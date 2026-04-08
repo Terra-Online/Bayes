@@ -1,0 +1,19 @@
+name = "bayes-backend"
+main = "src/index.ts"
+compatibility_date = "2026-04-08"
+
+[observability]
+enabled = true
+
+[[d1_databases]]
+binding = "DB"
+database_name = "oem-db"
+database_id = "9ba2f958-0e96-48e8-9049-57ce712b5faf"
+migrations_dir = "migrations"
+
+[[r2_buckets]]
+binding = "UGC_BUCKET"
+bucket_name = "opendfieldmap-ugc"
+
+[triggers]
+crons = ["*/5 * * * *"]

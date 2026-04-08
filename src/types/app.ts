@@ -1,0 +1,33 @@
+export type Role = "normal" | "moderator" | "admin";
+
+export interface Bindings {
+  DB: D1Database;
+  UGC_BUCKET: R2Bucket;
+  UPSTASH_REDIS_REST_URL: string;
+  UPSTASH_REDIS_REST_TOKEN: string;
+  BETTER_AUTH_SECRET?: string;
+  BETTER_AUTH_URL?: string;
+  OPENAI_API_KEY?: string;
+  SESSION_TTL_SECONDS?: string;
+  PROGRESS_CACHE_TTL_SECONDS?: string;
+  UPLOAD_URL_TTL_SECONDS?: string;
+  ALLOWED_UPLOAD_MIME?: string;
+  MAX_UPLOAD_BYTES?: string;
+}
+
+export interface AuthUser {
+  uid: string;
+  role: Role;
+  email: string;
+  nickname: string;
+}
+
+export interface Variables {
+  requestId: string;
+  authUser?: AuthUser;
+}
+
+export type AppEnv = {
+  Bindings: Bindings;
+  Variables: Variables;
+};
