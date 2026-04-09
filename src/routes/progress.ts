@@ -17,7 +17,7 @@ const syncSchema = z.object({
 export function createProgressRoutes() {
   const app = new Hono<AppEnv>();
 
-  app.get("/", requireAuth, rateLimit("auth"), async (c) => {
+  app.get("/state", requireAuth, rateLimit("auth"), async (c) => {
     const user = c.get("authUser");
     if (!user) {
       throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");

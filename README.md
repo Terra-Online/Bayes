@@ -32,16 +32,16 @@ This is a foundation implementation based on PRD and is intentionally incrementa
 
 ## API Endpoints (MVP)
 
-- GET /api/health
-- Better Auth native endpoints under /api/auth/* (for example /api/auth/sign-up/email, /api/auth/sign-in/email, /api/auth/get-session, /api/auth/sign-out)
-- Compatibility endpoints: /api/auth/register, /api/auth/login, /api/auth/session, /api/auth/logout
-- GET /api/progress
-- POST /api/progress/sync
-- POST /api/uploads/presign
-- PUT /api/uploads/direct/:ticketId
-- GET /api/moderation/pending (moderator/admin)
-- PATCH /api/moderation/:id/status (moderator/admin)
-- POST /api/moderation/run-once (admin)
+- GET /health/v1/status
+- Better Auth native endpoints under /auth/v1/* (social-only, for example /auth/v1/sign-in/social, /auth/v1/get-session, /auth/v1/sign-out)
+- Compatibility endpoints: /auth/v1/register and /auth/v1/login return 410 (disabled), /auth/v1/session and /auth/v1/logout remain available
+- GET /progress/v1/state
+- POST /progress/v1/sync
+- POST /uploads/v1/presign
+- PUT /uploads/v1/direct/:ticketId
+- GET /moderation/v1/pending (moderator/admin)
+- PATCH /moderation/v1/:id/status (moderator/admin)
+- POST /moderation/v1/run-once (admin)
 
 ## Local Development
 
@@ -65,6 +65,10 @@ Then fill values in .dev.vars:
 - UPSTASH_REDIS_REST_TOKEN
 - BETTER_AUTH_SECRET (at least 32 chars, random)
 - BETTER_AUTH_URL (for local: http://127.0.0.1:8787)
+- GOOGLE_CLIENT_ID
+- GOOGLE_CLIENT_SECRET
+- DISCORD_CLIENT_ID
+- DISCORD_CLIENT_SECRET
 - OPENAI_API_KEY (optional in local mode)
 - Optional overrides for TTL and upload constraints
 
@@ -116,22 +120,37 @@ Frontend URL: http://localhost:5173
 
 ### 3) Auth flow smoke test (curl)
 
-Register:
+Start social sign-in (Google):
 
-curl -i -X POST http://127.0.0.1:8787/api/auth/register \
+curl -i -X POST http://127.0.0.1:8787/auth/v1/sign-in/social \
 	-H "content-type: application/json" \
-	-d '{"email":"dev@example.com","password":"devpassword123","nickname":"DevUser01"}'
+	-d '{"provider":"google"}'
 
-Login:
+Start social sign-in (Discord):
 
-curl -i -X POST http://127.0.0.1:8787/api/auth/login \
+curl -i -X POST http://127.0.0.1:8787/auth/v1/sign-in/social \
 	-H "content-type: application/json" \
-	-d '{"email":"dev@example.com","password":"devpassword123"}'
+	-d '{"provider":"discord"}'
 
-Use returned token to access protected API:
+Then finish OAuth in browser and call get-session:
 
-curl -i http://127.0.0.1:8787/api/progress \
-	-H "authorization: Bearer <TOKEN>"
+curl -i http://127.0.0.1:8787/auth/v1/get-session
+
+Legacy endpoints are intentionally disabled:
+
+curl -i -X POST http://127.0.0.1:8787/auth/v1/register
+curl -i -X POST http://127.0.0.1:8787/auth/v1/login
+
+Both return HTTP 410.
+
+## Where Auth Method Is Configured
+
+- The allowed login/registration methods are configured in src/lib/auth.ts.
+- In createAuth(...):
+  - emailAndPassword.enabled controls email/password registration and login.
+  - socialProviders controls enabled OAuth providers (google/discord).
+	- basePath controls auth route mount prefix (/auth/v1).
+- Auth routes are mounted from src/routes/auth.ts and proxied to auth.handler(...).
 
 ### 4) Progress conflict test
 
@@ -141,10 +160,10 @@ curl -i http://127.0.0.1:8787/api/progress \
 
 ### 5) Upload and moderation smoke test
 
-- POST /api/uploads/presign
+- POST /uploads/v1/presign
 - PUT binary to returned uploadUrl with matching content-type
-- Verify submission appears in GET /api/moderation/pending (moderator/admin role)
-- POST /api/moderation/run-once as admin
+- Verify submission appears in GET /moderation/v1/pending (moderator/admin role)
+- POST /moderation/v1/run-once as admin
 
 ## Data and Consistency Behavior
 
@@ -174,7 +193,7 @@ curl -i http://127.0.0.1:8787/api/progress \
 
 ### Integration tests
 
-- Auth flow: Better Auth register -> login -> get-session -> logout
+- Auth flow: Better Auth social sign-in (google/discord) -> get-session -> logout
 - Progress flow: cold read fallback to D1 and Redis backfill
 - Sync flow: stale version conflict and valid version acceptance
 - Upload flow: presign ticket + direct upload + pending submission creation
@@ -182,7 +201,7 @@ curl -i http://127.0.0.1:8787/api/progress \
 
 ### End-to-end scenario
 
-- User registers and logs in
+- User completes social login (Google or Discord)
 - User syncs progress
 - User uploads image/comment
 - Submission enters pending state

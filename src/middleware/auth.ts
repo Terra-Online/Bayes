@@ -1,7 +1,7 @@
 import type { MiddlewareHandler } from "hono";
 import { createAuth } from "../lib/auth";
 import { ApiError } from "../lib/errors";
-import { ensureUserProfile } from "../repositories/users";
+import { ensureUserProfile, formatPublicUid } from "../repositories/users";
 import type { AppEnv, Role } from "../types/app";
 
 export const requireAuth: MiddlewareHandler<AppEnv> = async (c, next) => {
@@ -22,9 +22,11 @@ export const requireAuth: MiddlewareHandler<AppEnv> = async (c, next) => {
 
   c.set("authUser", {
     uid: profile.uid,
+    publicUid: formatPublicUid(profile.uidNumber, profile.uidSuffix),
     role: profile.role,
     email: profile.email,
-    nickname: profile.nickname
+    nickname: profile.nickname,
+    needsProfileSetup: !profile.nicknameCustomized
   });
 
   await next();

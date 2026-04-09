@@ -2,120 +2,98 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { createAuth } from "../lib/auth";
 import { ApiError } from "../lib/errors";
+import { requireAuth } from "../middleware/auth";
 import { rateLimit } from "../middleware/rate-limit";
-import { ensureUserProfile } from "../repositories/users";
-import type { AppEnv } from "../types/app";
+import { formatPublicUid, updateUserNickname } from "../repositories/users";
+import type { AppEnv, AuthUser } from "../types/app";
 
-const registerSchema = z.object({
-  email: z.string().email(),
-  password: z.string().min(8).max(128),
-  nickname: z.string().regex(/^[A-Za-z0-9]{1,26}$/),
-  avt: z.number().int().min(0).max(999).optional()
+const profileUpdateSchema = z.object({
+  nickname: z
+    .string()
+    .trim()
+    .min(2, "Nickname must be at least 2 characters.")
+    .max(26, "Nickname must be 26 characters or fewer.")
+    .regex(/^[A-Za-z0-9_-]+$/, "Nickname can only contain letters, numbers, '_' or '-'.")
 });
 
-const loginSchema = z.object({
-  email: z.string().email(),
-  password: z.string().min(8).max(128)
-});
+function toSessionUser(user: AuthUser) {
+  return {
+    uid: user.publicUid,
+    role: user.role,
+    email: user.email,
+    nickname: user.nickname,
+    needsProfileSetup: user.needsProfileSetup
+  };
+}
 
 export function createAuthRoutes() {
   const app = new Hono<AppEnv>();
 
-  // Compatibility wrappers to preserve the previous API shape.
+  // Legacy endpoints are intentionally disabled to enforce social-only auth.
   app.post("/register", rateLimit("public"), async (c) => {
-    const body = registerSchema.safeParse(await c.req.json());
-    if (!body.success) {
-      throw new ApiError(422, "VALIDATION_ERROR", "Invalid register payload.", body.error.flatten());
-    }
-
-    const auth = createAuth(c.env);
-    const registered = await auth.api.signUpEmail({
-      body: {
-        email: body.data.email.toLowerCase(),
-        password: body.data.password,
-        name: body.data.nickname
-      },
-      headers: c.req.raw.headers
-    });
-
-    const profile = await ensureUserProfile(c.env.DB, {
-      uid: registered.user.id,
-      email: registered.user.email,
-      nickname: body.data.nickname,
-      avt: body.data.avt
-    });
-
-    return c.json(
-      {
-        token: registered.token,
-        user: {
-          uid: profile.uid,
-          role: profile.role,
-          email: profile.email,
-          nickname: profile.nickname
-        }
-      },
-      201
+    throw new ApiError(
+      410,
+      "AUTH_METHOD_DISABLED",
+      "Email register is disabled. Use social login via /auth/v1/sign-in/social with provider google or discord."
     );
   });
 
   app.post("/login", rateLimit("public"), async (c) => {
-    const body = loginSchema.safeParse(await c.req.json());
-    if (!body.success) {
-      throw new ApiError(422, "VALIDATION_ERROR", "Invalid login payload.", body.error.flatten());
-    }
-
-    const auth = createAuth(c.env);
-    const signedIn = await auth.api.signInEmail({
-      body: {
-        email: body.data.email.toLowerCase(),
-        password: body.data.password,
-        rememberMe: true
-      },
-      headers: c.req.raw.headers
-    });
-
-    const profile = await ensureUserProfile(c.env.DB, {
-      uid: signedIn.user.id,
-      email: signedIn.user.email,
-      displayName: signedIn.user.name
-    });
-
-    return c.json({
-      token: signedIn.token,
-      user: {
-        uid: profile.uid,
-        role: profile.role,
-        email: profile.email,
-        nickname: profile.nickname
-      }
-    });
+    throw new ApiError(
+      410,
+      "AUTH_METHOD_DISABLED",
+      "Email login is disabled. Use social login via /auth/v1/sign-in/social with provider google or discord."
+    );
   });
 
-  app.get("/session", rateLimit("auth"), async (c) => {
-    const auth = createAuth(c.env);
-    const session = await auth.api.getSession({
-      headers: c.req.raw.headers
-    });
-
-    if (!session) {
+  app.get("/session", rateLimit("auth"), requireAuth, async (c) => {
+    const user = c.get("authUser");
+    if (!user) {
       throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
     }
 
-    const profile = await ensureUserProfile(c.env.DB, {
-      uid: session.user.id,
-      email: session.user.email,
-      displayName: session.user.name
-    });
+    return c.json({ user: toSessionUser(user) });
+  });
 
-    return c.json({
-      user: {
-        uid: profile.uid,
-        role: profile.role,
-        email: profile.email,
-        nickname: profile.nickname
+  app.patch("/profile", rateLimit("auth"), requireAuth, async (c) => {
+    const user = c.get("authUser");
+    if (!user) {
+      throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
+    }
+
+    const parsed = profileUpdateSchema.safeParse(await c.req.json());
+    if (!parsed.success) {
+      throw new ApiError(422, "VALIDATION_ERROR", "Invalid profile payload.", parsed.error.flatten());
+    }
+
+    try {
+      const updated = await updateUserNickname(c.env.DB, {
+        uid: user.uid,
+        nickname: parsed.data.nickname
+      });
+
+      return c.json({
+        user: {
+          uid: formatPublicUid(updated.uidNumber, updated.uidSuffix),
+          role: updated.role,
+          email: updated.email,
+          nickname: updated.nickname,
+          needsProfileSetup: !updated.nicknameCustomized
+        }
+      });
+    } catch (error) {
+      const message = String(error);
+      if (message.includes("INVALID_NICKNAME_FORMAT")) {
+        throw new ApiError(422, "INVALID_NICKNAME_FORMAT", "Nickname format is invalid.");
       }
-    });
+      if (message.includes("NICKNAME_CONFLICT")) {
+        throw new ApiError(409, "NICKNAME_TAKEN", "Nickname is already in use.");
+      }
+      if (message.includes("USER_NOT_FOUND")) {
+        throw new ApiError(404, "USER_NOT_FOUND", "User profile not found.");
+      }
+      throw error;
+    }
   });
 
   app.post("/logout", rateLimit("auth"), async (c) => {

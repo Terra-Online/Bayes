@@ -26,11 +26,11 @@ export function createApp() {
 
   app.onError(onAppError);
 
-  app.route("/api/health", createHealthRoutes());
-  app.route("/api/auth", createAuthRoutes());
-  app.route("/api/progress", createProgressRoutes());
-  app.route("/api/uploads", createUploadRoutes());
-  app.route("/api/moderation", createModerationRoutes());
+  app.route("/health/v1", createHealthRoutes());
+  app.route("/auth/v1", createAuthRoutes());
+  app.route("/progress/v1", createProgressRoutes());
+  app.route("/uploads/v1", createUploadRoutes());
+  app.route("/moderation/v1", createModerationRoutes());
 
   app.get("/", (c) => c.json({ status: "ok", message: "Bayes backend is running." }));
 

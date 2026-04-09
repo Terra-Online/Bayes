@@ -7,6 +7,10 @@ export interface Bindings {
   UPSTASH_REDIS_REST_TOKEN: string;
   BETTER_AUTH_SECRET?: string;
   BETTER_AUTH_URL?: string;
+  GOOGLE_CLIENT_ID?: string;
+  GOOGLE_CLIENT_SECRET?: string;
+  DISCORD_CLIENT_ID?: string;
+  DISCORD_CLIENT_SECRET?: string;
   OPENAI_API_KEY?: string;
   SESSION_TTL_SECONDS?: string;
   PROGRESS_CACHE_TTL_SECONDS?: string;
@@ -17,9 +21,11 @@ export interface Bindings {
 
 export interface AuthUser {
   uid: string;
+  publicUid: string;
   role: Role;
   email: string;
   nickname: string;
+  needsProfileSetup: boolean;
 }
 
 export interface Variables {

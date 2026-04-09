@@ -150,4 +150,5 @@ migrations/
 
 # Local environment files
 .dev.vars
+.dev.vars.local
 .env.local

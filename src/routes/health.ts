@@ -4,7 +4,7 @@ import type { AppEnv } from "../types/app";
 export function createHealthRoutes() {
   const app = new Hono<AppEnv>();
 
-  app.get("/", (c) => {
+  app.get("/status", (c) => {
     return c.json({
       status: "ok",
       service: "bayes-backend",

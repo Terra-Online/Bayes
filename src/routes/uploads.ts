@@ -51,7 +51,7 @@ export function createUploadRoutes() {
 
     return c.json({
       ticketId,
-      uploadUrl: `/api/uploads/direct/${ticketId}`,
+      uploadUrl: `/uploads/v1/direct/${ticketId}`,
       expiresAt: ticket.expiresAt,
       objectKey: ticket.objectKey
     });
