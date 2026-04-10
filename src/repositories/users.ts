@@ -18,6 +18,7 @@ export interface UserRecord {
   progressVersion: number;
   progressMarker: string;
   points: number;
+  karma: number;
   createdAt: string;
   lastActive: string;
 }
@@ -46,6 +47,55 @@ function normalizeUidSuffix(raw: string | undefined): string {
 
 function buildUidSuffixFromNickname(nickname: string): string {
   return normalizeUidSuffix(nickname);
+}
+
+export function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  if (typeof error === "object" && error !== null && "message" in error) {
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === "string") {
+      return message;
+    }
+  }
+  return String(error);
+}
+
+function normalizeRole(raw: unknown): Role {
+  const value = typeof raw === "string" ? raw.trim().toLowerCase() : "";
+
+  switch (value) {
+    case "n":
+    case "normal":
+      return "n";
+    case "p":
+    case "pioneer":
+    case "moderator":
+      return "p";
+    case "a":
+    case "admin":
+      return "a";
+    case "s":
+    case "suspend":
+    case "suspended":
+      return "s";
+    case "r":
+    case "robot":
+      return "r";
+    default:
+      return "n";
+  }
+}
+
+export function pointsToKarma(points: number): number {
+  const normalizedPoints = Number.isFinite(points) ? Math.max(0, Math.floor(points)) : 0;
+  if (normalizedPoints >= 1500) return 5;
+  if (normalizedPoints >= 800) return 4;
+  if (normalizedPoints >= 400) return 3;
+  if (normalizedPoints >= 200) return 2;
+  if (normalizedPoints >= 50) return 1;
+  return 0;
 }
 
 function normalizeEditableNickname(raw: string): string {
@@ -79,20 +129,26 @@ async function getNextUidNumber(db: D1Database): Promise<number> {
 }
 
 function mapUser(row: Record<string, unknown>): UserRecord {
+  const role = normalizeRole(row.role);
+  const points = Number(row.points ?? 0);
+  const karmaFromDb = Number(row.karma);
+  const karma = Number.isFinite(karmaFromDb) ? karmaFromDb : pointsToKarma(points);
+
   return {
     uid: String(row.uid),
     uidNumber: Number(row.uid_number ?? 0),
     uidSuffix: normalizeUidSuffix(typeof row.uid_suffix === "string" ? row.uid_suffix : undefined),
     email: String(row.email),
     passwordHash: String(row.password_hash),
-    role: (row.role as Role) ?? "normal",
+    role,
     avt: Number(row.avt ?? 0),
     nickname: String(row.nickname),
     nicknameCustomized: Number(row.nickname_customized ?? 0) === 1,
     efPass: row.ef_pass === null ? null : String(row.ef_pass ?? ""),
     progressVersion: Number(row.progress_version ?? 0),
     progressMarker: String(row.progress_marker ?? ""),
-    points: Number(row.points ?? 0),
+    points,
+    karma,
     createdAt: String(row.created_at),
     lastActive: String(row.last_active)
   };
@@ -135,6 +191,15 @@ export async function ensureUserProfile(db: D1Database, payload: EnsureUserProfi
     };
   }
 
+  const existingByEmail = await getUserByEmail(db, payload.email.toLowerCase());
+  if (existingByEmail) {
+    await db
+      .prepare("UPDATE users SET last_active = CURRENT_TIMESTAMP WHERE uid = ?1")
+      .bind(existingByEmail.uid)
+      .run();
+    return existingByEmail;
+  }
+
   const nicknameCandidates = normalizeNickname(payload.nickname ?? payload.displayName, payload.uid);
   const email = payload.email.toLowerCase();
   const avt = Number.isFinite(payload.avt) ? Number(payload.avt) : 0;
@@ -159,7 +224,7 @@ export async function ensureUserProfile(db: D1Database, payload: EnsureUserProfi
             initialUidSuffix,
             email,
             "better-auth-managed",
-            "normal",
+            "n",
             avt,
             nickname,
             shouldMarkNicknameCustomized ? 1 : 0,
@@ -172,14 +237,14 @@ export async function ensureUserProfile(db: D1Database, payload: EnsureUserProfi
           return created;
         }
       } catch (error) {
-        const message = String(error);
+        const message = getErrorMessage(error);
         if (message.includes("users.nickname")) {
           continue;
         }
         if (message.includes("users.uid_number") || message.includes("idx_users_uid_number")) {
           break;
         }
-        throw error;
+        throw new Error(message);
       }
     }
   }
@@ -217,11 +282,11 @@ export async function updateUserNickname(
       .bind(payload.uid, normalizedNickname, nextUidSuffix)
       .run();
   } catch (error) {
-    const message = String(error);
+    const message = getErrorMessage(error);
     if (message.includes("users.nickname")) {
       throw new Error("NICKNAME_CONFLICT");
     }
-    throw error;
+    throw new Error(message);
   }
 
   const updated = await getUserByUid(db, payload.uid);
@@ -244,6 +309,14 @@ export async function updateProgressInD1(
        SET progress_version = ?2,
            progress_marker = ?3,
            points = points + ?4,
+           karma = CASE
+             WHEN points + ?4 >= 1500 THEN 5
+             WHEN points + ?4 >= 800 THEN 4
+             WHEN points + ?4 >= 400 THEN 3
+             WHEN points + ?4 >= 200 THEN 2
+             WHEN points + ?4 >= 50 THEN 1
+             ELSE 0
+           END,
            last_active = CURRENT_TIMESTAMP
        WHERE uid = ?1`
     )

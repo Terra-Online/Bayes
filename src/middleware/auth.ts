@@ -24,6 +24,7 @@ export const requireAuth: MiddlewareHandler<AppEnv> = async (c, next) => {
     uid: profile.uid,
     publicUid: formatPublicUid(profile.uidNumber, profile.uidSuffix),
     role: profile.role,
+    karma: profile.karma,
     email: profile.email,
     nickname: profile.nickname,
     needsProfileSetup: !profile.nicknameCustomized

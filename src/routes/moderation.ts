@@ -16,14 +16,14 @@ const updateSchema = z.object({
 export function createModerationRoutes() {
   const app = new Hono<AppEnv>();
 
-  app.get("/pending", requireAuth, requireRole(["moderator", "admin"]), rateLimit("auth"), async (c) => {
+  app.get("/pending", requireAuth, requireRole(["p", "a"]), rateLimit("auth"), async (c) => {
     const rows = await getPendingSubmissions(c.env.DB, 50);
     return c.json({
       items: rows
     });
   });
 
-  app.patch("/:id/status", requireAuth, requireRole(["moderator", "admin"]), rateLimit("auth"), async (c) => {
+  app.patch("/:id/status", requireAuth, requireRole(["p", "a"]), rateLimit("auth"), async (c) => {
     const submissionId = c.req.param("id");
     if (!submissionId) {
       throw new ApiError(422, "VALIDATION_ERROR", "Submission id is required.");
@@ -43,7 +43,7 @@ export function createModerationRoutes() {
     return c.json({ ok: true });
   });
 
-  app.post("/run-once", requireAuth, requireRole(["admin"]), rateLimit("auth"), async (c) => {
+  app.post("/run-once", requireAuth, requireRole(["a"]), rateLimit("auth"), async (c) => {
     const redis = createRedisClient(c.env);
     await ensureModerationBackfill(c.env.DB, redis, 20);
     const processed = await moderateSubmissionOnce(c.env.DB, redis, c.env.OPENAI_API_KEY, 10);

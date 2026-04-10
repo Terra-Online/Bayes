@@ -143,6 +143,7 @@ Thumbs.db
 desktop.ini
 .history/
 PRD.md
+PROGRESS.md
 migrations/
 
 # Cloudflare Workers local artifacts

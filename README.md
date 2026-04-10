@@ -39,9 +39,27 @@ This is a foundation implementation based on PRD and is intentionally incrementa
 - POST /progress/v1/sync
 - POST /uploads/v1/presign
 - PUT /uploads/v1/direct/:ticketId
-- GET /moderation/v1/pending (moderator/admin)
-- PATCH /moderation/v1/:id/status (moderator/admin)
+- GET /moderation/v1/pending (pioneer/admin)
+- PATCH /moderation/v1/:id/status (pioneer/admin)
 - POST /moderation/v1/run-once (admin)
+
+## User Group and Karma Model
+
+- users.role stores one-letter group code only: n/p/a/s/r
+	- n = normal
+	- p = pioneer
+	- a = admin
+	- s = suspend
+	- r = robot
+- points is internal-only and should not be returned to client payloads.
+- karma is derived from points and returned to client as 0-5.
+- Current karma thresholds:
+	- 0: [0, 50)
+	- 1: [50, 200)
+	- 2: [200, 400)
+	- 3: [400, 800)
+	- 4: [800, 1500)
+	- 5: [1500, +inf)
 
 ## Local Development
 
@@ -84,6 +102,34 @@ Edit wrangler.toml and update:
 pnpm run db:migrate:local
 
 This applies both domain schema and Better Auth schema migrations.
+
+## Local D1 Operations Guide
+
+Use these commands when you need to frequently inspect or modify local user test data.
+
+Inspect users schema:
+
+pnpm exec wrangler d1 execute DB --local --command "PRAGMA table_info(users);"
+
+List users:
+
+pnpm exec wrangler d1 execute DB --local --command "SELECT uid, email, role, nickname, uid_number, uid_suffix, points, karma FROM users ORDER BY created_at DESC LIMIT 50;"
+
+Update nickname by uid:
+
+pnpm exec wrangler d1 execute DB --local --command "UPDATE users SET nickname='new_name', nickname_customized=1, last_active=CURRENT_TIMESTAMP WHERE uid='YOUR_UID';"
+
+Update group code by uid:
+
+pnpm exec wrangler d1 execute DB --local --command "UPDATE users SET role='p' WHERE uid='YOUR_UID';"
+
+Update points and recalc karma by uid:
+
+pnpm exec wrangler d1 execute DB --local --command "UPDATE users SET points=900, karma=CASE WHEN 900 >= 1500 THEN 5 WHEN 900 >= 800 THEN 4 WHEN 900 >= 400 THEN 3 WHEN 900 >= 200 THEN 2 WHEN 900 >= 50 THEN 1 ELSE 0 END WHERE uid='YOUR_UID';"
+
+Reset one user progress:
+
+pnpm exec wrangler d1 execute DB --local --command "UPDATE users SET progress_version=0, progress_marker='', points=0, karma=0 WHERE uid='YOUR_UID';"
 
 ### 5) Start dev server
 
@@ -162,7 +208,7 @@ Both return HTTP 410.
 
 - POST /uploads/v1/presign
 - PUT binary to returned uploadUrl with matching content-type
-- Verify submission appears in GET /moderation/v1/pending (moderator/admin role)
+- Verify submission appears in GET /moderation/v1/pending (pioneer/admin role)
 - POST /moderation/v1/run-once as admin
 
 ## Data and Consistency Behavior
@@ -177,7 +223,7 @@ Both return HTTP 410.
 ## Security Baseline in This Skeleton
 
 - Better Auth session and token handling
-- Role checks (normal/moderator/admin)
+- Role checks (n/p/a/s/r with pioneer/admin moderation permissions)
 - Per-minute rate limiting with role-based quotas
 - MIME whitelist and max upload size checks
 
@@ -209,7 +255,7 @@ Both return HTTP 410.
 
 ### Non-functional checks
 
-- Rate limiting behavior for normal/moderator/admin
+- Rate limiting behavior for n/p/a/s/r
 - Redis outage fallback behavior
 - D1 write flush behavior under burst updates
 - Idempotency and retry behavior for moderation jobs

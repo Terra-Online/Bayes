@@ -4,7 +4,7 @@ import { createAuth } from "../lib/auth";
 import { ApiError } from "../lib/errors";
 import { requireAuth } from "../middleware/auth";
 import { rateLimit } from "../middleware/rate-limit";
-import { formatPublicUid, updateUserNickname } from "../repositories/users";
+import { formatPublicUid, getErrorMessage, updateUserNickname } from "../repositories/users";
 import type { AppEnv, AuthUser } from "../types/app";
 
 const profileUpdateSchema = z.object({
@@ -20,6 +20,7 @@ function toSessionUser(user: AuthUser) {
   return {
     uid: user.publicUid,
     role: user.role,
+    karma: user.karma,
     email: user.email,
     nickname: user.nickname,
     needsProfileSetup: user.needsProfileSetup
@@ -61,7 +62,35 @@ export function createAuthRoutes() {
       throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
     }
 
-    const parsed = profileUpdateSchema.safeParse(await c.req.json());
+    const contentType = c.req.header("content-type")?.toLowerCase() ?? "";
+    let body: unknown;
+
+    if (contentType.includes("application/json") || contentType.length === 0) {
+      try {
+        body = await c.req.json();
+      } catch {
+        const rawText = await c.req.text();
+        const params = new URLSearchParams(rawText);
+        const nickname = params.get("nickname");
+        if (nickname !== null) {
+          body = { nickname };
+        } else {
+          throw new ApiError(422, "VALIDATION_ERROR", "Request body must be valid JSON.");
+        }
+      }
+    } else if (
+      contentType.includes("application/x-www-form-urlencoded") ||
+      contentType.includes("multipart/form-data")
+    ) {
+      const form = await c.req.parseBody();
+      body = {
+        nickname: typeof form.nickname === "string" ? form.nickname : undefined
+      };
+    } else {
+      throw new ApiError(415, "UNSUPPORTED_MEDIA_TYPE", "Unsupported content-type for profile update.");
+    }
+
+    const parsed = profileUpdateSchema.safeParse(body);
     if (!parsed.success) {
       throw new ApiError(422, "VALIDATION_ERROR", "Invalid profile payload.", parsed.error.flatten());
     }
@@ -76,13 +105,14 @@ export function createAuthRoutes() {
         user: {
           uid: formatPublicUid(updated.uidNumber, updated.uidSuffix),
           role: updated.role,
+          karma: updated.karma,
           email: updated.email,
           nickname: updated.nickname,
           needsProfileSetup: !updated.nicknameCustomized
         }
       });
     } catch (error) {
-      const message = String(error);
+      const message = getErrorMessage(error);
       if (message.includes("INVALID_NICKNAME_FORMAT")) {
         throw new ApiError(422, "INVALID_NICKNAME_FORMAT", "Nickname format is invalid.");
       }
@@ -92,7 +122,7 @@ export function createAuthRoutes() {
       if (message.includes("USER_NOT_FOUND")) {
         throw new ApiError(404, "USER_NOT_FOUND", "User profile not found.");
       }
-      throw error;
+      throw new ApiError(500, "PROFILE_UPDATE_FAILED", message);
     }
   });
 

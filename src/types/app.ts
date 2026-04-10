@@ -1,4 +1,4 @@
-export type Role = "normal" | "moderator" | "admin";
+export type Role = "n" | "p" | "a" | "s" | "r";
 
 export interface Bindings {
   DB: D1Database;
@@ -23,6 +23,7 @@ export interface AuthUser {
   uid: string;
   publicUid: string;
   role: Role;
+  karma: number;
   email: string;
   nickname: string;
   needsProfileSetup: boolean;

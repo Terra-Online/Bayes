@@ -35,7 +35,8 @@ export function onAppError(error: unknown, c: Context<AppEnv>) {
       requestId: c.get("requestId"),
       code: apiError.code,
       message: apiError.message,
-      details: apiError.details
+      details: apiError.details,
+      rawError: error instanceof Error ? { name: error.name, message: error.message, stack: error.stack } : error
     });
   }
   return errorJson(c, apiError.status, apiError.code, apiError.message, apiError.details);

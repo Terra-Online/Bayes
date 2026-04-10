@@ -4,9 +4,11 @@ import { createRedisClient } from "../lib/redis";
 import type { AppEnv, Role } from "../types/app";
 
 const ROLE_LIMITS: Record<Role, number> = {
-  normal: 120,
-  moderator: 300,
-  admin: 600
+  n: 120,
+  p: 300,
+  a: 600,
+  s: 20,
+  r: 40
 };
 
 function getWindowKey(scope: string, key: string): { redisKey: string; resetAt: number } {
