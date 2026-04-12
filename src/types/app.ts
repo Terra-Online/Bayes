@@ -17,6 +17,7 @@ export interface Bindings {
   UPLOAD_URL_TTL_SECONDS?: string;
   ALLOWED_UPLOAD_MIME?: string;
   MAX_UPLOAD_BYTES?: string;
+  RESEND_AUTH_KEY?: string;
 }
 
 export interface AuthUser {

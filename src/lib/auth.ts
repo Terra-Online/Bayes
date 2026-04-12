@@ -1,8 +1,10 @@
-import { betterAuth } from "better-auth";
-import { bearer } from "better-auth/plugins";
-import type { Bindings } from "../types/app";
+import { betterAuth } from 'better-auth';
+import { bearer } from 'better-auth/plugins';
+import type { Bindings } from '../types/app';
+import { sendEmail } from './email';
+import { envOrThrow, readEnv } from './utils';
 
-const DEV_AUTH_SECRET = "dev-only-better-auth-secret-change-in-production";
+const DEV_AUTH_SECRET = 'dev-only-better-auth-secret-change-in-production';
 
 function toSerializableError(error: unknown): unknown {
   if (!(error instanceof Error)) {
@@ -17,30 +19,14 @@ function toSerializableError(error: unknown): unknown {
     status: withCause.status,
     statusText: withCause.statusText,
     cause: withCause.cause ? toSerializableError(withCause.cause) : undefined,
-    stack: error.stack
+    stack: error.stack,
   };
-}
-
-function readEnv(value: string | undefined): string | undefined {
-  if (!value) return undefined;
-  const trimmed = value.trim();
-  const unquoted = trimmed.replace(/^(['"])(.*)\1$/, "$2").trim();
-  const normalized = unquoted.length > 0 ? unquoted : trimmed;
-  return normalized.length > 0 ? normalized : undefined;
-}
-
-function envOrThrow(value: string | undefined, key: string): string {
-  const normalized = readEnv(value);
-  if (normalized) {
-    return normalized;
-  }
-  throw new Error(`Missing required auth environment variable: ${key}`);
 }
 
 function pickOptionalProvider(
   provider: string,
   clientId: string | undefined,
-  clientSecret: string | undefined
+  clientSecret: string | undefined,
 ) {
   const id = readEnv(clientId);
   const secret = readEnv(clientSecret);
@@ -51,32 +37,32 @@ function pickOptionalProvider(
 
   if (!id || !secret) {
     throw new Error(
-      `Incomplete OAuth config for ${provider}. Both clientId and clientSecret are required.`
+      `Incomplete OAuth config for ${provider}. Both clientId and clientSecret are required.`,
     );
   }
 
   return {
     clientId: id,
-    clientSecret: secret
+    clientSecret: secret,
   };
 }
 
 export function createAuth(env: Bindings) {
   const socialProviders: {
-    discord: { clientId: string; clientSecret: string; prompt: "consent" };
+    discord: { clientId: string; clientSecret: string; prompt: 'consent' };
     google?: { clientId: string; clientSecret: string };
   } = {
     discord: {
-      clientId: envOrThrow(env.DISCORD_CLIENT_ID, "DISCORD_CLIENT_ID"),
-      clientSecret: envOrThrow(env.DISCORD_CLIENT_SECRET, "DISCORD_CLIENT_SECRET"),
-      prompt: "consent"
-    }
+      clientId: envOrThrow(env.DISCORD_CLIENT_ID, 'DISCORD_CLIENT_ID'),
+      clientSecret: envOrThrow(env.DISCORD_CLIENT_SECRET, 'DISCORD_CLIENT_SECRET'),
+      prompt: 'consent',
+    },
   };
 
   const googleProvider = pickOptionalProvider(
-    "google",
+    'google',
     env.GOOGLE_CLIENT_ID,
-    env.GOOGLE_CLIENT_SECRET
+    env.GOOGLE_CLIENT_SECRET,
   );
 
   if (googleProvider) {
@@ -85,40 +71,56 @@ export function createAuth(env: Bindings) {
 
   return betterAuth({
     database: env.DB,
-    baseURL: env.BETTER_AUTH_URL ?? "http://127.0.0.1:8787",
-    basePath: "/auth/v1",
+    baseURL: env.BETTER_AUTH_URL ?? 'http://127.0.0.1:8787',
+    basePath: '/auth/v1',
     secret: env.BETTER_AUTH_SECRET ?? DEV_AUTH_SECRET,
-    trustedOrigins: ["http://localhost:5173", "http://127.0.0.1:5173"],
+    trustedOrigins: ['http://localhost:5173', 'http://127.0.0.1:5173'],
     emailAndPassword: {
-      enabled: false
+      enabled: true,
+      sendResetPassword: async ({ user, url }) => {
+        void sendEmail(
+          user.email, `Click the link to reset your password: ${url}`,
+          'Reset your password',
+        );
+      },
+    },
+    emailVerification: {
+      sendOnSignUp: true,
+      autoSignInAfterVerification: true,
+      sendVerificationEmail: async ({ user, url }) => {
+        void sendEmail(
+          user.email, `Click the link to verify your email: ${url}`,
+          'Verify your email address',
+        );
+      },
     },
     socialProviders,
     user: {
-      modelName: "auth_users"
+      modelName: 'auth_users',
     },
     session: {
-      modelName: "auth_sessions"
+      modelName: 'auth_sessions',
     },
     account: {
-      modelName: "auth_accounts"
+      modelName: 'auth_accounts',
     },
     verification: {
-      modelName: "auth_verifications"
+      modelName: 'auth_verifications',
     },
     onAPIError: {
       onError: (error, ctx) => {
-        console.error("[better-auth][api-error]", {
+        console.error('[better-auth][api-error]', {
           oauthStateStrategy: ctx.oauthConfig.storeStateStrategy,
           hasSession: Boolean(ctx.session),
-          error: toSerializableError(error)
+          error: toSerializableError(error),
         });
-      }
+      },
     },
     plugins: [bearer()],
     advanced: {
       database: {
-        generateId: () => crypto.randomUUID()
-      }
-    }
+        generateId: () => crypto.randomUUID(),
+      },
+    },
   });
 }
