@@ -5,12 +5,12 @@ import { initResend, sendEmail } from './email';
 import {
   createOtpEmailTemplate,
   createResetPasswordMagicLinkTemplate,
-  createVerifyEmailMagicLinkTemplate,
   resolveEmailLocale,
 } from './email-templates';
 import { envOrThrow, readEnv } from './utils';
 
 const DEV_AUTH_SECRET = 'dev-only-better-auth-secret-change-in-production';
+const OEM_LOCALE_HEADER = 'x-oem-locale';
 
 function pickLocaleFromUser(user: unknown): string | undefined {
   if (!user || typeof user !== 'object') {
@@ -26,9 +26,45 @@ function pickLocaleFromUser(user: unknown): string | undefined {
   return undefined;
 }
 
-function resolvePreferredLocale(env: Bindings, user: unknown): ReturnType<typeof resolveEmailLocale> {
+function pickLocaleFromRequest(request: Request | undefined): string | undefined {
+  if (!request) {
+    return undefined;
+  }
+
+  const localeHeader = request.headers.get(OEM_LOCALE_HEADER)?.trim();
+  if (localeHeader) {
+    return localeHeader;
+  }
+
+  const acceptLanguage = request.headers.get('accept-language')?.trim();
+  if (acceptLanguage) {
+    return acceptLanguage;
+  }
+
+  return undefined;
+}
+
+function pickRequestFromCtx(ctx: unknown): Request | undefined {
+  if (!ctx || typeof ctx !== 'object') {
+    return undefined;
+  }
+
+  const maybeRequest = (ctx as { request?: unknown }).request;
+  if (maybeRequest instanceof Request) {
+    return maybeRequest;
+  }
+
+  return undefined;
+}
+
+function resolvePreferredLocale(
+  env: Bindings,
+  user: unknown,
+  request?: Request,
+): ReturnType<typeof resolveEmailLocale> {
+  const fromRequest = pickLocaleFromRequest(request);
   const fromUser = pickLocaleFromUser(user);
-  return resolveEmailLocale(fromUser ?? env.EMAIL_TEMPLATE_DEFAULT_LOCALE);
+  return resolveEmailLocale(fromRequest ?? fromUser ?? env.EMAIL_TEMPLATE_DEFAULT_LOCALE);
 }
 
 function toSerializableError(error: unknown): unknown {
@@ -104,8 +140,8 @@ export function createAuth(env: Bindings) {
     trustedOrigins: ['http://localhost:5173', 'http://127.0.0.1:5173'],
     emailAndPassword: {
       enabled: true,
-      sendResetPassword: async ({ user, url }) => {
-        const locale = resolvePreferredLocale(env, user);
+      sendResetPassword: async ({ user, url }, request) => {
+        const locale = resolvePreferredLocale(env, user, request);
         const content = createResetPasswordMagicLinkTemplate({ locale, url });
         await sendEmail({
           to: user.email,
@@ -118,17 +154,6 @@ export function createAuth(env: Bindings) {
     emailVerification: {
       sendOnSignUp: true,
       autoSignInAfterVerification: true,
-      sendVerificationEmail: async ({ user, url }) => {
-        // Fallback link email; OTP delivery is handled by emailOTP override flow.
-        const locale = resolvePreferredLocale(env, user);
-        const content = createVerifyEmailMagicLinkTemplate({ locale, url });
-        await sendEmail({
-          to: user.email,
-          subject: content.subject,
-          text: content.text,
-          html: content.html,
-        });
-      },
     },
     socialProviders,
     user: {
@@ -159,10 +184,10 @@ export function createAuth(env: Bindings) {
         sendVerificationOnSignUp: true,
         otpLength: 6,
         expiresIn: 300,
-        async sendVerificationOTP({ email, otp, type }) {
-          const locale = resolveEmailLocale(env.EMAIL_TEMPLATE_DEFAULT_LOCALE);
-          const mappedType = type === 'change-email' ? 'email-verification' : type;
-          const content = createOtpEmailTemplate({ locale, type: mappedType, otp });
+        async sendVerificationOTP({ email, otp }, ctx) {
+          const request = pickRequestFromCtx(ctx);
+          const locale = resolvePreferredLocale(env, null, request);
+          const content = createOtpEmailTemplate({ locale, otp });
           await sendEmail({
             to: email,
             subject: content.subject,

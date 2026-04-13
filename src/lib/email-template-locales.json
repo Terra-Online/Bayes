@@ -1,0 +1,582 @@
+{
+  "en": {
+    "brand": "Open Endfield Map",
+    "links": {
+      "siteText": "opendfieldmap.org",
+      "siteUrl": "https://opendfieldmap.org",
+      "blogText": "Blog",
+      "blogUrl": "https://blog.opendfieldmap.org"
+    },
+    "slogan": "Omnipresent, Efficient, Meticulous",
+    "otp": {
+      "email-verification": {
+        "subject": "[OEM] OTP Code: Register OEM Account",
+        "title": "Register your OEM account",
+        "intro": "Welcome to Open Endfield Map. Use the 6-digit code below to complete registration:",
+        "otpLabel": "Verification code",
+        "expires": "Code {{otp}} expires in 5 minutes.",
+        "ignore": "If this wasn't you, you can safely ignore this email."
+      }
+    },
+    "passwordResetMagicLink": {
+      "subject": "[OEM] Link: Reset Password",
+      "title": "Reset Your Password",
+      "intro": "Click the button below to reset your Bayes password:",
+      "actionLabel": "Reset password",
+      "fallbackLabel": "If the button does not work, copy and open this URL in your browser:",
+      "expires": "This link will expire in 1 day.",
+      "ignore": "If this wasn't you, you can safely ignore this email."
+    }
+  },
+  "zh-HK": {
+    "brand": "終末地地圖集",
+    "links": {
+      "siteText": "opendfieldmap.org",
+      "siteUrl": "https://opendfieldmap.org",
+      "blogText": "部落格",
+      "blogUrl": "https://blog.opendfieldmap.org"
+    },
+    "slogan": "全面，高效，細緻入微",
+    "otp": {
+      "email-verification": {
+        "subject": "[OEM] 驗證碼：註冊終末地地圖集",
+        "title": "註冊終末地地圖集",
+        "intro": "請輸入以下 6 位流動驗證碼完成驗證：",
+        "otpLabel": "驗證碼",
+        "expires": "驗證碼 {{otp}} 將在 5 分鐘後失效。",
+        "ignore": "若此封郵件非閣下本人操作，請安全忽略。"
+      }
+    },
+    "passwordResetMagicLink": {
+      "subject": "[OEM] 連結：重設密碼",
+      "title": "重設您的密碼",
+      "intro": "點擊下方按鈕重設終末地地圖集密碼：",
+      "actionLabel": "重設密碼",
+      "fallbackLabel": "如果按鈕無法使用，請複製以下連結並在瀏覽器中打開：",
+      "expires": "連結將在 1 天後失效。",
+      "ignore": "若此封郵件非閣下本人操作，請安全忽略。"
+    }
+  },
+  "zh-CN": {
+    "brand": "终末地地图集",
+    "links": {
+      "siteText": "opendfieldmap.org",
+      "siteUrl": "https://opendfieldmap.org",
+      "blogText": "博客",
+      "blogUrl": "https://blog.opendfieldmap.org"
+    },
+    "slogan": "全面，高效，细致入微",
+    "otp": {
+      "email-verification": {
+        "subject": "[OEM] 验证码：注册终末地地图集",
+        "title": "注册终末地地图集",
+        "intro": "请输入以下 6 位一次性验证码完成验证：",
+        "otpLabel": "验证码",
+        "expires": "验证码 {{otp}} 将在 5 分钟后失效。",
+        "ignore": "若此封验证码非您本人操作，请忽略本邮件。"
+      }
+    },
+    "passwordResetMagicLink": {
+      "subject": "[OEM] 链接：重置密码",
+      "title": "重置你的密码",
+      "intro": "点击下方按钮重置终末地地图集密码：",
+      "actionLabel": "重置密码",
+      "fallbackLabel": "如果按钮不可用，请复制以下链接到浏览器打开：",
+      "expires": "链接将在1天后失效。",
+      "ignore": "若此封链接非您本人操作，请忽略本邮件。"
+    }
+  },
+  "ja-JP": {
+    "brand": "終末地マップ集",
+    "links": {
+      "siteText": "opendfieldmap.org",
+      "siteUrl": "https://opendfieldmap.org",
+      "blogText": "ブログ",
+      "blogUrl": "https://blog.opendfieldmap.org"
+    },
+    "slogan": "すべてに行き届く、無駄なく、細部まで丁寧に",
+    "otp": {
+      "email-verification": {
+        "subject": "[OEM] 認証コード：OEMアカウント登録",
+        "title": "OEMアカウントの登録",
+        "intro": "終末地マップ集へようこそ。以下の6桁のコードを使用して登録を完了してください：",
+        "otpLabel": "認証コード",
+        "expires": "コード {{otp}} は5分で有効期限が切れます。",
+        "ignore": "お心当たりがない場合は、このメールを無視していただいて構いません。"
+      }
+    },
+    "passwordResetMagicLink": {
+      "subject": "[OEM] リンク：パスワードの再設定",
+      "title": "パスワードの再設定",
+      "intro": "下のボタンをクリックして終末地マップ集のパスワードを再設定してください：",
+      "actionLabel": "パスワードを再設定",
+      "fallbackLabel": "ボタンが機能しない場合は、次のURLをコピーしてブラウザで開いてください：",
+      "expires": "このリンクは1日で有効期限が切れます。",
+      "ignore": "お心当たりがない場合は、このメールを無視していただいて構いません。"
+    }
+  },
+  "ko-KR": {
+    "brand": "Open Endfield Map",
+    "links": {
+      "siteText": "opendfieldmap.org",
+      "siteUrl": "https://opendfieldmap.org",
+      "blogText": "블로그",
+      "blogUrl": "https://blog.opendfieldmap.org"
+    },
+    "slogan": "전방위적으로, 효율적으로, 세밀하게",
+    "otp": {
+      "email-verification": {
+        "subject": "[OEM] 인증 코드: OEM 계정 등록",
+        "title": "OEM 계정 등록",
+        "intro": "Open Endfield Map에 오신 것을 환영합니다. 아래의 6자리 코드를 입력하여 등록을 완료하세요:",
+        "otpLabel": "인증 코드",
+        "expires": "{{otp}} 코드는 5분 후에 만료됩니다.",
+        "ignore": "본인이 요청하지 않은 경우 이 이메일을 무시하셔도 됩니다."
+      }
+    },
+    "passwordResetMagicLink": {
+      "subject": "[OEM] 링크: 비밀번호 재설정",
+      "title": "비밀번호 재설정",
+      "intro": "아래 버튼을 클릭하여 OEM 비밀번호를 재설정하세요:",
+      "actionLabel": "비밀번호 재설정",
+      "fallbackLabel": "버튼이 작동하지 않으면 아래 URL을 복사하여 브라우저에서 여세요:",
+      "expires": "이 링크는 1일 후에 만료됩니다.",
+      "ignore": "본인이 요청하지 않은 경우 이 이메일을 무시하셔도 됩니다."
+    }
+  },
+  "ru-RU": {
+    "brand": "Open Endfield Map",
+    "links": {
+      "siteText": "opendfieldmap.org",
+      "siteUrl": "https://opendfieldmap.org",
+      "blogText": "Блог",
+      "blogUrl": "https://blog.opendfieldmap.org"
+    },
+    "slogan": "Охватывающий всё, Эффективный, Методичный",
+    "otp": {
+      "email-verification": {
+        "subject": "[OEM] Код подтверждения: Регистрация аккаунта OEM",
+        "title": "Регистрация вашего аккаунта OEM",
+        "intro": "Добро пожаловать в Open Endfield Map. Введите 6-значный код ниже, чтобы завершить регистрацию:",
+        "otpLabel": "Код подтверждения",
+        "expires": "Код {{otp}} истекает через 5 минут.",
+        "ignore": "Если это были не вы, можете смело игнорировать это письмо."
+      }
+    },
+    "passwordResetMagicLink": {
+      "subject": "[OEM] Ссылка: Сброс пароля",
+      "title": "Сброс пароля",
+      "intro": "Нажмите кнопку ниже, чтобы сбросить пароль OEM:",
+      "actionLabel": "Сбросить пароль",
+      "fallbackLabel": "Если кнопка не работает, скопируйте и откройте этот URL в вашем браузере:",
+      "expires": "Срок действия этой ссылки истекает через 1 день.",
+      "ignore": "Если это были не вы, можете смело игнорировать это письмо."
+    }
+  },
+  "es-ES": {
+    "brand": "Open Endfield Map",
+    "links": {
+      "siteText": "opendfieldmap.org",
+      "siteUrl": "https://opendfieldmap.org",
+      "blogText": "Blog",
+      "blogUrl": "https://blog.opendfieldmap.org"
+    },
+    "slogan": "Omnipresente, Eficiente, Meticuloso",
+    "otp": {
+      "email-verification": {
+        "subject": "[OEM] Código OTP: Registrar cuenta de OEM",
+        "title": "Registra tu cuenta de OEM",
+        "intro": "Bienvenido a Open Endfield Map. Utiliza el código de 6 dígitos a continuación para completar el registro:",
+        "otpLabel": "Código de verificación",
+        "expires": "El código {{otp}} caducará en 5 minutos.",
+        "ignore": "Si no has sido tú, puedes ignorar este correo electrónico de forma segura."
+      }
+    },
+    "passwordResetMagicLink": {
+      "subject": "[OEM] Enlace: Restablecer contraseña",
+      "title": "Restablecer tu contraseña",
+      "intro": "Haz clic en el botón de abajo para restablecer tu contraseña de OEM:",
+      "actionLabel": "Restablecer contraseña",
+      "fallbackLabel": "Si el botón no funciona, copia y abre esta URL en tu navegador:",
+      "expires": "Este enlace caducará en 1 día.",
+      "ignore": "Si no has sido tú, puedes ignorar este correo electrónico de forma segura."
+    }
+  },
+  "fr-FR": {
+    "brand": "Open Endfield Map",
+    "links": {
+      "siteText": "opendfieldmap.org",
+      "siteUrl": "https://opendfieldmap.org",
+      "blogText": "Blog",
+      "blogUrl": "https://blog.opendfieldmap.org"
+    },
+    "slogan": "Omniprésent, Efficace, Méticuleux",
+    "otp": {
+      "email-verification": {
+        "subject": "[OEM] Code OTP : Création de compte OEM",
+        "title": "Créez votre compte OEM",
+        "intro": "Bienvenue sur Open Endfield Map. Utilisez le code à 6 chiffres ci-dessous pour terminer l'inscription :",
+        "otpLabel": "Code de vérification",
+        "expires": "Le code {{otp}} expire dans 5 minutes.",
+        "ignore": "Si vous n'êtes pas à l'origine de cette demande, vous pouvez ignorer cet e-mail."
+      }
+    },
+    "passwordResetMagicLink": {
+      "subject": "[OEM] Lien : Réinitialiser le mot de passe",
+      "title": "Réinitialisez votre mot de passe",
+      "intro": "Cliquez sur le bouton ci-dessous pour réinitialiser votre mot de passe OEM :",
+      "actionLabel": "Réinitialiser le mot de passe",
+      "fallbackLabel": "Si le bouton ne fonctionne pas, copiez et ouvrez cette URL dans votre navigateur :",
+      "expires": "Ce lien expirera dans 1 jour.",
+      "ignore": "Si vous n'êtes pas à l'origine de cette demande, vous pouvez ignorer cet e-mail."
+    }
+  },
+  "de-DE": {
+    "brand": "Open Endfield Map",
+    "links": {
+      "siteText": "opendfieldmap.org",
+      "siteUrl": "https://opendfieldmap.org",
+      "blogText": "Blog",
+      "blogUrl": "https://blog.opendfieldmap.org"
+    },
+    "slogan": "Omnipräsent, Effizient, Methodisch",
+    "otp": {
+      "email-verification": {
+        "subject": "[OEM] OTP-Code: OEM-Konto registrieren",
+        "title": "Registrieren Sie Ihr OEM-Konto",
+        "intro": "Willkommen bei Open Endfield Map. Verwenden Sie den folgenden 6-stelligen Code, um die Registrierung abzuschließen:",
+        "otpLabel": "Bestätigungscode",
+        "expires": "Der Code {{otp}} läuft in 5 Minuten ab.",
+        "ignore": "Wenn Sie dies nicht waren, können Sie diese E-Mail ignorieren."
+      }
+    },
+    "passwordResetMagicLink": {
+      "subject": "[OEM] Link: Passwort zurücksetzen",
+      "title": "Setzen Sie Ihr Passwort zurück",
+      "intro": "Klicken Sie auf die Schaltfläche unten, um Ihr OEM-Passwort zurückzusetzen:",
+      "actionLabel": "Passwort zurücksetzen",
+      "fallbackLabel": "Wenn die Schaltfläche nicht funktioniert, kopieren Sie diese URL und öffnen Sie sie in Ihrem Browser:",
+      "expires": "Dieser Link läuft in 1 Tag ab.",
+      "ignore": "Wenn Sie dies nicht waren, können Sie diese E-Mail ignorieren."
+    }
+  },
+  "it-IT": {
+    "brand": "Open Endfield Map",
+    "links": {
+      "siteText": "opendfieldmap.org",
+      "siteUrl": "https://opendfieldmap.org",
+      "blogText": "Blog",
+      "blogUrl": "https://blog.opendfieldmap.org"
+    },
+    "slogan": "Onnipresente, Efficiente, Meticoloso",
+    "otp": {
+      "email-verification": {
+        "subject": "[OEM] Codice OTP: Registra account OEM",
+        "title": "Registra il tuo account OEM",
+        "intro": "Benvenuto in Open Endfield Map. Utilizza il codice a 6 cifre qui sotto per completare la registrazione:",
+        "otpLabel": "Codice di verifica",
+        "expires": "Il codice {{otp}} scadrà tra 5 minuti.",
+        "ignore": "Se non sei stato tu, puoi tranquillamente ignorare questa email."
+      }
+    },
+    "passwordResetMagicLink": {
+      "subject": "[OEM] Link: Reimposta password",
+      "title": "Reimposta la tua password",
+      "intro": "Fai clic sul pulsante qui sotto per reimpostare la tua password OEM:",
+      "actionLabel": "Reimposta password",
+      "fallbackLabel": "Se il pulsante non funziona, copia e apri questo URL nel tuo browser:",
+      "expires": "Questo link scadrà tra 1 giorno.",
+      "ignore": "Se non sei stato tu, puoi tranquillamente ignorare questa email."
+    }
+  },
+  "id-ID": {
+    "brand": "Open Endfield Map",
+    "links": {
+      "siteText": "opendfieldmap.org",
+      "siteUrl": "https://opendfieldmap.org",
+      "blogText": "Blog",
+      "blogUrl": "https://blog.opendfieldmap.org"
+    },
+    "slogan": "Komprehensif, Efisien, dan Teliti",
+    "otp": {
+      "email-verification": {
+        "subject": "[OEM] Kode OTP: Daftar Akun OEM",
+        "title": "Daftar akun OEM Anda",
+        "intro": "Selamat datang di Open Endfield Map. Gunakan kode 6 digit di bawah ini untuk menyelesaikan pendaftaran:",
+        "otpLabel": "Kode verifikasi",
+        "expires": "Kode {{otp}} akan kedaluwarsa dalam 5 menit.",
+        "ignore": "Jika ini bukan Anda, Anda dapat mengabaikan email ini."
+      }
+    },
+    "passwordResetMagicLink": {
+      "subject": "[OEM] Tautan: Atur Ulang Kata Sandi",
+      "title": "Atur Ulang Kata Sandi Anda",
+      "intro": "Klik tombol di bawah ini untuk mengatur ulang kata sandi OEM Anda:",
+      "actionLabel": "Atur ulang kata sandi",
+      "fallbackLabel": "Jika tombol tidak berfungsi, salin dan buka URL ini di browser Anda:",
+      "expires": "Tautan ini akan kedaluwarsa dalam 1 hari.",
+      "ignore": "Jika ini bukan Anda, Anda dapat mengabaikan email ini."
+    }
+  },
+  "pt-BR": {
+    "brand": "Open Endfield Map",
+    "links": {
+      "siteText": "opendfieldmap.org",
+      "siteUrl": "https://opendfieldmap.org",
+      "blogText": "Blog",
+      "blogUrl": "https://blog.opendfieldmap.org"
+    },
+    "slogan": "Onipresente, Eficiente, Meticuloso",
+    "otp": {
+      "email-verification": {
+        "subject": "[OEM] Código OTP: Registrar conta OEM",
+        "title": "Registre sua conta OEM",
+        "intro": "Bem-vindo ao Open Endfield Map. Use o código de 6 dígitos abaixo para concluir o registro:",
+        "otpLabel": "Código de verificação",
+        "expires": "O código {{otp}} expira em 5 minutos.",
+        "ignore": "Se não foi você, pode ignorar este e-mail com segurança."
+      }
+    },
+    "passwordResetMagicLink": {
+      "subject": "[OEM] Link: Redefinir senha",
+      "title": "Redefina sua senha",
+      "intro": "Clique no botão abaixo para redefinir sua senha do OEM:",
+      "actionLabel": "Redefinir senha",
+      "fallbackLabel": "Se o botão não funcionar, copie e abra este URL no seu navegador:",
+      "expires": "Este link expirará em 1 dia.",
+      "ignore": "Se não foi você, pode ignorar este e-mail com segurança."
+    }
+  },
+  "ar-AE": {
+    "brand": "Open Endfield Map",
+    "links": {
+      "siteText": "opendfieldmap.org",
+      "siteUrl": "https://opendfieldmap.org",
+      "blogText": "المدونة",
+      "blogUrl": "https://blog.opendfieldmap.org"
+    },
+    "slogan": "شامل، فعّال، دقيق للغاية",
+    "otp": {
+      "email-verification": {
+        "subject": "[OEM] رمز التحقق: تسجيل حساب OEM",
+        "title": "تسجيل حساب OEM الخاص بك",
+        "intro": "مرحبًا بك في Open Endfield Map. استخدم الرمز المكون من 6 أرقام أدناه لإكمال التسجيل:",
+        "otpLabel": "رمز التحقق",
+        "expires": "تنتهي صلاحية الرمز {{otp}} خلال 5 دقائق.",
+        "ignore": "إذا لم تكن أنت من طلب هذا، فيمكنك تجاهل هذا البريد الإلكتروني بأمان."
+      }
+    },
+    "passwordResetMagicLink": {
+      "subject": "[OEM] رابط: إعادة تعيين كلمة المرور",
+      "title": "إعادة تعيين كلمة المرور الخاصة بك",
+      "intro": "انقر على الزر أدناه لإعادة تعيين كلمة مرور OEM الخاصة بك:",
+      "actionLabel": "إعادة تعيين كلمة المرور",
+      "fallbackLabel": "إذا كان الزر لا يعمل، انسخ هذا الرابط وافتحه في متصفحك:",
+      "expires": "ستنتهي صلاحية هذا الرابط خلال يوم واحد.",
+      "ignore": "إذا لم تكن أنت من طلب هذا، فيمكنك تجاهل هذا البريد الإلكتروني بأمان."
+    }
+  },
+  "ms-MY": {
+    "brand": "Open Endfield Map",
+    "links": {
+      "siteText": "opendfieldmap.org",
+      "siteUrl": "https://opendfieldmap.org",
+      "blogText": "Blog",
+      "blogUrl": "https://blog.opendfieldmap.org"
+    },
+    "slogan": "Menyeluruh, Cekap dan Teliti",
+    "otp": {
+      "email-verification": {
+        "subject": "[OEM] Kod OTP: Daftar Akaun OEM",
+        "title": "Daftar akaun OEM anda",
+        "intro": "Selamat datang ke Open Endfield Map. Gunakan kod 6 digit di bawah untuk melengkapkan pendaftaran:",
+        "otpLabel": "Kod pengesahan",
+        "expires": "Kod {{otp}} akan tamat tempoh dalam masa 5 minit.",
+        "ignore": "Jika ini bukan anda, anda boleh mengabaikan e-mel ini."
+      }
+    },
+    "passwordResetMagicLink": {
+      "subject": "[OEM] Pautan: Tetapkan Semula Kata Laluan",
+      "title": "Tetapkan Semula Kata Laluan Anda",
+      "intro": "Klik butang di bawah untuk menetapkan semula kata laluan OEM anda:",
+      "actionLabel": "Tetapkan semula kata laluan",
+      "fallbackLabel": "Jika butang tidak berfungsi, salin dan buka URL ini dalam pelayar anda:",
+      "expires": "Pautan ini akan tamat tempoh dalam 1 hari.",
+      "ignore": "Jika ini bukan anda, anda boleh mengabaikan e-mel ini."
+    }
+  },
+  "pl-PL": {
+    "brand": "Open Endfield Map",
+    "links": {
+      "siteText": "opendfieldmap.org",
+      "siteUrl": "https://opendfieldmap.org",
+      "blogText": "Blog",
+      "blogUrl": "https://blog.opendfieldmap.org"
+    },
+    "slogan": "Wszechstronny, wydajny i skrupulatny",
+    "otp": {
+      "email-verification": {
+        "subject": "[OEM] Kod OTP: Zarejestruj konto OEM",
+        "title": "Zarejestruj swoje konto OEM",
+        "intro": "Witamy w Open Endfield Map. Użyj 6-cyfrowego kodu poniżej, aby dokończyć rejestrację:",
+        "otpLabel": "Kod weryfikacyjny",
+        "expires": "Kod {{otp}} wygaśnie za 5 minut.",
+        "ignore": "Jeśli to nie Ty, możesz bezpiecznie zignorować tego e-maila."
+      }
+    },
+    "passwordResetMagicLink": {
+      "subject": "[OEM] Link: Resetowanie hasła",
+      "title": "Zresetuj swoje hasło",
+      "intro": "Kliknij przycisk poniżej, aby zresetować hasło OEM:",
+      "actionLabel": "Zresetuj hasło",
+      "fallbackLabel": "Jeśli przycisk nie działa, skopiuj i otwórz ten adres URL w przeglądarce:",
+      "expires": "Ten link wygaśnie za 1 dzień.",
+      "ignore": "Jeśli to nie Ty, możesz bezpiecznie zignorować tego e-maila."
+    }
+  },
+  "sv-SE": {
+    "brand": "Open Endfield Map",
+    "links": {
+      "siteText": "opendfieldmap.org",
+      "siteUrl": "https://opendfieldmap.org",
+      "blogText": "Blogg",
+      "blogUrl": "https://blog.opendfieldmap.org"
+    },
+    "slogan": "Omfattande, effektiv och noggrann",
+    "otp": {
+      "email-verification": {
+        "subject": "[OEM] OTP-kod: Registrera OEM-konto",
+        "title": "Registrera ditt OEM-konto",
+        "intro": "Välkommen till Open Endfield Map. Använd den 6-siffriga koden nedan för att slutföra registreringen:",
+        "otpLabel": "Verifieringskod",
+        "expires": "Koden {{otp}} löper ut om 5 minuter.",
+        "ignore": "Om detta inte var du kan du säkert ignorera detta e-postmeddelande."
+      }
+    },
+    "passwordResetMagicLink": {
+      "subject": "[OEM] Länk: Återställ lösenord",
+      "title": "Återställ ditt lösenord",
+      "intro": "Klicka på knappen nedan för att återställa ditt OEM-lösenord:",
+      "actionLabel": "Återställ lösenord",
+      "fallbackLabel": "Om knappen inte fungerar, kopiera och öppna denna URL i din webbläsare:",
+      "expires": "Denna länk löper ut om 1 dag.",
+      "ignore": "Om detta inte var du kan du säkert ignorera detta e-postmeddelande."
+    }
+  },
+  "th-TH": {
+    "brand": "Open Endfield Map",
+    "links": {
+      "siteText": "opendfieldmap.org",
+      "siteUrl": "https://opendfieldmap.org",
+      "blogText": "บล็อก",
+      "blogUrl": "https://blog.opendfieldmap.org"
+    },
+    "slogan": "ครอบคลุม มีประสิทธิภาพ และพิถีพิถัน",
+    "otp": {
+      "email-verification": {
+        "subject": "[OEM] รหัส OTP: ลงทะเบียนบัญชี OEM",
+        "title": "ลงทะเบียนบัญชี OEM ของคุณ",
+        "intro": "ยินดีต้อนรับสู่ Open Endfield Map ใช้รหัส 6 หลักด้านล่างเพื่อดำเนินการลงทะเบียนให้เสร็จสมบูรณ์:",
+        "otpLabel": "รหัสยืนยัน",
+        "expires": "รหัส {{otp}} จะหมดอายุใน 5 นาที",
+        "ignore": "หากคุณไม่ได้เป็นผู้ดำเนินการ โปรดเพิกเฉยต่ออีเมลฉบับนี้"
+      }
+    },
+    "passwordResetMagicLink": {
+      "subject": "[OEM] ลิงก์: รีเซ็ตรหัสผ่าน",
+      "title": "รีเซ็ตรหัสผ่านของคุณ",
+      "intro": "คลิกปุ่มด้านล่างเพื่อรีเซ็ตรหัสผ่าน OEM ของคุณ:",
+      "actionLabel": "รีเซ็ตรหัสผ่าน",
+      "fallbackLabel": "หากปุ่มไม่ทำงาน โปรดคัดลอกและเปิด URL นี้ในเบราว์เซอร์ของคุณ:",
+      "expires": "ลิงก์นี้จะหมดอายุใน 1 วัน",
+      "ignore": "หากคุณไม่ได้เป็นผู้ดำเนินการ โปรดเพิกเฉยต่ออีเมลฉบับนี้"
+    }
+  },
+  "vi-VN": {
+    "brand": "Open Endfield Map",
+    "links": {
+      "siteText": "opendfieldmap.org",
+      "siteUrl": "https://opendfieldmap.org",
+      "blogText": "Blog",
+      "blogUrl": "https://blog.opendfieldmap.org"
+    },
+    "slogan": "Toàn diện, Hiệu quả và Tỉ mỉ",
+    "otp": {
+      "email-verification": {
+        "subject": "[OEM] Mã OTP: Đăng ký tài khoản OEM",
+        "title": "Đăng ký tài khoản OEM của bạn",
+        "intro": "Chào mừng đến với Open Endfield Map. Sử dụng mã 6 chữ số bên dưới để hoàn tất đăng ký:",
+        "otpLabel": "Mã xác minh",
+        "expires": "Mã {{otp}} sẽ hết hạn sau 5 phút.",
+        "ignore": "Nếu đây không phải là bạn, bạn có thể bỏ qua email này một cách an toàn."
+      }
+    },
+    "passwordResetMagicLink": {
+      "subject": "[OEM] Liên kết: Đặt lại Mật khẩu",
+      "title": "Đặt lại mật khẩu của bạn",
+      "intro": "Nhấp vào nút bên dưới để đặt lại mật khẩu OEM của bạn:",
+      "actionLabel": "Đặt lại mật khẩu",
+      "fallbackLabel": "Nếu nút không hoạt động, hãy sao chép và mở URL này trong trình duyệt của bạn:",
+      "expires": "Liên kết này sẽ hết hạn sau 1 ngày.",
+      "ignore": "Nếu đây không phải là bạn, bạn có thể bỏ qua email này một cách an toàn."
+    }
+  },
+  "el-GR": {
+    "brand": "Open Endfield Map",
+    "links": {
+      "siteText": "opendfieldmap.org",
+      "siteUrl": "https://opendfieldmap.org",
+      "blogText": "Ιστολόγιο",
+      "blogUrl": "https://blog.opendfieldmap.org"
+    },
+    "slogan": "Οικουμενικός, Αποτελεσματικός, Μεθοδικός",
+    "otp": {
+      "email-verification": {
+        "subject": "[OEM] Κωδικός OTP: Εγγραφή λογαριασμού OEM",
+        "title": "Εγγράψτε τον λογαριασμό σας OEM",
+        "intro": "Καλώς ορίσατε στο Open Endfield Map. Χρησιμοποιήστε τον παρακάτω 6ψήφιο κωδικό για να ολοκληρώσετε την εγγραφή:",
+        "otpLabel": "Κωδικός επαλήθευσης",
+        "expires": "Ο κωδικός {{otp}} λήγει σε 5 λεπτά.",
+        "ignore": "Εάν δεν ήσασταν εσείς, μπορείτε να αγνοήσετε με ασφάλεια αυτό το email."
+      }
+    },
+    "passwordResetMagicLink": {
+      "subject": "[OEM] Σύνδεσμος: Επαναφορά κωδικού πρόσβασης",
+      "title": "Επαναφορά του κωδικού πρόσβασής σας",
+      "intro": "Κάντε κλικ στο παρακάτω κουμπί για να επαναφέρετε τον κωδικό πρόσβασης OEM:",
+      "actionLabel": "Επαναφορά κωδικού πρόσβασης",
+      "fallbackLabel": "Εάν το κουμπί δεν λειτουργεί, αντιγράψτε και ανοίξτε αυτό το URL στο πρόγραμμα περιήγησής σας:",
+      "expires": "Αυτός ο σύνδεσμος θα λήξει σε 1 ημέρα.",
+      "ignore": "Εάν δεν ήσασταν εσείς, μπορείτε να αγνοήσετε με ασφάλεια αυτό το email."
+    }
+  },
+  "hi-IN": {
+    "brand": "Open Endfield Map",
+    "links": {
+      "siteText": "opendfieldmap.org",
+      "siteUrl": "https://opendfieldmap.org",
+      "blogText": "ब्लॉग",
+      "blogUrl": "https://blog.opendfieldmap.org"
+    },
+    "slogan": "व्यापक, कुशल और सूक्ष्म",
+    "otp": {
+      "email-verification": {
+        "subject": "[OEM] OTP कोड: OEM खाता पंजीकृत करें",
+        "title": "अपना OEM खाता पंजीकृत करें",
+        "intro": "Open Endfield Map में आपका स्वागत है। पंजीकरण पूरा करने के लिए नीचे दिए गए 6-अंकीय कोड का उपयोग करें:",
+        "otpLabel": "सत्यापन कोड",
+        "expires": "कोड {{otp}} 5 मिनट में समाप्त हो जाएगा।",
+        "ignore": "यदि यह आपने नहीं किया है, तो आप सुरक्षित रूप से इस ईमेल को अनदेखा कर सकते हैं।"
+      }
+    },
+    "passwordResetMagicLink": {
+      "subject": "[OEM] लिंक: पासवर्ड रीसेट करें",
+      "title": "अपना पासवर्ड रीसेट करें",
+      "intro": "अपना OEM पासवर्ड रीसेट करने के लिए नीचे दिए गए बटन पर क्लिक करें:",
+      "actionLabel": "पासवर्ड रीसेट करें",
+      "fallbackLabel": "यदि बटन काम नहीं करता है, तो इस URL को अपने ब्राउज़र में कॉपी करके खोलें:",
+      "expires": "यह लिंक 1 दिन में समाप्त हो जाएगा।",
+      "ignore": "यदि यह आपने नहीं किया है, तो आप सुरक्षित रूप से इस ईमेल को अनदेखा कर सकते हैं।"
+    }
+  }
+}

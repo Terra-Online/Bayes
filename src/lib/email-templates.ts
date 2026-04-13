@@ -1,14 +1,14 @@
-export type EmailLocale = "zh-CN" | "zh-TW" | "en" | "ja" | "ko";
+import localeTemplates from "./email-template-locales.json";
 
-type OtpTemplateType = "sign-in" | "email-verification" | "forget-password";
+export type EmailLocale = "zh-HK" | "zh-CN" | "en" | "ja-JP" | "ko-KR" | "de-DE" | "fr-FR" | "es-ES" | "it-IT" | "id-ID" | "pt-BR" | "ru-RU" | "vi-VN" | "th-TH" | "ar-AE" | "hi-IN" | "el-GR" | "ms-MY" | "sv-SE" | "pl-PL";
 
 interface OtpTemplate {
   subject: string;
   title: string;
   intro: string;
   otpLabel: string;
-  expiry: string;
-  footer: string;
+  expires: string;
+  ignore: string;
 }
 
 interface LinkTemplate {
@@ -17,13 +17,25 @@ interface LinkTemplate {
   intro: string;
   actionLabel: string;
   fallbackLabel: string;
-  footer: string;
+  expires: string;
+  ignore: string;
+}
+
+interface FooterLinks {
+  siteText: string;
+  siteUrl: string;
+  blogText: string;
+  blogUrl: string;
 }
 
 interface LocaleTemplates {
-  otp: Record<OtpTemplateType, OtpTemplate>;
+  brand: string;
+  links: FooterLinks;
+  slogan: string;
+  otp: {
+    "email-verification"?: OtpTemplate;
+  };
   passwordResetMagicLink: LinkTemplate;
-  verifyEmailMagicLink: LinkTemplate;
 }
 
 interface RenderedEmail {
@@ -33,308 +45,99 @@ interface RenderedEmail {
 }
 
 const OTP_PLACEHOLDER = "{{otp}}";
-const EMAIL_TEMPLATES: Record<EmailLocale, LocaleTemplates> = {
-  "zh-CN": {
-    otp: {
-      "sign-in": {
-        subject: "[OEM] 验证码：登录终末地地图集",
-        title: "登录验证码",
-        intro: "你正在登录 Bayes，请输入以下 6 位验证码：",
-        otpLabel: "验证码",
-        expiry: "验证码 {{otp}} 将在 5 分钟后失效。",
-        footer: "如果不是你本人操作，请忽略本邮件。"
-      },
-      "email-verification": {
-        subject: "[OEM] 验证码：注册终末地地图集",
-        title: "完成邮箱验证",
-        intro: "欢迎注册终末地地图集(Open Endfield Map)，请输入以下 6 位一次性验证码完成邮箱验证：",
-        otpLabel: "验证码",
-        expiry: "验证码 {{otp}} 将在 5 分钟后失效。",
-        footer: "若此封验证码非您本人操作，请忽略本邮件。"
-      },
-      "forget-password": {
-        subject: "[OEM] 验证码：重置密码",
-        title: "重置密码验证码",
-        intro: "你正在重置 Bayes 密码，请输入以下 6 位验证码：",
-        otpLabel: "验证码",
-        expiry: "验证码 {{otp}} 将在 5 分钟后失效。",
-        footer: "若此封验证码非您本人操作，请忽略本邮件。"
-      }
-    },
-    passwordResetMagicLink: {
-      subject: "[OEM] 链接：重置密码",
-      title: "重置你的密码",
-      intro: "点击下方按钮重置 Bayes 密码：",
-      actionLabel: "重置密码",
-      fallbackLabel: "如果按钮不可用，请复制以下链接到浏览器：",
-      footer: "若此封链接非您本人操作，请忽略本邮件。"
-    },
-    verifyEmailMagicLink: {
-      subject: "[OEM] 链接：验证邮箱",
-      title: "验证你的邮箱",
-      intro: "点击下方按钮验证你的 Bayes 邮箱：",
-      actionLabel: "验证邮箱",
-      fallbackLabel: "如果按钮不可用，请复制以下链接到浏览器：",
-      footer: "若此封链接非您本人操作，请忽略本邮件。"
-    }
-  },
-  "zh-TW": {
-    otp: {
-      "sign-in": {
-        subject: "[OEM] 驗證碼：登入終末地地圖集",
-        title: "登入驗證碼",
-        intro: "你正在登入 Open Endfield Map（終末地地圖集），請輸入以下 6 位流动驗證碼：",
-        otpLabel: "驗證碼",
-        expiry: "驗證碼 {{otp}} 將於 5 分鐘後失效。",
-        footer: "若此信件非閣下本人操作，您可以安全地忽略此郵件。"
-      },
-      "email-verification": {
-        subject: "[OEM] 驗證碼：註冊終末地地圖集",
-        title: "完成信箱驗證",
-        intro: "歡迎註冊 Bayes，請輸入以下 6 位驗證碼完成信箱驗證：",
-        otpLabel: "驗證碼",
-        expiry: "驗證碼 {{otp}} 將於 5 分鐘後失效。",
-        footer: "若此信件非閣下本人操作，您可以安全地忽略此郵件。"
-      },
-      "forget-password": {
-        subject: "[OEM] 驗證碼：重設密碼",
-        title: "重設密碼驗證碼",
-        intro: "你正在重設 Bayes 密碼，請輸入以下 6 位驗證碼：",
-        otpLabel: "驗證碼",
-        expiry: "驗證碼 {{otp}} 將於 5 分鐘後失效。",
-        footer: "若此信件非閣下本人操作，您可以安全地忽略此郵件。"
-      }
-    },
-    passwordResetMagicLink: {
-      subject: "[OEM] 鏈接：重設密碼",
-      title: "重設你的密碼",
-      intro: "點擊下方按鈕即可重設 Bayes 密碼：",
-      actionLabel: "重設密碼",
-      fallbackLabel: "若按鈕無法使用，請將以下連結貼到瀏覽器開啟：",
-      footer: "若此信件非閣下本人操作，您可以安全地忽略此郵件。"
-    },
-    verifyEmailMagicLink: {
-      subject: "[OEM] 鏈接：驗證信箱",
-      title: "驗證你的信箱",
-      intro: "點擊下方按鈕即可驗證你的 Bayes 信箱：",
-      actionLabel: "驗證信箱",
-      fallbackLabel: "若按鈕無法使用，請將以下連結貼到瀏覽器開啟：",
-      footer: "若此信件非閣下本人操作，您可以安全地忽略此郵件。"
-    }
-  },
-  en: {
-    otp: {
-      "sign-in": {
-        subject: "[OEM] OTP Code: Sign in to Open Endfield Map",
-        title: "Sign-In Verification Code",
-        intro: "Use the 6-digit code below to sign in to Bayes:",
-        otpLabel: "Verification code",
-        expiry: "Code {{otp}} expires in 5 minutes.",
-        footer: "If this wasn't you, you can safely ignore this email."
-      },
-      "email-verification": {
-        subject: "[OEM] OTP Code: Verify Email",
-        title: "Verify Your Email",
-        intro: "Welcome to Open Endfield Map. Use the 6-digit code below to verify your email:",
-        otpLabel: "Verification code",
-        expiry: "Code {{otp}} expires in 5 minutes.",
-        footer: "If this wasn't you, you can safely ignore this email."
-      },
-      "forget-password": {
-        subject: "[OEM] OTP Code: Reset Password",
-        title: "Password Reset Verification Code",
-        intro: "Use the 6-digit code below to reset your Bayes password:",
-        otpLabel: "Verification code",
-        expiry: "Code {{otp}} expires in 5 minutes.",
-        footer: "If this wasn't you, you can safely ignore this email."
-      }
-    },
-    passwordResetMagicLink: {
-      subject: "[OEM] Link: Reset Password",
-      title: "Reset Your Password",
-      intro: "Click the button below to reset your Bayes password:",
-      actionLabel: "Reset password",
-      fallbackLabel: "If the button does not work, copy and open this URL in your browser:",
-      footer: "If this wasn't you, you can safely ignore this email."
-    },
-    verifyEmailMagicLink: {
-      subject: "[OEM] Link: Verify Email",
-      title: "Verify Your Email",
-      intro: "Click the button below to verify your Bayes email address:",
-      actionLabel: "Verify email",
-      fallbackLabel: "If the button does not work, copy and open this URL in your browser:",
-      footer: "If this wasn't you, you can safely ignore this email."
-    }
-  },
-  ja: {
-    otp: {
-      "sign-in": {
-        subject: "[OEM] OTP Code: Sign in to Open Endfield Map",
-        title: "ログイン認証コード",
-        intro: "Bayes にログインするには、以下の 6 桁コードを入力してください。",
-        otpLabel: "認証コード",
-        expiry: "認証コード {{otp}} の有効期限は 5 分です。",
-        footer: "お心当たりがない場合は、このメールを無視してください。"
-      },
-      "email-verification": {
-        subject: "[OEM] OTP Code: Verify Email",
-        title: "メールアドレスを認証",
-        intro: "Bayes へようこそ。以下の 6 桁コードでメールアドレス認証を完了してください。",
-        otpLabel: "認証コード",
-        expiry: "認証コード {{otp}} の有効期限は 5 分です。",
-        footer: "お心当たりがない場合は、このメールを無視してください。"
-      },
-      "forget-password": {
-        subject: "Bayes パスワード再設定認証コード",
-        title: "パスワード再設定認証コード",
-        intro: "Bayes のパスワード再設定には、以下の 6 桁コードを入力してください。",
-        otpLabel: "認証コード",
-        expiry: "認証コード {{otp}} の有効期限は 5 分です。",
-        footer: "お心当たりがない場合は、このメールを無視してください。"
-      }
-    },
-    passwordResetMagicLink: {
-      subject: "Bayes パスワード再設定リンク",
-      title: "パスワードを再設定",
-      intro: "下のボタンをクリックして Bayes のパスワードを再設定してください。",
-      actionLabel: "パスワードを再設定",
-      fallbackLabel: "ボタンが使えない場合は、次の URL をブラウザに貼り付けて開いてください。",
-      footer: "お心当たりがない場合は、このメールを無視してください。"
-    },
-    verifyEmailMagicLink: {
-      subject: "Bayes メール認証リンク",
-      title: "メールアドレスを認証",
-      intro: "下のボタンをクリックして Bayes のメールアドレス認証を完了してください。",
-      actionLabel: "メールを認証",
-      fallbackLabel: "ボタンが使えない場合は、次の URL をブラウザに貼り付けて開いてください。",
-      footer: "お心当たりがない場合は、このメールを無視してください。"
-    }
-  },
-  ko: {
-    otp: {
-      "sign-in": {
-        subject: "Bayes 로그인 인증 코드",
-        title: "로그인 인증 코드",
-        intro: "Bayes 로그인용 6자리 인증 코드를 입력해 주세요:",
-        otpLabel: "인증 코드",
-        expiry: "인증 코드 {{otp}} 는 5분 후 만료됩니다.",
-        footer: "본인이 요청하지 않았다면 이 메일을 무시해 주세요."
-      },
-      "email-verification": {
-        subject: "Bayes 회원가입 인증 코드",
-        title: "이메일 인증 완료",
-        intro: "Bayes 회원가입을 완료하려면 아래 6자리 인증 코드를 입력해 주세요:",
-        otpLabel: "인증 코드",
-        expiry: "인증 코드 {{otp}} 는 5분 후 만료됩니다.",
-        footer: "본인이 요청하지 않았다면 이 메일을 무시해 주세요."
-      },
-      "forget-password": {
-        subject: "Bayes 비밀번호 재설정 인증 코드",
-        title: "비밀번호 재설정 인증 코드",
-        intro: "Bayes 비밀번호를 재설정하려면 아래 6자리 인증 코드를 입력해 주세요:",
-        otpLabel: "인증 코드",
-        expiry: "인증 코드 {{otp}} 는 5분 후 만료됩니다.",
-        footer: "본인이 요청하지 않았다면 이 메일을 무시해 주세요."
-      }
-    },
-    passwordResetMagicLink: {
-      subject: "Bayes 비밀번호 재설정 링크",
-      title: "비밀번호 재설정",
-      intro: "아래 버튼을 눌러 Bayes 비밀번호를 재설정하세요:",
-      actionLabel: "비밀번호 재설정",
-      fallbackLabel: "버튼이 동작하지 않으면 아래 링크를 브라우저에 붙여넣어 열어 주세요:",
-      footer: "본인이 요청하지 않았다면 이 메일을 무시해 주세요."
-    },
-    verifyEmailMagicLink: {
-      subject: "Bayes 이메일 인증 링크",
-      title: "이메일 인증",
-      intro: "아래 버튼을 눌러 Bayes 이메일 인증을 완료하세요:",
-      actionLabel: "이메일 인증",
-      fallbackLabel: "버튼이 동작하지 않으면 아래 링크를 브라우저에 붙여넣어 열어 주세요:",
-      footer: "본인이 요청하지 않았다면 이 메일을 무시해 주세요."
-    }
-  }
-};
+const EMAIL_TEMPLATES = localeTemplates as Record<string, LocaleTemplates>;
+const SUPPORTED_EMAIL_LOCALES = Object.keys(EMAIL_TEMPLATES) as EmailLocale[];
+const EXACT_LOCALE_LOOKUP = new Map<string, EmailLocale>(
+  SUPPORTED_EMAIL_LOCALES.map((locale) => [locale.toLowerCase(), locale]),
+);
 
-export function resolveEmailLocale(locale: string | undefined): EmailLocale {
-  const normalized = locale?.trim().toLowerCase();
+const THEME_COLOR = "#FFC428";
+const PAGE_BACKGROUND = "#F2F2EB";
+const CODE_CARD_BG = "#F7F7F2";
+const TEXT_PRIMARY = "#111111";
+const TEXT_MUTED = "#707070";
+const FONT_STACK = "-apple-system, BlinkMacSystemFont, Roboto, Arial, sans-serif";
 
-  if (!normalized) {
-    return "en";
-  }
+const BRAND_ICON_SVG = `
+<svg width="92" height="92" viewBox="0 0 92 92" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <path fill="#fff" d="M68.9706,151.7345c1.8721-2.3042,2.3047-6.6245,2.3047-9.5049v-31.1787c0-2.8804-.4326-7.2007-2.3047-9.5049h13.1768c-1.8721,2.3042-2.3037,6.6245-2.3037,9.5049v31.1787c0,2.8615.4293,7.1399,2.2704,9.455l.7894-117.551h-48.7604v3.1157s12.9819,10.2664,13.5015,30.5178v97.623c-.5195,20.2515-13.5015,46.7344-13.5015,46.7344v3.1157h47.5442l.4265-63.5059h-13.1431ZM68.3241,151.7345h-13.1768c1.8721-2.3042,2.3047-6.6245,2.3047-9.5049v-31.1787c0-2.8804-.4326-7.2007-2.3047-9.5049h13.1768c-1.8721,2.3042-2.3037,6.6245-2.3037,9.5049v31.1787c0,2.8804.4316,7.2007,2.3037,9.5049Z"/>
+    <path fill="#FBC825" d="M85.2082,142.2297v-31.1787c0-2.8804-.4326-7.2007-2.3047-9.5049h13.1768c-1.8721,2.3042-2.3037,6.6245-2.3037,9.5049v31.1787c0,2.8804.4316,7.2007,2.3037,9.5049h-13.1768c1.8721-2.3042,2.3047-6.6245,2.3047-9.5049Z"/>
+    <path fill="#FBC825" d="M99.0314,142.2297v-31.1787c0-2.8804-.4326-7.2007-2.3047-9.5049h13.1768c-1.8721,2.3042-2.3037,6.6245-2.3037,9.5049v31.1787c0,2.8804.4316,7.2007,2.3037,9.5049h-13.1768c1.8721-2.3042,2.3047-6.6245,2.3047-9.5049Z"/>
+    <path fill="#FBC825" d="M112.8556,142.2297v-31.1787c0-2.8804-.4326-7.2007-2.3047-9.5049h13.1768c-1.8721,2.3042-2.3037,6.6245-2.3037,9.5049v31.1787c0,2.8804.4316,7.2007,2.3037,9.5049h-13.1768c1.8721-2.3042,2.3047-6.6245,2.3047-9.5049Z"/>
+    <path fill="#FBC825" d="M126.6789,142.2297v-31.1787c0-2.8804-.4326-7.2007-2.3047-9.5049h13.1768c-1.8721,2.3042-2.3037,6.6245-2.3037,9.5049v31.1787c0,2.8804.4316,7.2007,2.3037,9.5049h-13.1768c1.8721-2.3042,2.3047-6.6245,2.3047-9.5049Z"/>
+    <path fill="#fff" d="M182.0487,215.2404h-47.2534c27.3453-3.166,48.6133-33.7097,55.9967-45.6187h3.1152l-11.8585,45.6187Z"/>
+    <path fill="#fff" d="M134.7953,34.1338h47.2534v2.9963l9.9225,39.2178h-3.1152c-3.742-13.4843-21.8209-36.915-54.0607-42.2141Z"/>
+</svg>`;
 
-  if (normalized.startsWith("zh-cn") || normalized.startsWith("zh-hans")) {
-    return "zh-CN";
-  }
-
-  if (
-    normalized.startsWith("zh-tw") ||
-    normalized.startsWith("zh-hant") ||
-    normalized.startsWith("zh-hk")
-  ) {
-    return "zh-TW";
-  }
-
-  if (normalized.startsWith("ja")) {
-    return "ja";
-  }
-
-  if (normalized.startsWith("ko")) {
-    return "ko";
-  }
-
-  return "en";
+function escapeHtml(input: string): string {
+  return input
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
 }
 
 function fillTemplate(template: string, key: string, value: string) {
   return template.replaceAll(key, value);
 }
 
-function renderSimpleHtmlEmail(input: {
+function formatOtpCode(otp: string): string {
+  if (/^\d{6}$/.test(otp)) {
+    return `${otp.slice(0, 3)}-${otp.slice(3)}`;
+  }
+  return otp;
+}
+
+function renderOemLayout(input: {
   title: string;
   intro: string;
-  codeLabel?: string;
-  code?: string;
-  actionLabel?: string;
-  actionUrl?: string;
-  fallbackLabel?: string;
-  footer: string;
-}) {
-  const codeBlock =
-    input.code && input.codeLabel
-      ? `
-        <p style="margin: 24px 0 8px; color: #4b5563; font-size: 14px;">${input.codeLabel}</p>
-        <p style="margin: 0 0 20px; letter-spacing: 8px; font-size: 32px; font-weight: 700; color: #111827;">${input.code}</p>
-      `
-      : "";
-
-  const actionBlock =
-    input.actionLabel && input.actionUrl
-      ? `
-        <p style="margin: 24px 0;">
-          <a href="${input.actionUrl}" style="display: inline-block; padding: 12px 18px; border-radius: 8px; background: #0f766e; color: #ffffff; text-decoration: none; font-weight: 600;">${input.actionLabel}</a>
-        </p>
-        <p style="margin: 8px 0; color: #4b5563; font-size: 13px;">${input.fallbackLabel ?? ""}</p>
-        <p style="margin: 0 0 16px; color: #0f766e; word-break: break-all;">${input.actionUrl}</p>
-      `
-      : "";
+  contentHtml: string;
+  expiresText: string;
+  ignoreText: string;
+  brand: string;
+  links: FooterLinks;
+  slogan: string;
+}): string {
+  const safeTitle = escapeHtml(input.title);
+  const safeIntro = escapeHtml(input.intro);
+  const safeExpires = escapeHtml(input.expiresText);
+  const safeIgnore = escapeHtml(input.ignoreText);
+  const safeBrand = escapeHtml(input.brand);
+  const safeSlogan = escapeHtml(input.slogan);
+  const safeSiteText = escapeHtml(input.links.siteText);
+  const safeSiteUrl = escapeHtml(input.links.siteUrl);
+  const safeBlogText = escapeHtml(input.links.blogText);
+  const safeBlogUrl = escapeHtml(input.links.blogUrl);
 
   return `<!doctype html>
 <html lang="en">
-  <body style="margin: 0; padding: 0; background: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif;">
-    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="padding: 24px;">
+  <body style="margin:0;padding:0;background:${PAGE_BACKGROUND};font-family:${FONT_STACK};color:${TEXT_PRIMARY};">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:${PAGE_BACKGROUND};padding:24px 0;">
       <tr>
         <td align="center">
-          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width: 640px; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 28px;">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:680px;background:${PAGE_BACKGROUND};border:1px solid #D6D6CD;">
+            <tr><td style="height:14px;background:${THEME_COLOR};font-size:0;line-height:0;">&nbsp;</td></tr>
             <tr>
-              <td>
-                <h1 style="margin: 0 0 12px; font-size: 22px; color: #0f172a;">${input.title}</h1>
-                <p style="margin: 0 0 8px; color: #334155; font-size: 15px; line-height: 1.6;">${input.intro}</p>
-                ${codeBlock}
-                ${actionBlock}
-                <p style="margin: 16px 0 0; color: #64748b; font-size: 13px; line-height: 1.5;">${input.footer}</p>
+              <td style="padding:34px 28px 30px;">
+                <div style="text-align:center;line-height:1;">${BRAND_ICON_SVG}</div>
+                <h1 style="margin:18px 0 10px;font-size:46px;line-height:1.2;font-weight:800;text-align:center;">${safeTitle}</h1>
+                <p style="margin:0 0 24px;font-size:18px;line-height:1.7;text-align:center;">${safeIntro}</p>
+                ${input.contentHtml}
+                <p style="margin:28px 0 8px;color:${TEXT_PRIMARY};font-size:15px;line-height:1.75;text-align:center;font-weight:600;">${safeExpires}</p>
+                <p style="margin:0 0 0;color:${TEXT_MUTED};font-size:15px;line-height:1.75;text-align:center;">${safeIgnore}</p>
+                <div style="text-align:center;margin-top:50px;">
+                  <div style="font-size:40px;font-weight:800;line-height:1.15;color:#111;">${safeBrand}</div>
+                  <div style="margin-top:6px;font-size:28px;font-weight:700;line-height:1.3;">
+                    <a href="${safeSiteUrl}" style="color:#111;text-decoration:none;">${safeSiteText}</a>
+                    <span style="color:#d6d6cd;margin:0 8px;">|</span> 
+                    <a href="${safeBlogUrl}" style="color:#111;text-decoration:none;">${safeBlogText}</a>
+                  </div>
+                  <div style="margin-top:10px;font-size:18px;color:#303030;font-style:italic;">${safeSlogan}</div>
+                </div>
               </td>
             </tr>
+            <tr><td style="height:14px;background:${THEME_COLOR};font-size:0;line-height:0;">&nbsp;</td></tr>
           </table>
         </td>
       </tr>
@@ -343,13 +146,132 @@ function renderSimpleHtmlEmail(input: {
 </html>`;
 }
 
+export function resolveEmailLocale(locale: string | undefined): EmailLocale {
+  const normalized = locale
+    ?.split(",")[0]
+    .trim()
+    .replaceAll("_", "-")
+    .toLowerCase();
+
+  if (!normalized) {
+    return "en";
+  }
+
+  const exactMatch = EXACT_LOCALE_LOOKUP.get(normalized);
+  if (exactMatch) {
+    return exactMatch;
+  }
+
+  if (normalized.startsWith("zh-hk") || normalized.startsWith("zh-tw") || normalized.startsWith("zh-hant")) {
+    return "zh-HK";
+  }
+
+  if (normalized.startsWith("zh-cn") || normalized.startsWith("zh-hans")) {
+    return "zh-CN";
+  }
+
+  if (normalized.startsWith("ja")) {
+    return "ja-JP";
+  }
+
+  if (normalized.startsWith("ko")) {
+    return "ko-KR";
+  }
+
+  if (normalized.startsWith("de")) {
+    return "de-DE";
+  }
+
+  if (normalized.startsWith("fr")) {
+    return "fr-FR";
+  }
+
+  if (normalized.startsWith("es")) {
+    return "es-ES";
+  }
+
+  if (normalized.startsWith("it")) {
+    return "it-IT";
+  }
+
+  if (normalized.startsWith("id")) {
+    return "id-ID";
+  }
+
+  if (normalized.startsWith("pt")) {
+    return "pt-BR";
+  }
+
+  if (normalized.startsWith("ru")) {
+    return "ru-RU";
+  }
+
+  if (normalized.startsWith("vi")) {
+    return "vi-VN";
+  }
+
+  if (normalized.startsWith("th")) {
+    return "th-TH";
+  }
+
+  if (normalized.startsWith("ar")) {
+    return "ar-AE";
+  }
+
+  if (normalized.startsWith("hi")) {
+    return "hi-IN";
+  }
+
+  if (normalized.startsWith("el")) {
+    return "el-GR";
+  }
+
+  if (normalized.startsWith("ms")) {
+    return "ms-MY";
+  }
+
+  if (normalized.startsWith("sv")) {
+    return "sv-SE";
+  }
+
+  if (normalized.startsWith("pl")) {
+    return "pl-PL";
+  }
+
+  return "en";
+}
+
+function getLocaleTemplates(locale: EmailLocale): LocaleTemplates {
+  return EMAIL_TEMPLATES[locale] ?? EMAIL_TEMPLATES.en;
+}
+
+function getOtpTemplate(localeTemplate: LocaleTemplates): OtpTemplate {
+  const fallbackTemplate = EMAIL_TEMPLATES.en.otp["email-verification"];
+  const resolvedTemplate = localeTemplate.otp["email-verification"] ?? fallbackTemplate;
+
+  if (!resolvedTemplate) {
+    throw new Error("Missing OTP email template configuration.");
+  }
+
+  return resolvedTemplate;
+}
+
 export function createOtpEmailTemplate(input: {
   locale: EmailLocale;
-  type: OtpTemplateType;
   otp: string;
 }): RenderedEmail {
-  const template = EMAIL_TEMPLATES[input.locale].otp[input.type];
-  const expiryText = fillTemplate(template.expiry, OTP_PLACEHOLDER, input.otp);
+  const localeTemplate = getLocaleTemplates(input.locale);
+  const template = getOtpTemplate(localeTemplate);
+  const expiryText = fillTemplate(template.expires, OTP_PLACEHOLDER, input.otp);
+  const visualOtp = formatOtpCode(input.otp);
+
+  const codeCardHtml = `
+    <div style="display:flex;justify-content:center;margin:8px 0 0;">
+      <div style="width:100%;max-width:430px;background:${CODE_CARD_BG};border:1px solid #E3E3DA;border-radius:26px;padding:36px 22px;text-align:center;box-shadow:0 6px 12px rgba(17,17,17,0.08);">
+        <div style="font-size:62px;font-weight:700;letter-spacing:4px;line-height:1;color:#4B4B4B;">${escapeHtml(visualOtp)}</div>
+      </div>
+    </div>
+  `;
 
   return {
     subject: template.subject,
@@ -360,50 +282,34 @@ export function createOtpEmailTemplate(input: {
       `${template.otpLabel}: ${input.otp}`,
       expiryText,
       "",
-      template.footer,
+      template.ignore,
     ].join("\n"),
-    html: renderSimpleHtmlEmail({
+    html: renderOemLayout({
       title: template.title,
       intro: template.intro,
-      codeLabel: template.otpLabel,
-      code: input.otp,
-      footer: `${expiryText} ${template.footer}`,
+      contentHtml: codeCardHtml,
+      expiresText: expiryText,
+      ignoreText: template.ignore,
+      brand: localeTemplate.brand,
+      links: localeTemplate.links,
+      slogan: localeTemplate.slogan,
     }),
   };
 }
 
-export function createResetPasswordMagicLinkTemplate(input: {
-  locale: EmailLocale;
-  url: string;
-}): RenderedEmail {
-  const template = EMAIL_TEMPLATES[input.locale].passwordResetMagicLink;
-
-  return {
-    subject: template.subject,
-    text: [
-      template.title,
-      "",
-      template.intro,
-      input.url,
-      "",
-      template.footer,
-    ].join("\n"),
-    html: renderSimpleHtmlEmail({
-      title: template.title,
-      intro: template.intro,
-      actionLabel: template.actionLabel,
-      actionUrl: input.url,
-      fallbackLabel: template.fallbackLabel,
-      footer: template.footer,
-    }),
-  };
-}
-
-export function createVerifyEmailMagicLinkTemplate(input: {
-  locale: EmailLocale;
-  url: string;
-}): RenderedEmail {
-  const template = EMAIL_TEMPLATES[input.locale].verifyEmailMagicLink;
+function createMagicLinkTemplate(
+  localeObj: LocaleTemplates,
+  template: LinkTemplate,
+  url: string
+): RenderedEmail {
+  const safeUrl = escapeHtml(url);
+  const contentHtml = `
+    <div style="display:flex;justify-content:center;margin:16px 0 0;">
+      <a href="${safeUrl}" style="display:inline-block;background:${THEME_COLOR};color:#1C1C1C;text-decoration:none;padding:14px 24px;border-radius:14px;font-size:18px;font-weight:700;">${escapeHtml(template.actionLabel)}</a>
+    </div>
+    <p style="margin:22px 0 6px;color:${TEXT_MUTED};font-size:14px;line-height:1.7;">${escapeHtml(template.fallbackLabel)}</p>
+    <p style="margin:0;color:#3D3D3D;word-break:break-all;font-size:14px;line-height:1.75;">${safeUrl}</p>
+  `;
 
   return {
     subject: template.subject,
@@ -412,17 +318,29 @@ export function createVerifyEmailMagicLinkTemplate(input: {
       "",
       template.intro,
       template.fallbackLabel,
-      input.url,
+      url,
       "",
-      template.footer,
+      template.expires,
+      template.ignore,
     ].join("\n"),
-    html: renderSimpleHtmlEmail({
+    html: renderOemLayout({
       title: template.title,
       intro: template.intro,
-      actionLabel: template.actionLabel,
-      actionUrl: input.url,
-      fallbackLabel: template.fallbackLabel,
-      footer: template.footer,
+      contentHtml,
+      expiresText: template.expires,
+      ignoreText: template.ignore,
+      brand: localeObj.brand,
+      links: localeObj.links,
+      slogan: localeObj.slogan,
     }),
   };
+}
+
+export function createResetPasswordMagicLinkTemplate(input: {
+  locale: EmailLocale;
+  url: string;
+}): RenderedEmail {
+  const localeObj = getLocaleTemplates(input.locale);
+  const template = localeObj.passwordResetMagicLink;
+  return createMagicLinkTemplate(localeObj, template, input.url);
 }

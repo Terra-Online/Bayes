@@ -95,7 +95,7 @@ Then fill values in .dev.vars:
 - OPENAI_API_KEY (optional in local mode)
 - RESEND_AUTH_KEY
 - RESEND_FROM_EMAIL (optional, default: noreply@opendfieldmap.org)
-- EMAIL_TEMPLATE_DEFAULT_LOCALE (optional: zh-CN / zh-TW / en / ja / ko, default: en)
+- EMAIL_TEMPLATE_DEFAULT_LOCALE (optional: zh-CN / zh-HK / en / ja / ko, default: en)
 - Optional overrides for TTL and upload constraints
 
 ### 3) Configure Wrangler bindings
