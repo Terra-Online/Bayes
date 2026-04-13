@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Context, Hono } from "hono";
 import { z } from "zod";
 import { createAuth } from "../lib/auth";
 import { ApiError } from "../lib/errors";
@@ -30,21 +30,19 @@ function toSessionUser(user: AuthUser) {
 export function createAuthRoutes() {
   const app = new Hono<AppEnv>();
 
-  // Legacy endpoints are intentionally disabled to enforce social-only auth.
+  const forwardToAuthPath = (c: Context<AppEnv>, path: string) => {
+    const auth = createAuth(c.env);
+    const targetUrl = new URL(c.req.url);
+    targetUrl.pathname = `/auth/v1${path}`;
+    return auth.handler(new Request(targetUrl.toString(), c.req.raw));
+  };
+
   app.post("/register", rateLimit("public"), async (c) => {
-    throw new ApiError(
-      410,
-      "AUTH_METHOD_DISABLED",
-      "Email register is disabled. Use social login via /auth/v1/sign-in/social with provider google or discord."
-    );
+    return forwardToAuthPath(c, "/sign-up/email");
   });
 
   app.post("/login", rateLimit("public"), async (c) => {
-    throw new ApiError(
-      410,
-      "AUTH_METHOD_DISABLED",
-      "Email login is disabled. Use social login via /auth/v1/sign-in/social with provider google or discord."
-    );
+    return forwardToAuthPath(c, "/sign-in/email");
   });
 
   app.get("/session", rateLimit("auth"), requireAuth, async (c) => {

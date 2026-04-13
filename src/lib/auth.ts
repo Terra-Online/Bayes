@@ -1,10 +1,35 @@
 import { betterAuth } from 'better-auth';
-import { bearer } from 'better-auth/plugins';
+import { bearer, emailOTP } from 'better-auth/plugins';
 import type { Bindings } from '../types/app';
-import { sendEmail } from './email';
+import { initResend, sendEmail } from './email';
+import {
+  createOtpEmailTemplate,
+  createResetPasswordMagicLinkTemplate,
+  createVerifyEmailMagicLinkTemplate,
+  resolveEmailLocale,
+} from './email-templates';
 import { envOrThrow, readEnv } from './utils';
 
 const DEV_AUTH_SECRET = 'dev-only-better-auth-secret-change-in-production';
+
+function pickLocaleFromUser(user: unknown): string | undefined {
+  if (!user || typeof user !== 'object') {
+    return undefined;
+  }
+
+  const userAsRecord = user as Record<string, unknown>;
+  const locale = userAsRecord.locale;
+  if (typeof locale === 'string' && locale.trim().length > 0) {
+    return locale;
+  }
+
+  return undefined;
+}
+
+function resolvePreferredLocale(env: Bindings, user: unknown): ReturnType<typeof resolveEmailLocale> {
+  const fromUser = pickLocaleFromUser(user);
+  return resolveEmailLocale(fromUser ?? env.EMAIL_TEMPLATE_DEFAULT_LOCALE);
+}
 
 function toSerializableError(error: unknown): unknown {
   if (!(error instanceof Error)) {
@@ -48,6 +73,8 @@ function pickOptionalProvider(
 }
 
 export function createAuth(env: Bindings) {
+  initResend(env);
+
   const socialProviders: {
     discord: { clientId: string; clientSecret: string; prompt: 'consent' };
     google?: { clientId: string; clientSecret: string };
@@ -78,20 +105,29 @@ export function createAuth(env: Bindings) {
     emailAndPassword: {
       enabled: true,
       sendResetPassword: async ({ user, url }) => {
-        void sendEmail(
-          user.email, `Click the link to reset your password: ${url}`,
-          'Reset your password',
-        );
+        const locale = resolvePreferredLocale(env, user);
+        const content = createResetPasswordMagicLinkTemplate({ locale, url });
+        await sendEmail({
+          to: user.email,
+          subject: content.subject,
+          text: content.text,
+          html: content.html,
+        });
       },
     },
     emailVerification: {
       sendOnSignUp: true,
       autoSignInAfterVerification: true,
       sendVerificationEmail: async ({ user, url }) => {
-        void sendEmail(
-          user.email, `Click the link to verify your email: ${url}`,
-          'Verify your email address',
-        );
+        // Fallback link email; OTP delivery is handled by emailOTP override flow.
+        const locale = resolvePreferredLocale(env, user);
+        const content = createVerifyEmailMagicLinkTemplate({ locale, url });
+        await sendEmail({
+          to: user.email,
+          subject: content.subject,
+          text: content.text,
+          html: content.html,
+        });
       },
     },
     socialProviders,
@@ -116,7 +152,26 @@ export function createAuth(env: Bindings) {
         });
       },
     },
-    plugins: [bearer()],
+    plugins: [
+      bearer(),
+      emailOTP({
+        overrideDefaultEmailVerification: true,
+        sendVerificationOnSignUp: true,
+        otpLength: 6,
+        expiresIn: 300,
+        async sendVerificationOTP({ email, otp, type }) {
+          const locale = resolveEmailLocale(env.EMAIL_TEMPLATE_DEFAULT_LOCALE);
+          const mappedType = type === 'change-email' ? 'email-verification' : type;
+          const content = createOtpEmailTemplate({ locale, type: mappedType, otp });
+          await sendEmail({
+            to: email,
+            subject: content.subject,
+            text: content.text,
+            html: content.html,
+          });
+        },
+      }),
+    ],
     advanced: {
       database: {
         generateId: () => crypto.randomUUID(),

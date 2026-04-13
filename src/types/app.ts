@@ -18,6 +18,8 @@ export interface Bindings {
   ALLOWED_UPLOAD_MIME?: string;
   MAX_UPLOAD_BYTES?: string;
   RESEND_AUTH_KEY?: string;
+  RESEND_FROM_EMAIL?: string;
+  EMAIL_TEMPLATE_DEFAULT_LOCALE?: string;
 }
 
 export interface AuthUser {

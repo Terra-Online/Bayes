@@ -33,8 +33,13 @@ This is a foundation implementation based on PRD and is intentionally incrementa
 ## API Endpoints (MVP)
 
 - GET /health/v1/status
-- Better Auth native endpoints under /auth/v1/* (social-only, for example /auth/v1/sign-in/social, /auth/v1/get-session, /auth/v1/sign-out)
-- Compatibility endpoints: /auth/v1/register and /auth/v1/login return 410 (disabled), /auth/v1/session and /auth/v1/logout remain available
+- Better Auth native endpoints under /auth/v1/*
+	- Email login/registration: /auth/v1/sign-up/email, /auth/v1/sign-in/email
+	- Email OTP verification: /auth/v1/email-otp/send-verification-otp, /auth/v1/email-otp/verify-email
+	- Password reset: /auth/v1/forget-password (send magic link)
+	- Social login: /auth/v1/sign-in/social
+- Compatibility endpoints: /auth/v1/register -> /auth/v1/sign-up/email, /auth/v1/login -> /auth/v1/sign-in/email
+- Session endpoints: /auth/v1/get-session, /auth/v1/logout
 - GET /progress/v1/state
 - POST /progress/v1/sync
 - POST /uploads/v1/presign
@@ -88,6 +93,9 @@ Then fill values in .dev.vars:
 - DISCORD_CLIENT_ID
 - DISCORD_CLIENT_SECRET
 - OPENAI_API_KEY (optional in local mode)
+- RESEND_AUTH_KEY
+- RESEND_FROM_EMAIL (optional, default: noreply@opendfieldmap.org)
+- EMAIL_TEMPLATE_DEFAULT_LOCALE (optional: zh-CN / zh-TW / en / ja / ko, default: en)
 - Optional overrides for TTL and upload constraints
 
 ### 3) Configure Wrangler bindings
@@ -182,12 +190,21 @@ Then finish OAuth in browser and call get-session:
 
 curl -i http://127.0.0.1:8787/auth/v1/get-session
 
-Legacy endpoints are intentionally disabled:
+Email registration and login are enabled:
 
-curl -i -X POST http://127.0.0.1:8787/auth/v1/register
-curl -i -X POST http://127.0.0.1:8787/auth/v1/login
+curl -i -X POST http://127.0.0.1:8787/auth/v1/register \
+	-H "content-type: application/json" \
+	-d '{"email":"user@example.com","password":"StrongPass123!","name":"Demo User"}'
 
-Both return HTTP 410.
+curl -i -X POST http://127.0.0.1:8787/auth/v1/login \
+	-H "content-type: application/json" \
+	-d '{"email":"user@example.com","password":"StrongPass123!"}'
+
+Verify signup email with OTP (6 digits):
+
+curl -i -X POST http://127.0.0.1:8787/auth/v1/email-otp/verify-email \
+	-H "content-type: application/json" \
+	-d '{"email":"user@example.com","otp":"123456"}'
 
 ## Where Auth Method Is Configured
 
@@ -239,6 +256,7 @@ Both return HTTP 410.
 
 ### Integration tests
 
+- Auth flow: email sign-up -> email OTP verify -> email sign-in -> get-session -> logout
 - Auth flow: Better Auth social sign-in (google/discord) -> get-session -> logout
 - Progress flow: cold read fallback to D1 and Redis backfill
 - Sync flow: stale version conflict and valid version acceptance
@@ -247,7 +265,8 @@ Both return HTTP 410.
 
 ### End-to-end scenario
 
-- User completes social login (Google or Discord)
+- User completes email sign-up and verifies email with OTP
+- User logs in with email/password or social login
 - User syncs progress
 - User uploads image/comment
 - Submission enters pending state
