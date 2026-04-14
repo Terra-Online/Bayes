@@ -1,18 +1,11 @@
 import type { MiddlewareHandler } from "hono";
 import { ApiError } from "../lib/errors";
 import { createRedisClient } from "../lib/redis";
-import type { AppEnv, Role } from "../types/app";
+import type { AppEnv } from "../types/app";
 
 const OTP_SEND_IP_LIMIT_PER_MINUTE = 20;
 const OTP_SEND_EMAIL_LIMIT_PER_HOUR = 8;
-
-const ROLE_LIMITS: Record<Role, number> = {
-  n: 120,
-  p: 300,
-  a: 600,
-  s: 20,
-  r: 40
-};
+const AUTH_LIMIT_PER_MINUTE = 120;
 
 function getWindowKey(scope: string, key: string): { redisKey: string; resetAt: number } {
   const now = Date.now();
@@ -65,18 +58,15 @@ function getRequestIp(c: Parameters<MiddlewareHandler<AppEnv>>[0]): string {
 export function rateLimit(scope: "public" | "auth" | "otp-send"): MiddlewareHandler<AppEnv> {
   return async (c, next) => {
     const redis = createRedisClient(c.env);
-    const user = c.get("authUser");
     const requestIp = getRequestIp(c);
 
-    const identity = scope === "auth" && user ? user.uid : requestIp;
+    const identity = requestIp;
 
     const limit =
       scope === "public"
         ? 80
         : scope === "auth"
-          ? user
-            ? ROLE_LIMITS[user.role]
-            : 60
+          ? AUTH_LIMIT_PER_MINUTE
           : OTP_SEND_IP_LIMIT_PER_MINUTE;
 
     const windowData = getWindowKey(scope, identity);

@@ -7,6 +7,66 @@ import { rateLimit } from "../middleware/rate-limit";
 import { formatPublicUid, getErrorMessage, updateUserNickname } from "../repositories/users";
 import type { AppEnv, AuthUser } from "../types/app";
 
+const HOP_BY_HOP_HEADERS = [
+  "connection",
+  "keep-alive",
+  "proxy-authenticate",
+  "proxy-authorization",
+  "te",
+  "trailer",
+  "transfer-encoding",
+  "upgrade",
+  "host",
+  "content-length",
+];
+
+const FORWARDED_HEADER_ALLOWLIST = [
+  "authorization",
+  "cookie",
+  "user-agent",
+  "accept",
+  "accept-language",
+  "content-type",
+  "cf-connecting-ip",
+  "x-forwarded-for",
+  "x-real-ip",
+  "x-request-id",
+  "x-oem-locale",
+  "origin",
+  "referer",
+];
+
+function buildForwardHeaders(
+  source: Headers,
+  options?: { forceJson?: boolean; headers?: Record<string, string> }
+): Headers {
+  const forwardedHeaders = new Headers();
+
+  for (const headerName of FORWARDED_HEADER_ALLOWLIST) {
+    const value = source.get(headerName);
+    if (value) {
+      forwardedHeaders.set(headerName, value);
+    }
+  }
+
+  if (options?.forceJson) {
+    forwardedHeaders.set("content-type", "application/json");
+    forwardedHeaders.set("accept", "application/json");
+  }
+
+  if (options?.headers) {
+    for (const [name, value] of Object.entries(options.headers)) {
+      forwardedHeaders.set(name, value);
+    }
+  }
+
+  for (const headerName of HOP_BY_HOP_HEADERS) {
+    forwardedHeaders.delete(headerName);
+  }
+
+  return forwardedHeaders;
+}
+
 const profileUpdateSchema = z.object({
   nickname: z
     .string()
@@ -18,13 +78,18 @@ const profileUpdateSchema = z.object({
 
 const sendTemplateOtpSchema = z.object({
   email: z.string().email("Invalid email address."),
-  type: z.enum(["sign-in", "email-verification"]).optional(),
+  type: z.literal("sign-in").default("sign-in"),
   locale: z.string().trim().min(1).optional(),
 });
 
 const registerWithOtpSchema = z.object({
   email: z.string().email("Invalid email address."),
-  password: z.string().min(1, "Password is required."),
+  password: z
+    .string()
+    .min(8, "Password must be at least 8 characters.")
+    .max(20, "Password must be 20 characters or fewer.")
+    .regex(/[A-Z]/, "Password must include at least one uppercase letter.")
+    .regex(/^\S+$/, "Password cannot contain spaces."),
   otp: z.string().trim().regex(/^\d{6}$/, "OTP must be 6 digits."),
   name: z.string().trim().min(1).max(64).optional(),
 });
@@ -42,12 +107,27 @@ function deriveDisplayName(email: string): string {
   return "Traveler";
 }
 
-async function readAuthErrorCode(response: Response): Promise<string | null> {
+type AuthSignInResult = {
+  token: string;
+  userId: string;
+};
+
+async function readAuthSignInResult(response: Response): Promise<AuthSignInResult | null> {
   try {
     const parsed = (await response.clone().json()) as Record<string, unknown>;
-    const code = parsed.code;
-    if (typeof code === "string" && code.length > 0) {
-      return code;
+    const token = parsed.token;
+    const user = parsed.user as Record<string, unknown> | undefined;
+    const userId = user?.id;
+    if (
+      typeof token === "string"
+      && token.length > 0
+      && typeof userId === "string"
+      && userId.length > 0
+    ) {
+      return {
+        token,
+        userId,
+      };
     }
   } catch {
     return null;
@@ -56,15 +136,34 @@ async function readAuthErrorCode(response: Response): Promise<string | null> {
   return null;
 }
 
-async function readAuthSessionToken(response: Response): Promise<string | null> {
-  try {
-    const parsed = (await response.clone().json()) as Record<string, unknown>;
-    const token = parsed.token;
-    if (typeof token === "string" && token.length > 0) {
-      return token;
-    }
-  } catch {
+function readCodeFromUnknownError(error: unknown): string | null {
+  if (!error || typeof error !== "object") {
     return null;
+  }
+
+  const maybeError = error as {
+    code?: unknown;
+    body?: { code?: unknown };
+    cause?: { code?: unknown; body?: { code?: unknown } };
+  };
+
+  if (typeof maybeError.code === "string" && maybeError.code.length > 0) {
+    return maybeError.code;
+  }
+
+  if (typeof maybeError.body?.code === "string" && maybeError.body.code.length > 0) {
+    return maybeError.body.code;
+  }
+
+  if (typeof maybeError.cause?.code === "string" && maybeError.cause.code.length > 0) {
+    return maybeError.cause.code;
+  }
+
+  if (
+    typeof maybeError.cause?.body?.code === "string"
+    && maybeError.cause.body.code.length > 0
+  ) {
+    return maybeError.cause.body.code;
   }
 
   return null;
@@ -83,9 +182,10 @@ function toSessionUser(user: AuthUser) {
 
 export function createAuthRoutes() {
   const app = new Hono<AppEnv>();
+  type AuthRouteContext = Context<AppEnv>;
 
   const forwardToAuthJsonPath = (
-    c: Context<AppEnv>,
+    c: AuthRouteContext,
     path: string,
     body: Record<string, unknown>,
     options?: { headers?: Record<string, string> }
@@ -94,15 +194,10 @@ export function createAuthRoutes() {
     const targetUrl = new URL(c.req.url);
     targetUrl.pathname = `/auth/v1${path}`;
 
-    const forwardedHeaders = new Headers(c.req.raw.headers);
-    forwardedHeaders.set("content-type", "application/json");
-    forwardedHeaders.set("accept", "application/json");
-
-    if (options?.headers) {
-      for (const [name, value] of Object.entries(options.headers)) {
-        forwardedHeaders.set(name, value);
-      }
-    }
+    const forwardedHeaders = buildForwardHeaders(c.req.raw.headers, {
+      forceJson: true,
+      headers: options?.headers,
+    });
 
     const request = new Request(targetUrl.toString(), {
       method: "POST",
@@ -111,6 +206,50 @@ export function createAuthRoutes() {
     });
 
     return auth.handler(request);
+  };
+
+  const forwardToAuthRawRequest = (c: AuthRouteContext) => {
+    const auth = createAuth(c.env);
+    const targetUrl = new URL(c.req.url);
+    const method = c.req.method.toUpperCase();
+    const hasRequestBody = !["GET", "HEAD"].includes(method);
+
+    const forwardedHeaders = buildForwardHeaders(c.req.raw.headers);
+
+    const request = new Request(targetUrl.toString(), {
+      method,
+      headers: forwardedHeaders,
+      body: hasRequestBody ? c.req.raw.body : undefined,
+    });
+
+    return auth.handler(request);
+  };
+
+  const rollbackRegisterSideEffects = async (input: {
+    env: AppEnv["Bindings"];
+    sessionToken: string;
+    userId: string;
+    email: string;
+    existedBefore: boolean;
+  }) => {
+    const auth = createAuth(input.env);
+
+    try {
+      await auth.api.signOut({
+        headers: new Headers({
+          authorization: `Bearer ${input.sessionToken}`,
+        }),
+      });
+    } catch (error) {
+      console.error("[auth][register] failed to revoke session during rollback", error);
+    }
+
+    if (!input.existedBefore) {
+      await input.env.DB
+        .prepare("DELETE FROM auth_users WHERE id = ?1 AND email = ?2")
+        .bind(input.userId, input.email)
+        .run();
+    }
   };
 
   app.post("/register", rateLimit("public"), async (c) => {
@@ -131,6 +270,13 @@ export function createAuthRoutes() {
     const otp = parsed.data.otp;
     const name = parsed.data.name?.trim() || deriveDisplayName(email);
 
+    const existing = await c.env.DB
+      .prepare("SELECT id FROM auth_users WHERE email = ?1 LIMIT 1")
+      .bind(email)
+      .first<{ id: string }>();
+
+    const existedBefore = Boolean(existing?.id);
+
     const signInWithOtpResponse = await forwardToAuthJsonPath(c, "/sign-in/email-otp", {
       email,
       otp,
@@ -141,26 +287,31 @@ export function createAuthRoutes() {
       return signInWithOtpResponse;
     }
 
-    const sessionToken = await readAuthSessionToken(signInWithOtpResponse);
-    if (!sessionToken) {
+    const signInResult = await readAuthSignInResult(signInWithOtpResponse);
+    if (!signInResult) {
       throw new ApiError(500, "AUTH_FLOW_FAILED", "Missing session token after OTP sign-in.");
     }
 
-    const setPasswordResponse = await forwardToAuthJsonPath(
-      c,
-      "/set-password",
-      { newPassword: password },
-      {
-        headers: {
-          authorization: `Bearer ${sessionToken}`,
-        },
-      }
-    );
-
-    if (!setPasswordResponse.ok) {
-      const code = await readAuthErrorCode(setPasswordResponse);
+    const auth = createAuth(c.env);
+    try {
+      await auth.api.setPassword({
+        body: { newPassword: password },
+        headers: new Headers({
+          authorization: `Bearer ${signInResult.token}`,
+        }),
+      });
+    } catch (error) {
+      const code = readCodeFromUnknownError(error);
       if (code !== "PASSWORD_ALREADY_SET") {
-        return setPasswordResponse;
+        await rollbackRegisterSideEffects({
+          env: c.env,
+          sessionToken: signInResult.token,
+          userId: signInResult.userId,
+          email,
+          existedBefore,
+        });
+
+        throw new ApiError(400, code ?? "SET_PASSWORD_FAILED", "Failed to set password.");
       }
     }
 
@@ -193,7 +344,7 @@ export function createAuthRoutes() {
       "/email-otp/send-verification-otp",
       {
         email,
-        type: "sign-in",
+        type: parsed.data.type,
       },
       {
         headers: requestHeaders,
@@ -201,7 +352,47 @@ export function createAuthRoutes() {
     );
   });
 
-  app.get("/session", rateLimit("auth"), requireAuth, async (c) => {
+  app.post("/sign-in/email", rateLimit("public"), async (c) => {
+    return forwardToAuthRawRequest(c);
+  });
+
+  app.post("/sign-in/social", rateLimit("public"), async (c) => {
+    return forwardToAuthRawRequest(c);
+  });
+
+  app.post("/forget-password", rateLimit("public"), async (c) => {
+    return forwardToAuthRawRequest(c);
+  });
+
+  app.post("/request-password-reset", rateLimit("public"), async (c) => {
+    return forwardToAuthRawRequest(c);
+  });
+
+  app.post("/reset-password", rateLimit("public"), async (c) => {
+    return forwardToAuthRawRequest(c);
+  });
+
+  app.get("/get-session", async (c) => {
+    return forwardToAuthRawRequest(c);
+  });
+
+  app.post("/sign-out", async (c) => {
+    return forwardToAuthRawRequest(c);
+  });
+
+  app.get("/reset-password/*", rateLimit("public"), async (c) => {
+    return forwardToAuthRawRequest(c);
+  });
+
+  app.on(["GET", "POST", "OPTIONS"], "/callback/*", rateLimit("public"), async (c) => {
+    return forwardToAuthRawRequest(c);
+  });
+
+  app.get("/error", rateLimit("public"), async (c) => {
+    return forwardToAuthRawRequest(c);
+  });
+
+  app.get("/session", requireAuth, async (c) => {
     const user = c.get("authUser");
     if (!user) {
       throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
@@ -210,7 +401,7 @@ export function createAuthRoutes() {
     return c.json({ user: toSessionUser(user) });
   });
 
-  app.patch("/profile", rateLimit("auth"), requireAuth, async (c) => {
+  app.patch("/profile", requireAuth, async (c) => {
     const user = c.get("authUser");
     if (!user) {
       throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
@@ -223,14 +414,7 @@ export function createAuthRoutes() {
       try {
         body = await c.req.json();
       } catch {
-        const rawText = await c.req.text();
-        const params = new URLSearchParams(rawText);
-        const nickname = params.get("nickname");
-        if (nickname !== null) {
-          body = { nickname };
-        } else {
-          throw new ApiError(422, "VALIDATION_ERROR", "Request body must be valid JSON.");
-        }
+        throw new ApiError(422, "VALIDATION_ERROR", "Request body must be valid JSON.");
       }
     } else if (
       contentType.includes("application/x-www-form-urlencoded") ||
@@ -280,7 +464,7 @@ export function createAuthRoutes() {
     }
   });
 
-  app.post("/logout", rateLimit("auth"), async (c) => {
+  app.post("/logout", async (c) => {
     const auth = createAuth(c.env);
     await auth.api.signOut({
       headers: c.req.raw.headers
@@ -288,9 +472,8 @@ export function createAuthRoutes() {
     return c.json({ ok: true });
   });
 
-  app.on(["GET", "POST", "OPTIONS"], "/*", (c) => {
-    const auth = createAuth(c.env);
-    return auth.handler(c.req.raw);
+  app.on(["GET", "POST", "OPTIONS"], "/*", async () => {
+    throw new ApiError(404, "NOT_FOUND", "Not found.");
   });
 
   return app;
