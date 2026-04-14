@@ -6,6 +6,39 @@ let resend: Resend | undefined = undefined;
 
 let fromAddress = 'noreply@opendfieldmap.org';
 
+function stripOuterQuotes(value: string): string {
+  const trimmed = value.trim();
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"'))
+    || (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    return trimmed.slice(1, -1).trim();
+  }
+
+  return trimmed;
+}
+
+function normalizeFromAddress(rawValue: string): string {
+  const normalized = stripOuterQuotes(rawValue);
+  const match = normalized.match(/^(.*)<([^>]+)>$/);
+
+  if (!match) {
+    return normalized;
+  }
+
+  const displayName = stripOuterQuotes(match[1]?.trim() ?? '');
+  const email = stripOuterQuotes(match[2]?.trim() ?? '');
+  if (!email) {
+    return normalized;
+  }
+
+  if (!displayName) {
+    return email;
+  }
+
+  return `${displayName} <${email}>`;
+}
+
 export interface EmailPayload {
   to: string;
   subject: string;
@@ -13,17 +46,24 @@ export interface EmailPayload {
   html?: string;
 }
 
+export interface SendEmailResult {
+  id?: string;
+}
+
 export function initResend(env: Bindings) {
   resend = new Resend(envOrThrow(env.RESEND_AUTH_KEY, 'RESEND_AUTH_KEY'));
   if (env.RESEND_FROM_EMAIL && env.RESEND_FROM_EMAIL.trim().length > 0) {
-    fromAddress = env.RESEND_FROM_EMAIL.trim();
+    fromAddress = normalizeFromAddress(env.RESEND_FROM_EMAIL);
+  }
+
+  if (env.RESEND_FROM_NAME && env.RESEND_FROM_NAME.trim().length > 0 && !fromAddress.includes('<')) {
+    fromAddress = `${env.RESEND_FROM_NAME.trim()} <${fromAddress}>`;
   }
 }
 
-export function sendEmail(payload: EmailPayload) {
+export async function sendEmail(payload: EmailPayload): Promise<SendEmailResult> {
   if (!resend) {
-    console.warn('[email] resend is not initialized, skipped sending email');
-    return;
+    throw new Error('RESEND_NOT_INITIALIZED');
   }
 
   return resend.emails.send({
@@ -47,6 +87,10 @@ export function sendEmail(payload: EmailPayload) {
       to: payload.to,
       subject: payload.subject,
     });
+
+    return {
+      id: result?.data?.id,
+    };
   }).catch((error: unknown) => {
     console.error('[email] send failed', {
       to: payload.to,

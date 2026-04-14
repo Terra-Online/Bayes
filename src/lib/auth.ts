@@ -12,6 +12,18 @@ import { envOrThrow, readEnv } from './utils';
 const DEV_AUTH_SECRET = 'dev-only-better-auth-secret-change-in-production';
 const OEM_LOCALE_HEADER = 'x-oem-locale';
 
+function generateNumericOtp(length: number): string {
+  const bytes = new Uint8Array(length);
+  crypto.getRandomValues(bytes);
+  let otp = '';
+
+  for (let index = 0; index < bytes.length; index += 1) {
+    otp += String(bytes[index]! % 10);
+  }
+
+  return otp;
+}
+
 function pickLocaleFromUser(user: unknown): string | undefined {
   if (!user || typeof user !== 'object') {
     return undefined;
@@ -152,7 +164,7 @@ export function createAuth(env: Bindings) {
       },
     },
     emailVerification: {
-      sendOnSignUp: true,
+      sendOnSignUp: false,
       autoSignInAfterVerification: true,
     },
     socialProviders,
@@ -177,13 +189,32 @@ export function createAuth(env: Bindings) {
         });
       },
     },
+    rateLimit: {
+      enabled: true,
+      window: 60,
+      max: 100,
+      customRules: {
+        '/email-otp/send-verification-otp': {
+          window: 60,
+          max: 12,
+        },
+        '/sign-in/email-otp': {
+          window: 60,
+          max: 12,
+        },
+      },
+    },
     plugins: [
       bearer(),
       emailOTP({
         overrideDefaultEmailVerification: true,
-        sendVerificationOnSignUp: true,
+        sendVerificationOnSignUp: false,
         otpLength: 6,
         expiresIn: 300,
+        allowedAttempts: 5,
+        resendStrategy: 'rotate',
+        storeOTP: 'hashed',
+        generateOTP: () => generateNumericOtp(6),
         async sendVerificationOTP({ email, otp }, ctx) {
           const request = pickRequestFromCtx(ctx);
           const locale = resolvePreferredLocale(env, null, request);
@@ -198,6 +229,10 @@ export function createAuth(env: Bindings) {
       }),
     ],
     advanced: {
+      ipAddress: {
+        ipAddressHeaders: ['cf-connecting-ip', 'x-forwarded-for'],
+        ipv6Subnet: 64,
+      },
       database: {
         generateId: () => crypto.randomUUID(),
       },

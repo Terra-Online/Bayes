@@ -35,11 +35,11 @@ This is a foundation implementation based on PRD and is intentionally incrementa
 - GET /health/v1/status
 - Better Auth native endpoints under /auth/v1/*
 	- Email login/registration: /auth/v1/sign-up/email, /auth/v1/sign-in/email
-	- Email OTP verification: /auth/v1/email-otp/send-verification-otp, /auth/v1/email-otp/verify-email
+	- Email OTP verification: /auth/v1/email-otp/send-verification-otp, /auth/v1/sign-in/email-otp, /auth/v1/email-otp/verify-email
 	- Password reset: /auth/v1/forget-password (send magic link)
 	- Social login: /auth/v1/sign-in/social
-- Compatibility endpoints: /auth/v1/register -> /auth/v1/sign-up/email, /auth/v1/login -> /auth/v1/sign-in/email
-- Session endpoints: /auth/v1/get-session, /auth/v1/logout
+- Compatibility endpoints: /auth/v1/register (email+password+otp bridge)
+- Session endpoints: /auth/v1/session, /auth/v1/logout
 - GET /progress/v1/state
 - POST /progress/v1/sync
 - POST /uploads/v1/presign
@@ -186,25 +186,27 @@ curl -i -X POST http://127.0.0.1:8787/auth/v1/sign-in/social \
 	-H "content-type: application/json" \
 	-d '{"provider":"discord"}'
 
-Then finish OAuth in browser and call get-session:
+Then finish OAuth in browser and call session:
 
-curl -i http://127.0.0.1:8787/auth/v1/get-session
+curl -i http://127.0.0.1:8787/auth/v1/session
 
 Email registration and login are enabled:
 
+curl -i -X POST http://127.0.0.1:8787/auth/v1/email-otp/send-verification-otp \
+	-H "content-type: application/json" \
+	-d '{"email":"user@example.com","type":"sign-in"}'
+
 curl -i -X POST http://127.0.0.1:8787/auth/v1/register \
 	-H "content-type: application/json" \
-	-d '{"email":"user@example.com","password":"StrongPass123!","name":"Demo User"}'
+	-d '{"email":"user@example.com","password":"StrongPass123!","otp":"123456","name":"Demo User"}'
 
-curl -i -X POST http://127.0.0.1:8787/auth/v1/login \
+curl -i -X POST http://127.0.0.1:8787/auth/v1/sign-in/email \
 	-H "content-type: application/json" \
 	-d '{"email":"user@example.com","password":"StrongPass123!"}'
 
-Verify signup email with OTP (6 digits):
+Manual OTP end-to-end helper script (interactive):
 
-curl -i -X POST http://127.0.0.1:8787/auth/v1/email-otp/verify-email \
-	-H "content-type: application/json" \
-	-d '{"email":"user@example.com","otp":"123456"}'
+./scripts/register-with-otp-e2e.sh bridgechan7@gmail.com 'StrongPass123!' 'BridgeChan' zh-HK
 
 ## Where Auth Method Is Configured
 
@@ -256,8 +258,8 @@ curl -i -X POST http://127.0.0.1:8787/auth/v1/email-otp/verify-email \
 
 ### Integration tests
 
-- Auth flow: email sign-up -> email OTP verify -> email sign-in -> get-session -> logout
-- Auth flow: Better Auth social sign-in (google/discord) -> get-session -> logout
+- Auth flow: send OTP(type=sign-in) -> register(email/password/otp) -> email sign-in -> session -> logout
+- Auth flow: Better Auth social sign-in (google/discord) -> session -> logout
 - Progress flow: cold read fallback to D1 and Redis backfill
 - Sync flow: stale version conflict and valid version acceptance
 - Upload flow: presign ticket + direct upload + pending submission creation
@@ -265,7 +267,7 @@ curl -i -X POST http://127.0.0.1:8787/auth/v1/email-otp/verify-email \
 
 ### End-to-end scenario
 
-- User completes email sign-up and verifies email with OTP
+- User requests sign-in OTP and completes register with email/password/otp
 - User logs in with email/password or social login
 - User syncs progress
 - User uploads image/comment

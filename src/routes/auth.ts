@@ -16,6 +16,60 @@ const profileUpdateSchema = z.object({
     .regex(/^[A-Za-z0-9_-]+$/, "Nickname can only contain letters, numbers, '_' or '-'.")
 });
 
+const sendTemplateOtpSchema = z.object({
+  email: z.string().email("Invalid email address."),
+  type: z.enum(["sign-in", "email-verification"]).optional(),
+  locale: z.string().trim().min(1).optional(),
+});
+
+const registerWithOtpSchema = z.object({
+  email: z.string().email("Invalid email address."),
+  password: z.string().min(1, "Password is required."),
+  otp: z.string().trim().regex(/^\d{6}$/, "OTP must be 6 digits."),
+  name: z.string().trim().min(1).max(64).optional(),
+});
+
+function normalizeEmail(email: string): string {
+  return email.trim().toLowerCase();
+}
+
+function deriveDisplayName(email: string): string {
+  const local = email.split("@")[0]?.trim() ?? "";
+  const normalized = local.replace(/[^A-Za-z0-9_-]/g, "");
+  if (normalized.length >= 2) {
+    return normalized.slice(0, 26);
+  }
+  return "Traveler";
+}
+
+async function readAuthErrorCode(response: Response): Promise<string | null> {
+  try {
+    const parsed = (await response.clone().json()) as Record<string, unknown>;
+    const code = parsed.code;
+    if (typeof code === "string" && code.length > 0) {
+      return code;
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
+async function readAuthSessionToken(response: Response): Promise<string | null> {
+  try {
+    const parsed = (await response.clone().json()) as Record<string, unknown>;
+    const token = parsed.token;
+    if (typeof token === "string" && token.length > 0) {
+      return token;
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
 function toSessionUser(user: AuthUser) {
   return {
     uid: user.publicUid,
@@ -30,19 +84,121 @@ function toSessionUser(user: AuthUser) {
 export function createAuthRoutes() {
   const app = new Hono<AppEnv>();
 
-  const forwardToAuthPath = (c: Context<AppEnv>, path: string) => {
+  const forwardToAuthJsonPath = (
+    c: Context<AppEnv>,
+    path: string,
+    body: Record<string, unknown>,
+    options?: { headers?: Record<string, string> }
+  ) => {
     const auth = createAuth(c.env);
     const targetUrl = new URL(c.req.url);
     targetUrl.pathname = `/auth/v1${path}`;
-    return auth.handler(new Request(targetUrl.toString(), c.req.raw));
+
+    const forwardedHeaders = new Headers(c.req.raw.headers);
+    forwardedHeaders.set("content-type", "application/json");
+    forwardedHeaders.set("accept", "application/json");
+
+    if (options?.headers) {
+      for (const [name, value] of Object.entries(options.headers)) {
+        forwardedHeaders.set(name, value);
+      }
+    }
+
+    const request = new Request(targetUrl.toString(), {
+      method: "POST",
+      headers: forwardedHeaders,
+      body: JSON.stringify(body),
+    });
+
+    return auth.handler(request);
   };
 
   app.post("/register", rateLimit("public"), async (c) => {
-    return forwardToAuthPath(c, "/sign-up/email");
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      throw new ApiError(422, "VALIDATION_ERROR", "Request body must be valid JSON.");
+    }
+
+    const parsed = registerWithOtpSchema.safeParse(body);
+    if (!parsed.success) {
+      throw new ApiError(422, "VALIDATION_ERROR", "Invalid payload.", parsed.error.flatten());
+    }
+
+    const email = normalizeEmail(parsed.data.email);
+    const password = parsed.data.password;
+    const otp = parsed.data.otp;
+    const name = parsed.data.name?.trim() || deriveDisplayName(email);
+
+    const signInWithOtpResponse = await forwardToAuthJsonPath(c, "/sign-in/email-otp", {
+      email,
+      otp,
+      name,
+    });
+
+    if (!signInWithOtpResponse.ok) {
+      return signInWithOtpResponse;
+    }
+
+    const sessionToken = await readAuthSessionToken(signInWithOtpResponse);
+    if (!sessionToken) {
+      throw new ApiError(500, "AUTH_FLOW_FAILED", "Missing session token after OTP sign-in.");
+    }
+
+    const setPasswordResponse = await forwardToAuthJsonPath(
+      c,
+      "/set-password",
+      { newPassword: password },
+      {
+        headers: {
+          authorization: `Bearer ${sessionToken}`,
+        },
+      }
+    );
+
+    if (!setPasswordResponse.ok) {
+      const code = await readAuthErrorCode(setPasswordResponse);
+      if (code !== "PASSWORD_ALREADY_SET") {
+        return setPasswordResponse;
+      }
+    }
+
+    return signInWithOtpResponse;
   });
 
-  app.post("/login", rateLimit("public"), async (c) => {
-    return forwardToAuthPath(c, "/sign-in/email");
+  app.post("/email-otp/send-verification-otp", rateLimit("otp-send"), async (c) => {
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      throw new ApiError(422, "VALIDATION_ERROR", "Request body must be valid JSON.");
+    }
+
+    const parsed = sendTemplateOtpSchema.safeParse(body);
+    if (!parsed.success) {
+      throw new ApiError(422, "VALIDATION_ERROR", "Invalid payload.", parsed.error.flatten());
+    }
+
+    const email = normalizeEmail(parsed.data.email);
+    const locale = parsed.data.locale?.trim();
+    const requestHeaders = locale
+      ? {
+          "x-oem-locale": locale,
+        }
+      : undefined;
+
+    return forwardToAuthJsonPath(
+      c,
+      "/email-otp/send-verification-otp",
+      {
+        email,
+        type: "sign-in",
+      },
+      {
+        headers: requestHeaders,
+      }
+    );
   });
 
   app.get("/session", rateLimit("auth"), requireAuth, async (c) => {

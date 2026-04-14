@@ -57,17 +57,7 @@ const CODE_CARD_BG = "#F7F7F2";
 const TEXT_PRIMARY = "#111111";
 const TEXT_MUTED = "#707070";
 const FONT_STACK = "-apple-system, BlinkMacSystemFont, Roboto, Arial, sans-serif";
-
-const BRAND_ICON_SVG = `
-<svg width="92" height="92" viewBox="0 0 92 92" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-    <path fill="#fff" d="M68.9706,151.7345c1.8721-2.3042,2.3047-6.6245,2.3047-9.5049v-31.1787c0-2.8804-.4326-7.2007-2.3047-9.5049h13.1768c-1.8721,2.3042-2.3037,6.6245-2.3037,9.5049v31.1787c0,2.8615.4293,7.1399,2.2704,9.455l.7894-117.551h-48.7604v3.1157s12.9819,10.2664,13.5015,30.5178v97.623c-.5195,20.2515-13.5015,46.7344-13.5015,46.7344v3.1157h47.5442l.4265-63.5059h-13.1431ZM68.3241,151.7345h-13.1768c1.8721-2.3042,2.3047-6.6245,2.3047-9.5049v-31.1787c0-2.8804-.4326-7.2007-2.3047-9.5049h13.1768c-1.8721,2.3042-2.3037,6.6245-2.3037,9.5049v31.1787c0,2.8804.4316,7.2007,2.3037,9.5049Z"/>
-    <path fill="#FBC825" d="M85.2082,142.2297v-31.1787c0-2.8804-.4326-7.2007-2.3047-9.5049h13.1768c-1.8721,2.3042-2.3037,6.6245-2.3037,9.5049v31.1787c0,2.8804.4316,7.2007,2.3037,9.5049h-13.1768c1.8721-2.3042,2.3047-6.6245,2.3047-9.5049Z"/>
-    <path fill="#FBC825" d="M99.0314,142.2297v-31.1787c0-2.8804-.4326-7.2007-2.3047-9.5049h13.1768c-1.8721,2.3042-2.3037,6.6245-2.3037,9.5049v31.1787c0,2.8804.4316,7.2007,2.3037,9.5049h-13.1768c1.8721-2.3042,2.3047-6.6245,2.3047-9.5049Z"/>
-    <path fill="#FBC825" d="M112.8556,142.2297v-31.1787c0-2.8804-.4326-7.2007-2.3047-9.5049h13.1768c-1.8721,2.3042-2.3037,6.6245-2.3037,9.5049v31.1787c0,2.8804.4316,7.2007,2.3037,9.5049h-13.1768c1.8721-2.3042,2.3047-6.6245,2.3047-9.5049Z"/>
-    <path fill="#FBC825" d="M126.6789,142.2297v-31.1787c0-2.8804-.4326-7.2007-2.3047-9.5049h13.1768c-1.8721,2.3042-2.3037,6.6245-2.3037,9.5049v31.1787c0,2.8804.4316,7.2007,2.3037,9.5049h-13.1768c1.8721-2.3042,2.3047-6.6245,2.3047-9.5049Z"/>
-    <path fill="#fff" d="M182.0487,215.2404h-47.2534c27.3453-3.166,48.6133-33.7097,55.9967-45.6187h3.1152l-11.8585,45.6187Z"/>
-    <path fill="#fff" d="M134.7953,34.1338h47.2534v2.9963l9.9225,39.2178h-3.1152c-3.742-13.4843-21.8209-36.915-54.0607-42.2141Z"/>
-</svg>`;
+const BRAND_ICON_URL = "https://cdn.opendfieldmap.org/_dev/endfield/atlos/favicon.png";
 
 function escapeHtml(input: string): string {
   return input
@@ -84,7 +74,7 @@ function fillTemplate(template: string, key: string, value: string) {
 
 function formatOtpCode(otp: string): string {
   if (/^\d{6}$/.test(otp)) {
-    return `${otp.slice(0, 3)}-${otp.slice(3)}`;
+    return otp;
   }
   return otp;
 }
@@ -120,20 +110,28 @@ function renderOemLayout(input: {
             <tr><td style="height:14px;background:${THEME_COLOR};font-size:0;line-height:0;">&nbsp;</td></tr>
             <tr>
               <td style="padding:34px 28px 30px;">
-                <div style="text-align:center;line-height:1;">${BRAND_ICON_SVG}</div>
-                <h1 style="margin:18px 0 10px;font-size:46px;line-height:1.2;font-weight:800;text-align:center;">${safeTitle}</h1>
+                <div style="text-align:center;line-height:1;">
+                  <img
+                    src="${BRAND_ICON_URL}"
+                    width="92"
+                    height="92"
+                    alt="${safeBrand}"
+                    style="display:inline-block;border:0;outline:none;text-decoration:none;border-radius:20px;"
+                  />
+                </div>
+                <h1 style="margin:18px 0 10px;font-size:32px;line-height:1.2;font-weight:800;text-align:center;">${safeTitle}</h1>
                 <p style="margin:0 0 24px;font-size:18px;line-height:1.7;text-align:center;">${safeIntro}</p>
                 ${input.contentHtml}
                 <p style="margin:28px 0 8px;color:${TEXT_PRIMARY};font-size:15px;line-height:1.75;text-align:center;font-weight:600;">${safeExpires}</p>
                 <p style="margin:0 0 0;color:${TEXT_MUTED};font-size:15px;line-height:1.75;text-align:center;">${safeIgnore}</p>
                 <div style="text-align:center;margin-top:50px;">
-                  <div style="font-size:40px;font-weight:800;line-height:1.15;color:#111;">${safeBrand}</div>
-                  <div style="margin-top:6px;font-size:28px;font-weight:700;line-height:1.3;">
+                  <div style="font-size:24px;font-weight:800;line-height:1.15;color:#111;">${safeBrand}</div>
+                  <div style="margin-top:6px;font-size:20px;font-weight:700;line-height:1.3;">
                     <a href="${safeSiteUrl}" style="color:#111;text-decoration:none;">${safeSiteText}</a>
                     <span style="color:#d6d6cd;margin:0 8px;">|</span> 
                     <a href="${safeBlogUrl}" style="color:#111;text-decoration:none;">${safeBlogText}</a>
                   </div>
-                  <div style="margin-top:10px;font-size:18px;color:#303030;font-style:italic;">${safeSlogan}</div>
+                  <div style="margin-top:10px;font-size:16px;font-weight: 300;color:#303030;font-style:italic;">${safeSlogan}</div>
                 </div>
               </td>
             </tr>

@@ -19,6 +19,7 @@ export interface Bindings {
   MAX_UPLOAD_BYTES?: string;
   RESEND_AUTH_KEY?: string;
   RESEND_FROM_EMAIL?: string;
+  RESEND_FROM_NAME?: string;
   EMAIL_TEMPLATE_DEFAULT_LOCALE?: string;
 }
 
