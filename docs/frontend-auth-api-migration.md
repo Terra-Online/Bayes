@@ -173,6 +173,7 @@ export async function getBusinessSession() {
 - `TOO_MANY_ATTEMPTS`：验证码尝试次数超限，引导重新发码。
 - `RATE_LIMITED`：发送频率超限，读取响应头倒计时后重试。
 - `INVALID_EMAIL_OR_PASSWORD`：邮箱密码登录失败。
+- `USER_NOT_FOUND`：邮箱未注册（建议前端映射到注册引导提示）。
 
 ### 7.4 兼容策略
 

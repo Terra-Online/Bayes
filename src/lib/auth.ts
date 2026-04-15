@@ -152,6 +152,7 @@ export function createAuth(env: Bindings) {
     trustedOrigins: ['http://localhost:5173', 'http://127.0.0.1:5173'],
     emailAndPassword: {
       enabled: true,
+      resetPasswordTokenExpiresIn: 300,
       sendResetPassword: async ({ user, url }, request) => {
         const locale = resolvePreferredLocale(env, user, request);
         const content = createResetPasswordMagicLinkTemplate({ locale, url });

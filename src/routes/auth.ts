@@ -73,7 +73,9 @@ const profileUpdateSchema = z.object({
     .trim()
     .min(2, "Nickname must be at least 2 characters.")
     .max(26, "Nickname must be 26 characters or fewer.")
-    .regex(/^[A-Za-z0-9_-]+$/, "Nickname can only contain letters, numbers, '_' or '-'.")
+    .regex(/^[A-Za-z0-9_-]+$/, "Nickname can only contain letters, numbers, '_' or '-'."),
+  avatar: z.number().int().min(1).max(99).optional(),
+  avt: z.number().int().min(1).max(99).optional(),
 });
 
 const sendTemplateOtpSchema = z.object({
@@ -92,6 +94,32 @@ const registerWithOtpSchema = z.object({
     .regex(/^\S+$/, "Password cannot contain spaces."),
   otp: z.string().trim().regex(/^\d{6}$/, "OTP must be 6 digits."),
   name: z.string().trim().min(1).max(64).optional(),
+});
+
+const requestPasswordResetSchema = z.object({
+  email: z.string().email("Invalid email address."),
+  redirectTo: z.string().url("Invalid redirect URL."),
+  locale: z.string().trim().min(1).optional(),
+});
+
+const resetPasswordSchema = z.object({
+  token: z.string().trim().min(1, "Token is required."),
+  newPassword: z
+    .string()
+    .min(8, "Password must be at least 8 characters.")
+    .max(20, "Password must be 20 characters or fewer.")
+    .regex(/[A-Z]/, "Password must include at least one uppercase letter.")
+    .regex(/^\S+$/, "Password cannot contain spaces."),
+  repeatPassword: z
+    .string()
+    .min(8, "Password must be at least 8 characters.")
+    .max(20, "Password must be 20 characters or fewer.")
+    .regex(/[A-Z]/, "Password must include at least one uppercase letter.")
+    .regex(/^\S+$/, "Password cannot contain spaces."),
+});
+
+const resetPasswordPreviewSchema = z.object({
+  token: z.string().trim().min(1, "Token is required."),
 });
 
 function normalizeEmail(email: string): string {
@@ -174,6 +202,7 @@ function toSessionUser(user: AuthUser) {
     uid: user.publicUid,
     role: user.role,
     karma: user.karma,
+    avatar: user.avatar,
     email: user.email,
     nickname: user.nickname,
     needsProfileSetup: user.needsProfileSetup
@@ -353,7 +382,35 @@ export function createAuthRoutes() {
   });
 
   app.post("/sign-in/email", rateLimit("public"), async (c) => {
-    return forwardToAuthRawRequest(c);
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return forwardToAuthRawRequest(c);
+    }
+
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      throw new ApiError(422, "VALIDATION_ERROR", "Invalid payload.");
+    }
+
+    const payload = body as Record<string, unknown>;
+    const rawEmail = payload.email;
+    if (typeof rawEmail !== "string") {
+      return forwardToAuthJsonPath(c, "/sign-in/email", payload);
+    }
+
+    const email = normalizeEmail(rawEmail);
+    const existingAuthUser = await c.env.DB
+      .prepare("SELECT id FROM auth_users WHERE email = ?1 LIMIT 1")
+      .bind(email)
+      .first<{ id: string }>();
+
+    if (!existingAuthUser?.id) {
+      throw new ApiError(404, "USER_NOT_FOUND", "User not found.");
+    }
+
+    payload.email = email;
+    return forwardToAuthJsonPath(c, "/sign-in/email", payload);
   });
 
   app.post("/sign-in/social", rateLimit("public"), async (c) => {
@@ -361,7 +418,49 @@ export function createAuthRoutes() {
   });
 
   app.post("/forget-password", rateLimit("public"), async (c) => {
-    return forwardToAuthRawRequest(c);
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      throw new ApiError(422, "VALIDATION_ERROR", "Request body must be valid JSON.");
+    }
+
+    const parsed = requestPasswordResetSchema.safeParse(body);
+    if (!parsed.success) {
+      throw new ApiError(422, "VALIDATION_ERROR", "Invalid payload.", parsed.error.flatten());
+    }
+
+    const email = normalizeEmail(parsed.data.email);
+    const locale = parsed.data.locale?.trim();
+    const requestHeaders = locale
+      ? {
+          "x-oem-locale": locale,
+        }
+      : undefined;
+
+    const user = await c.env.DB
+      .prepare("SELECT id FROM auth_users WHERE email = ?1 LIMIT 1")
+      .bind(email)
+      .first<{ id: string }>();
+
+    if (user?.id) {
+      await c.env.DB
+        .prepare("DELETE FROM auth_verifications WHERE value = ?1 AND identifier LIKE 'reset-password:%'")
+        .bind(user.id)
+        .run();
+    }
+
+    return forwardToAuthJsonPath(
+      c,
+      "/request-password-reset",
+      {
+        email,
+        redirectTo: parsed.data.redirectTo,
+      },
+      {
+        headers: requestHeaders,
+      },
+    );
   });
 
   app.post("/request-password-reset", rateLimit("public"), async (c) => {
@@ -369,7 +468,57 @@ export function createAuthRoutes() {
   });
 
   app.post("/reset-password", rateLimit("public"), async (c) => {
-    return forwardToAuthRawRequest(c);
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      throw new ApiError(422, "VALIDATION_ERROR", "Request body must be valid JSON.");
+    }
+
+    const parsed = resetPasswordSchema.safeParse(body);
+    if (!parsed.success) {
+      throw new ApiError(422, "VALIDATION_ERROR", "Invalid payload.", parsed.error.flatten());
+    }
+
+    if (parsed.data.newPassword !== parsed.data.repeatPassword) {
+      throw new ApiError(400, "PASSWORD_MISMATCH", "Repeated password does not match.");
+    }
+
+    return forwardToAuthJsonPath(c, "/reset-password", {
+      token: parsed.data.token,
+      newPassword: parsed.data.newPassword,
+    });
+  });
+
+  app.get("/reset-password-preview", rateLimit("public"), async (c) => {
+    const parsed = resetPasswordPreviewSchema.safeParse({
+      token: c.req.query("token"),
+    });
+    if (!parsed.success) {
+      throw new ApiError(422, "VALIDATION_ERROR", "Invalid payload.", parsed.error.flatten());
+    }
+
+    const identifier = `reset-password:${parsed.data.token}`;
+    const verification = await c.env.DB
+      .prepare("SELECT value, expiresAt FROM auth_verifications WHERE identifier = ?1 LIMIT 1")
+      .bind(identifier)
+      .first<{ value: string; expiresAt: string }>();
+
+    const expiresAt = verification ? Date.parse(verification.expiresAt) : Number.NaN;
+    if (!verification || !Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+      throw new ApiError(400, "INVALID_TOKEN", "Reset token is invalid or expired.");
+    }
+
+    const user = await c.env.DB
+      .prepare("SELECT email FROM auth_users WHERE id = ?1 LIMIT 1")
+      .bind(verification.value)
+      .first<{ email: string }>();
+
+    if (!user?.email) {
+      throw new ApiError(404, "USER_NOT_FOUND", "User not found.");
+    }
+
+    return c.json({ email: user.email });
   });
 
   app.get("/get-session", async (c) => {
@@ -421,11 +570,25 @@ export function createAuthRoutes() {
       contentType.includes("multipart/form-data")
     ) {
       const form = await c.req.parseBody();
+      const rawAvatar = typeof form.avatar === "string"
+        ? Number(form.avatar)
+        : typeof form.avt === "string"
+          ? Number(form.avt)
+          : undefined;
       body = {
-        nickname: typeof form.nickname === "string" ? form.nickname : undefined
+        nickname: typeof form.nickname === "string" ? form.nickname : undefined,
+        avatar: rawAvatar,
       };
     } else {
       throw new ApiError(415, "UNSUPPORTED_MEDIA_TYPE", "Unsupported content-type for profile update.");
+    }
+
+    if (body && typeof body === "object" && !Array.isArray(body)) {
+      const nextBody = { ...(body as Record<string, unknown>) };
+      if (nextBody.avatar === undefined && nextBody.avt !== undefined) {
+        nextBody.avatar = nextBody.avt;
+      }
+      body = nextBody;
     }
 
     const parsed = profileUpdateSchema.safeParse(body);
@@ -436,7 +599,8 @@ export function createAuthRoutes() {
     try {
       const updated = await updateUserNickname(c.env.DB, {
         uid: user.uid,
-        nickname: parsed.data.nickname
+        nickname: parsed.data.nickname,
+        avatar: parsed.data.avatar
       });
 
       return c.json({
@@ -444,6 +608,7 @@ export function createAuthRoutes() {
           uid: formatPublicUid(updated.uidNumber, updated.uidSuffix),
           role: updated.role,
           karma: updated.karma,
+          avatar: updated.avt,
           email: updated.email,
           nickname: updated.nickname,
           needsProfileSetup: !updated.nicknameCustomized
@@ -453,6 +618,9 @@ export function createAuthRoutes() {
       const message = getErrorMessage(error);
       if (message.includes("INVALID_NICKNAME_FORMAT")) {
         throw new ApiError(422, "INVALID_NICKNAME_FORMAT", "Nickname format is invalid.");
+      }
+      if (message.includes("INVALID_AVATAR")) {
+        throw new ApiError(422, "INVALID_AVATAR", "Avatar is invalid.");
       }
       if (message.includes("NICKNAME_CONFLICT")) {
         throw new ApiError(409, "NICKNAME_TAKEN", "Nickname is already in use.");

@@ -28,6 +28,7 @@ export interface AuthUser {
   publicUid: string;
   role: Role;
   karma: number;
+  avatar: number;
   email: string;
   nickname: string;
   needsProfileSetup: boolean;
