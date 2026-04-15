@@ -17,6 +17,10 @@ export interface Bindings {
   UPLOAD_URL_TTL_SECONDS?: string;
   ALLOWED_UPLOAD_MIME?: string;
   MAX_UPLOAD_BYTES?: string;
+  RESEND_AUTH_KEY?: string;
+  RESEND_FROM_EMAIL?: string;
+  RESEND_FROM_NAME?: string;
+  EMAIL_TEMPLATE_DEFAULT_LOCALE?: string;
 }
 
 export interface AuthUser {
@@ -24,6 +28,7 @@ export interface AuthUser {
   publicUid: string;
   role: Role;
   karma: number;
+  avatar: number;
   email: string;
   nickname: string;
   needsProfileSetup: boolean;

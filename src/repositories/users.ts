@@ -257,6 +257,7 @@ export async function updateUserNickname(
   payload: {
     uid: string;
     nickname: string;
+    avatar?: number;
   }
 ): Promise<UserRecord> {
   const current = await getUserByUid(db, payload.uid);
@@ -265,6 +266,16 @@ export async function updateUserNickname(
   }
 
   const normalizedNickname = normalizeEditableNickname(payload.nickname);
+  const normalizedAvatar = payload.avatar === undefined
+    ? undefined
+    : Number.isFinite(payload.avatar)
+      ? Math.floor(payload.avatar)
+      : NaN;
+
+  if (normalizedAvatar !== undefined && (!Number.isFinite(normalizedAvatar) || normalizedAvatar < 1 || normalizedAvatar > 99)) {
+    throw new Error("INVALID_AVATAR");
+  }
+
   const nextUidSuffix = current.nicknameCustomized
     ? current.uidSuffix
     : buildUidSuffixFromNickname(normalizedNickname);
@@ -275,11 +286,12 @@ export async function updateUserNickname(
         `UPDATE users
          SET nickname = ?2,
              uid_suffix = ?3,
+           avt = COALESCE(?4, avt),
              nickname_customized = 1,
              last_active = CURRENT_TIMESTAMP
          WHERE uid = ?1`
       )
-      .bind(payload.uid, normalizedNickname, nextUidSuffix)
+        .bind(payload.uid, normalizedNickname, nextUidSuffix, normalizedAvatar ?? null)
       .run();
   } catch (error) {
     const message = getErrorMessage(error);
