@@ -13,8 +13,24 @@ const updateSchema = z.object({
   moderationNote: z.string().max(500).optional()
 });
 
+function isModerationLocked(flag: string | undefined): boolean {
+  const normalized = (flag ?? "true").trim().toLowerCase();
+  return !["0", "false", "off", "no"].includes(normalized);
+}
+
 export function createModerationRoutes() {
   const app = new Hono<AppEnv>();
+
+  app.use("*", async (c, next) => {
+    if (isModerationLocked(c.env.LOCK_MODERATION_ENDPOINTS)) {
+      throw new ApiError(
+        503,
+        "MODERATION_TEMPORARILY_DISABLED",
+        "Moderation endpoints are temporarily disabled during stabilization."
+      );
+    }
+    await next();
+  });
 
   app.get("/pending", requireAuth, requireRole(["p", "a"]), rateLimit("auth"), async (c) => {
     const rows = await getPendingSubmissions(c.env.DB, 50);

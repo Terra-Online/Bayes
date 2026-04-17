@@ -6,25 +6,42 @@ import type { AppEnv } from "../types/app";
 const OTP_SEND_IP_LIMIT_PER_MINUTE = 20;
 const OTP_SEND_EMAIL_LIMIT_PER_HOUR = 8;
 const AUTH_LIMIT_PER_MINUTE = 120;
+const PUBLIC_LIMIT_PER_MINUTE = 80;
+const RESET_SEND_LIMIT_PER_MINUTE = 80;
+const EMAIL_COOLDOWN_SECONDS = 100;
+const ONE_MINUTE_MS = 60 * 1000;
+const ONE_HOUR_MS = 60 * ONE_MINUTE_MS;
 
-function getWindowKey(scope: string, key: string): { redisKey: string; resetAt: number } {
-  const now = Date.now();
-  const minuteStart = Math.floor(now / 60000);
-  const resetAt = (minuteStart + 1) * 60000;
-  return {
-    redisKey: `rate:${scope}:${minuteStart}:${key}`,
-    resetAt
-  };
+type RateLimitScope = "public" | "auth" | "otp-send" | "reset-send";
+
+interface SlidingWindowResult {
+  count: number;
+  remaining: number;
+  resetAt: number;
+  exceeded: boolean;
 }
 
-function getHourWindowKey(scope: string, key: string): { redisKey: string; resetAt: number } {
-  const now = Date.now();
-  const hourStart = Math.floor(now / 3600000);
-  const resetAt = (hourStart + 1) * 3600000;
-  return {
-    redisKey: `rate:${scope}:${hourStart}:${key}`,
-    resetAt,
-  };
+function getWindowMs(scope: RateLimitScope): number {
+  if (scope === "otp-send") {
+    return ONE_MINUTE_MS;
+  }
+  return ONE_MINUTE_MS;
+}
+
+function getScopeLimit(scope: RateLimitScope): number {
+  if (scope === "auth") {
+    return AUTH_LIMIT_PER_MINUTE;
+  }
+
+  if (scope === "otp-send") {
+    return OTP_SEND_IP_LIMIT_PER_MINUTE;
+  }
+
+  if (scope === "reset-send") {
+    return RESET_SEND_LIMIT_PER_MINUTE;
+  }
+
+  return PUBLIC_LIMIT_PER_MINUTE;
 }
 
 function normalizeEmail(input: string): string {
@@ -52,55 +69,150 @@ async function tryExtractEmailFromJson(c: Parameters<MiddlewareHandler<AppEnv>>[
 }
 
 function getRequestIp(c: Parameters<MiddlewareHandler<AppEnv>>[0]): string {
-  return c.req.header("cf-connecting-ip") ?? c.req.header("x-forwarded-for") ?? "anonymous";
+  return c.req.header("cf-connecting-ip") ?? "anonymous";
 }
 
-export function rateLimit(scope: "public" | "auth" | "otp-send"): MiddlewareHandler<AppEnv> {
-  return async (c, next) => {
-    const redis = createRedisClient(c.env);
-    const requestIp = getRequestIp(c);
+async function applySlidingWindowLimit(
+  c: Parameters<MiddlewareHandler<AppEnv>>[0],
+  redisKey: string,
+  limit: number,
+  windowMs: number
+): Promise<SlidingWindowResult> {
+  const redis = createRedisClient(c.env);
+  const now = Date.now();
+  const windowStart = now - windowMs;
 
+  await redis.zremrangebyscore(redisKey, 0, windowStart);
+
+  const currentRaw = await redis.zcard(redisKey);
+  const current = Number(currentRaw ?? 0);
+  const resetAt = now + windowMs;
+
+  if (current >= limit) {
+    return {
+      count: current,
+      remaining: 0,
+      resetAt,
+      exceeded: true,
+    };
+  }
+
+  await redis.zadd(redisKey, {
+    score: now,
+    member: `${now}:${crypto.randomUUID()}`,
+  });
+
+  await redis.expire(redisKey, Math.ceil((windowMs + 5000) / 1000));
+
+  const nextCount = current + 1;
+  return {
+    count: nextCount,
+    remaining: Math.max(0, limit - nextCount),
+    resetAt,
+    exceeded: false,
+  };
+}
+
+export function rateLimit(scope: RateLimitScope): MiddlewareHandler<AppEnv> {
+  return async (c, next) => {
+    const requestIp = getRequestIp(c);
     const identity = requestIp;
 
-    const limit =
-      scope === "public"
-        ? 80
-        : scope === "auth"
-          ? AUTH_LIMIT_PER_MINUTE
-          : OTP_SEND_IP_LIMIT_PER_MINUTE;
+    const limit = getScopeLimit(scope);
+    const windowMs = getWindowMs(scope);
 
-    const windowData = getWindowKey(scope, identity);
+    try {
+      const redis = createRedisClient(c.env);
+      const redisKey = `rate:${scope}:ip:${identity}`;
+      const result = await applySlidingWindowLimit(c, redisKey, limit, windowMs);
 
-    const current = await redis.incr(windowData.redisKey);
-    if (current === 1) {
-      await redis.expire(windowData.redisKey, 65);
-    }
+      c.header("x-ratelimit-limit", String(limit));
+      c.header("x-ratelimit-remaining", String(result.remaining));
+      c.header("x-ratelimit-reset", String(Math.floor(result.resetAt / 1000)));
 
-    c.header("x-ratelimit-limit", String(limit));
-    c.header("x-ratelimit-remaining", String(Math.max(0, limit - current)));
-    c.header("x-ratelimit-reset", String(Math.floor(windowData.resetAt / 1000)));
+      if (result.exceeded) {
+        throw new ApiError(429, "RATE_LIMITED", "Too many requests.");
+      }
 
-    if (current > limit) {
-      throw new ApiError(429, "RATE_LIMITED", "Too many requests.");
-    }
+      if (scope === "otp-send") {
+        const email = await tryExtractEmailFromJson(c);
+        if (email) {
+          const cooldownKey = `rate:${scope}:email-cooldown:${email}`;
+          const cooldownPlaced = await redis.set(cooldownKey, String(Date.now()), {
+            nx: true,
+            ex: EMAIL_COOLDOWN_SECONDS,
+          });
 
-    if (scope === "otp-send") {
-      const email = await tryExtractEmailFromJson(c);
-      if (email) {
-        const emailWindowData = getHourWindowKey("otp-send-email", email);
-        const emailCurrent = await redis.incr(emailWindowData.redisKey);
-        if (emailCurrent === 1) {
-          await redis.expire(emailWindowData.redisKey, 3605);
-        }
+          if (!cooldownPlaced) {
+            const retryAfterRaw = await redis.ttl(cooldownKey);
+            const retryAfter = Number(retryAfterRaw ?? EMAIL_COOLDOWN_SECONDS);
+            if (Number.isFinite(retryAfter) && retryAfter > 0) {
+              c.header("retry-after", String(Math.ceil(retryAfter)));
+            }
+            throw new ApiError(
+              429,
+              "RATE_LIMITED",
+              "Please wait before requesting another email.",
+              {
+                retryAfterSeconds: Number.isFinite(retryAfter) && retryAfter > 0
+                  ? Math.ceil(retryAfter)
+                  : EMAIL_COOLDOWN_SECONDS,
+              }
+            );
+          }
 
-        c.header("x-ratelimit-email-limit", String(OTP_SEND_EMAIL_LIMIT_PER_HOUR));
-        c.header("x-ratelimit-email-remaining", String(Math.max(0, OTP_SEND_EMAIL_LIMIT_PER_HOUR - emailCurrent)));
-        c.header("x-ratelimit-email-reset", String(Math.floor(emailWindowData.resetAt / 1000)));
+          const emailKey = `rate:otp-send:email:${email}`;
+          const emailResult = await applySlidingWindowLimit(
+            c,
+            emailKey,
+            OTP_SEND_EMAIL_LIMIT_PER_HOUR,
+            ONE_HOUR_MS
+          );
 
-        if (emailCurrent > OTP_SEND_EMAIL_LIMIT_PER_HOUR) {
-          throw new ApiError(429, "RATE_LIMITED", "Too many OTP requests for this email.");
+          if (emailResult.exceeded) {
+            throw new ApiError(429, "RATE_LIMITED", "Too many OTP requests.");
+          }
         }
       }
+
+      if (scope === "reset-send") {
+        const email = await tryExtractEmailFromJson(c);
+        if (email) {
+          const cooldownKey = `rate:${scope}:email-cooldown:${email}`;
+          const cooldownPlaced = await redis.set(cooldownKey, String(Date.now()), {
+            nx: true,
+            ex: EMAIL_COOLDOWN_SECONDS,
+          });
+
+          if (!cooldownPlaced) {
+            const retryAfterRaw = await redis.ttl(cooldownKey);
+            const retryAfter = Number(retryAfterRaw ?? EMAIL_COOLDOWN_SECONDS);
+            if (Number.isFinite(retryAfter) && retryAfter > 0) {
+              c.header("retry-after", String(Math.ceil(retryAfter)));
+            }
+            throw new ApiError(
+              429,
+              "RATE_LIMITED",
+              "Please wait before requesting another email.",
+              {
+                retryAfterSeconds: Number.isFinite(retryAfter) && retryAfter > 0
+                  ? Math.ceil(retryAfter)
+                  : EMAIL_COOLDOWN_SECONDS,
+              }
+            );
+          }
+        }
+      }
+    } catch (error) {
+      if (error instanceof ApiError) {
+        throw error;
+      }
+      console.error("[rate-limit] backend failure", {
+        scope,
+        requestIp,
+        error,
+      });
+      throw new ApiError(503, "RATE_LIMIT_BACKEND_UNAVAILABLE", "Rate limit service unavailable.");
     }
 
     await next();

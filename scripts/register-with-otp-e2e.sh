@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-BASE_URL="${BASE_URL:-http://localhost:8788}"
+BASE_URL="${BASE_URL:-https://api.opendfieldmap.org}"
 EMAIL="${1:-bridgechan7@gmail.com}"
 PASSWORD="${2:-StrongPass123!}"
 NAME="${3:-BridgeChan}"

@@ -7,7 +7,24 @@ import { initResend } from './lib/email';
 
 const app = createApp();
 
+function isFeatureLocked(flag: string | undefined, defaultLocked = true): boolean {
+  if (!flag) {
+    return defaultLocked;
+  }
+
+  const normalized = flag.trim().toLowerCase();
+  return !['0', 'false', 'off', 'no'].includes(normalized);
+}
+
 async function runScheduledJobs(env: Bindings): Promise<void> {
+  if (isFeatureLocked(env.LOCK_SCHEDULED_JOBS, true)) {
+    console.warn('cron jobs skipped', {
+      reason: 'LOCK_SCHEDULED_JOBS enabled',
+      at: new Date().toISOString(),
+    });
+    return;
+  }
+
   const redis = createRedisClient(env);
 
   const flushed = await flushDirtyProgressToD1(env.DB, redis, 100);

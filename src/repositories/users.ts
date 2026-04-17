@@ -3,6 +3,7 @@ import type { Role } from "../types/app";
 const UID_START = 100000;
 const NICKNAME_PATTERN = /^[A-Za-z0-9_-]{2,26}$/;
 const DEFAULT_UID_SUFFIX = "AA";
+const UID_SUFFIX_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
 export interface UserRecord {
   uid: string;
@@ -45,8 +46,34 @@ function normalizeUidSuffix(raw: string | undefined): string {
   return DEFAULT_UID_SUFFIX;
 }
 
+function randomUpperLetters(count: number): string {
+  if (count <= 0) {
+    return "";
+  }
+
+  const bytes = crypto.getRandomValues(new Uint8Array(count));
+  let output = "";
+  for (let index = 0; index < bytes.length; index += 1) {
+    const mapped = bytes[index]! % UID_SUFFIX_ALPHABET.length;
+    output += UID_SUFFIX_ALPHABET[mapped]!;
+  }
+  return output;
+}
+
 function buildUidSuffixFromNickname(nickname: string): string {
-  return normalizeUidSuffix(nickname);
+  const letters = nickname
+    .replace(/[^A-Za-z]/g, "")
+    .toUpperCase();
+
+  if (letters.length >= 2) {
+    return letters.slice(-2);
+  }
+
+  if (letters.length === 1) {
+    return `${letters}${randomUpperLetters(1)}`;
+  }
+
+  return randomUpperLetters(2);
 }
 
 export function getErrorMessage(error: unknown): string {
@@ -115,17 +142,25 @@ export function formatPublicUid(uidNumber: number, uidSuffix: string): string {
   return `${normalizedNumber}${normalizedSuffix}`;
 }
 
-async function getNextUidNumber(db: D1Database): Promise<number> {
-  const row = await db
-    .prepare("SELECT COALESCE(MAX(uid_number), ?1) + 1 AS next_uid_number FROM users")
-    .bind(UID_START)
-    .first<Record<string, unknown>>();
+async function allocateNextUidNumber(db: D1Database): Promise<number> {
+  try {
+    const row = await db
+      .prepare("INSERT INTO user_uid_sequence DEFAULT VALUES RETURNING id")
+      .first<{ id: number | string }>();
 
-  const nextValue = Number(row?.next_uid_number ?? UID_START + 1);
-  if (Number.isFinite(nextValue) && nextValue > UID_START) {
-    return Math.floor(nextValue);
+    const sequenceValue = Number(row?.id ?? Number.NaN);
+    if (Number.isFinite(sequenceValue) && sequenceValue > 0) {
+      return UID_START + Math.floor(sequenceValue);
+    }
+  } catch (error) {
+    const message = getErrorMessage(error);
+    if (message.includes("user_uid_sequence") || message.includes("RETURNING")) {
+      throw new Error("UID_SEQUENCE_NOT_READY_MIGRATION_REQUIRED");
+    }
+    throw error;
   }
-  return UID_START + 1;
+
+  throw new Error("UID_SEQUENCE_NOT_READY_MIGRATION_REQUIRED");
 }
 
 function mapUser(row: Record<string, unknown>): UserRecord {
@@ -204,14 +239,19 @@ export async function ensureUserProfile(db: D1Database, payload: EnsureUserProfi
   const email = payload.email.toLowerCase();
   const avt = Number.isFinite(payload.avt) ? Number(payload.avt) : 0;
   const shouldMarkNicknameCustomized = Boolean(payload.nickname && payload.nickname.trim().length > 0);
+  const fallbackNickname = nicknameCandidates[0] ?? payload.uid;
   const initialUidSuffix = shouldMarkNicknameCustomized
     ? buildUidSuffixFromNickname(payload.nickname as string)
-    : DEFAULT_UID_SUFFIX;
+    : buildUidSuffixFromNickname(fallbackNickname);
 
   for (let uidAttempt = 0; uidAttempt < 5; uidAttempt += 1) {
-    const uidNumber = await getNextUidNumber(db);
+    const uidNumber = await allocateNextUidNumber(db);
 
     for (const nickname of nicknameCandidates) {
+      const nextUidSuffix = shouldMarkNicknameCustomized
+        ? initialUidSuffix
+        : buildUidSuffixFromNickname(nickname);
+
       try {
         await db
           .prepare(
@@ -221,7 +261,7 @@ export async function ensureUserProfile(db: D1Database, payload: EnsureUserProfi
           .bind(
             payload.uid,
             uidNumber,
-            initialUidSuffix,
+            nextUidSuffix,
             email,
             "better-auth-managed",
             "n",
@@ -241,12 +281,39 @@ export async function ensureUserProfile(db: D1Database, payload: EnsureUserProfi
         if (message.includes("users.nickname")) {
           continue;
         }
+        if (message.includes("users.uid") || message.includes("users.email")) {
+          // Concurrent requests can race on first profile bootstrap. If another
+          // request already inserted the same user, return that row instead of 500.
+          const createdByUid = await getUserByUid(db, payload.uid);
+          if (createdByUid) {
+            return createdByUid;
+          }
+
+          const createdByEmail = await getUserByEmail(db, email);
+          if (createdByEmail && createdByEmail.uid === payload.uid) {
+            return createdByEmail;
+          }
+
+          if (createdByEmail && createdByEmail.uid !== payload.uid) {
+            throw new Error("EMAIL_ALREADY_BOUND_TO_ANOTHER_USER");
+          }
+
+          continue;
+        }
         if (message.includes("users.uid_number") || message.includes("idx_users_uid_number")) {
           break;
+        }
+        if (message.includes("UID_SEQUENCE_NOT_READY_MIGRATION_REQUIRED")) {
+          throw new Error(message);
         }
         throw new Error(message);
       }
     }
+  }
+
+  const created = await getUserByUid(db, payload.uid);
+  if (created) {
+    return created;
   }
 
   throw new Error("Unable to create profile for authenticated user.");

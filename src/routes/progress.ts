@@ -14,8 +14,24 @@ const syncSchema = z.object({
   pointsDelta: z.number().int().min(-1000).max(1000).optional()
 });
 
+function isProgressLocked(flag: string | undefined): boolean {
+  const normalized = (flag ?? "true").trim().toLowerCase();
+  return !["0", "false", "off", "no"].includes(normalized);
+}
+
 export function createProgressRoutes() {
   const app = new Hono<AppEnv>();
+
+  app.use("*", async (c, next) => {
+    if (isProgressLocked(c.env.LOCK_PROGRESS_ENDPOINTS)) {
+      throw new ApiError(
+        503,
+        "PROGRESS_TEMPORARILY_DISABLED",
+        "Progress endpoints are temporarily disabled during stabilization."
+      );
+    }
+    await next();
+  });
 
   app.get("/state", requireAuth, rateLimit("auth"), async (c) => {
     const user = c.get("authUser");

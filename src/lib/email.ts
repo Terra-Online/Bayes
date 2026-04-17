@@ -39,6 +39,18 @@ function normalizeFromAddress(rawValue: string): string {
   return `${displayName} <${email}>`;
 }
 
+function maskEmail(email: string): string {
+  const [local = '', domain = ''] = email.split('@');
+  if (!domain) {
+    return '***';
+  }
+
+  const safeLocal = local.length <= 2
+    ? `${local.slice(0, 1)}***`
+    : `${local.slice(0, 2)}***`;
+  return `${safeLocal}@${domain}`;
+}
+
 export interface EmailPayload {
   to: string;
   subject: string;
@@ -66,6 +78,8 @@ export async function sendEmail(payload: EmailPayload): Promise<SendEmailResult>
     throw new Error('RESEND_NOT_INITIALIZED');
   }
 
+  const maskedTo = maskEmail(payload.to);
+
   return resend.emails.send({
     from: fromAddress,
     to: payload.to,
@@ -75,7 +89,7 @@ export async function sendEmail(payload: EmailPayload): Promise<SendEmailResult>
   }).then((result) => {
     if (result.error) {
       console.error('[email] send rejected by provider', {
-        to: payload.to,
+        to: maskedTo,
         subject: payload.subject,
         error: result.error,
       });
@@ -84,7 +98,7 @@ export async function sendEmail(payload: EmailPayload): Promise<SendEmailResult>
 
     console.warn('[email] send success', {
       id: result?.data?.id,
-      to: payload.to,
+      to: maskedTo,
       subject: payload.subject,
     });
 
@@ -93,7 +107,7 @@ export async function sendEmail(payload: EmailPayload): Promise<SendEmailResult>
     };
   }).catch((error: unknown) => {
     console.error('[email] send failed', {
-      to: payload.to,
+      to: maskedTo,
       subject: payload.subject,
       error,
     });

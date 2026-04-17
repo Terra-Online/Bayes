@@ -7,6 +7,8 @@ export interface Bindings {
   UPSTASH_REDIS_REST_TOKEN: string;
   BETTER_AUTH_SECRET?: string;
   BETTER_AUTH_URL?: string;
+  CORS_ORIGINS?: string;
+  TRUSTED_ORIGINS?: string;
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET?: string;
   DISCORD_CLIENT_ID?: string;
@@ -21,6 +23,10 @@ export interface Bindings {
   RESEND_FROM_EMAIL?: string;
   RESEND_FROM_NAME?: string;
   EMAIL_TEMPLATE_DEFAULT_LOCALE?: string;
+  LOCK_PROGRESS_ENDPOINTS?: string;
+  LOCK_MODERATION_ENDPOINTS?: string;
+  LOCK_UPLOAD_ENDPOINTS?: string;
+  LOCK_SCHEDULED_JOBS?: string;
 }
 
 export interface AuthUser {

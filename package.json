@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "wrangler dev",
     "dev:local": "cp .dev.vars.local .dev.vars && wrangler dev",
-    "deploy": "wrangler deploy",
+    "deploy": "bash scripts/deploy-with-dev-vars.sh",
+    "deploy:raw": "wrangler deploy",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "db:migrate:local": "wrangler d1 migrations apply DB --local",

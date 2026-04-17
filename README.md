@@ -87,7 +87,7 @@ Then fill values in .dev.vars:
 - UPSTASH_REDIS_REST_URL
 - UPSTASH_REDIS_REST_TOKEN
 - BETTER_AUTH_SECRET (at least 32 chars, random)
-- BETTER_AUTH_URL (for local: http://127.0.0.1:8787)
+- BETTER_AUTH_URL (production: https://api.opendfieldmap.org)
 - GOOGLE_CLIENT_ID
 - GOOGLE_CLIENT_SECRET
 - DISCORD_CLIENT_ID
@@ -145,7 +145,7 @@ pnpm run dev
 
 Default endpoint:
 
-- http://127.0.0.1:8787
+- https://api.opendfieldmap.org
 
 ### 6) Trigger cron manually (local)
 
@@ -161,7 +161,7 @@ pnpm install
 pnpm run db:migrate:local
 pnpm run dev
 
-Backend URL: http://127.0.0.1:8787
+Backend URL: https://api.opendfieldmap.org
 
 ### 2) Start Atlos frontend
 
@@ -170,37 +170,45 @@ Run in Atlos talos directory:
 pnpm install
 pnpm dev
 
-Frontend URL: http://localhost:5173
+Frontend URL: https://opendfieldmap.org
 
 ### 3) Auth flow smoke test (curl)
 
+Set API base URL (production default):
+
+BASE_URL="${BASE_URL:-https://api.opendfieldmap.org}"
+
+For local debugging only:
+
+BASE_URL="$BETTER_AUTH_URL"
+
 Start social sign-in (Google):
 
-curl -i -X POST http://127.0.0.1:8787/auth/v1/sign-in/social \
+curl -i -X POST "$BASE_URL/auth/v1/sign-in/social" \
 	-H "content-type: application/json" \
 	-d '{"provider":"google"}'
 
 Start social sign-in (Discord):
 
-curl -i -X POST http://127.0.0.1:8787/auth/v1/sign-in/social \
+curl -i -X POST "$BASE_URL/auth/v1/sign-in/social" \
 	-H "content-type: application/json" \
 	-d '{"provider":"discord"}'
 
 Then finish OAuth in browser and call session:
 
-curl -i http://127.0.0.1:8787/auth/v1/session
+curl -i "$BASE_URL/auth/v1/session"
 
 Email registration and login are enabled:
 
-curl -i -X POST http://127.0.0.1:8787/auth/v1/email-otp/send-verification-otp \
+curl -i -X POST "$BASE_URL/auth/v1/email-otp/send-verification-otp" \
 	-H "content-type: application/json" \
 	-d '{"email":"user@example.com","type":"sign-in"}'
 
-curl -i -X POST http://127.0.0.1:8787/auth/v1/register \
+curl -i -X POST "$BASE_URL/auth/v1/register" \
 	-H "content-type: application/json" \
 	-d '{"email":"user@example.com","password":"StrongPass123!","otp":"123456","name":"Demo User"}'
 
-curl -i -X POST http://127.0.0.1:8787/auth/v1/sign-in/email \
+curl -i -X POST "$BASE_URL/auth/v1/sign-in/email" \
 	-H "content-type: application/json" \
 	-d '{"email":"user@example.com","password":"StrongPass123!"}'
 

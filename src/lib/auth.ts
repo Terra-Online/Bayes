@@ -9,8 +9,49 @@ import {
 } from './email-templates';
 import { envOrThrow, readEnv } from './utils';
 
-const DEV_AUTH_SECRET = 'dev-only-better-auth-secret-change-in-production';
 const OEM_LOCALE_HEADER = 'x-oem-locale';
+const DEFAULT_AUTH_BASE_URL = 'https://api.opendfieldmap.org';
+const DEFAULT_TRUSTED_ORIGINS = [
+  'https://opendfieldmap.org',
+  'https://www.opendfieldmap.org',
+  'https://opendfieldmap.cn',
+  'https://www.opendfieldmap.cn',
+  'https://api.opendfieldmap.org',
+];
+const LOCAL_TRUSTED_ORIGINS = [
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+  'http://localhost:8787',
+  'http://127.0.0.1:8787',
+];
+
+function isLocalBaseUrl(raw: string | undefined): boolean {
+  const normalized = readEnv(raw);
+  if (!normalized) {
+    return false;
+  }
+
+  try {
+    const url = new URL(normalized);
+    return url.hostname === 'localhost' || url.hostname === '127.0.0.1';
+  } catch {
+    return false;
+  }
+}
+
+function parseOrigins(raw: string | undefined, baseUrl: string | undefined): string[] {
+  const normalized = readEnv(raw);
+  if (!normalized) {
+    return isLocalBaseUrl(baseUrl) ? LOCAL_TRUSTED_ORIGINS : DEFAULT_TRUSTED_ORIGINS;
+  }
+
+  const parsed = normalized
+    .split(',')
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+
+  return parsed.length > 0 ? parsed : DEFAULT_TRUSTED_ORIGINS;
+}
 
 function generateNumericOtp(length: number): string {
   const bytes = new Uint8Array(length);
@@ -122,6 +163,7 @@ function pickOptionalProvider(
 
 export function createAuth(env: Bindings) {
   initResend(env);
+  const trustedOrigins = parseOrigins(env.TRUSTED_ORIGINS ?? env.CORS_ORIGINS, env.BETTER_AUTH_URL);
 
   const socialProviders: {
     discord: { clientId: string; clientSecret: string; prompt: 'consent' };
@@ -146,10 +188,10 @@ export function createAuth(env: Bindings) {
 
   return betterAuth({
     database: env.DB,
-    baseURL: env.BETTER_AUTH_URL ?? 'http://127.0.0.1:8787',
+    baseURL: readEnv(env.BETTER_AUTH_URL) ?? DEFAULT_AUTH_BASE_URL,
     basePath: '/auth/v1',
-    secret: env.BETTER_AUTH_SECRET ?? DEV_AUTH_SECRET,
-    trustedOrigins: ['http://localhost:5173', 'http://127.0.0.1:5173'],
+    secret: envOrThrow(env.BETTER_AUTH_SECRET, 'BETTER_AUTH_SECRET'),
+    trustedOrigins,
     emailAndPassword: {
       enabled: true,
       resetPasswordTokenExpiresIn: 300,
@@ -231,7 +273,7 @@ export function createAuth(env: Bindings) {
     ],
     advanced: {
       ipAddress: {
-        ipAddressHeaders: ['cf-connecting-ip', 'x-forwarded-for'],
+        ipAddressHeaders: ['cf-connecting-ip'],
         ipv6Subnet: 64,
       },
       database: {

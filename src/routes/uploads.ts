@@ -17,8 +17,24 @@ const presignSchema = z.object({
   content: z.string().max(1000).optional()
 });
 
+function isUploadsLocked(flag: string | undefined): boolean {
+  const normalized = (flag ?? "true").trim().toLowerCase();
+  return !["0", "false", "off", "no"].includes(normalized);
+}
+
 export function createUploadRoutes() {
   const app = new Hono<AppEnv>();
+
+  app.use("*", async (c, next) => {
+    if (isUploadsLocked(c.env.LOCK_UPLOAD_ENDPOINTS)) {
+      throw new ApiError(
+        503,
+        "UPLOADS_TEMPORARILY_DISABLED",
+        "Upload endpoints are temporarily disabled during stabilization."
+      );
+    }
+    await next();
+  });
 
   app.post("/presign", requireAuth, rateLimit("auth"), async (c) => {
     const user = c.get("authUser");

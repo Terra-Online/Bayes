@@ -28,8 +28,6 @@ const FORWARDED_HEADER_ALLOWLIST = [
   "accept-language",
   "content-type",
   "cf-connecting-ip",
-  "x-forwarded-for",
-  "x-real-ip",
   "x-request-id",
   "x-oem-locale",
   "origin",
@@ -400,15 +398,6 @@ export function createAuthRoutes() {
     }
 
     const email = normalizeEmail(rawEmail);
-    const existingAuthUser = await c.env.DB
-      .prepare("SELECT id FROM auth_users WHERE email = ?1 LIMIT 1")
-      .bind(email)
-      .first<{ id: string }>();
-
-    if (!existingAuthUser?.id) {
-      throw new ApiError(404, "USER_NOT_FOUND", "User not found.");
-    }
-
     payload.email = email;
     return forwardToAuthJsonPath(c, "/sign-in/email", payload);
   });
@@ -417,10 +406,10 @@ export function createAuthRoutes() {
     return forwardToAuthRawRequest(c);
   });
 
-  app.post("/forget-password", rateLimit("public"), async (c) => {
-    let body: unknown;
-    try {
-      body = await c.req.json();
+  app.post("/forget-password", rateLimit("reset-send"), async (c) => {
+      let body: unknown;
+      try {
+        body = await c.req.json();
     } catch {
       throw new ApiError(422, "VALIDATION_ERROR", "Request body must be valid JSON.");
     }
@@ -438,18 +427,6 @@ export function createAuthRoutes() {
         }
       : undefined;
 
-    const user = await c.env.DB
-      .prepare("SELECT id FROM auth_users WHERE email = ?1 LIMIT 1")
-      .bind(email)
-      .first<{ id: string }>();
-
-    if (user?.id) {
-      await c.env.DB
-        .prepare("DELETE FROM auth_verifications WHERE value = ?1 AND identifier LIKE 'reset-password:%'")
-        .bind(user.id)
-        .run();
-    }
-
     return forwardToAuthJsonPath(
       c,
       "/request-password-reset",
@@ -463,7 +440,7 @@ export function createAuthRoutes() {
     );
   });
 
-  app.post("/request-password-reset", rateLimit("public"), async (c) => {
+    app.post("/request-password-reset", rateLimit("reset-send"), async (c) => {
     return forwardToAuthRawRequest(c);
   });
 
@@ -509,23 +486,14 @@ export function createAuthRoutes() {
       throw new ApiError(400, "INVALID_TOKEN", "Reset token is invalid or expired.");
     }
 
-    const user = await c.env.DB
-      .prepare("SELECT email FROM auth_users WHERE id = ?1 LIMIT 1")
-      .bind(verification.value)
-      .first<{ email: string }>();
-
-    if (!user?.email) {
-      throw new ApiError(404, "USER_NOT_FOUND", "User not found.");
-    }
-
-    return c.json({ email: user.email });
+    return c.json({ ok: true, tokenValid: true });
   });
 
-  app.get("/get-session", async (c) => {
+  app.get("/get-session", rateLimit("public"), async (c) => {
     return forwardToAuthRawRequest(c);
   });
 
-  app.post("/sign-out", async (c) => {
+  app.post("/sign-out", rateLimit("public"), async (c) => {
     return forwardToAuthRawRequest(c);
   });
 
@@ -541,7 +509,7 @@ export function createAuthRoutes() {
     return forwardToAuthRawRequest(c);
   });
 
-  app.get("/session", requireAuth, async (c) => {
+  app.get("/session", requireAuth, rateLimit("auth"), async (c) => {
     const user = c.get("authUser");
     if (!user) {
       throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
@@ -550,7 +518,7 @@ export function createAuthRoutes() {
     return c.json({ user: toSessionUser(user) });
   });
 
-  app.patch("/profile", requireAuth, async (c) => {
+  app.patch("/profile", requireAuth, rateLimit("auth"), async (c) => {
     const user = c.get("authUser");
     if (!user) {
       throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
