@@ -53,6 +53,21 @@ function parseOrigins(raw: string | undefined, baseUrl: string | undefined): str
   return parsed.length > 0 ? parsed : DEFAULT_TRUSTED_ORIGINS;
 }
 
+function resolveCookieAttributes(baseUrl: string | undefined):
+  | { sameSite: 'none'; secure: true }
+  | undefined {
+  if (isLocalBaseUrl(baseUrl)) {
+    return undefined;
+  }
+
+  // CN frontend (opendfieldmap.cn) calling ORG API (api.opendfieldmap.org)
+  // is cross-site. Browsers only send cookies for XHR/fetch when SameSite=None.
+  return {
+    sameSite: 'none',
+    secure: true,
+  };
+}
+
 function generateNumericOtp(length: number): string {
   const bytes = new Uint8Array(length);
   crypto.getRandomValues(bytes);
@@ -164,6 +179,7 @@ function pickOptionalProvider(
 export function createAuth(env: Bindings) {
   initResend(env);
   const trustedOrigins = parseOrigins(env.TRUSTED_ORIGINS ?? env.CORS_ORIGINS, env.BETTER_AUTH_URL);
+  const defaultCookieAttributes = resolveCookieAttributes(env.BETTER_AUTH_URL);
 
   const socialProviders: {
     discord: { clientId: string; clientSecret: string; prompt: 'consent' };
@@ -272,6 +288,7 @@ export function createAuth(env: Bindings) {
       }),
     ],
     advanced: {
+      defaultCookieAttributes,
       ipAddress: {
         ipAddressHeaders: ['cf-connecting-ip'],
         ipv6Subnet: 64,
