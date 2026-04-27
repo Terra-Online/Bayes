@@ -252,6 +252,35 @@ export function createAuthRoutes() {
     return auth.handler(request);
   };
 
+  const forwardPasswordResetRequest = (
+    c: AuthRouteContext,
+    payload: {
+      email: string;
+      redirectTo: string;
+      locale?: string;
+    },
+  ) => {
+    const email = normalizeEmail(payload.email);
+    const locale = payload.locale?.trim();
+    const requestHeaders = locale
+      ? {
+          "x-oem-locale": locale,
+        }
+      : undefined;
+
+    return forwardToAuthJsonPath(
+      c,
+      "/request-password-reset",
+      {
+        email,
+        redirectTo: payload.redirectTo,
+      },
+      {
+        headers: requestHeaders,
+      },
+    );
+  };
+
   const rollbackRegisterSideEffects = async (input: {
     env: AppEnv["Bindings"];
     sessionToken: string;
@@ -407,9 +436,9 @@ export function createAuthRoutes() {
   });
 
   app.post("/forget-password", rateLimit("reset-send"), async (c) => {
-      let body: unknown;
-      try {
-        body = await c.req.json();
+    let body: unknown;
+    try {
+      body = await c.req.json();
     } catch {
       throw new ApiError(422, "VALIDATION_ERROR", "Request body must be valid JSON.");
     }
@@ -419,29 +448,23 @@ export function createAuthRoutes() {
       throw new ApiError(422, "VALIDATION_ERROR", "Invalid payload.", parsed.error.flatten());
     }
 
-    const email = normalizeEmail(parsed.data.email);
-    const locale = parsed.data.locale?.trim();
-    const requestHeaders = locale
-      ? {
-          "x-oem-locale": locale,
-        }
-      : undefined;
-
-    return forwardToAuthJsonPath(
-      c,
-      "/request-password-reset",
-      {
-        email,
-        redirectTo: parsed.data.redirectTo,
-      },
-      {
-        headers: requestHeaders,
-      },
-    );
+    return forwardPasswordResetRequest(c, parsed.data);
   });
 
-    app.post("/request-password-reset", rateLimit("reset-send"), async (c) => {
-    return forwardToAuthRawRequest(c);
+  app.post("/request-password-reset", rateLimit("reset-send"), async (c) => {
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      throw new ApiError(422, "VALIDATION_ERROR", "Request body must be valid JSON.");
+    }
+
+    const parsed = requestPasswordResetSchema.safeParse(body);
+    if (!parsed.success) {
+      throw new ApiError(422, "VALIDATION_ERROR", "Invalid payload.", parsed.error.flatten());
+    }
+
+    return forwardPasswordResetRequest(c, parsed.data);
   });
 
   app.post("/reset-password", rateLimit("public"), async (c) => {
@@ -486,7 +509,17 @@ export function createAuthRoutes() {
       throw new ApiError(400, "INVALID_TOKEN", "Reset token is invalid or expired.");
     }
 
-    return c.json({ ok: true, tokenValid: true });
+    const user = await c.env.DB
+      .prepare("SELECT email FROM auth_users WHERE id = ?1 LIMIT 1")
+      .bind(verification.value)
+      .first<{ email: string }>();
+
+    const email = typeof user?.email === "string" ? normalizeEmail(user.email) : "";
+    if (!email) {
+      throw new ApiError(400, "INVALID_TOKEN", "Reset token is invalid or expired.");
+    }
+
+    return c.json({ ok: true, tokenValid: true, email });
   });
 
   app.get("/get-session", rateLimit("public"), async (c) => {
