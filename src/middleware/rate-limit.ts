@@ -6,13 +6,14 @@ import type { AppEnv } from "../types/app";
 const OTP_SEND_IP_LIMIT_PER_MINUTE = 20;
 const OTP_SEND_EMAIL_LIMIT_PER_HOUR = 8;
 const AUTH_LIMIT_PER_MINUTE = 120;
+const BINDING_LIMIT_PER_MINUTE = 80;
 const PUBLIC_LIMIT_PER_MINUTE = 80;
 const RESET_SEND_LIMIT_PER_MINUTE = 80;
 const EMAIL_COOLDOWN_SECONDS = 100;
 const ONE_MINUTE_MS = 60 * 1000;
 const ONE_HOUR_MS = 60 * ONE_MINUTE_MS;
 
-type RateLimitScope = "public" | "auth" | "otp-send" | "reset-send";
+type RateLimitScope = "public" | "auth" | "binding" | "otp-send" | "reset-send";
 
 interface SlidingWindowResult {
   count: number;
@@ -31,6 +32,10 @@ function getWindowMs(scope: RateLimitScope): number {
 function getScopeLimit(scope: RateLimitScope): number {
   if (scope === "auth") {
     return AUTH_LIMIT_PER_MINUTE;
+  }
+
+  if (scope === "binding") {
+    return BINDING_LIMIT_PER_MINUTE;
   }
 
   if (scope === "otp-send") {
