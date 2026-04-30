@@ -453,6 +453,13 @@ export async function getEndfieldRoles(provider: EndfieldProvider, cred: string,
     }
   });
 
+  if (response.status === 404) {
+    throw new ApiError(404, "ENDFIELD_ROLE_NOT_FOUND", "No Endfield roles found on this account.", {
+      upstreamStatus: response.status,
+      provider
+    });
+  }
+
   const data = await parseApiEnvelope<PlayerBindingData>(response);
   const entry = (data.list ?? []).find((item) => item.appCode === "endfield");
   const roles = entry?.bindingList?.[0]?.roles ?? [];
