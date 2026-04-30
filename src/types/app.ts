@@ -28,7 +28,6 @@ export interface Bindings {
   LOCK_UPLOAD_ENDPOINTS?: string;
   LOCK_SCHEDULED_JOBS?: string;
   ENDFIELD_CREDENTIAL_SECRET?: string;
-  ENDFIELD_POSITION_CACHE_TTL_SECONDS?: string;
 }
 
 export interface AuthUser {

@@ -3,7 +3,7 @@ import { cors } from "hono/cors";
 import { onAppError } from "./middleware/error-handler";
 import { requestIdMiddleware } from "./middleware/request-id";
 import { createAuthRoutes } from "./routes/auth";
-import { createBindingRoutes } from "./routes/binding";
+import { createBindingRoutes, createLocatorRoutes } from "./routes/binding";
 import { createHealthRoutes } from "./routes/health";
 import { createModerationRoutes } from "./routes/moderation";
 import { createProgressRoutes } from "./routes/progress";
@@ -76,6 +76,7 @@ export function createApp() {
   app.route("/health/v1", createHealthRoutes());
   app.route("/auth/v1", createAuthRoutes());
   app.route("/binding/v1", createBindingRoutes());
+  app.route("/locator", createLocatorRoutes());
   app.route("/progress/v1", createProgressRoutes());
   app.route("/uploads/v1", createUploadRoutes());
   app.route("/moderation/v1", createModerationRoutes());

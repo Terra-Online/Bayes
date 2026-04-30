@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { ApiError } from "./errors";
+import { ApiError, isApiError } from "./errors";
 
 const textEncoder = new TextEncoder();
 
@@ -392,7 +392,23 @@ export async function grantEndfieldOAuthCode(provider: EndfieldProvider, account
     })
   });
 
-  const data = await parseAuthEnvelope<OauthGrantData>(response);
+  let data: OauthGrantData;
+  try {
+    data = await parseAuthEnvelope<OauthGrantData>(response);
+  } catch (error) {
+    if (provider === "skport" && isApiError(error) && error.code === "ENDFIELD_AUTH_REJECTED") {
+      throw new ApiError(
+        401,
+        "ENDFIELD_GRYPHLINE_TOKEN_INVALID",
+        "Invalid Gryphline account token. Please copy the full response from https://web-api.gryphline.com/cookie_store/account_token.",
+        {
+          expectedTokenSource: "https://web-api.gryphline.com/cookie_store/account_token",
+          rejectedAuthBaseUrl: hosts.authBaseUrl
+        }
+      );
+    }
+    throw error;
+  }
   if (!data.code) {
     throw new ApiError(502, "ENDFIELD_CODE_MISSING", "OAuth grant response did not include a code.");
   }
@@ -490,4 +506,44 @@ export async function getEndfieldPosition(args: {
   });
 
   return parseApiEnvelope<EndfieldPositionData>(response, { positionRequest: true });
+}
+
+export async function agreePolicy(args: {
+  provider: EndfieldProvider;
+  roleId: string;
+  serverId: number;
+  cred: string;
+  token: string;
+}): Promise<void> {
+  const hosts = getEndfieldHosts(args.provider);
+  const path = "/web/v1/game/endfield/map/agree-policy";
+  const body = JSON.stringify({
+    roleId: args.roleId,
+    serverId: String(args.serverId)
+  });
+  const timestamp = String(Math.floor(Date.now() / 1000));
+  const sign = await getSignature(path, timestamp, args.token, body);
+  const origin = args.provider === "skland"
+    ? "https://game.skland.com"
+    : "https://game.skport.com";
+
+  const response = await fetch(buildUrl(hosts.baseUrl, path), {
+    method: "POST",
+    headers: {
+      accept: "*/*",
+      "content-type": "application/json",
+      cred: args.cred,
+      origin,
+      platform: "3",
+      referer: `${origin}/`,
+      timestamp,
+      vname: "1.0.0",
+      sign,
+      "accept-language": "en-US",
+      "sk-language": "en"
+    },
+    body
+  });
+
+  await parseApiEnvelope<void>(response);
 }

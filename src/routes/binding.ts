@@ -2,6 +2,7 @@ import { Hono, type Context } from "hono";
 import { z } from "zod";
 import { createToken, decryptSecret, encryptSecret } from "../lib/crypto";
 import {
+  agreePolicy,
   generateEndfieldCredByCode,
   getEndfieldPosition,
   getEndfieldRoles,
@@ -40,7 +41,6 @@ type PendingEndfieldSession = {
 };
 
 const PENDING_TTL_SECONDS = 10 * 60;
-const DEFAULT_POSITION_CACHE_TTL_SECONDS = 2;
 
 const providerSchema = z.enum(["skland", "skport"]);
 const exchangeTokenSchema = z.object({
@@ -56,6 +56,10 @@ const bindRoleSchema = z.object({
   serverId: z.number().int().positive(),
   roleId: z.string().trim().min(1).max(128)
 });
+const agreeSchema = z.object({
+  serverId: z.union([z.number().int().positive(), z.string().trim().min(1).max(64)]).optional(),
+  roleId: z.string().trim().min(1).max(128).optional()
+}).optional();
 const roleOptionSchema = z.object({
   serverId: z.number().int().positive(),
   roleId: z.string(),
@@ -81,20 +85,8 @@ function getCredentialSecret(c: AppContext): string {
   return secret;
 }
 
-function getPositionCacheTtlSeconds(raw: string | undefined): number {
-  const parsed = Number.parseInt(raw ?? "", 10);
-  if (!Number.isFinite(parsed) || parsed < 0) {
-    return DEFAULT_POSITION_CACHE_TTL_SECONDS;
-  }
-  return Math.min(10, parsed);
-}
-
 function getPendingKey(uid: string, flowId: string): string {
   return `binding:endfield:pending:${uid}:${flowId}`;
-}
-
-function getPositionCacheKey(uid: string): string {
-  return `binding:endfield:position:${uid}`;
 }
 
 function publicBinding(row: EndfieldBindingRow | null) {
@@ -190,8 +182,9 @@ async function readPendingSession(
   }
 }
 
-function parseCachedJson<T>(raw: unknown): T {
-  return (typeof raw === "string" ? JSON.parse(raw) : raw) as T;
+function shouldIncludeBinding(c: AppContext): boolean {
+  const value = c.req.query("binding") ?? c.req.query("includeBinding");
+  return value === "1" || value === "true";
 }
 
 function requireUser(c: AppContext) {
@@ -200,6 +193,70 @@ function requireUser(c: AppContext) {
     throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
   }
   return user;
+}
+
+async function handleEndfieldPosition(c: AppContext) {
+  const user = requireUser(c);
+  const binding = await getBinding(c.env.DB, user.uid);
+  if (!binding) {
+    throw new ApiError(404, "ENDFIELD_BINDING_NOT_FOUND", "Endfield binding is not configured.");
+  }
+  if (binding.status !== "enabled") {
+    throw new ApiError(409, "ENDFIELD_BINDING_DISABLED", "Endfield binding is disabled.");
+  }
+
+  const includeBinding = shouldIncludeBinding(c);
+
+  const secret = getCredentialSecret(c);
+  const position = await getEndfieldPosition({
+    provider: binding.provider,
+    roleId: binding.role_id,
+    serverId: Number(binding.server_id),
+    cred: await decryptSecret(binding.cred_enc, secret),
+    token: await decryptSecret(binding.token_enc, secret)
+  });
+
+  return c.json({
+    data: position,
+    ...(includeBinding ? { binding: publicBinding(binding) } : {})
+  });
+}
+
+async function handleAgree(c: AppContext) {
+  const user = requireUser(c);
+  const binding = await getBinding(c.env.DB, user.uid);
+  if (!binding) {
+    throw new ApiError(404, "ENDFIELD_BINDING_NOT_FOUND", "Endfield binding is not configured.");
+  }
+  if (binding.status !== "enabled") {
+    throw new ApiError(409, "ENDFIELD_BINDING_DISABLED", "Endfield binding is disabled.");
+  }
+
+  const payload = await c.req.json().catch(() => undefined);
+  const parsed = agreeSchema.safeParse(payload);
+  if (!parsed.success) {
+    throw new ApiError(422, "VALIDATION_ERROR", "Invalid agree-policy payload.", parsed.error.flatten());
+  }
+
+  const reqRole = parsed.data?.roleId;
+  const reqServer = parsed.data?.serverId;
+  if (
+    (reqRole && reqRole !== binding.role_id)
+    || (reqServer !== undefined && Number(reqServer) !== Number(binding.server_id))
+  ) {
+    throw new ApiError(409, "ENDFIELD_BINDING_MISMATCH", "Policy authorization target does not match the current Endfield binding.");
+  }
+
+  const secret = getCredentialSecret(c);
+  await agreePolicy({
+    provider: binding.provider,
+    roleId: binding.role_id,
+    serverId: Number(binding.server_id),
+    cred: await decryptSecret(binding.cred_enc, secret),
+    token: await decryptSecret(binding.token_enc, secret)
+  });
+
+  return c.json({ ok: true, binding: publicBinding(binding) });
 }
 
 export function createBindingRoutes() {
@@ -285,48 +342,9 @@ export function createBindingRoutes() {
 
     const redis = createRedisClient(c.env);
     await redis.del(getPendingKey(user.uid, parsed.data.flowId));
-    await redis.del(getPositionCacheKey(user.uid));
 
     const binding = await getBinding(c.env.DB, user.uid);
     return c.json({ ok: true, binding: publicBinding(binding) });
-  });
-
-  app.get("/endfield/position", async (c) => {
-    const user = requireUser(c);
-    const binding = await getBinding(c.env.DB, user.uid);
-    if (!binding) {
-      throw new ApiError(404, "ENDFIELD_BINDING_NOT_FOUND", "Endfield binding is not configured.");
-    }
-    if (binding.status !== "enabled") {
-      throw new ApiError(409, "ENDFIELD_BINDING_DISABLED", "Endfield binding is disabled.");
-    }
-
-    const redis = createRedisClient(c.env);
-    const cacheKey = getPositionCacheKey(user.uid);
-    const cached = await redis.get<unknown>(cacheKey);
-    if (cached) {
-      return c.json(parseCachedJson(cached));
-    }
-
-    const secret = getCredentialSecret(c);
-    const position = await getEndfieldPosition({
-      provider: binding.provider,
-      roleId: binding.role_id,
-      serverId: Number(binding.server_id),
-      cred: await decryptSecret(binding.cred_enc, secret),
-      token: await decryptSecret(binding.token_enc, secret)
-    });
-
-    const payload = {
-      data: position,
-      binding: publicBinding(binding)
-    };
-    const ttl = getPositionCacheTtlSeconds(c.env.ENDFIELD_POSITION_CACHE_TTL_SECONDS);
-    if (ttl > 0) {
-      await redis.set(cacheKey, JSON.stringify(payload), { ex: ttl });
-    }
-
-    return c.json(payload);
   });
 
   app.post("/endfield/disable", async (c) => {
@@ -335,7 +353,6 @@ export function createBindingRoutes() {
       .prepare("UPDATE endfield_bindings SET status = 'disabled', updated_at = CURRENT_TIMESTAMP WHERE uid = ?1")
       .bind(user.uid)
       .run();
-    await createRedisClient(c.env).del(getPositionCacheKey(user.uid));
     const binding = await getBinding(c.env.DB, user.uid);
     return c.json({ ok: true, binding: publicBinding(binding) });
   });
@@ -343,9 +360,18 @@ export function createBindingRoutes() {
   app.post("/endfield/unlink", async (c) => {
     const user = requireUser(c);
     await c.env.DB.prepare("DELETE FROM endfield_bindings WHERE uid = ?1").bind(user.uid).run();
-    await createRedisClient(c.env).del(getPositionCacheKey(user.uid));
     return c.json({ ok: true, binding: publicBinding(null) });
   });
+
+  return app;
+}
+
+export function createLocatorRoutes() {
+  const app = new Hono<AppEnv>();
+
+  app.use("/*", requireAuth);
+  app.get("/position", handleEndfieldPosition);
+  app.post("/agree-policy", handleAgree);
 
   return app;
 }
