@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import deviceProfilePool from "./endfield-client-ua.json";
 import { ApiError, isApiError } from "./errors";
 
 const textEncoder = new TextEncoder();
@@ -24,6 +25,19 @@ export interface EndfieldPositionData {
   levelId: string;
   isOnline: boolean;
   mapId: string;
+}
+
+export interface EndfieldDeviceProfile {
+  version: 1;
+  userAgent: string;
+  secChUa?: string;
+  secChUaMobile?: string;
+  secChUaPlatform?: string;
+  deviceModel: string;
+  osVersion: string;
+  deviceType: string;
+  platform: "android" | "ios" | "windows";
+  deviceId: string;
 }
 
 type ApiEnvelope<T> = {
@@ -125,6 +139,10 @@ const HOSTS: Record<EndfieldProvider, EndfieldHostConfig> = {
   }
 };
 
+type EndfieldDeviceProfileTemplate = Omit<EndfieldDeviceProfile, "deviceId">;
+
+const DEVICE_PROFILE_POOL = deviceProfilePool as unknown as ReadonlyArray<EndfieldDeviceProfileTemplate>;
+
 function buildUrl(baseUrl: string, path: string): string {
   if (/^https?:\/\//.test(path)) {
     return path;
@@ -164,6 +182,67 @@ async function getSignature(path: string, timestamp: string, token: string, body
 
   const hmacHex = await hmacSha256Hex(path + body + timestamp + headerJson, token);
   return createHash("md5").update(hmacHex).digest("hex");
+}
+
+function createDeviceId(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  return Array.from(bytes)
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function isEndfieldDeviceProfile(value: unknown): value is EndfieldDeviceProfile {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Partial<EndfieldDeviceProfile>;
+  return candidate.version === 1
+    && typeof candidate.userAgent === "string"
+    && candidate.userAgent.length >= 32
+    && (candidate.secChUa === undefined || typeof candidate.secChUa === "string")
+    && (candidate.secChUaMobile === undefined || typeof candidate.secChUaMobile === "string")
+    && (candidate.secChUaPlatform === undefined || typeof candidate.secChUaPlatform === "string")
+    && typeof candidate.deviceModel === "string"
+    && candidate.deviceModel.length > 0
+    && typeof candidate.osVersion === "string"
+    && candidate.osVersion.length > 0
+    && typeof candidate.deviceType === "string"
+    && candidate.deviceType.length > 0
+    && typeof candidate.deviceId === "string"
+    && /^[a-f0-9]{16,64}$/i.test(candidate.deviceId)
+    && (candidate.platform === "android" || candidate.platform === "ios" || candidate.platform === "windows");
+}
+
+export function createEndfieldDeviceProfile(): EndfieldDeviceProfile {
+  const index = crypto.getRandomValues(new Uint32Array(1))[0] % DEVICE_PROFILE_POOL.length;
+  const base = DEVICE_PROFILE_POOL[index];
+  return {
+    ...base,
+    deviceId: createDeviceId()
+  };
+}
+
+export function parseEndfieldDeviceProfile(value: string | null | undefined): EndfieldDeviceProfile | null {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value);
+    return isEndfieldDeviceProfile(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+export function serializeEndfieldDeviceProfile(profile: EndfieldDeviceProfile): string {
+  return JSON.stringify({
+    version: profile.version,
+    platform: profile.platform,
+    deviceModel: profile.deviceModel,
+    osVersion: profile.osVersion,
+    deviceType: profile.deviceType,
+    deviceId: profile.deviceId,
+    userAgent: profile.userAgent,
+    ...(profile.secChUa ? { secChUa: profile.secChUa } : {}),
+    ...(profile.secChUaMobile ? { secChUaMobile: profile.secChUaMobile } : {}),
+    ...(profile.secChUaPlatform ? { secChUaPlatform: profile.secChUaPlatform } : {})
+  });
 }
 
 async function parseApiEnvelope<T>(response: Response, options: ApiEnvelopeOptions = {}): Promise<T> {
@@ -233,12 +312,18 @@ export function getEndfieldHosts(provider: EndfieldProvider): EndfieldHostConfig
   return HOSTS[provider];
 }
 
-function buildDeviceHeaders(deviceId: string): Record<string, string> {
+function buildDeviceHeaders(profile?: EndfieldDeviceProfile, deviceId = profile?.deviceId): Record<string, string> {
+  if (!profile) return {};
+
   return {
-    "x-deviceid": deviceId,
-    "x-devicemodel": "Chrome",
-    "x-devicetype": "7",
-    "x-osver": "Linux"
+    "user-agent": profile.userAgent,
+    ...(profile.secChUa ? { "sec-ch-ua": profile.secChUa } : {}),
+    ...(profile.secChUaMobile ? { "sec-ch-ua-mobile": profile.secChUaMobile } : {}),
+    ...(profile.secChUaPlatform ? { "sec-ch-ua-platform": profile.secChUaPlatform } : {}),
+    ...(deviceId ? { "x-deviceid": deviceId } : {}),
+    "x-devicemodel": profile.deviceModel,
+    "x-devicetype": profile.deviceType,
+    "x-osver": profile.osVersion
   };
 }
 
@@ -247,6 +332,7 @@ export async function requestEndfieldAccountTokenByEmailPassword(args: {
   email: string;
   password: string;
   captcha?: EndfieldCaptchaSolution;
+  deviceProfile?: EndfieldDeviceProfile;
 }): Promise<string> {
   const hosts = getEndfieldHosts(args.provider);
   const captchaPayload = args.captcha?.captcha
@@ -268,7 +354,8 @@ export async function requestEndfieldAccountTokenByEmailPassword(args: {
     headers: {
       "content-type": "application/json",
       "accept-language": "en-US",
-      "x-language": "en-us"
+      "x-language": "en-us",
+      ...buildDeviceHeaders(args.deviceProfile)
     },
     body: JSON.stringify({
       email: args.email,
@@ -295,14 +382,18 @@ export async function requestEndfieldAccountTokenByEmailPassword(args: {
   return token;
 }
 
-export async function sendSklandPhoneCodeBackup(phone: string, deviceId: string): Promise<void> {
+export async function sendSklandPhoneCodeBackup(
+  phone: string,
+  deviceId: string,
+  deviceProfile?: EndfieldDeviceProfile
+): Promise<void> {
   const hosts = getEndfieldHosts("skland");
   const response = await fetch(buildUrl(hosts.authBaseUrl, "/general/v1/send_phone_code"), {
     method: "POST",
     headers: {
       accept: "*/*",
       "content-type": "application/json;charset=UTF-8",
-      ...buildDeviceHeaders(deviceId)
+      ...buildDeviceHeaders(deviceProfile, deviceId)
     },
     body: JSON.stringify({
       phone,
@@ -313,14 +404,18 @@ export async function sendSklandPhoneCodeBackup(phone: string, deviceId: string)
   await parseAuthEnvelope<Record<string, unknown>>(response);
 }
 
-async function exchangePhoneTokenToCred(phoneToken: string, deviceId: string): Promise<GenerateCredData> {
+async function exchangePhoneTokenToCred(
+  phoneToken: string,
+  deviceId: string,
+  deviceProfile?: EndfieldDeviceProfile
+): Promise<GenerateCredData> {
   const hosts = getEndfieldHosts("skland");
   const grantResponse = await fetch(buildUrl(hosts.authBaseUrl, "/user/oauth2/v2/grant"), {
     method: "POST",
     headers: {
       accept: "*/*",
       "content-type": "application/json;charset=UTF-8",
-      ...buildDeviceHeaders(deviceId)
+      ...buildDeviceHeaders(deviceProfile, deviceId)
     },
     body: JSON.stringify({
       token: phoneToken,
@@ -329,13 +424,14 @@ async function exchangePhoneTokenToCred(phoneToken: string, deviceId: string): P
     })
   });
   const grant = await parseAuthEnvelope<OauthGrantData>(grantResponse);
-  return generateEndfieldCredByCode("skland", grant.code);
+  return generateEndfieldCredByCode("skland", grant.code, deviceProfile);
 }
 
 export async function generateSklandCredByPhoneCodeBackup(args: {
   phone: string;
   verificationCode: string;
   deviceId: string;
+  deviceProfile?: EndfieldDeviceProfile;
 }): Promise<GenerateCredData> {
   const hosts = getEndfieldHosts("skland");
   const response = await fetch(buildUrl(hosts.authBaseUrl, "/user/auth/v2/token_by_phone_code"), {
@@ -343,7 +439,7 @@ export async function generateSklandCredByPhoneCodeBackup(args: {
     headers: {
       accept: "*/*",
       "content-type": "application/json;charset=UTF-8",
-      ...buildDeviceHeaders(args.deviceId)
+      ...buildDeviceHeaders(args.deviceProfile, args.deviceId)
     },
     body: JSON.stringify({
       phone: args.phone,
@@ -352,13 +448,14 @@ export async function generateSklandCredByPhoneCodeBackup(args: {
     })
   });
   const data = await parseAuthEnvelope<PhoneCodeTokenData>(response);
-  return exchangePhoneTokenToCred(data.token, args.deviceId);
+  return exchangePhoneTokenToCred(data.token, args.deviceId, args.deviceProfile);
 }
 
 export async function generateSklandCredByPhonePasswordBackup(args: {
   phone: string;
   password: string;
   deviceId: string;
+  deviceProfile?: EndfieldDeviceProfile;
 }): Promise<GenerateCredData> {
   const hosts = getEndfieldHosts("skland");
   const response = await fetch(buildUrl(hosts.authBaseUrl, "/user/auth/v1/token_by_phone_password"), {
@@ -366,7 +463,7 @@ export async function generateSklandCredByPhonePasswordBackup(args: {
     headers: {
       accept: "*/*",
       "content-type": "application/json;charset=UTF-8",
-      ...buildDeviceHeaders(args.deviceId)
+      ...buildDeviceHeaders(args.deviceProfile, args.deviceId)
     },
     body: JSON.stringify({
       phone: args.phone,
@@ -374,16 +471,21 @@ export async function generateSklandCredByPhonePasswordBackup(args: {
     })
   });
   const data = await parseAuthEnvelope<PhoneCodeTokenData>(response);
-  return exchangePhoneTokenToCred(data.token, args.deviceId);
+  return exchangePhoneTokenToCred(data.token, args.deviceId, args.deviceProfile);
 }
 
-export async function grantEndfieldOAuthCode(provider: EndfieldProvider, accountToken: string): Promise<OauthGrantData> {
+export async function grantEndfieldOAuthCode(
+  provider: EndfieldProvider,
+  accountToken: string,
+  deviceProfile?: EndfieldDeviceProfile
+): Promise<OauthGrantData> {
   const hosts = getEndfieldHosts(provider);
   const response = await fetch(buildUrl(hosts.authBaseUrl, "/user/oauth2/v2/grant"), {
     method: "POST",
     headers: {
       accept: "*/*",
-      "content-type": "application/json;charset=UTF-8"
+      "content-type": "application/json;charset=UTF-8",
+      ...buildDeviceHeaders(deviceProfile)
     },
     body: JSON.stringify({
       token: accountToken,
@@ -415,13 +517,18 @@ export async function grantEndfieldOAuthCode(provider: EndfieldProvider, account
   return data;
 }
 
-export async function generateEndfieldCredByCode(provider: EndfieldProvider, code: string): Promise<GenerateCredData> {
+export async function generateEndfieldCredByCode(
+  provider: EndfieldProvider,
+  code: string,
+  deviceProfile?: EndfieldDeviceProfile
+): Promise<GenerateCredData> {
   const hosts = getEndfieldHosts(provider);
   const response = await fetch(buildUrl(hosts.baseUrl, "/web/v1/user/auth/generate_cred_by_code"), {
     method: "POST",
     headers: {
       "content-type": "application/json",
-      "accept-language": "en-US"
+      "accept-language": "en-US",
+      ...buildDeviceHeaders(deviceProfile)
     },
     body: JSON.stringify({ kind: 1, code })
   });
@@ -433,7 +540,12 @@ export async function generateEndfieldCredByCode(provider: EndfieldProvider, cod
   return data;
 }
 
-export async function getEndfieldRoles(provider: EndfieldProvider, cred: string, token: string): Promise<EndfieldRoleOption[]> {
+export async function getEndfieldRoles(
+  provider: EndfieldProvider,
+  cred: string,
+  token: string,
+  deviceProfile?: EndfieldDeviceProfile
+): Promise<EndfieldRoleOption[]> {
   const hosts = getEndfieldHosts(provider);
   const path = "/api/v1/game/player/binding";
   const timestamp = String(Math.floor(Date.now() / 1000));
@@ -449,7 +561,8 @@ export async function getEndfieldRoles(provider: EndfieldProvider, cred: string,
       vname: "1.0.0",
       sign,
       "accept-language": "en-US",
-      "sk-language": "en"
+      "sk-language": "en",
+      ...buildDeviceHeaders(deviceProfile)
     }
   });
 
@@ -489,6 +602,7 @@ export async function getEndfieldPosition(args: {
   serverId: number;
   cred: string;
   token: string;
+  deviceProfile?: EndfieldDeviceProfile;
 }): Promise<EndfieldPositionData> {
   const hosts = getEndfieldHosts(args.provider);
   const path = "/web/v1/game/endfield/map/me/position";
@@ -508,7 +622,8 @@ export async function getEndfieldPosition(args: {
       timestamp,
       vname: "1.0.0",
       sign,
-      "accept-language": "en-US"
+      "accept-language": "en-US",
+      ...buildDeviceHeaders(args.deviceProfile)
     }
   });
 
@@ -521,6 +636,7 @@ export async function agreePolicy(args: {
   serverId: number;
   cred: string;
   token: string;
+  deviceProfile?: EndfieldDeviceProfile;
 }): Promise<void> {
   const hosts = getEndfieldHosts(args.provider);
   const path = "/web/v1/game/endfield/map/agree-policy";
@@ -547,7 +663,8 @@ export async function agreePolicy(args: {
       vname: "1.0.0",
       sign,
       "accept-language": "en-US",
-      "sk-language": "en"
+      "sk-language": "en",
+      ...buildDeviceHeaders(args.deviceProfile)
     },
     body
   });

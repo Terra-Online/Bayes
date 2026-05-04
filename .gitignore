@@ -144,6 +144,7 @@ desktop.ini
 PRD.md
 PROGRESS.md
 migrations/
+src/lib/endfield-client-ua.json
 
 # Cloudflare Workers local artifacts
 .wrangler/
