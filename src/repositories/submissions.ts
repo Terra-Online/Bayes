@@ -32,7 +32,7 @@ export type SubmissionStatus =
   | "pending_audit"
   | "active"
   | "flagged"
-  | "pending_removal"
+  | "remove_request"
   | "stale";
 
 export interface PublicSubmissionImage {
@@ -42,6 +42,7 @@ export interface PublicSubmissionImage {
   poiType: string;
   snapshotId: string;
   url: string;
+  filePath: string;
   content: string | null;
   createdAt: string;
 }
@@ -129,7 +130,7 @@ export async function createPendingSubmission(
       payload.userId,
       payload.content ?? null,
       payload.filePath,
-      payload.status ?? "pending_audit",
+      payload.status ?? "pending_openai",
       payload.mimeType,
       payload.sizeBytes
     )
@@ -192,7 +193,7 @@ export async function getReviewSubmissions(
            WHEN 'pending_openai' THEN 0
            WHEN 'pending_audit' THEN 0
            WHEN 'flagged' THEN 1
-           WHEN 'pending_removal' THEN 2
+           WHEN 'remove_request' THEN 2
            WHEN 'active' THEN 3
            ELSE 1
          END,
@@ -250,6 +251,21 @@ export async function getSubmissionById(db: D1Database, id: string): Promise<Sub
   return row ? mapSubmission(row) : null;
 }
 
+export async function getPublicSubmissionByFilePath(db: D1Database, filePath: string): Promise<SubmissionRecord | null> {
+  const row = await db
+    .prepare(
+      `SELECT *
+       FROM ugc_submissions
+       WHERE file_path = ?1
+         AND status IN ('active', 'flagged', 'remove_request')
+       LIMIT 1`
+    )
+    .bind(filePath)
+    .first<Record<string, unknown>>();
+
+  return row ? mapSubmission(row) : null;
+}
+
 export async function updateSubmissionStatus(
   db: D1Database,
   payload: {
@@ -291,7 +307,7 @@ export async function listActiveImagesByMarker(
   const limit = Math.min(Math.max(payload.limit ?? 6, 1), 24);
   const filters: string[] = [
     `poi_id IN (${placeholders})`,
-    "status = 'active'"
+    "status IN ('active', 'flagged', 'remove_request')"
   ];
   const extraBindings: Array<string | number> = [];
   if (payload.pathPrefix) {
@@ -322,6 +338,7 @@ export async function listActiveImagesByMarker(
       poiType: submission.poiType,
       snapshotId: submission.snapshotId,
       url: `${payload.assetBaseUrl}/${submission.filePath}`,
+      filePath: submission.filePath,
       content: submission.content,
       createdAt: submission.createdAt
     };
@@ -334,7 +351,7 @@ function mapStatus(value: unknown): SubmissionStatus {
     value === "pending_audit" ||
     value === "active" ||
     value === "flagged" ||
-    value === "pending_removal" ||
+    value === "remove_request" ||
     value === "stale"
   ) {
     return value;
@@ -347,6 +364,6 @@ export const ALL_STATUSES: SubmissionStatus[] = [
   "pending_audit",
   "active",
   "flagged",
-  "pending_removal",
+  "remove_request",
   "stale"
 ];

@@ -43,59 +43,102 @@ export async function moderateSubmissionOnce(
       break;
     }
 
-    const submission = await getSubmissionById(db, submissionId);
-    if (!submission || submission.status !== "pending_openai") {
-      continue;
-    }
-
-    if (options.skipAiModeration) {
-      await updateSubmissionStatus(db, {
-        id: submissionId,
-        status: "pending_audit",
-        moderationNote: "AI moderation skipped; waiting for manual audit."
-      });
+    if (await moderateSubmissionById(db, submissionId, options)) {
       processed += 1;
-      continue;
     }
-
-    if (!options.openAiApiKey) {
-      await updateSubmissionStatus(db, {
-        id: submissionId,
-        status: options.localAutoApprove ? "active" : "pending_audit",
-        moderationNote: options.localAutoApprove
-          ? "Local upload debug auto-approved (OPENAI_API_KEY missing)."
-          : "OpenAI moderation skipped in local mode; waiting for manual audit."
-      });
-      processed += 1;
-      continue;
-    }
-
-    let result: OpenAIModerationResult;
-    try {
-      result = await callOpenAIModeration(options.openAiApiKey, {
-        text: submission.content ?? "",
-        imageUrl: await resolveModerationImageUrl(options.ugcBucket, {
-          filePath: submission.filePath,
-          mimeType: submission.mimeType,
-          fallbackUrl: `${options.assetBaseUrl.replace(/\/$/, "")}/${submission.filePath}`
-        })
-      });
-    } catch (error) {
-      result = {
-        flagged: false,
-        categorySummary: `OpenAI moderation failed (${formatModerationError(error)}), sent to manual audit.`
-      };
-    }
-
-    await updateSubmissionStatus(db, {
-      id: submissionId,
-      status: result.flagged ? "stale" : "pending_audit",
-      moderationNote: result.categorySummary
-    });
-    processed += 1;
   }
 
   return processed;
+}
+
+export async function moderateSubmissionIds(
+  db: D1Database,
+  options: {
+    openAiApiKey?: string;
+    assetBaseUrl: string;
+    ugcBucket: R2Bucket;
+    skipAiModeration?: boolean;
+    localAutoApprove?: boolean;
+  },
+  submissionIds: string[],
+  maxRuntimeMs = 25_000
+): Promise<number> {
+  let processed = 0;
+  const startedAt = Date.now();
+  const ids = [...new Set(submissionIds.map((id) => id.trim()).filter(Boolean))];
+
+  for (const submissionId of ids) {
+    if (Date.now() - startedAt >= maxRuntimeMs) {
+      break;
+    }
+
+    if (await moderateSubmissionById(db, submissionId, options)) {
+      processed += 1;
+    }
+  }
+
+  return processed;
+}
+
+async function moderateSubmissionById(
+  db: D1Database,
+  submissionId: string,
+  options: {
+    openAiApiKey?: string;
+    assetBaseUrl: string;
+    ugcBucket: R2Bucket;
+    skipAiModeration?: boolean;
+    localAutoApprove?: boolean;
+  }
+): Promise<boolean> {
+  const submission = await getSubmissionById(db, submissionId);
+  if (!submission || submission.status !== "pending_openai") {
+    return false;
+  }
+
+  if (options.skipAiModeration) {
+    await updateSubmissionStatus(db, {
+      id: submissionId,
+      status: "pending_audit",
+      moderationNote: "AI moderation skipped; waiting for manual audit."
+    });
+    return true;
+  }
+
+  if (!options.openAiApiKey) {
+    await updateSubmissionStatus(db, {
+      id: submissionId,
+      status: options.localAutoApprove ? "active" : "pending_audit",
+      moderationNote: options.localAutoApprove
+        ? "Local upload debug auto-approved (OPENAI_API_KEY missing)."
+        : "OpenAI moderation skipped in local mode; waiting for manual audit."
+    });
+    return true;
+  }
+
+  let result: OpenAIModerationResult;
+  try {
+    result = await callOpenAIModeration(options.openAiApiKey, {
+      text: submission.content ?? "",
+      imageUrl: await resolveModerationImageUrl(options.ugcBucket, {
+        filePath: submission.filePath,
+        mimeType: submission.mimeType,
+        fallbackUrl: `${options.assetBaseUrl.replace(/\/$/, "")}/${submission.filePath}`
+      })
+    });
+  } catch (error) {
+    result = {
+      flagged: false,
+      categorySummary: `OpenAI moderation failed (${formatModerationError(error)}), sent to manual audit.`
+    };
+  }
+
+  await updateSubmissionStatus(db, {
+    id: submissionId,
+    status: result.flagged ? "stale" : "pending_audit",
+    moderationNote: result.categorySummary
+  });
+  return true;
 }
 
 async function resolveModerationImageUrl(

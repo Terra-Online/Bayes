@@ -3,10 +3,18 @@ import { nanoid } from "nanoid";
 import { z } from "zod";
 import { getRuntimeConfig } from "../lib/config";
 import { ApiError } from "../lib/errors";
+import { createRedisClient } from "../lib/redis";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { rateLimit } from "../middleware/rate-limit";
-import { createPendingSubmission, listActiveImagesByMarker } from "../repositories/submissions";
+import {
+  createPendingSubmission,
+  getPublicSubmissionByFilePath,
+  getSubmissionById,
+  listActiveImagesByMarker,
+  updateSubmissionStatus
+} from "../repositories/submissions";
 import { readImageDimensions } from "../services/image-metadata";
+import { enqueueModeration } from "../services/moderation";
 import { buildUploadObjectKey, extensionFromMime, normalizePathPart, prepareUploadImageForStorage } from "../services/upload";
 import type { AppEnv } from "../types/app";
 
@@ -48,6 +56,30 @@ function parseObjectKey(raw: string | undefined): string {
 }
 
 function parseObjectKeyFromRequestPath(path: string): string {
+  const publicMarker = "/uploads/v1/public-file/";
+  const localPublicMarker = "/public-file/";
+  const publicMarkerIndex = path.indexOf(publicMarker);
+  if (publicMarkerIndex >= 0) {
+    try {
+      return parseObjectKey(decodeURIComponent(path.slice(publicMarkerIndex + publicMarker.length)));
+    } catch (error) {
+      if (error instanceof ApiError) {
+        throw error;
+      }
+      throw new ApiError(422, "VALIDATION_ERROR", "Invalid image path.");
+    }
+  }
+  if (path.startsWith(localPublicMarker)) {
+    try {
+      return parseObjectKey(decodeURIComponent(path.slice(localPublicMarker.length)));
+    } catch (error) {
+      if (error instanceof ApiError) {
+        throw error;
+      }
+      throw new ApiError(422, "VALIDATION_ERROR", "Invalid image path.");
+    }
+  }
+
   const marker = "/uploads/v1/file/";
   const localMarker = "/file/";
   const markerIndex = path.indexOf(marker);
@@ -67,11 +99,26 @@ function parseObjectKeyFromRequestPath(path: string): string {
   }
 }
 
+function isLocalHostname(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+}
+
+function resolvePublicAssetBaseUrl(requestUrl: string, configuredBaseUrl: string): string {
+  const url = new URL(requestUrl);
+  if (isLocalHostname(url.hostname)) {
+    return `${url.origin}/uploads/v1/public-file`;
+  }
+  return configuredBaseUrl;
+}
+
 export function createUploadRoutes() {
   const app = new Hono<AppEnv>();
 
   app.use("*", async (c, next) => {
-    const isPublicImageRead = c.req.method === "GET" && c.req.path.endsWith("/uploads/v1/images");
+    const isPublicImageRead = c.req.method === "GET" && (
+      c.req.path.endsWith("/uploads/v1/images") ||
+      c.req.path.includes("/uploads/v1/public-file/")
+    );
     if (!isPublicImageRead && isUploadsLocked(c.env.LOCK_UPLOAD_ENDPOINTS)) {
       throw new ApiError(
         503,
@@ -166,18 +213,43 @@ export function createUploadRoutes() {
       filePath: objectKey,
       mimeType: preparedImage.mimeType,
       sizeBytes: preparedImage.sizeBytes,
-      status: "pending_audit"
+      status: "pending_openai"
     });
+    await enqueueModeration(createRedisClient(c.env), submissionId);
 
     return c.json({
       ok: true,
       submission: {
         id: submissionId,
         markerId: parsed.data.markerId,
-        status: "pending_audit",
+        status: "pending_openai",
         filePath: objectKey,
         snapshotId
       }
+    });
+  });
+
+  app.get("/public-file/*", rateLimit("public"), async (c) => {
+    const objectKey = parseObjectKeyFromRequestPath(c.req.path);
+    const submission = await getPublicSubmissionByFilePath(c.env.DB, objectKey);
+    if (!submission) {
+      throw new ApiError(404, "IMAGE_NOT_FOUND", "Image file was not found.");
+    }
+
+    const object = await c.env.UGC_BUCKET.get(objectKey);
+    if (!object) {
+      throw new ApiError(404, "IMAGE_NOT_FOUND", "Image file was not found.");
+    }
+
+    const headers = new Headers();
+    object.writeHttpMetadata(headers);
+    headers.set("etag", object.httpEtag);
+    headers.set("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
+    headers.set("Content-Type", object.httpMetadata?.contentType ?? submission.mimeType ?? "application/octet-stream");
+
+    return new Response(object.body, {
+      status: 200,
+      headers
     });
   });
 
@@ -198,6 +270,72 @@ export function createUploadRoutes() {
       status: 200,
       headers
     });
+  });
+
+  app.post("/images/:id/flag", requireAuth, rateLimit("auth"), async (c) => {
+    const user = c.get("authUser");
+    const submissionId = c.req.param("id");
+    if (!user) {
+      throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
+    }
+    if (!submissionId) {
+      throw new ApiError(422, "VALIDATION_ERROR", "Submission id is required.");
+    }
+
+    const submission = await getSubmissionById(c.env.DB, submissionId);
+    if (!submission) {
+      throw new ApiError(404, "SUBMISSION_NOT_FOUND", "Submission was not found.");
+    }
+    if (submission.userId === user.uid) {
+      throw new ApiError(403, "CANNOT_FLAG_OWN_SUBMISSION", "You cannot flag your own image.");
+    }
+    if (submission.status !== "active") {
+      throw new ApiError(409, "INVALID_STATUS_TRANSITION", "Only active images can be flagged.", {
+        from: submission.status,
+        to: "flagged"
+      });
+    }
+
+    await updateSubmissionStatus(c.env.DB, {
+      id: submissionId,
+      status: "flagged",
+      moderationNote: "Flagged by user."
+    });
+
+    return c.json({ ok: true, status: "flagged" });
+  });
+
+  app.post("/images/:id/remove-request", requireAuth, rateLimit("auth"), async (c) => {
+    const user = c.get("authUser");
+    const submissionId = c.req.param("id");
+    if (!user) {
+      throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
+    }
+    if (!submissionId) {
+      throw new ApiError(422, "VALIDATION_ERROR", "Submission id is required.");
+    }
+
+    const submission = await getSubmissionById(c.env.DB, submissionId);
+    if (!submission) {
+      throw new ApiError(404, "SUBMISSION_NOT_FOUND", "Submission was not found.");
+    }
+    if (submission.userId !== user.uid) {
+      throw new ApiError(403, "REMOVE_REQUEST_OWNER_ONLY", "Only the uploader can request image removal.");
+    }
+    if (submission.status !== "active") {
+      throw new ApiError(409, "INVALID_STATUS_TRANSITION", "Only active images can receive a remove request.", {
+        from: submission.status,
+        to: "remove_request"
+      });
+    }
+
+    await updateSubmissionStatus(c.env.DB, {
+      id: submissionId,
+      status: "remove_request",
+      moderationNote: "Removal requested by uploader."
+    });
+
+    return c.json({ ok: true, status: "remove_request" });
   });
 
   app.get("/images", rateLimit("public"), async (c) => {
@@ -225,7 +363,7 @@ export function createUploadRoutes() {
     const excludePathPrefix = parsed.data.scope === "prod" ? "_test" : undefined;
     const images = await listActiveImagesByMarker(c.env.DB, {
       markerIds: ids,
-      assetBaseUrl: config.ugcAssetBaseUrl,
+      assetBaseUrl: resolvePublicAssetBaseUrl(c.req.url, config.ugcAssetBaseUrl),
       pathPrefix,
       excludePathPrefix,
       limit: parsed.data.limit ?? 6

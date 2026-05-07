@@ -19,6 +19,7 @@ PROGRESS_CACHE_TTL_SECONDS="604800"
 UPLOAD_URL_TTL_SECONDS="900"
 ALLOWED_UPLOAD_MIME="image/jpeg,image/png,image/webp"
 MAX_UPLOAD_BYTES="15728640"
+UGC_ASSET_BASE_URL="http://localhost:8787/uploads/v1/public-file"
 
 RESEND_AUTH_KEY=""
 RESEND_FROM_EMAIL="noreply@opendfieldmap.org"

@@ -86,7 +86,7 @@ export function getRuntimeConfig(env: Bindings): RuntimeConfig {
     ugcUploadPathPrefix: normalizeUploadPrefix(
       env.UGC_UPLOAD_TEST_PREFIX ?? (isLocalBackendUrl(env.BETTER_AUTH_URL) ? DEFAULT_TEST_UPLOAD_PREFIX : "")
     ),
-    skipAiModeration: parseBoolean(env.SKIP_AI_MODERATION, true),
+    skipAiModeration: parseBoolean(env.SKIP_AI_MODERATION, false),
     localUploadAutoApprove: ["1", "true", "on", "yes"].includes(localAutoApprove)
   };
 }

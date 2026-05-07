@@ -15,11 +15,11 @@ import {
   updateSubmissionStatus,
   type SubmissionStatus
 } from "../repositories/submissions";
-import { ensureModerationBackfill, moderateSubmissionOnce } from "../services/moderation";
+import { ensureModerationBackfill, moderateSubmissionIds, moderateSubmissionOnce } from "../services/moderation";
 import type { AppEnv } from "../types/app";
 
 const updateSchema = z.object({
-  status: z.enum(["pending_openai", "pending_audit", "active", "flagged", "pending_removal", "stale"]),
+  status: z.enum(["pending_openai", "pending_audit", "active", "flagged", "remove_request", "stale"]),
   moderationNote: z.string().max(500).optional()
 });
 
@@ -28,13 +28,17 @@ const listSchema = z.object({
   limit: z.coerce.number().int().min(1).max(500).optional()
 });
 
+const runSelectedSchema = z.object({
+  ids: z.array(z.string().min(1).max(64)).min(1).max(500)
+});
+
 const STATUS_TRANSITIONS: Record<SubmissionStatus, SubmissionStatus[]> = {
-  pending_openai: ["pending_audit", "active", "flagged", "stale"],
-  pending_audit: ["active", "flagged", "stale"],
-  active: ["pending_removal", "pending_audit", "stale"],
-  flagged: ["pending_audit", "stale"],
-  pending_removal: ["active", "stale"],
-  stale: ["pending_audit", "active"]
+  pending_openai: ["pending_audit", "stale"],
+  pending_audit: ["active", "stale"],
+  active: ["stale"],
+  flagged: ["active", "stale"],
+  remove_request: ["active", "stale"],
+  stale: ["active"]
 };
 
 function isModerationLocked(flag: string | undefined): boolean {
@@ -180,8 +184,34 @@ export function createModerationRoutes() {
         skipAiModeration: config.skipAiModeration,
         localAutoApprove: config.localUploadAutoApprove
       },
-      3,
-      12_000
+      10,
+      25_000
+    );
+
+    return c.json({
+      ok: true,
+      processed
+    });
+  });
+
+  app.post("/run-selected", requireAuth, requireRole(["a"]), rateLimit("auth"), async (c) => {
+    const parsed = runSelectedSchema.safeParse(await c.req.json());
+    if (!parsed.success) {
+      throw new ApiError(422, "VALIDATION_ERROR", "Invalid moderation selection.", parsed.error.flatten());
+    }
+
+    const config = getRuntimeConfig(c.env);
+    const processed = await moderateSubmissionIds(
+      c.env.DB,
+      {
+        openAiApiKey: c.env.OPENAI_API_KEY,
+        assetBaseUrl: config.ugcAssetBaseUrl,
+        ugcBucket: c.env.UGC_BUCKET,
+        skipAiModeration: config.skipAiModeration,
+        localAutoApprove: config.localUploadAutoApprove
+      },
+      parsed.data.ids,
+      25_000
     );
 
     return c.json({
