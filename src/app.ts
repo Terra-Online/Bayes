@@ -13,13 +13,16 @@ import type { AppEnv } from "./types/app";
 const DEFAULT_CORS_ORIGINS = [
   "https://opendfieldmap.org",
   "https://www.opendfieldmap.org",
+  "https://admin.opendfieldmap.org",
   "https://opendfieldmap.cn",
   "https://www.opendfieldmap.cn"
 ];
 
 const LOCAL_CORS_ORIGINS = [
   "http://localhost:5173",
-  "http://127.0.0.1:5173"
+  "http://127.0.0.1:5173",
+  "http://localhost:5429",
+  "http://127.0.0.1:5429"
 ];
 
 function isLocalBackendUrl(raw: string | undefined): boolean {
@@ -64,7 +67,7 @@ export function createApp() {
           ? origin
           : (allowedOrigins[0] ?? DEFAULT_CORS_ORIGINS[0]!);
       },
-      allowMethods: ["GET", "POST", "PUT", "PATCH", "OPTIONS"],
+      allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
       allowHeaders: ["Content-Type", "Authorization", "x-request-id", "x-oem-locale"],
       credentials: true,
       maxAge: 86400

@@ -19,6 +19,10 @@ export interface Bindings {
   UPLOAD_URL_TTL_SECONDS?: string;
   ALLOWED_UPLOAD_MIME?: string;
   MAX_UPLOAD_BYTES?: string;
+  UGC_ASSET_BASE_URL?: string;
+  UGC_UPLOAD_TEST_PREFIX?: string;
+  SKIP_AI_MODERATION?: string;
+  LOCAL_UPLOAD_AUTO_APPROVE?: string;
   RESEND_AUTH_KEY?: string;
   RESEND_FROM_EMAIL?: string;
   RESEND_FROM_NAME?: string;

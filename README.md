@@ -42,11 +42,12 @@ This is a foundation implementation based on PRD and is intentionally incrementa
 - Session endpoints: /auth/v1/session, /auth/v1/logout
 - GET /progress/v1/state
 - POST /progress/v1/sync
-- POST /uploads/v1/presign
-- PUT /uploads/v1/direct/:ticketId
+- POST /uploads/v1/images
+- GET /uploads/v1/images
 - GET /moderation/v1/pending (pioneer/admin)
 - PATCH /moderation/v1/:id/status (pioneer/admin)
 - POST /moderation/v1/run-once (admin)
+- DELETE /moderation/v1/stale (admin)
 
 ## User Group and Karma Model
 
@@ -143,6 +144,8 @@ pnpm exec wrangler d1 execute DB --local --command "UPDATE users SET progress_ve
 
 pnpm run dev
 
+Wrangler local dev writes D1/R2 data to `.wrangler/state`. Uploaded UGC objects will not be visible through `https://assets.opendfieldmap.org/...` in this mode. Use `pnpm run dev:remote` when local requests must write to the real Cloudflare R2 bucket.
+
 Default endpoint:
 
 - https://api.opendfieldmap.org
@@ -233,8 +236,7 @@ Manual OTP end-to-end helper script (interactive):
 
 ### 5) Upload and moderation smoke test
 
-- POST /uploads/v1/presign
-- PUT binary to returned uploadUrl with matching content-type
+- POST multipart image to /uploads/v1/images with markerId, poiHash, poiType, and file
 - Verify submission appears in GET /moderation/v1/pending (pioneer/admin role)
 - POST /moderation/v1/run-once as admin
 
@@ -270,7 +272,7 @@ Manual OTP end-to-end helper script (interactive):
 - Auth flow: Better Auth social sign-in (google/discord) -> session -> logout
 - Progress flow: cold read fallback to D1 and Redis backfill
 - Sync flow: stale version conflict and valid version acceptance
-- Upload flow: presign ticket + direct upload + pending submission creation
+- Upload flow: multipart image upload + Worker-side image normalization + pending submission creation
 - Moderation flow: queue consumption and status update
 
 ### End-to-end scenario

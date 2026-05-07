@@ -1,4 +1,5 @@
 import { createRedisClient } from './lib/redis';
+import { getRuntimeConfig } from './lib/config';
 import { flushDirtyProgressToD1 } from './services/progress';
 import { ensureModerationBackfill, moderateSubmissionOnce } from './services/moderation';
 import { createApp } from './app';
@@ -26,10 +27,22 @@ async function runScheduledJobs(env: Bindings): Promise<void> {
   }
 
   const redis = createRedisClient(env);
+  const config = getRuntimeConfig(env);
 
   const flushed = await flushDirtyProgressToD1(env.DB, redis, 100);
   const enqueued = await ensureModerationBackfill(env.DB, redis, 20);
-  const processed = await moderateSubmissionOnce(env.DB, redis, env.OPENAI_API_KEY, 10);
+  const processed = await moderateSubmissionOnce(
+    env.DB,
+    redis,
+    {
+      openAiApiKey: env.OPENAI_API_KEY,
+      assetBaseUrl: config.ugcAssetBaseUrl,
+      ugcBucket: env.UGC_BUCKET,
+      skipAiModeration: config.skipAiModeration,
+      localAutoApprove: config.localUploadAutoApprove,
+    },
+    10
+  );
 
   console.warn('cron jobs completed', {
     flushed,
