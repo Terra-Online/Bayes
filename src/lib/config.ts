@@ -10,6 +10,7 @@ export interface RuntimeConfig {
   ugcUploadPathPrefix: string;
   skipAiModeration: boolean;
   localUploadAutoApprove: boolean;
+  scheduledModerationEnabled: boolean;
 }
 
 const DEFAULT_SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
@@ -87,6 +88,7 @@ export function getRuntimeConfig(env: Bindings): RuntimeConfig {
       env.UGC_UPLOAD_TEST_PREFIX ?? (isLocalBackendUrl(env.BETTER_AUTH_URL) ? DEFAULT_TEST_UPLOAD_PREFIX : "")
     ),
     skipAiModeration: parseBoolean(env.SKIP_AI_MODERATION, false),
-    localUploadAutoApprove: ["1", "true", "on", "yes"].includes(localAutoApprove)
+    localUploadAutoApprove: ["1", "true", "on", "yes"].includes(localAutoApprove),
+    scheduledModerationEnabled: parseBoolean(env.ENABLE_SCHEDULED_MODERATION, false)
   };
 }

@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { z } from "zod";
 import { getRuntimeConfig } from "../lib/config";
 import { ApiError } from "../lib/errors";
@@ -30,6 +30,11 @@ const listSchema = z.object({
 
 const runSelectedSchema = z.object({
   ids: z.array(z.string().min(1).max(64)).min(1).max(500)
+});
+
+const runSchema = z.object({
+  ids: z.array(z.string().min(1).max(64)).min(1).max(500).optional(),
+  limit: z.coerce.number().int().min(1).max(20).optional()
 });
 
 const STATUS_TRANSITIONS: Record<SubmissionStatus, SubmissionStatus[]> = {
@@ -71,6 +76,57 @@ function assertStatusTransition(from: SubmissionStatus, to: SubmissionStatus): v
       allowed: STATUS_TRANSITIONS[from]
     });
   }
+}
+
+async function runModeration(
+  c: Context<AppEnv>,
+  payload: {
+    ids?: string[];
+    limit?: number;
+  }
+) {
+  const config = getRuntimeConfig(c.env);
+  const options = {
+    openAiApiKey: c.env.OPENAI_API_KEY,
+    assetBaseUrl: config.ugcAssetBaseUrl,
+    ugcBucket: c.env.UGC_BUCKET,
+    skipAiModeration: config.skipAiModeration,
+    localAutoApprove: config.localUploadAutoApprove
+  };
+
+  if (payload.ids && payload.ids.length > 0) {
+    const processed = await moderateSubmissionIds(
+      c.env.DB,
+      options,
+      payload.ids,
+      25_000
+    );
+
+    return {
+      ok: true,
+      mode: "selected" as const,
+      requested: payload.ids.length,
+      processed
+    };
+  }
+
+  const redis = createRedisClient(c.env);
+  const limit = payload.limit ?? 5;
+  await ensureModerationBackfill(c.env.DB, redis, limit);
+  const processed = await moderateSubmissionOnce(
+    c.env.DB,
+    redis,
+    options,
+    limit,
+    25_000
+  );
+
+  return {
+    ok: true,
+    mode: "queue" as const,
+    requested: limit,
+    processed
+  };
 }
 
 async function deleteR2Prefix(bucket: R2Bucket, prefix: string): Promise<number> {
@@ -170,28 +226,17 @@ export function createModerationRoutes() {
     return c.json({ ok: true });
   });
 
-  app.post("/run-once", requireAuth, requireRole(["a"]), rateLimit("auth"), async (c) => {
-    const redis = createRedisClient(c.env);
-    const config = getRuntimeConfig(c.env);
-    await ensureModerationBackfill(c.env.DB, redis, 20);
-    const processed = await moderateSubmissionOnce(
-      c.env.DB,
-      redis,
-      {
-        openAiApiKey: c.env.OPENAI_API_KEY,
-        assetBaseUrl: config.ugcAssetBaseUrl,
-        ugcBucket: c.env.UGC_BUCKET,
-        skipAiModeration: config.skipAiModeration,
-        localAutoApprove: config.localUploadAutoApprove
-      },
-      10,
-      25_000
-    );
+  app.post("/run", requireAuth, requireRole(["a"]), rateLimit("auth"), async (c) => {
+    const parsed = runSchema.safeParse(await c.req.json().catch(() => ({})));
+    if (!parsed.success) {
+      throw new ApiError(422, "VALIDATION_ERROR", "Invalid moderation run payload.", parsed.error.flatten());
+    }
 
-    return c.json({
-      ok: true,
-      processed
-    });
+    return c.json(await runModeration(c, parsed.data));
+  });
+
+  app.post("/run-once", requireAuth, requireRole(["a"]), rateLimit("auth"), async (c) => {
+    return c.json(await runModeration(c, { limit: 5 }));
   });
 
   app.post("/run-selected", requireAuth, requireRole(["a"]), rateLimit("auth"), async (c) => {
@@ -200,24 +245,7 @@ export function createModerationRoutes() {
       throw new ApiError(422, "VALIDATION_ERROR", "Invalid moderation selection.", parsed.error.flatten());
     }
 
-    const config = getRuntimeConfig(c.env);
-    const processed = await moderateSubmissionIds(
-      c.env.DB,
-      {
-        openAiApiKey: c.env.OPENAI_API_KEY,
-        assetBaseUrl: config.ugcAssetBaseUrl,
-        ugcBucket: c.env.UGC_BUCKET,
-        skipAiModeration: config.skipAiModeration,
-        localAutoApprove: config.localUploadAutoApprove
-      },
-      parsed.data.ids,
-      25_000
-    );
-
-    return c.json({
-      ok: true,
-      processed
-    });
+    return c.json(await runModeration(c, { ids: parsed.data.ids }));
   });
 
   app.delete("/test-images", requireAuth, requireRole(["a"]), rateLimit("auth"), async (c) => {

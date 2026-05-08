@@ -46,6 +46,7 @@ This is a foundation implementation based on PRD and is intentionally incrementa
 - GET /uploads/v1/images
 - GET /moderation/v1/pending (pioneer/admin)
 - PATCH /moderation/v1/:id/status (pioneer/admin)
+- POST /moderation/v1/run (admin)
 - POST /moderation/v1/run-once (admin)
 - DELETE /moderation/v1/stale (admin)
 
@@ -94,6 +95,7 @@ Then fill values in .dev.vars:
 - DISCORD_CLIENT_ID
 - DISCORD_CLIENT_SECRET
 - OPENAI_API_KEY (optional in local mode)
+- ENABLE_SCHEDULED_MODERATION (optional, default: false)
 - RESEND_AUTH_KEY
 - RESEND_FROM_EMAIL (optional, default: noreply@opendfieldmap.org)
 - EMAIL_TEMPLATE_DEFAULT_LOCALE (optional: zh-CN / zh-HK / en / ja / ko, default: en)

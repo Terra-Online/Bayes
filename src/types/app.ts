@@ -23,6 +23,7 @@ export interface Bindings {
   UGC_UPLOAD_TEST_PREFIX?: string;
   SKIP_AI_MODERATION?: string;
   LOCAL_UPLOAD_AUTO_APPROVE?: string;
+  ENABLE_SCHEDULED_MODERATION?: string;
   RESEND_AUTH_KEY?: string;
   RESEND_FROM_EMAIL?: string;
   RESEND_FROM_NAME?: string;

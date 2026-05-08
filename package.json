@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "wrangler dev",
     "dev:remote": "wrangler dev --remote",
-    "dev:local": "cp .dev.vars.local .dev.vars && wrangler dev",
+    "dev:local": "wrangler dev --env local",
     "deploy": "bash scripts/deploy-with-dev-vars.sh",
     "deploy:raw": "wrangler deploy",
     "typecheck": "tsc --noEmit",

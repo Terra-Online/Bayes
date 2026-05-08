@@ -358,6 +358,13 @@ export function createUploadRoutes() {
       throw new ApiError(422, "VALIDATION_ERROR", "markerId or markerIds is required.");
     }
 
+    const cache = await caches.open("ugc-images");
+    const cacheKey = new Request(c.req.url, { method: "GET" });
+    const cached = await cache.match(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
     const config = getRuntimeConfig(c.env);
     const pathPrefix = parsed.data.scope === "test" ? "_test" : undefined;
     const excludePathPrefix = parsed.data.scope === "prod" ? "_test" : undefined;
@@ -369,8 +376,10 @@ export function createUploadRoutes() {
       limit: parsed.data.limit ?? 6
     });
 
-    c.header("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
-    return c.json({ items: images });
+    const response = c.json({ items: images });
+    response.headers.set("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
+    c.executionCtx.waitUntil(cache.put(cacheKey, response.clone()));
+    return response;
   });
 
   return app;

@@ -30,24 +30,30 @@ async function runScheduledJobs(env: Bindings): Promise<void> {
   const config = getRuntimeConfig(env);
 
   const flushed = await flushDirtyProgressToD1(env.DB, redis, 100);
-  const enqueued = await ensureModerationBackfill(env.DB, redis, 20);
-  const processed = await moderateSubmissionOnce(
-    env.DB,
-    redis,
-    {
-      openAiApiKey: env.OPENAI_API_KEY,
-      assetBaseUrl: config.ugcAssetBaseUrl,
-      ugcBucket: env.UGC_BUCKET,
-      skipAiModeration: config.skipAiModeration,
-      localAutoApprove: config.localUploadAutoApprove,
-    },
-    10
-  );
+  let enqueued = 0;
+  let processed = 0;
+
+  if (config.scheduledModerationEnabled) {
+    enqueued = await ensureModerationBackfill(env.DB, redis, 20);
+    processed = await moderateSubmissionOnce(
+      env.DB,
+      redis,
+      {
+        openAiApiKey: env.OPENAI_API_KEY,
+        assetBaseUrl: config.ugcAssetBaseUrl,
+        ugcBucket: env.UGC_BUCKET,
+        skipAiModeration: config.skipAiModeration,
+        localAutoApprove: config.localUploadAutoApprove,
+      },
+      10
+    );
+  }
 
   console.warn('cron jobs completed', {
     flushed,
     enqueued,
     processed,
+    scheduledModerationEnabled: config.scheduledModerationEnabled,
     at: new Date().toISOString(),
   });
 }
