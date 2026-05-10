@@ -24,6 +24,8 @@ export interface Bindings {
   SKIP_AI_MODERATION?: string;
   LOCAL_UPLOAD_AUTO_APPROVE?: string;
   ENABLE_SCHEDULED_MODERATION?: string;
+  SURGE_MODE_ENABLED?: string;
+  SURGE_BACKOFF_MULTIPLIER?: string;
   RESEND_AUTH_KEY?: string;
   RESEND_FROM_EMAIL?: string;
   RESEND_FROM_NAME?: string;

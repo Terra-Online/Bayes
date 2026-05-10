@@ -146,6 +146,7 @@ PROGRESS.md
 UGC.md
 migrations/
 src/lib/endfield-client-ua.json
+src/lib/karma-config.json
 
 # Cloudflare Workers local artifacts
 .wrangler/

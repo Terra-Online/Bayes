@@ -1,4 +1,5 @@
 import type { Role } from "../types/app";
+import { pointsToKarma } from "../lib/karma";
 
 const UID_START = 100000;
 const NICKNAME_PATTERN = /^[A-Za-z0-9_-]{2,26}$/;
@@ -113,16 +114,6 @@ function normalizeRole(raw: unknown): Role {
     default:
       return "n";
   }
-}
-
-export function pointsToKarma(points: number): number {
-  const normalizedPoints = Number.isFinite(points) ? Math.max(0, Math.floor(points)) : 0;
-  if (normalizedPoints >= 1500) return 5;
-  if (normalizedPoints >= 800) return 4;
-  if (normalizedPoints >= 400) return 3;
-  if (normalizedPoints >= 200) return 2;
-  if (normalizedPoints >= 50) return 1;
-  return 0;
 }
 
 function normalizeEditableNickname(raw: string): string {
@@ -379,26 +370,40 @@ export async function updateProgressInD1(
   db: D1Database,
   uid: string,
   version: number,
-  marker: string,
-  pointsDelta: number
+  marker: string
 ): Promise<void> {
   await db
     .prepare(
       `UPDATE users
        SET progress_version = ?2,
            progress_marker = ?3,
-           points = points + ?4,
-           karma = CASE
-             WHEN points + ?4 >= 1500 THEN 5
-             WHEN points + ?4 >= 800 THEN 4
-             WHEN points + ?4 >= 400 THEN 3
-             WHEN points + ?4 >= 200 THEN 2
-             WHEN points + ?4 >= 50 THEN 1
-             ELSE 0
-           END,
            last_active = CURRENT_TIMESTAMP
        WHERE uid = ?1`
     )
-    .bind(uid, version, marker, pointsDelta)
+    .bind(uid, version, marker)
+    .run();
+}
+
+export async function applyUserPointsDelta(
+  db: D1Database,
+  uid: string,
+  pointsDelta: number
+): Promise<void> {
+  if (!Number.isFinite(pointsDelta)) {
+    return;
+  }
+
+  const delta = Math.floor(pointsDelta);
+  if (delta === 0) {
+    return;
+  }
+
+  await db
+    .prepare(
+      `UPDATE users
+       SET points = MAX(0, points + ?2)
+       WHERE uid = ?1`
+    )
+    .bind(uid, delta)
     .run();
 }

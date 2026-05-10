@@ -1,6 +1,6 @@
 {
-  "name": "bayes-backend",
-  "version": "0.1.0",
+  "name": "oem-backend",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "scripts": {

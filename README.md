@@ -59,14 +59,23 @@ This is a foundation implementation based on PRD and is intentionally incrementa
 	- s = suspend
 	- r = robot
 - points is internal-only and should not be returned to client payloads.
-- karma is derived from points and returned to client as 0-5.
+- karma is derived from an internal score and returned to client as 0-5.
+- Karma thresholds, upload rate bands, scoring inputs, and evaluation cadence live in `src/lib/karma-config.json`.
 - Current karma thresholds:
 	- 0: [0, 50)
 	- 1: [50, 200)
 	- 2: [200, 400)
 	- 3: [400, 800)
-	- 4: [800, 1500)
-	- 5: [1500, +inf)
+	- 4: [800, 2700)
+	- 5: [2700, +inf), never downgraded after reaching 5
+- Karma evaluation score is based on points, asymptotic passive activity points, image approval rate, and square-root long inactivity decay.
+- Passive activity alone can contribute at most 120 points, with 90 active-span days reaching 60 points.
+- Approved image/comment points use per-user daily backoff curves before being written to points.
+- Pioneer/admin users keep at least 1 point for each approved image/comment after daily backoff.
+- Surge mode is controlled by `SURGE_MODE_ENABLED`; when enabled, approved image/comment daily backoff nodes are multiplied by `SURGE_BACKOFF_MULTIPLIER` (default 3).
+- Moderation approval/rejection affects points directly; approved content counts are not added again during karma evaluation.
+- Karma is evaluated by scheduled jobs roughly every two days from a dirty-user queue plus a cursor-based whole-user sweep, not on every point write.
+- Upload and comment submissions use karma-based per-user rate limits.
 
 ## Local Development
 
@@ -134,9 +143,9 @@ Update group code by uid:
 
 pnpm exec wrangler d1 execute DB --local --command "UPDATE users SET role='p' WHERE uid='YOUR_UID';"
 
-Update points and recalc karma by uid:
+Update points by uid:
 
-pnpm exec wrangler d1 execute DB --local --command "UPDATE users SET points=900, karma=CASE WHEN 900 >= 1500 THEN 5 WHEN 900 >= 800 THEN 4 WHEN 900 >= 400 THEN 3 WHEN 900 >= 200 THEN 2 WHEN 900 >= 50 THEN 1 ELSE 0 END WHERE uid='YOUR_UID';"
+pnpm exec wrangler d1 execute DB --local --command "UPDATE users SET points=900 WHERE uid='YOUR_UID';"
 
 Reset one user progress:
 
@@ -239,6 +248,7 @@ Manual OTP end-to-end helper script (interactive):
 ### 5) Upload and moderation smoke test
 
 - POST multipart image to /uploads/v1/images with markerId, poiHash, poiType, and file
+- POST JSON comment to /uploads/v1/comments with markerId, poiHash, poiType, and content shorter than 200 characters
 - Verify submission appears in GET /moderation/v1/pending (pioneer/admin role)
 - POST /moderation/v1/run-once as admin
 

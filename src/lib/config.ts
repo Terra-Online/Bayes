@@ -11,6 +11,8 @@ export interface RuntimeConfig {
   skipAiModeration: boolean;
   localUploadAutoApprove: boolean;
   scheduledModerationEnabled: boolean;
+  surgeModeEnabled: boolean;
+  surgeBackoffMultiplier: number;
 }
 
 const DEFAULT_SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
@@ -19,6 +21,7 @@ const DEFAULT_UPLOAD_URL_TTL_SECONDS = 15 * 60;
 const DEFAULT_MAX_UPLOAD_BYTES = 15 * 1024 * 1024;
 const DEFAULT_UGC_ASSET_BASE_URL = "https://assets.opendfieldmap.org";
 const DEFAULT_TEST_UPLOAD_PREFIX = "_test";
+const DEFAULT_SURGE_BACKOFF_MULTIPLIER = 3;
 
 function parsePositiveInt(value: string | undefined, fallback: number): number {
   if (!value) {
@@ -89,6 +92,8 @@ export function getRuntimeConfig(env: Bindings): RuntimeConfig {
     ),
     skipAiModeration: parseBoolean(env.SKIP_AI_MODERATION, false),
     localUploadAutoApprove: ["1", "true", "on", "yes"].includes(localAutoApprove),
-    scheduledModerationEnabled: parseBoolean(env.ENABLE_SCHEDULED_MODERATION, false)
+    scheduledModerationEnabled: parseBoolean(env.ENABLE_SCHEDULED_MODERATION, false),
+    surgeModeEnabled: parseBoolean(env.SURGE_MODE_ENABLED, false),
+    surgeBackoffMultiplier: parsePositiveInt(env.SURGE_BACKOFF_MULTIPLIER, DEFAULT_SURGE_BACKOFF_MULTIPLIER)
   };
 }

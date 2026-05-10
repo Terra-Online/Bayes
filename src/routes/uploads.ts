@@ -11,6 +11,7 @@ import {
   getPublicSubmissionByFilePath,
   getSubmissionById,
   listActiveImagesByMarker,
+  listUserImagesByMarker,
   updateSubmissionStatus
 } from "../repositories/submissions";
 import { readImageDimensions } from "../services/image-metadata";
@@ -31,6 +32,18 @@ const imageUploadFieldsSchema = z.object({
   poiType: z.string().min(1).max(128),
   content: z.string().max(1000).optional()
 });
+
+const commentSubmissionSchema = z.object({
+  markerId: z.string().min(1).max(128),
+  poiHash: z.string().min(1).max(128),
+  poiType: z.string().min(1).max(128),
+  content: z.string().trim().min(1).max(199)
+});
+
+const TEST_UPLOAD_PREFIX = "_test";
+const BETA_FRONTEND_HOSTNAMES = new Set([
+  "beta.opendfieldmap.org"
+]);
 
 function isUploadsLocked(flag: string | undefined): boolean {
   const normalized = (flag ?? "true").trim().toLowerCase();
@@ -103,6 +116,64 @@ function isLocalHostname(hostname: string): boolean {
   return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
 }
 
+function isBetaFrontendRequest(request: Request): boolean {
+  const candidates = [request.headers.get("origin"), request.headers.get("referer")];
+
+  for (const candidate of candidates) {
+    if (!candidate) {
+      continue;
+    }
+
+    try {
+      const url = new URL(candidate);
+      if (BETA_FRONTEND_HOSTNAMES.has(url.hostname.toLowerCase())) {
+        return true;
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return false;
+}
+
+function resolveUploadPrefix(request: Request, configuredPrefix: string): string {
+  if (isBetaFrontendRequest(request)) {
+    return TEST_UPLOAD_PREFIX;
+  }
+  return configuredPrefix;
+}
+
+function resolveImageScope(
+  request: Request,
+  configuredPrefix: string,
+  scope: "test" | "prod" | undefined
+): { pathPrefix?: string; excludePathPrefix?: string } {
+  if (isBetaFrontendRequest(request) || configuredPrefix === TEST_UPLOAD_PREFIX) {
+    return { pathPrefix: TEST_UPLOAD_PREFIX };
+  }
+
+  if (scope === "test") {
+    return { pathPrefix: TEST_UPLOAD_PREFIX };
+  }
+
+  if (scope === "prod") {
+    return { excludePathPrefix: TEST_UPLOAD_PREFIX };
+  }
+
+  return {};
+}
+
+function resolveImageCacheNamespace(scope: { pathPrefix?: string; excludePathPrefix?: string }): string {
+  if (scope.pathPrefix === TEST_UPLOAD_PREFIX) {
+    return "test";
+  }
+  if (scope.excludePathPrefix === TEST_UPLOAD_PREFIX) {
+    return "prod";
+  }
+  return "default";
+}
+
 function resolvePublicAssetBaseUrl(requestUrl: string, configuredBaseUrl: string): string {
   const url = new URL(requestUrl);
   if (isLocalHostname(url.hostname)) {
@@ -115,11 +186,12 @@ export function createUploadRoutes() {
   const app = new Hono<AppEnv>();
 
   app.use("*", async (c, next) => {
-    const isPublicImageRead = c.req.method === "GET" && (
+    const isImageRead = c.req.method === "GET" && (
       c.req.path.endsWith("/uploads/v1/images") ||
+      c.req.path.endsWith("/uploads/v1/images/mine") ||
       c.req.path.includes("/uploads/v1/public-file/")
     );
-    if (!isPublicImageRead && isUploadsLocked(c.env.LOCK_UPLOAD_ENDPOINTS)) {
+    if (!isImageRead && isUploadsLocked(c.env.LOCK_UPLOAD_ENDPOINTS)) {
       throw new ApiError(
         503,
         "UPLOADS_TEMPORARILY_DISABLED",
@@ -129,7 +201,7 @@ export function createUploadRoutes() {
     await next();
   });
 
-  app.post("/images", requireAuth, rateLimit("auth"), async (c) => {
+  app.post("/images", requireAuth, rateLimit("upload"), async (c) => {
     const user = c.get("authUser");
     if (!user) {
       throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
@@ -184,12 +256,13 @@ export function createUploadRoutes() {
     const snapshotId = nanoid(12);
     const poiType = normalizePathPart(parsed.data.poiType);
     const poiHash = normalizePathPart(parsed.data.poiHash);
+    const uploadPrefix = resolveUploadPrefix(c.req.raw, config.ugcUploadPathPrefix);
     const objectKey = buildUploadObjectKey({
       poiType,
       poiHash,
       snapshotId,
       mimeType: preparedImage.mimeType,
-      prefix: config.ugcUploadPathPrefix
+      prefix: uploadPrefix
     });
 
     await c.env.UGC_BUCKET.put(objectKey, preparedImage.body, {
@@ -210,6 +283,7 @@ export function createUploadRoutes() {
       snapshotId,
       userId: user.uid,
       content: parsed.data.content,
+      kind: "image",
       filePath: objectKey,
       mimeType: preparedImage.mimeType,
       sizeBytes: preparedImage.sizeBytes,
@@ -224,6 +298,46 @@ export function createUploadRoutes() {
         markerId: parsed.data.markerId,
         status: "pending_openai",
         filePath: objectKey,
+        snapshotId
+      }
+    });
+  });
+
+  app.post("/comments", requireAuth, rateLimit("upload"), async (c) => {
+    const user = c.get("authUser");
+    if (!user) {
+      throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
+    }
+
+    const parsed = commentSubmissionSchema.safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) {
+      throw new ApiError(422, "VALIDATION_ERROR", "Invalid comment payload.", parsed.error.flatten());
+    }
+
+    const submissionId = nanoid(18);
+    const snapshotId = nanoid(12);
+    const poiType = normalizePathPart(parsed.data.poiType);
+    const poiHash = normalizePathPart(parsed.data.poiHash);
+
+    await createPendingSubmission(c.env.DB, {
+      id: submissionId,
+      markerId: parsed.data.markerId,
+      poiHash,
+      poiType,
+      snapshotId,
+      userId: user.uid,
+      content: parsed.data.content,
+      kind: "comment",
+      status: "pending_openai"
+    });
+    await enqueueModeration(createRedisClient(c.env), submissionId);
+
+    return c.json({
+      ok: true,
+      submission: {
+        id: submissionId,
+        markerId: parsed.data.markerId,
+        status: "pending_openai",
         snapshotId
       }
     });
@@ -251,6 +365,45 @@ export function createUploadRoutes() {
       status: 200,
       headers
     });
+  });
+
+  app.get("/images/mine", requireAuth, rateLimit("auth"), async (c) => {
+    const user = c.get("authUser");
+    if (!user) {
+      throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
+    }
+
+    const parsed = imagesQuerySchema.safeParse({
+      markerId: c.req.query("markerId"),
+      markerIds: c.req.query("markerIds"),
+      scope: c.req.query("scope"),
+      limit: c.req.query("limit")
+    });
+    if (!parsed.success) {
+      throw new ApiError(422, "VALIDATION_ERROR", "Invalid image query.", parsed.error.flatten());
+    }
+
+    const markerIds = parsed.data.markerIds
+      ?.split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+    const ids = markerIds?.length ? markerIds : parsed.data.markerId ? [parsed.data.markerId] : [];
+    if (ids.length === 0) {
+      throw new ApiError(422, "VALIDATION_ERROR", "markerId or markerIds is required.");
+    }
+
+    const config = getRuntimeConfig(c.env);
+    const scope = resolveImageScope(c.req.raw, config.ugcUploadPathPrefix, parsed.data.scope);
+    const items = await listUserImagesByMarker(c.env.DB, {
+      userId: user.uid,
+      markerIds: ids,
+      assetBaseUrl: resolvePublicAssetBaseUrl(c.req.url, config.ugcAssetBaseUrl),
+      pathPrefix: scope.pathPrefix,
+      excludePathPrefix: scope.excludePathPrefix,
+      limit: parsed.data.limit ?? 6
+    });
+
+    return c.json({ items });
   });
 
   app.get("/file/*", requireAuth, requireRole(["p", "a"]), rateLimit("auth"), async (c) => {
@@ -358,21 +511,23 @@ export function createUploadRoutes() {
       throw new ApiError(422, "VALIDATION_ERROR", "markerId or markerIds is required.");
     }
 
+    const config = getRuntimeConfig(c.env);
+    const scope = resolveImageScope(c.req.raw, config.ugcUploadPathPrefix, parsed.data.scope);
     const cache = await caches.open("ugc-images");
-    const cacheKey = new Request(c.req.url, { method: "GET" });
+    const cacheNamespace = resolveImageCacheNamespace(scope);
+    const cacheUrl = new URL(c.req.url);
+    cacheUrl.searchParams.set("_cache_ns", cacheNamespace);
+    const cacheKey = new Request(cacheUrl.toString(), { method: "GET" });
     const cached = await cache.match(cacheKey);
     if (cached) {
       return cached;
     }
 
-    const config = getRuntimeConfig(c.env);
-    const pathPrefix = parsed.data.scope === "test" ? "_test" : undefined;
-    const excludePathPrefix = parsed.data.scope === "prod" ? "_test" : undefined;
     const images = await listActiveImagesByMarker(c.env.DB, {
       markerIds: ids,
       assetBaseUrl: resolvePublicAssetBaseUrl(c.req.url, config.ugcAssetBaseUrl),
-      pathPrefix,
-      excludePathPrefix,
+      pathPrefix: scope.pathPrefix,
+      excludePathPrefix: scope.excludePathPrefix,
       limit: parsed.data.limit ?? 6
     });
 

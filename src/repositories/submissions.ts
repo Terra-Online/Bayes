@@ -2,13 +2,14 @@ import { formatPublicUid } from "./users";
 
 export interface SubmissionRecord {
   id: string;
+  kind: SubmissionKind;
   markerId: string;
   poiHash: string;
   poiType: string;
   snapshotId: string;
   userId: string;
   content: string | null;
-  filePath: string;
+  filePath: string | null;
   status: SubmissionStatus;
   moderationNote: string | null;
   mimeType: string | null;
@@ -35,6 +36,8 @@ export type SubmissionStatus =
   | "remove_request"
   | "stale";
 
+export type SubmissionKind = "image" | "comment";
+
 export interface PublicSubmissionImage {
   id: string;
   markerId: string;
@@ -44,7 +47,15 @@ export interface PublicSubmissionImage {
   url: string;
   filePath: string;
   content: string | null;
+  author: {
+    nickname: string;
+    publicUid: string;
+  } | null;
   createdAt: string;
+}
+
+export interface UserSubmissionImage extends PublicSubmissionImage {
+  status: SubmissionStatus;
 }
 
 function mapSubmission(row: Record<string, unknown>): SubmissionRecord {
@@ -60,13 +71,14 @@ function mapSubmission(row: Record<string, unknown>): SubmissionRecord {
 
   return {
     id: String(row.id),
+    kind: mapKind(row.kind),
     markerId: String(row.poi_id),
     poiHash: String(row.poi_hash),
     poiType: String(row.poi_type),
     snapshotId: String(row.snapshot_id),
     userId: String(row.user_id),
     content: row.content === null ? null : String(row.content ?? ""),
-    filePath: String(row.file_path),
+    filePath: row.file_path === null || row.file_path === undefined ? null : String(row.file_path),
     status: mapStatus(row.status),
     moderationNote: row.moderation_note === null ? null : String(row.moderation_note ?? ""),
     mimeType: row.mime_type === null || row.mime_type === undefined ? null : String(row.mime_type),
@@ -98,9 +110,10 @@ export async function createPendingSubmission(
     snapshotId: string;
     userId: string;
     content?: string;
-    filePath: string;
-    mimeType: string;
-    sizeBytes: number;
+    kind?: SubmissionKind;
+    filePath?: string | null;
+    mimeType?: string | null;
+    sizeBytes?: number | null;
     status?: SubmissionStatus;
   }
 ): Promise<void> {
@@ -114,12 +127,13 @@ export async function createPendingSubmission(
          snapshot_id,
          user_id,
          content,
+         kind,
          file_path,
          status,
          mime_type,
          size_bytes
        )
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)`
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)`
     )
     .bind(
       payload.id,
@@ -129,10 +143,11 @@ export async function createPendingSubmission(
       payload.snapshotId,
       payload.userId,
       payload.content ?? null,
-      payload.filePath,
+      payload.kind ?? "image",
+      payload.filePath ?? null,
       payload.status ?? "pending_openai",
-      payload.mimeType,
-      payload.sizeBytes
+      payload.mimeType ?? null,
+      payload.sizeBytes ?? null
     )
     .run();
 }
@@ -208,7 +223,7 @@ export async function getReviewSubmissions(
 
 export async function deleteSubmissionsByFilePathPrefix(db: D1Database, prefix: string): Promise<number> {
   const result = await db
-    .prepare("DELETE FROM ugc_submissions WHERE file_path LIKE ?1")
+    .prepare("DELETE FROM ugc_submissions WHERE kind = 'image' AND file_path LIKE ?1")
     .bind(`${prefix.replace(/%/g, "\\%")}/%`)
     .run();
 
@@ -225,7 +240,9 @@ export async function getSubmissionFilePathsByStatus(
     .prepare(
       `SELECT file_path
        FROM ugc_submissions
-       WHERE status = ?1
+       WHERE kind = 'image'
+         AND file_path IS NOT NULL
+         AND status = ?1
        ORDER BY created_at ASC
        LIMIT ?2 OFFSET ?3`
     )
@@ -247,7 +264,23 @@ export async function deleteSubmissionsByStatus(db: D1Database, status: Submissi
 }
 
 export async function getSubmissionById(db: D1Database, id: string): Promise<SubmissionRecord | null> {
-  const row = await db.prepare("SELECT * FROM ugc_submissions WHERE id = ?1 LIMIT 1").bind(id).first<Record<string, unknown>>();
+  const row = await db
+    .prepare(
+      `SELECT
+         s.*,
+         u.uid AS submitter_uid,
+         u.uid_number AS user_uid_number,
+         u.uid_suffix AS user_uid_suffix,
+         u.role AS user_role,
+         u.karma AS user_karma,
+         u.nickname AS user_nickname
+       FROM ugc_submissions s
+       LEFT JOIN users u ON u.uid = s.user_id
+       WHERE s.id = ?1
+       LIMIT 1`
+    )
+    .bind(id)
+    .first<Record<string, unknown>>();
   return row ? mapSubmission(row) : null;
 }
 
@@ -257,6 +290,7 @@ export async function getPublicSubmissionByFilePath(db: D1Database, filePath: st
       `SELECT *
        FROM ugc_submissions
        WHERE file_path = ?1
+         AND kind = 'image'
          AND status IN ('active', 'flagged', 'remove_request')
        LIMIT 1`
     )
@@ -307,6 +341,7 @@ export async function listActiveImagesByMarker(
   const limit = Math.min(Math.max(payload.limit ?? 6, 1), 24);
   const filters: string[] = [
     `poi_id IN (${placeholders})`,
+    "kind = 'image'",
     "status IN ('active', 'flagged', 'remove_request')"
   ];
   const extraBindings: Array<string | number> = [];
@@ -320,8 +355,16 @@ export async function listActiveImagesByMarker(
   }
   const result = await db
     .prepare(
-      `SELECT *
-       FROM ugc_submissions
+      `SELECT
+         s.*,
+         u.uid AS submitter_uid,
+         u.uid_number AS user_uid_number,
+         u.uid_suffix AS user_uid_suffix,
+         u.role AS user_role,
+         u.karma AS user_karma,
+         u.nickname AS user_nickname
+       FROM ugc_submissions s
+       LEFT JOIN users u ON u.uid = s.user_id
        WHERE ${filters.join(" AND ")}
        ORDER BY poi_id ASC, created_at DESC
        LIMIT ?${markerIds.length + extraBindings.length + 1}`
@@ -331,18 +374,108 @@ export async function listActiveImagesByMarker(
 
   return (result.results ?? []).map((row) => {
     const submission = mapSubmission(row);
+    const filePath = submission.filePath ?? "";
     return {
       id: submission.id,
       markerId: submission.markerId,
       poiHash: submission.poiHash,
       poiType: submission.poiType,
       snapshotId: submission.snapshotId,
-      url: `${payload.assetBaseUrl}/${submission.filePath}`,
-      filePath: submission.filePath,
+      url: `${payload.assetBaseUrl}/${filePath}`,
+      filePath,
       content: submission.content,
+      author: submission.submitter?.publicUid && submission.submitter.nickname
+        ? {
+            nickname: submission.submitter.nickname,
+            publicUid: submission.submitter.publicUid
+          }
+        : null,
       createdAt: submission.createdAt
     };
   });
+}
+
+export async function listUserImagesByMarker(
+  db: D1Database,
+  payload: {
+    userId: string;
+    markerId?: string;
+    markerIds?: string[];
+    assetBaseUrl: string;
+    limit?: number;
+    pathPrefix?: string;
+    excludePathPrefix?: string;
+  }
+): Promise<UserSubmissionImage[]> {
+  const requestedIds = payload.markerIds ?? (payload.markerId ? [payload.markerId] : []);
+  const markerIds = [...new Set(requestedIds.map((item) => item.trim()).filter(Boolean))].slice(0, 100);
+  if (markerIds.length === 0) {
+    return [];
+  }
+
+  const placeholders = markerIds.map((_, index) => `?${index + 2}`).join(", ");
+  const limit = Math.min(Math.max(payload.limit ?? 6, 1), 24);
+  const filters: string[] = [
+    "user_id = ?1",
+    `poi_id IN (${placeholders})`,
+    "kind = 'image'",
+    "status IN ('pending_openai', 'pending_audit', 'active', 'flagged', 'remove_request')"
+  ];
+  const extraBindings: Array<string | number> = [];
+  if (payload.pathPrefix) {
+    filters.push(`file_path LIKE ?${markerIds.length + extraBindings.length + 2}`);
+    extraBindings.push(`${payload.pathPrefix}/%`);
+  }
+  if (payload.excludePathPrefix) {
+    filters.push(`file_path NOT LIKE ?${markerIds.length + extraBindings.length + 2}`);
+    extraBindings.push(`${payload.excludePathPrefix}/%`);
+  }
+
+  const result = await db
+    .prepare(
+      `SELECT
+         s.*,
+         u.uid AS submitter_uid,
+         u.uid_number AS user_uid_number,
+         u.uid_suffix AS user_uid_suffix,
+         u.role AS user_role,
+         u.karma AS user_karma,
+         u.nickname AS user_nickname
+       FROM ugc_submissions s
+       LEFT JOIN users u ON u.uid = s.user_id
+       WHERE ${filters.join(" AND ")}
+       ORDER BY poi_id ASC, created_at DESC
+       LIMIT ?${markerIds.length + extraBindings.length + 2}`
+    )
+    .bind(payload.userId, ...markerIds, ...extraBindings, limit * markerIds.length)
+    .all<Record<string, unknown>>();
+
+  return (result.results ?? []).map((row) => {
+    const submission = mapSubmission(row);
+    const filePath = submission.filePath ?? "";
+    return {
+      id: submission.id,
+      markerId: submission.markerId,
+      poiHash: submission.poiHash,
+      poiType: submission.poiType,
+      snapshotId: submission.snapshotId,
+      url: `${payload.assetBaseUrl}/${filePath}`,
+      filePath,
+      content: submission.content,
+      createdAt: submission.createdAt,
+      author: submission.submitter?.publicUid && submission.submitter.nickname
+        ? {
+            nickname: submission.submitter.nickname,
+            publicUid: submission.submitter.publicUid
+          }
+        : null,
+      status: submission.status
+    };
+  });
+}
+
+function mapKind(value: unknown): SubmissionKind {
+  return value === "comment" ? "comment" : "image";
 }
 
 function mapStatus(value: unknown): SubmissionStatus {

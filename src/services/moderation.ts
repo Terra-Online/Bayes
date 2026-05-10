@@ -1,9 +1,11 @@
 import type { Redis } from "@upstash/redis";
+import { getModerationPointsDeltaWithDailyBackoff, markKarmaDirty } from "./karma";
 import {
   getPendingOpenAISubmissions,
   getSubmissionById,
   updateSubmissionStatus
 } from "../repositories/submissions";
+import { applyUserPointsDelta } from "../repositories/users";
 
 const MODERATION_QUEUE_KEY = "moderation:queue";
 const OPENAI_MODERATION_TIMEOUT_MS = 8_000;
@@ -24,6 +26,9 @@ export async function moderateSubmissionOnce(
     openAiApiKey?: string;
     assetBaseUrl: string;
     ugcBucket: R2Bucket;
+    redis?: Redis;
+    surgeModeEnabled?: boolean;
+    surgeBackoffMultiplier?: number;
     skipAiModeration?: boolean;
     localAutoApprove?: boolean;
   },
@@ -57,6 +62,9 @@ export async function moderateSubmissionIds(
     openAiApiKey?: string;
     assetBaseUrl: string;
     ugcBucket: R2Bucket;
+    redis?: Redis;
+    surgeModeEnabled?: boolean;
+    surgeBackoffMultiplier?: number;
     skipAiModeration?: boolean;
     localAutoApprove?: boolean;
   },
@@ -87,6 +95,9 @@ async function moderateSubmissionById(
     openAiApiKey?: string;
     assetBaseUrl: string;
     ugcBucket: R2Bucket;
+    redis?: Redis;
+    surgeModeEnabled?: boolean;
+    surgeBackoffMultiplier?: number;
     skipAiModeration?: boolean;
     localAutoApprove?: boolean;
   }
@@ -106,25 +117,45 @@ async function moderateSubmissionById(
   }
 
   if (!options.openAiApiKey) {
+    const status = options.localAutoApprove ? "active" : "pending_audit";
     await updateSubmissionStatus(db, {
       id: submissionId,
-      status: options.localAutoApprove ? "active" : "pending_audit",
+      status,
       moderationNote: options.localAutoApprove
         ? "Local upload debug auto-approved (OPENAI_API_KEY missing)."
         : "OpenAI moderation skipped in local mode; waiting for manual audit."
     });
+    if (status === "active") {
+      const pointsDelta = await getModerationPointsDeltaWithDailyBackoff(options.redis, {
+        userId: submission.userId,
+        kind: submission.kind,
+        status,
+        role: submission.submitter?.role,
+        surgeModeEnabled: options.surgeModeEnabled,
+        surgeBackoffMultiplier: options.surgeBackoffMultiplier
+      });
+      await applyUserPointsDelta(db, submission.userId, pointsDelta);
+      if (options.redis) {
+        await markKarmaDirty(options.redis, submission.userId);
+      }
+    }
     return true;
   }
 
   let result: OpenAIModerationResult;
   try {
+    const imageUrl = submission.kind === "image" && submission.filePath
+      ? await resolveModerationImageUrl(options.ugcBucket, {
+          filePath: submission.filePath,
+          mimeType: submission.mimeType,
+          fallbackUrl: `${options.assetBaseUrl.replace(/\/$/, "")}/${submission.filePath}`
+        })
+      : undefined;
+
     result = await callOpenAIModeration(options.openAiApiKey, {
       text: submission.content ?? "",
-      imageUrl: await resolveModerationImageUrl(options.ugcBucket, {
-        filePath: submission.filePath,
-        mimeType: submission.mimeType,
-        fallbackUrl: `${options.assetBaseUrl.replace(/\/$/, "")}/${submission.filePath}`
-      })
+      imageUrl,
+      clientRequestId: `moderation:${submissionId}`
     });
   } catch (error) {
     result = {
@@ -133,11 +164,26 @@ async function moderateSubmissionById(
     };
   }
 
+  const status = result.flagged ? "stale" : "pending_audit";
   await updateSubmissionStatus(db, {
     id: submissionId,
-    status: result.flagged ? "stale" : "pending_audit",
+    status,
     moderationNote: result.categorySummary
   });
+  if (status === "stale") {
+    const pointsDelta = await getModerationPointsDeltaWithDailyBackoff(options.redis, {
+      userId: submission.userId,
+      kind: submission.kind,
+      status,
+      role: submission.submitter?.role,
+      surgeModeEnabled: options.surgeModeEnabled,
+      surgeBackoffMultiplier: options.surgeBackoffMultiplier
+    });
+    await applyUserPointsDelta(db, submission.userId, pointsDelta);
+    if (options.redis) {
+      await markKarmaDirty(options.redis, submission.userId);
+    }
+  }
   return true;
 }
 
@@ -170,12 +216,19 @@ function arrayBufferToBase64(body: ArrayBuffer): string {
 
 async function callOpenAIModeration(
   apiKey: string,
-  payload: { text: string; imageUrl: string }
+  payload: { text: string; imageUrl?: string; clientRequestId?: string }
 ): Promise<OpenAIModerationResult> {
   const input = [
     payload.text ? { type: "text", text: payload.text } : null,
-    { type: "image_url", image_url: { url: payload.imageUrl } }
+    payload.imageUrl ? { type: "image_url", image_url: { url: payload.imageUrl } } : null
   ].filter(Boolean);
+
+  if (input.length === 0) {
+    return {
+      flagged: false,
+      categorySummary: "empty moderation input; sent to manual audit."
+    };
+  }
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), OPENAI_MODERATION_TIMEOUT_MS);
@@ -184,7 +237,8 @@ async function callOpenAIModeration(
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`
+      Authorization: `Bearer ${apiKey}`,
+      ...(payload.clientRequestId ? { "X-Client-Request-Id": payload.clientRequestId } : {})
     },
     signal: controller.signal,
     body: JSON.stringify({
@@ -194,9 +248,18 @@ async function callOpenAIModeration(
   }).finally(() => clearTimeout(timeout));
 
   if (!response.ok) {
+    const requestId = response.headers.get("x-request-id") ?? "unknown";
+    const responseText = await response.text().catch(() => "");
+    const responseDetail = parseOpenAIErrorDetail(responseText);
+    console.warn("OpenAI moderation request failed", {
+      status: response.status,
+      requestId,
+      clientRequestId: payload.clientRequestId ?? null,
+      detail: responseDetail
+    });
     return {
       flagged: false,
-      categorySummary: `OpenAI moderation unavailable (${response.status}), sent to manual audit.`
+      categorySummary: `OpenAI moderation unavailable (${response.status}, request_id=${requestId}${responseDetail ? `, ${responseDetail}` : ""}), sent to manual audit.`
     };
   }
 
@@ -226,6 +289,30 @@ function formatModerationError(error: unknown): string {
     return error.name === "AbortError" ? "timeout" : error.message;
   }
   return "unknown error";
+}
+
+function parseOpenAIErrorDetail(raw: string): string {
+  if (!raw.trim()) {
+    return "";
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as {
+      error?: {
+        code?: string;
+        message?: string;
+        type?: string;
+      };
+    };
+    const parts = [
+      parsed.error?.type,
+      parsed.error?.code,
+      parsed.error?.message
+    ].filter((item): item is string => Boolean(item && item.trim().length > 0));
+    return parts.join(": ");
+  } catch {
+    return raw.slice(0, 240).replace(/\s+/g, " ").trim();
+  }
 }
 
 export async function ensureModerationBackfill(

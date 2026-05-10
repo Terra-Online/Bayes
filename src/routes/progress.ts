@@ -10,8 +10,7 @@ import type { AppEnv } from "../types/app";
 
 const syncSchema = z.object({
   version: z.number().int().min(0),
-  marker: z.string(),
-  pointsDelta: z.number().int().min(-1000).max(1000).optional()
+  marker: z.string()
 });
 
 function isProgressLocked(flag: string | undefined): boolean {
@@ -74,7 +73,6 @@ export function createProgressRoutes() {
         version: parsed.data.version,
         marker: parsed.data.marker
       },
-      parsed.data.pointsDelta ?? 0,
       config.progressCacheTtlSeconds
     );
 

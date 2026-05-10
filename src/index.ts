@@ -2,6 +2,7 @@ import { createRedisClient } from './lib/redis';
 import { getRuntimeConfig } from './lib/config';
 import { flushDirtyProgressToD1 } from './services/progress';
 import { ensureModerationBackfill, moderateSubmissionOnce } from './services/moderation';
+import { evaluateKarmaIfDue } from './services/karma';
 import { createApp } from './app';
 import type { Bindings } from './types/app';
 import { initResend } from './lib/email';
@@ -30,6 +31,7 @@ async function runScheduledJobs(env: Bindings): Promise<void> {
   const config = getRuntimeConfig(env);
 
   const flushed = await flushDirtyProgressToD1(env.DB, redis, 100);
+  const karmaEvaluation = await evaluateKarmaIfDue(env.DB, redis);
   let enqueued = 0;
   let processed = 0;
 
@@ -42,6 +44,9 @@ async function runScheduledJobs(env: Bindings): Promise<void> {
         openAiApiKey: env.OPENAI_API_KEY,
         assetBaseUrl: config.ugcAssetBaseUrl,
         ugcBucket: env.UGC_BUCKET,
+        redis,
+        surgeModeEnabled: config.surgeModeEnabled,
+        surgeBackoffMultiplier: config.surgeBackoffMultiplier,
         skipAiModeration: config.skipAiModeration,
         localAutoApprove: config.localUploadAutoApprove,
       },
@@ -51,6 +56,7 @@ async function runScheduledJobs(env: Bindings): Promise<void> {
 
   console.warn('cron jobs completed', {
     flushed,
+    karmaEvaluation,
     enqueued,
     processed,
     scheduledModerationEnabled: config.scheduledModerationEnabled,

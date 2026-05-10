@@ -15,6 +15,8 @@ import {
   updateSubmissionStatus,
   type SubmissionStatus
 } from "../repositories/submissions";
+import { applyUserPointsDelta } from "../repositories/users";
+import { getModerationPointsDeltaWithDailyBackoff, markKarmaDirty } from "../services/karma";
 import { ensureModerationBackfill, moderateSubmissionIds, moderateSubmissionOnce } from "../services/moderation";
 import type { AppEnv } from "../types/app";
 
@@ -86,10 +88,14 @@ async function runModeration(
   }
 ) {
   const config = getRuntimeConfig(c.env);
+  const redis = createRedisClient(c.env);
   const options = {
     openAiApiKey: c.env.OPENAI_API_KEY,
     assetBaseUrl: config.ugcAssetBaseUrl,
     ugcBucket: c.env.UGC_BUCKET,
+    redis,
+    surgeModeEnabled: config.surgeModeEnabled,
+    surgeBackoffMultiplier: config.surgeBackoffMultiplier,
     skipAiModeration: config.skipAiModeration,
     localAutoApprove: config.localUploadAutoApprove
   };
@@ -110,7 +116,6 @@ async function runModeration(
     };
   }
 
-  const redis = createRedisClient(c.env);
   const limit = payload.limit ?? 5;
   await ensureModerationBackfill(c.env.DB, redis, limit);
   const processed = await moderateSubmissionOnce(
@@ -222,6 +227,23 @@ export function createModerationRoutes() {
       status: parsed.data.status,
       moderationNote: parsed.data.moderationNote
     });
+    if (current.status !== parsed.data.status && (parsed.data.status === "active" || parsed.data.status === "stale")) {
+      const redis = createRedisClient(c.env);
+      const config = getRuntimeConfig(c.env);
+      await applyUserPointsDelta(
+        c.env.DB,
+        current.userId,
+        await getModerationPointsDeltaWithDailyBackoff(redis, {
+          userId: current.userId,
+          kind: current.kind,
+          status: parsed.data.status,
+          role: current.submitter?.role,
+          surgeModeEnabled: config.surgeModeEnabled,
+          surgeBackoffMultiplier: config.surgeBackoffMultiplier
+        })
+      );
+      await markKarmaDirty(redis, current.userId);
+    }
 
     return c.json({ ok: true });
   });

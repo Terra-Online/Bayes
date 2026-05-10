@@ -14,6 +14,7 @@ const DEFAULT_AUTH_BASE_URL = 'https://api.opendfieldmap.org';
 const DEFAULT_TRUSTED_ORIGINS = [
   'https://opendfieldmap.org',
   'https://www.opendfieldmap.org',
+  'https://beta.opendfieldmap.org',
   'https://opendfieldmap.cn',
   'https://www.opendfieldmap.cn',
   'https://api.opendfieldmap.org',

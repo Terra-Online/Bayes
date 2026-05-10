@@ -13,6 +13,7 @@ import type { AppEnv } from "./types/app";
 const DEFAULT_CORS_ORIGINS = [
   "https://opendfieldmap.org",
   "https://www.opendfieldmap.org",
+  "https://beta.opendfieldmap.org",
   "https://admin.opendfieldmap.org",
   "https://opendfieldmap.cn",
   "https://www.opendfieldmap.cn"
@@ -84,7 +85,7 @@ export function createApp() {
   app.route("/uploads/v1", createUploadRoutes());
   app.route("/moderation/v1", createModerationRoutes());
 
-  app.get("/", (c) => c.json({ status: "ok", message: "Bayes backend is running." }));
+  app.get("/", (c) => c.json({ status: "ok", message: "OEM backend is running." }));
 
   return app;
 }

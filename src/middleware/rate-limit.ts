@@ -1,5 +1,6 @@
 import type { MiddlewareHandler } from "hono";
 import { ApiError } from "../lib/errors";
+import { getUploadRateLimitForKarma } from "../lib/karma";
 import { createRedisClient } from "../lib/redis";
 import type { AppEnv } from "../types/app";
 
@@ -13,7 +14,7 @@ const EMAIL_COOLDOWN_SECONDS = 100;
 const ONE_MINUTE_MS = 60 * 1000;
 const ONE_HOUR_MS = 60 * ONE_MINUTE_MS;
 
-type RateLimitScope = "public" | "auth" | "binding" | "otp-send" | "reset-send";
+type RateLimitScope = "public" | "auth" | "binding" | "otp-send" | "reset-send" | "upload";
 
 interface SlidingWindowResult {
   count: number;
@@ -30,6 +31,10 @@ function getWindowMs(scope: RateLimitScope): number {
 }
 
 function getScopeLimit(scope: RateLimitScope): number {
+  if (scope === "upload") {
+    return AUTH_LIMIT_PER_MINUTE;
+  }
+
   if (scope === "auth") {
     return AUTH_LIMIT_PER_MINUTE;
   }
@@ -47,6 +52,15 @@ function getScopeLimit(scope: RateLimitScope): number {
   }
 
   return PUBLIC_LIMIT_PER_MINUTE;
+}
+
+function getLimitForRequest(scope: RateLimitScope, c: Parameters<MiddlewareHandler<AppEnv>>[0]): number {
+  if (scope === "upload") {
+    const user = c.get("authUser");
+    return getUploadRateLimitForKarma(user?.karma ?? 0);
+  }
+
+  return getScopeLimit(scope);
 }
 
 function normalizeEmail(input: string): string {
@@ -121,14 +135,14 @@ async function applySlidingWindowLimit(
 export function rateLimit(scope: RateLimitScope): MiddlewareHandler<AppEnv> {
   return async (c, next) => {
     const requestIp = getRequestIp(c);
-    const identity = requestIp;
-
-    const limit = getScopeLimit(scope);
+    const user = c.get("authUser");
+    const identity = scope === "upload" && user ? `user:${user.uid}` : `ip:${requestIp}`;
+    const limit = getLimitForRequest(scope, c);
     const windowMs = getWindowMs(scope);
 
     try {
       const redis = createRedisClient(c.env);
-      const redisKey = `rate:${scope}:ip:${identity}`;
+      const redisKey = `rate:${scope}:${identity}`;
       const result = await applySlidingWindowLimit(c, redisKey, limit, windowMs);
 
       c.header("x-ratelimit-limit", String(limit));
