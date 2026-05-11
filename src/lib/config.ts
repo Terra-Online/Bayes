@@ -92,7 +92,7 @@ export function getRuntimeConfig(env: Bindings): RuntimeConfig {
     ),
     skipAiModeration: parseBoolean(env.SKIP_AI_MODERATION, false),
     localUploadAutoApprove: ["1", "true", "on", "yes"].includes(localAutoApprove),
-    scheduledModerationEnabled: parseBoolean(env.ENABLE_SCHEDULED_MODERATION, false),
+    scheduledModerationEnabled: parseBoolean(env.ENABLE_SCHEDULED_MODERATION, true),
     surgeModeEnabled: parseBoolean(env.SURGE_MODE_ENABLED, false),
     surgeBackoffMultiplier: parsePositiveInt(env.SURGE_BACKOFF_MULTIPLIER, DEFAULT_SURGE_BACKOFF_MULTIPLIER)
   };

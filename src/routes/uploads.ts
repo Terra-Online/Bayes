@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { nanoid } from "nanoid";
 import { z } from "zod";
+import { createAuth } from "../lib/auth";
 import { getRuntimeConfig } from "../lib/config";
 import { ApiError } from "../lib/errors";
 import { createRedisClient } from "../lib/redis";
@@ -14,6 +15,7 @@ import {
   listUserImagesByMarker,
   updateSubmissionStatus
 } from "../repositories/submissions";
+import { getUserByUid } from "../repositories/users";
 import { readImageDimensions } from "../services/image-metadata";
 import { enqueueModeration } from "../services/moderation";
 import { buildUploadObjectKey, extensionFromMime, normalizePathPart, prepareUploadImageForStorage } from "../services/upload";
@@ -186,6 +188,26 @@ export function createUploadRoutes() {
   const app = new Hono<AppEnv>();
 
   app.use("*", async (c, next) => {
+    const hasAuthHeaders = Boolean(
+      c.req.header("authorization")?.trim() ||
+      c.req.header("cookie")?.trim()
+    );
+    if (hasAuthHeaders) {
+      const session = await createAuth(c.env).api.getSession({
+        headers: c.req.raw.headers
+      });
+      if (session) {
+        const user = await getUserByUid(c.env.DB, session.user.id);
+        if (user?.role === "s") {
+          throw new ApiError(
+            403,
+            "ACCESS_DENIED",
+            "Suspended users cannot access upload endpoints."
+          );
+        }
+      }
+    }
+
     const isImageRead = c.req.method === "GET" && (
       c.req.path.endsWith("/uploads/v1/images") ||
       c.req.path.endsWith("/uploads/v1/images/mine") ||

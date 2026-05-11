@@ -136,6 +136,10 @@ export function rateLimit(scope: RateLimitScope): MiddlewareHandler<AppEnv> {
   return async (c, next) => {
     const requestIp = getRequestIp(c);
     const user = c.get("authUser");
+    if (user?.role === "r") {
+      await next();
+      return;
+    }
     const identity = scope === "upload" && user ? `user:${user.uid}` : `ip:${requestIp}`;
     const limit = getLimitForRequest(scope, c);
     const windowMs = getWindowMs(scope);

@@ -27,4 +27,4 @@ binding = "UGC_BUCKET"
 bucket_name = "opendfieldmap-ugc"
 
 [triggers]
-crons = ["*/5 * * * *"]
+crons = ["*/1 * * * *"]

@@ -90,7 +90,8 @@ export const requireAuth: MiddlewareHandler<AppEnv> = async (c, next) => {
 export function requireRole(roles: Role[]): MiddlewareHandler<AppEnv> {
   return async (c, next) => {
     const user = c.get("authUser");
-    if (!user || !roles.includes(user.role)) {
+    const effectiveRole = user?.role === "r" ? "a" : user?.role;
+    if (!user || !effectiveRole || !roles.includes(effectiveRole)) {
       throw new ApiError(403, "ACCESS_DENIED", "Insufficient permissions.");
     }
     await next();

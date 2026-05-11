@@ -53,7 +53,7 @@ export async function getModerationPointsDeltaWithDailyBackoff(
     surgeBackoffMultiplier?: number;
   }
 ): Promise<number> {
-  const minimumActivePoints = payload.role === "p" || payload.role === "a" ? 1 : 0;
+  const minimumActivePoints = payload.role === "p" || payload.role === "a" || payload.role === "r" ? 1 : 0;
   const backoffMultiplier = payload.surgeModeEnabled ? payload.surgeBackoffMultiplier ?? 3 : 1;
   if (payload.status !== "active" || !redis) {
     return getModerationPointsDelta(payload.kind, payload.status, 1, minimumActivePoints, backoffMultiplier);
