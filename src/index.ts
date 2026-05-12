@@ -101,7 +101,10 @@ async function runScheduledJobs(env: Bindings): Promise<void> {
   const config = getRuntimeConfig(env);
 
   const flushed = await flushDirtyProgressToD1(env.DB, redis, 100);
-  const karmaEvaluation = await evaluateKarmaIfDue(env.DB, redis);
+  const karmaEvaluation = await evaluateKarmaIfDue(env.DB, redis, {
+    surgeModeEnabled: config.surgeModeEnabled,
+    surgeBackoffMultiplier: config.surgeBackoffMultiplier,
+  });
   let enqueued = 0;
   let processed = 0;
 

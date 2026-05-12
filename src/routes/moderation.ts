@@ -2,11 +2,13 @@ import { Hono, type Context } from "hono";
 import { z } from "zod";
 import { getRuntimeConfig } from "../lib/config";
 import { ApiError } from "../lib/errors";
+import { RECALL_MODERATION_NOTE_PREFIX } from "../lib/moderation";
 import { createRedisClient } from "../lib/redis";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { rateLimit } from "../middleware/rate-limit";
 import {
   ALL_STATUSES,
+  clearSubmissionFlags,
   deleteSubmissionsByStatus,
   deleteSubmissionsByFilePathPrefix,
   getSubmissionFilePathsByStatus,
@@ -78,6 +80,22 @@ function assertStatusTransition(from: SubmissionStatus, to: SubmissionStatus): v
       allowed: STATUS_TRANSITIONS[from]
     });
   }
+}
+
+function shouldApplyModerationPoints(
+  currentStatus: SubmissionStatus,
+  nextStatus: SubmissionStatus,
+  moderationNote: string | null
+): boolean {
+  if (currentStatus === nextStatus || (nextStatus !== "active" && nextStatus !== "stale")) {
+    return false;
+  }
+
+  if (nextStatus === "stale" && moderationNote?.startsWith(RECALL_MODERATION_NOTE_PREFIX)) {
+    return false;
+  }
+
+  return true;
 }
 
 async function runModeration(
@@ -227,7 +245,12 @@ export function createModerationRoutes() {
       status: parsed.data.status,
       moderationNote: parsed.data.moderationNote
     });
-    if (current.status !== parsed.data.status && (parsed.data.status === "active" || parsed.data.status === "stale")) {
+    if (current.status === "flagged" && parsed.data.status === "active") {
+      await clearSubmissionFlags(c.env.DB, submissionId);
+    }
+    const effectiveModerationNote = parsed.data.moderationNote ?? current.moderationNote;
+    if (shouldApplyModerationPoints(current.status, parsed.data.status, effectiveModerationNote)) {
+      const reviewStatus = parsed.data.status === "active" ? "active" : "stale";
       const redis = createRedisClient(c.env);
       const config = getRuntimeConfig(c.env);
       await applyUserPointsDelta(
@@ -236,7 +259,7 @@ export function createModerationRoutes() {
         await getModerationPointsDeltaWithDailyBackoff(redis, {
           userId: current.userId,
           kind: current.kind,
-          status: parsed.data.status,
+          status: reviewStatus,
           role: current.submitter?.role,
           surgeModeEnabled: config.surgeModeEnabled,
           surgeBackoffMultiplier: config.surgeBackoffMultiplier

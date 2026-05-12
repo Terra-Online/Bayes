@@ -4,11 +4,18 @@ import { z } from "zod";
 import { createAuth } from "../lib/auth";
 import { getRuntimeConfig } from "../lib/config";
 import { ApiError } from "../lib/errors";
+import { RECALL_MODERATION_NOTE_PREFIX } from "../lib/moderation";
 import { createRedisClient } from "../lib/redis";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { rateLimit } from "../middleware/rate-limit";
 import {
+  countSubmissionFlags,
+  countSubmissionUpvotes,
   createPendingSubmission,
+  createSubmissionFlag,
+  createSubmissionUpvote,
+  deleteSubmissionFlag,
+  deleteSubmissionUpvote,
   getPublicSubmissionByFilePath,
   getSubmissionById,
   listActiveImagesByMarker,
@@ -447,6 +454,64 @@ export function createUploadRoutes() {
     });
   });
 
+  app.post("/images/:id/upvote", requireAuth, rateLimit("auth"), async (c) => {
+    const user = c.get("authUser");
+    const submissionId = c.req.param("id");
+    if (!user) {
+      throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
+    }
+    if (!submissionId) {
+      throw new ApiError(422, "VALIDATION_ERROR", "Submission id is required.");
+    }
+
+    const submission = await getSubmissionById(c.env.DB, submissionId);
+    if (!submission || submission.kind !== "image") {
+      throw new ApiError(404, "SUBMISSION_NOT_FOUND", "Image submission was not found.");
+    }
+    if (!["active", "flagged", "remove_request"].includes(submission.status)) {
+      throw new ApiError(409, "INVALID_SUBMISSION_STATUS", "Only visible images can be upvoted.", {
+        status: submission.status
+      });
+    }
+
+    const created = await createSubmissionUpvote(c.env.DB, {
+      submissionId,
+      userId: user.uid
+    });
+    const upvoteCount = await countSubmissionUpvotes(c.env.DB, submissionId);
+
+    return c.json({ ok: true, created, upvoteCount });
+  });
+
+  app.post("/images/:id/unvote", requireAuth, rateLimit("auth"), async (c) => {
+    const user = c.get("authUser");
+    const submissionId = c.req.param("id");
+    if (!user) {
+      throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
+    }
+    if (!submissionId) {
+      throw new ApiError(422, "VALIDATION_ERROR", "Submission id is required.");
+    }
+
+    const submission = await getSubmissionById(c.env.DB, submissionId);
+    if (!submission || submission.kind !== "image") {
+      throw new ApiError(404, "SUBMISSION_NOT_FOUND", "Image submission was not found.");
+    }
+    if (!["active", "flagged", "remove_request"].includes(submission.status)) {
+      throw new ApiError(409, "INVALID_SUBMISSION_STATUS", "Only visible images can be unvoted.", {
+        status: submission.status
+      });
+    }
+
+    const deleted = await deleteSubmissionUpvote(c.env.DB, {
+      submissionId,
+      userId: user.uid
+    });
+    const upvoteCount = await countSubmissionUpvotes(c.env.DB, submissionId);
+
+    return c.json({ ok: true, deleted, upvoteCount });
+  });
+
   app.post("/images/:id/flag", requireAuth, rateLimit("auth"), async (c) => {
     const user = c.get("authUser");
     const submissionId = c.req.param("id");
@@ -458,26 +523,72 @@ export function createUploadRoutes() {
     }
 
     const submission = await getSubmissionById(c.env.DB, submissionId);
-    if (!submission) {
-      throw new ApiError(404, "SUBMISSION_NOT_FOUND", "Submission was not found.");
+    if (!submission || submission.kind !== "image") {
+      throw new ApiError(404, "SUBMISSION_NOT_FOUND", "Image submission was not found.");
     }
     if (submission.userId === user.uid) {
       throw new ApiError(403, "CANNOT_FLAG_OWN_SUBMISSION", "You cannot flag your own image.");
     }
-    if (submission.status !== "active") {
-      throw new ApiError(409, "INVALID_STATUS_TRANSITION", "Only active images can be flagged.", {
-        from: submission.status,
-        to: "flagged"
+    if (submission.status !== "active" && submission.status !== "flagged") {
+      throw new ApiError(409, "INVALID_SUBMISSION_STATUS", "Only active or flagged images can be flagged.", {
+        status: submission.status
       });
     }
 
-    await updateSubmissionStatus(c.env.DB, {
-      id: submissionId,
-      status: "flagged",
-      moderationNote: "Flagged by user."
+    const created = await createSubmissionFlag(c.env.DB, {
+      submissionId,
+      userId: user.uid
     });
+    if (created && submission.status === "active") {
+      await updateSubmissionStatus(c.env.DB, {
+        id: submissionId,
+        status: "flagged",
+        moderationNote: "Flagged by user."
+      });
+    }
+    const flagCount = await countSubmissionFlags(c.env.DB, submissionId);
 
-    return c.json({ ok: true, status: "flagged" });
+    return c.json({ ok: true, created, status: "flagged", flagCount });
+  });
+
+  app.post("/images/:id/unflag", requireAuth, rateLimit("auth"), async (c) => {
+    const user = c.get("authUser");
+    const submissionId = c.req.param("id");
+    if (!user) {
+      throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
+    }
+    if (!submissionId) {
+      throw new ApiError(422, "VALIDATION_ERROR", "Submission id is required.");
+    }
+
+    const submission = await getSubmissionById(c.env.DB, submissionId);
+    if (!submission || submission.kind !== "image") {
+      throw new ApiError(404, "SUBMISSION_NOT_FOUND", "Image submission was not found.");
+    }
+    if (submission.userId === user.uid) {
+      throw new ApiError(403, "CANNOT_UNFLAG_OWN_SUBMISSION", "You cannot unflag your own image.");
+    }
+    if (submission.status !== "active" && submission.status !== "flagged") {
+      throw new ApiError(409, "INVALID_SUBMISSION_STATUS", "Only active or flagged images can be unflagged.", {
+        status: submission.status
+      });
+    }
+
+    const deleted = await deleteSubmissionFlag(c.env.DB, {
+      submissionId,
+      userId: user.uid
+    });
+    const flagCount = await countSubmissionFlags(c.env.DB, submissionId);
+    const status = flagCount > 0 ? "flagged" : "active";
+    if (submission.status !== status) {
+      await updateSubmissionStatus(c.env.DB, {
+        id: submissionId,
+        status,
+        moderationNote: status === "active" ? "User flag removed." : undefined
+      });
+    }
+
+    return c.json({ ok: true, deleted, status, flagCount });
   });
 
   app.post("/images/:id/remove-request", requireAuth, rateLimit("auth"), async (c) => {
@@ -497,8 +608,8 @@ export function createUploadRoutes() {
     if (submission.userId !== user.uid) {
       throw new ApiError(403, "REMOVE_REQUEST_OWNER_ONLY", "Only the uploader can request image removal.");
     }
-    if (submission.status !== "active") {
-      throw new ApiError(409, "INVALID_STATUS_TRANSITION", "Only active images can receive a remove request.", {
+    if (submission.status !== "active" && submission.status !== "flagged") {
+      throw new ApiError(409, "INVALID_STATUS_TRANSITION", "Only visible images can receive a remove request.", {
         from: submission.status,
         to: "remove_request"
       });
@@ -508,6 +619,77 @@ export function createUploadRoutes() {
       id: submissionId,
       status: "remove_request",
       moderationNote: "Removal requested by uploader."
+    });
+
+    return c.json({ ok: true, status: "remove_request" });
+  });
+
+  app.post("/images/:id/unrecall", requireAuth, rateLimit("auth"), async (c) => {
+    const user = c.get("authUser");
+    const submissionId = c.req.param("id");
+    if (!user) {
+      throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
+    }
+    if (!submissionId) {
+      throw new ApiError(422, "VALIDATION_ERROR", "Submission id is required.");
+    }
+
+    const submission = await getSubmissionById(c.env.DB, submissionId);
+    if (!submission || submission.kind !== "image") {
+      throw new ApiError(404, "SUBMISSION_NOT_FOUND", "Image submission was not found.");
+    }
+    if (submission.userId !== user.uid) {
+      throw new ApiError(403, "RECALL_OWNER_ONLY", "Only the uploader can cancel image recall.");
+    }
+    if (submission.status !== "remove_request") {
+      throw new ApiError(409, "INVALID_STATUS_TRANSITION", "Only remove requests can be cancelled.", {
+        from: submission.status,
+        to: "active"
+      });
+    }
+
+    const flagCount = await countSubmissionFlags(c.env.DB, submissionId);
+    const status = flagCount > 0 ? "flagged" : "active";
+    await updateSubmissionStatus(c.env.DB, {
+      id: submissionId,
+      status,
+      moderationNote: "Removal request cancelled by uploader."
+    });
+
+    return c.json({ ok: true, status, flagCount });
+  });
+
+  app.post("/images/:id/recall", requireAuth, rateLimit("auth"), async (c) => {
+    const user = c.get("authUser");
+    const submissionId = c.req.param("id");
+    if (!user) {
+      throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
+    }
+    if (!submissionId) {
+      throw new ApiError(422, "VALIDATION_ERROR", "Submission id is required.");
+    }
+
+    const submission = await getSubmissionById(c.env.DB, submissionId);
+    if (!submission || submission.kind !== "image") {
+      throw new ApiError(404, "SUBMISSION_NOT_FOUND", "Image submission was not found.");
+    }
+    if (submission.userId !== user.uid) {
+      throw new ApiError(403, "RECALL_OWNER_ONLY", "Only the uploader can recall an image.");
+    }
+    if (submission.status === "stale") {
+      return c.json({ ok: true, status: "stale" });
+    }
+    if (!["pending_openai", "pending_audit", "active", "flagged", "remove_request"].includes(submission.status)) {
+      throw new ApiError(409, "INVALID_STATUS_TRANSITION", "Image cannot be recalled from its current status.", {
+        from: submission.status,
+        to: "remove_request"
+      });
+    }
+
+    await updateSubmissionStatus(c.env.DB, {
+      id: submissionId,
+      status: "remove_request",
+      moderationNote: `${RECALL_MODERATION_NOTE_PREFIX} upload error.`
     });
 
     return c.json({ ok: true, status: "remove_request" });
@@ -535,14 +717,22 @@ export function createUploadRoutes() {
 
     const config = getRuntimeConfig(c.env);
     const scope = resolveImageScope(c.req.raw, config.ugcUploadPathPrefix, parsed.data.scope);
-    const cache = await caches.open("ugc-images");
-    const cacheNamespace = resolveImageCacheNamespace(scope);
-    const cacheUrl = new URL(c.req.url);
-    cacheUrl.searchParams.set("_cache_ns", cacheNamespace);
-    const cacheKey = new Request(cacheUrl.toString(), { method: "GET" });
-    const cached = await cache.match(cacheKey);
-    if (cached) {
-      return cached;
+    const session = await createAuth(c.env).api.getSession({
+      headers: c.req.raw.headers
+    });
+    const useSharedCache = !session;
+    let cache: Cache | null = null;
+    let cacheKey: Request | null = null;
+    if (useSharedCache) {
+      cache = await caches.open("ugc-images");
+      const cacheNamespace = resolveImageCacheNamespace(scope);
+      const cacheUrl = new URL(c.req.url);
+      cacheUrl.searchParams.set("_cache_ns", cacheNamespace);
+      cacheKey = new Request(cacheUrl.toString(), { method: "GET" });
+      const cached = await cache.match(cacheKey);
+      if (cached) {
+        return cached;
+      }
     }
 
     const images = await listActiveImagesByMarker(c.env.DB, {
@@ -550,12 +740,17 @@ export function createUploadRoutes() {
       assetBaseUrl: resolvePublicAssetBaseUrl(c.req.url, config.ugcAssetBaseUrl),
       pathPrefix: scope.pathPrefix,
       excludePathPrefix: scope.excludePathPrefix,
-      limit: parsed.data.limit ?? 6
+      limit: parsed.data.limit ?? 6,
+      viewerUserId: session?.user.id
     });
 
     const response = c.json({ items: images });
-    response.headers.set("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
-    c.executionCtx.waitUntil(cache.put(cacheKey, response.clone()));
+    if (cache && cacheKey) {
+      response.headers.set("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
+      c.executionCtx.waitUntil(cache.put(cacheKey, response.clone()));
+    } else {
+      response.headers.set("Cache-Control", "private, max-age=30");
+    }
     return response;
   });
 

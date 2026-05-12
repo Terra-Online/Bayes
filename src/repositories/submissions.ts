@@ -51,11 +51,21 @@ export interface PublicSubmissionImage {
     nickname: string;
     publicUid: string;
   } | null;
+  status: SubmissionStatus;
+  upvoteCount: number;
+  flagCount: number;
+  upvoted?: boolean;
+  flagged?: boolean;
   createdAt: string;
 }
 
 export interface UserSubmissionImage extends PublicSubmissionImage {
   status: SubmissionStatus;
+}
+
+function toCount(value: unknown): number {
+  const count = Number(value ?? 0);
+  return Number.isFinite(count) ? Math.max(0, Math.floor(count)) : 0;
 }
 
 function mapSubmission(row: Record<string, unknown>): SubmissionRecord {
@@ -222,9 +232,35 @@ export async function getReviewSubmissions(
 }
 
 export async function deleteSubmissionsByFilePathPrefix(db: D1Database, prefix: string): Promise<number> {
+  const escapedPrefix = `${prefix.replace(/%/g, "\\%")}/%`;
+  await db
+    .prepare(
+      `DELETE FROM ugc_submission_upvotes
+       WHERE submission_id IN (
+         SELECT id
+         FROM ugc_submissions
+         WHERE kind = 'image'
+           AND file_path LIKE ?1
+       )`
+    )
+    .bind(escapedPrefix)
+    .run();
+  await db
+    .prepare(
+      `DELETE FROM ugc_submission_flags
+       WHERE submission_id IN (
+         SELECT id
+         FROM ugc_submissions
+         WHERE kind = 'image'
+           AND file_path LIKE ?1
+       )`
+    )
+    .bind(escapedPrefix)
+    .run();
+
   const result = await db
     .prepare("DELETE FROM ugc_submissions WHERE kind = 'image' AND file_path LIKE ?1")
-    .bind(`${prefix.replace(/%/g, "\\%")}/%`)
+    .bind(escapedPrefix)
     .run();
 
   return result.meta.changes ?? 0;
@@ -255,6 +291,29 @@ export async function getSubmissionFilePathsByStatus(
 }
 
 export async function deleteSubmissionsByStatus(db: D1Database, status: SubmissionStatus): Promise<number> {
+  await db
+    .prepare(
+      `DELETE FROM ugc_submission_upvotes
+       WHERE submission_id IN (
+         SELECT id
+         FROM ugc_submissions
+         WHERE status = ?1
+       )`
+    )
+    .bind(status)
+    .run();
+  await db
+    .prepare(
+      `DELETE FROM ugc_submission_flags
+       WHERE submission_id IN (
+         SELECT id
+         FROM ugc_submissions
+         WHERE status = ?1
+       )`
+    )
+    .bind(status)
+    .run();
+
   const result = await db
     .prepare("DELETE FROM ugc_submissions WHERE status = ?1")
     .bind(status)
@@ -312,12 +371,124 @@ export async function updateSubmissionStatus(
     .prepare(
       `UPDATE ugc_submissions
        SET status = ?2,
-           moderation_note = ?3,
+           moderation_note = COALESCE(?3, moderation_note),
            updated_at = CURRENT_TIMESTAMP
        WHERE id = ?1`
     )
     .bind(payload.id, payload.status, payload.moderationNote ?? null)
     .run();
+}
+
+export async function createSubmissionUpvote(
+  db: D1Database,
+  payload: {
+    submissionId: string;
+    userId: string;
+  }
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      `INSERT OR IGNORE INTO ugc_submission_upvotes (submission_id, user_id)
+       VALUES (?1, ?2)`
+    )
+    .bind(payload.submissionId, payload.userId)
+    .run();
+
+  return (result.meta.changes ?? 0) > 0;
+}
+
+export async function deleteSubmissionUpvote(
+  db: D1Database,
+  payload: {
+    submissionId: string;
+    userId: string;
+  }
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      `DELETE FROM ugc_submission_upvotes
+       WHERE submission_id = ?1
+         AND user_id = ?2`
+    )
+    .bind(payload.submissionId, payload.userId)
+    .run();
+
+  return (result.meta.changes ?? 0) > 0;
+}
+
+export async function createSubmissionFlag(
+  db: D1Database,
+  payload: {
+    submissionId: string;
+    userId: string;
+  }
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      `INSERT OR IGNORE INTO ugc_submission_flags (submission_id, user_id)
+       VALUES (?1, ?2)`
+    )
+    .bind(payload.submissionId, payload.userId)
+    .run();
+
+  return (result.meta.changes ?? 0) > 0;
+}
+
+export async function deleteSubmissionFlag(
+  db: D1Database,
+  payload: {
+    submissionId: string;
+    userId: string;
+  }
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      `DELETE FROM ugc_submission_flags
+       WHERE submission_id = ?1
+         AND user_id = ?2`
+    )
+    .bind(payload.submissionId, payload.userId)
+    .run();
+
+  return (result.meta.changes ?? 0) > 0;
+}
+
+export async function countSubmissionUpvotes(db: D1Database, submissionId: string): Promise<number> {
+  const row = await db
+    .prepare(
+      `SELECT COUNT(*) AS count
+       FROM ugc_submission_upvotes
+       WHERE submission_id = ?1`
+    )
+    .bind(submissionId)
+    .first<{ count: number | string }>();
+
+  return toCount(row?.count);
+}
+
+export async function countSubmissionFlags(db: D1Database, submissionId: string): Promise<number> {
+  const row = await db
+    .prepare(
+      `SELECT COUNT(*) AS count
+       FROM ugc_submission_flags
+       WHERE submission_id = ?1`
+    )
+    .bind(submissionId)
+    .first<{ count: number | string }>();
+
+  return toCount(row?.count);
+}
+
+export async function clearSubmissionFlags(db: D1Database, submissionId: string): Promise<number> {
+  const result = await db
+    .prepare(
+      `DELETE FROM ugc_submission_flags
+       WHERE submission_id = ?1`
+    )
+    .bind(submissionId)
+    .run();
+
+  return result.meta.changes ?? 0;
 }
 
 export async function listActiveImagesByMarker(
@@ -329,6 +500,7 @@ export async function listActiveImagesByMarker(
     limit?: number;
     pathPrefix?: string;
     excludePathPrefix?: string;
+    viewerUserId?: string;
   }
 ): Promise<PublicSubmissionImage[]> {
   const requestedIds = payload.markerIds ?? (payload.markerId ? [payload.markerId] : []);
@@ -353,23 +525,49 @@ export async function listActiveImagesByMarker(
     filters.push(`file_path NOT LIKE ?${markerIds.length + extraBindings.length + 1}`);
     extraBindings.push(`${payload.excludePathPrefix}/%`);
   }
+  const viewerBindingOffset = markerIds.length + extraBindings.length;
+  const viewerSelect = payload.viewerUserId
+    ? `,
+         CASE WHEN uv.user_id IS NULL THEN 0 ELSE 1 END AS viewer_upvoted,
+         CASE WHEN uf.user_id IS NULL THEN 0 ELSE 1 END AS viewer_flagged`
+    : "";
+  const viewerJoin = payload.viewerUserId
+    ? `
+       LEFT JOIN ugc_submission_upvotes uv ON uv.submission_id = s.id AND uv.user_id = ?${viewerBindingOffset + 1}
+       LEFT JOIN ugc_submission_flags uf ON uf.submission_id = s.id AND uf.user_id = ?${viewerBindingOffset + 2}`
+    : "";
+  const viewerBindings = payload.viewerUserId ? [payload.viewerUserId, payload.viewerUserId] : [];
   const result = await db
     .prepare(
       `SELECT
          s.*,
+         COALESCE(v.upvote_count, 0) AS upvote_count,
+         COALESCE(f.flag_count, 0) AS flag_count,
          u.uid AS submitter_uid,
          u.uid_number AS user_uid_number,
          u.uid_suffix AS user_uid_suffix,
          u.role AS user_role,
          u.karma AS user_karma,
          u.nickname AS user_nickname
+         ${viewerSelect}
        FROM ugc_submissions s
+       LEFT JOIN (
+         SELECT submission_id, COUNT(*) AS upvote_count
+         FROM ugc_submission_upvotes
+         GROUP BY submission_id
+       ) v ON v.submission_id = s.id
+       LEFT JOIN (
+         SELECT submission_id, COUNT(*) AS flag_count
+         FROM ugc_submission_flags
+         GROUP BY submission_id
+       ) f ON f.submission_id = s.id
+       ${viewerJoin}
        LEFT JOIN users u ON u.uid = s.user_id
        WHERE ${filters.join(" AND ")}
        ORDER BY poi_id ASC, created_at DESC
-       LIMIT ?${markerIds.length + extraBindings.length + 1}`
+       LIMIT ?${markerIds.length + extraBindings.length + viewerBindings.length + 1}`
     )
-    .bind(...markerIds, ...extraBindings, limit * markerIds.length)
+    .bind(...markerIds, ...extraBindings, ...viewerBindings, limit * markerIds.length)
     .all<Record<string, unknown>>();
 
   return (result.results ?? []).map((row) => {
@@ -390,6 +588,11 @@ export async function listActiveImagesByMarker(
             publicUid: submission.submitter.publicUid
           }
         : null,
+      status: submission.status,
+      upvoteCount: toCount(row.upvote_count),
+      flagCount: toCount(row.flag_count),
+      upvoted: payload.viewerUserId ? Boolean(row.viewer_upvoted) : undefined,
+      flagged: payload.viewerUserId ? Boolean(row.viewer_flagged) : undefined,
       createdAt: submission.createdAt
     };
   });
@@ -435,6 +638,8 @@ export async function listUserImagesByMarker(
     .prepare(
       `SELECT
          s.*,
+         COALESCE(v.upvote_count, 0) AS upvote_count,
+         COALESCE(f.flag_count, 0) AS flag_count,
          u.uid AS submitter_uid,
          u.uid_number AS user_uid_number,
          u.uid_suffix AS user_uid_suffix,
@@ -442,6 +647,16 @@ export async function listUserImagesByMarker(
          u.karma AS user_karma,
          u.nickname AS user_nickname
        FROM ugc_submissions s
+       LEFT JOIN (
+         SELECT submission_id, COUNT(*) AS upvote_count
+         FROM ugc_submission_upvotes
+         GROUP BY submission_id
+       ) v ON v.submission_id = s.id
+       LEFT JOIN (
+         SELECT submission_id, COUNT(*) AS flag_count
+         FROM ugc_submission_flags
+         GROUP BY submission_id
+       ) f ON f.submission_id = s.id
        LEFT JOIN users u ON u.uid = s.user_id
        WHERE ${filters.join(" AND ")}
        ORDER BY poi_id ASC, created_at DESC
@@ -469,6 +684,8 @@ export async function listUserImagesByMarker(
             publicUid: submission.submitter.publicUid
           }
         : null,
+      upvoteCount: toCount(row.upvote_count),
+      flagCount: toCount(row.flag_count),
       status: submission.status
     };
   });

@@ -1,4 +1,5 @@
 import type { Redis } from "@upstash/redis";
+import { AI_STALE_MODERATION_NOTE_PREFIX, RECALL_MODERATION_NOTE_PREFIX } from "../lib/moderation";
 import {
   getApprovedCommentDailyBackoffTtlSeconds,
   calculateKarmaEvaluationScore,
@@ -83,9 +84,15 @@ async function incrementDailyApprovedSubmissionCount(
 
 export async function evaluateKarmaIfDue(
   db: D1Database,
-  redis: Redis
+  redis: Redis,
+  options: {
+    surgeModeEnabled?: boolean;
+    surgeBackoffMultiplier?: number;
+  } = {}
 ): Promise<KarmaEvaluationResult> {
-  const intervalSeconds = getKarmaEvaluationIntervalSeconds();
+  const intervalSeconds = getKarmaEvaluationIntervalSeconds(
+    options.surgeModeEnabled ? options.surgeBackoffMultiplier ?? 3 : 1
+  );
   const lockPlaced = await redis.set(KARMA_EVALUATION_LOCK_KEY, String(Date.now()), {
     nx: true,
     ex: intervalSeconds
@@ -143,13 +150,26 @@ async function evaluateKarmaUsers(db: D1Database, uids: string[]): Promise<numbe
 
 async function evaluateKarmaUserChunk(db: D1Database, uids: string[]): Promise<number> {
   const placeholders = uids.map((_, index) => `?${index + 1}`).join(", ");
+  const aiStaleNotePlaceholder = `?${uids.length + 1}`;
+  const recallNotePlaceholder = `?${uids.length + 2}`;
+  const userFilterOffset = uids.length + 3;
+  const userFilterPlaceholders = uids.map((_, index) => `?${userFilterOffset + index}`).join(", ");
   const rows = await db
     .prepare(
       `WITH image_stats AS (
          SELECT
            user_id,
            SUM(CASE WHEN kind = 'image' AND status IN ('active', 'flagged', 'remove_request') THEN 1 ELSE 0 END) AS approved_images,
-           SUM(CASE WHEN kind = 'image' AND status = 'stale' THEN 1 ELSE 0 END) AS rejected_images
+           SUM(
+             CASE
+               WHEN kind = 'image'
+                AND status = 'stale'
+                AND COALESCE(moderation_note, '') NOT LIKE ${aiStaleNotePlaceholder}
+                AND COALESCE(moderation_note, '') NOT LIKE ${recallNotePlaceholder}
+               THEN 1
+               ELSE 0
+             END
+           ) AS rejected_images
          FROM ugc_submissions
          WHERE kind = 'image'
            AND user_id IN (${placeholders})
@@ -166,9 +186,9 @@ async function evaluateKarmaUserChunk(db: D1Database, uids: string[]): Promise<n
        FROM users u
        LEFT JOIN image_stats s ON s.user_id = u.uid
        WHERE u.role != 'r'
-         AND u.uid IN (${placeholders})`
+         AND u.uid IN (${userFilterPlaceholders})`
     )
-    .bind(...uids)
+    .bind(...uids, `${AI_STALE_MODERATION_NOTE_PREFIX}%`, `${RECALL_MODERATION_NOTE_PREFIX}%`, ...uids)
     .all<KarmaEvaluationRow>();
 
   let updated = 0;

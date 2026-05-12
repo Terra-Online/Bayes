@@ -1,4 +1,5 @@
 import type { Redis } from "@upstash/redis";
+import { AI_STALE_MODERATION_NOTE_PREFIX } from "../lib/moderation";
 import { getModerationPointsDeltaWithDailyBackoff, markKarmaDirty } from "./karma";
 import {
   getPendingOpenAISubmissions,
@@ -168,22 +169,10 @@ async function moderateSubmissionById(
   await updateSubmissionStatus(db, {
     id: submissionId,
     status,
-    moderationNote: result.categorySummary
+    moderationNote: result.flagged
+      ? `${AI_STALE_MODERATION_NOTE_PREFIX} ${result.categorySummary}`
+      : result.categorySummary
   });
-  if (status === "stale") {
-    const pointsDelta = await getModerationPointsDeltaWithDailyBackoff(options.redis, {
-      userId: submission.userId,
-      kind: submission.kind,
-      status,
-      role: submission.submitter?.role,
-      surgeModeEnabled: options.surgeModeEnabled,
-      surgeBackoffMultiplier: options.surgeBackoffMultiplier
-    });
-    await applyUserPointsDelta(db, submission.userId, pointsDelta);
-    if (options.redis) {
-      await markKarmaDirty(options.redis, submission.userId);
-    }
-  }
   return true;
 }
 

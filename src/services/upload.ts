@@ -48,6 +48,15 @@ export async function prepareUploadImageForStorage(payload: {
   mimeType: string;
   dimensions: ImageDimensions | null;
 }): Promise<PreparedUploadImage> {
+  if (payload.mimeType === "image/webp") {
+    return {
+      body: payload.body,
+      mimeType: payload.mimeType,
+      sizeBytes: payload.body.byteLength,
+      converted: false
+    };
+  }
+
   let dimensions = payload.dimensions;
   let decoded: ImageData | null = null;
   if (!dimensions) {
