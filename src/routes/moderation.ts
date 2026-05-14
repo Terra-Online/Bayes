@@ -18,7 +18,7 @@ import {
   type SubmissionStatus
 } from "../repositories/submissions";
 import { applyUserPointsDelta } from "../repositories/users";
-import { getModerationPointsDeltaWithDailyBackoff, markKarmaDirty } from "../services/karma";
+import { evaluateKarmaBatch, getModerationPointsDeltaWithDailyBackoff, markKarmaDirty } from "../services/karma";
 import { ensureModerationBackfill, moderateSubmissionIds, moderateSubmissionOnce } from "../services/moderation";
 import { notifyPendingOpenAICompleted } from "../services/notifications";
 import type { AppEnv } from "../types/app";
@@ -310,6 +310,24 @@ export function createModerationRoutes() {
     }
 
     return c.json(await runModeration(c, { ids: parsed.data.ids }));
+  });
+
+  app.post("/karma/run-once", requireAuth, requireRole(["a"]), rateLimit("auth"), async (c) => {
+    const redis = createRedisClient(c.env);
+    let result;
+    try {
+      result = await evaluateKarmaBatch(c.env.DB, redis);
+    } catch (error) {
+      throw new ApiError(500, "KARMA_EVALUATION_FAILED", "Karma evaluation failed.", {
+        name: error instanceof Error ? error.name : undefined,
+        message: error instanceof Error ? error.message : String(error)
+      });
+    }
+
+    return c.json({
+      ok: true,
+      ...result
+    });
   });
 
   app.delete("/test-images", requireAuth, requireRole(["a"]), rateLimit("auth"), async (c) => {

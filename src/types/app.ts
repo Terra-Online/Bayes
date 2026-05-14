@@ -36,6 +36,7 @@ export interface Bindings {
   LOCK_UPLOAD_ENDPOINTS?: string;
   LOCK_SCHEDULED_JOBS?: string;
   ENDFIELD_CREDENTIAL_SECRET?: string;
+  ENDFIELD_WS_BASE_URL?: string;
 }
 
 export interface AuthUser {

@@ -13,7 +13,7 @@ import {
 const KARMA_EVALUATION_LOCK_KEY = "karma:evaluation:last-run";
 const KARMA_DIRTY_SET_KEY = "karma:evaluation:dirty-users";
 const KARMA_SWEEP_CURSOR_KEY = "karma:evaluation:sweep-cursor";
-const KARMA_EVALUATION_QUERY_CHUNK_SIZE = 500;
+const KARMA_EVALUATION_QUERY_CHUNK_SIZE = 90;
 const DAILY_APPROVED_SUBMISSION_KEY_PREFIX = "karma:approved-submissions:";
 
 type KarmaEvaluationResult = {
@@ -108,7 +108,12 @@ export async function evaluateKarmaIfDue(
     };
   }
 
-  return evaluateKarmaBatch(db, redis);
+  try {
+    return await evaluateKarmaBatch(db, redis);
+  } catch (error) {
+    await redis.del(KARMA_EVALUATION_LOCK_KEY).catch(() => undefined);
+    throw error;
+  }
 }
 
 export async function evaluateKarmaBatch(
@@ -149,16 +154,17 @@ async function evaluateKarmaUsers(db: D1Database, uids: string[]): Promise<numbe
 }
 
 async function evaluateKarmaUserChunk(db: D1Database, uids: string[]): Promise<number> {
-  const placeholders = uids.map((_, index) => `?${index + 1}`).join(", ");
+  const selectedUserValues = uids.map((_, index) => `(?${index + 1})`).join(", ");
   const aiStaleNotePlaceholder = `?${uids.length + 1}`;
   const recallNotePlaceholder = `?${uids.length + 2}`;
-  const userFilterOffset = uids.length + 3;
-  const userFilterPlaceholders = uids.map((_, index) => `?${userFilterOffset + index}`).join(", ");
   const rows = await db
     .prepare(
-      `WITH image_stats AS (
+      `WITH selected_users(uid) AS (
+         VALUES ${selectedUserValues}
+       ),
+       image_stats AS (
          SELECT
-           user_id,
+           s.user_id,
            SUM(CASE WHEN kind = 'image' AND status IN ('active', 'flagged', 'remove_request') THEN 1 ELSE 0 END) AS approved_images,
            SUM(
              CASE
@@ -170,10 +176,10 @@ async function evaluateKarmaUserChunk(db: D1Database, uids: string[]): Promise<n
                ELSE 0
              END
            ) AS rejected_images
-         FROM ugc_submissions
-         WHERE kind = 'image'
-           AND user_id IN (${placeholders})
-         GROUP BY user_id
+         FROM ugc_submissions s
+         INNER JOIN selected_users selected ON selected.uid = s.user_id
+         WHERE s.kind = 'image'
+         GROUP BY s.user_id
        )
        SELECT
          u.uid,
@@ -184,11 +190,11 @@ async function evaluateKarmaUserChunk(db: D1Database, uids: string[]): Promise<n
          COALESCE(s.approved_images, 0) AS approved_images,
          COALESCE(s.rejected_images, 0) AS rejected_images
        FROM users u
+       INNER JOIN selected_users selected ON selected.uid = u.uid
        LEFT JOIN image_stats s ON s.user_id = u.uid
-       WHERE u.role != 'r'
-         AND u.uid IN (${userFilterPlaceholders})`
+       WHERE u.role != 'r'`
     )
-    .bind(...uids, `${AI_STALE_MODERATION_NOTE_PREFIX}%`, `${RECALL_MODERATION_NOTE_PREFIX}%`, ...uids)
+    .bind(...uids, `${AI_STALE_MODERATION_NOTE_PREFIX}%`, `${RECALL_MODERATION_NOTE_PREFIX}%`)
     .all<KarmaEvaluationRow>();
 
   let updated = 0;

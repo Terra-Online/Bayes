@@ -3,10 +3,12 @@ import { z } from "zod";
 import { createToken, decryptSecret, encryptSecret } from "../lib/crypto";
 import {
   agreePolicy,
+  connectEndfieldPositionSocket,
   createEndfieldDeviceProfile,
   generateEndfieldCredByCode,
   getEndfieldPosition,
   getEndfieldRoles,
+  parseEndfieldPositionSocketMessage,
   grantEndfieldOAuthCode,
   parseEndfieldDeviceProfile,
   serializeEndfieldDeviceProfile,
@@ -54,14 +56,14 @@ const PENDING_TTL_SECONDS = 10 * 60;
 const DECRYPTED_BINDING_CACHE_TTL_MS = 180_000;
 const POSITION_CACHE_FRESH_MS = 250;
 const POSITION_CACHE_STALE_MS = 2_500;
-const POSITION_SOCKET_INTERVAL_MS = 1_000;
-const POSITION_SOCKET_RETRY_MS = 5_000;
+const POSITION_STREAM_RECONNECT_MS = 1_000;
 
 type DecryptedBinding = {
   binding: EndfieldBindingRow;
   publicBinding: ReturnType<typeof publicBinding>;
   cred: string;
   token: string;
+  wsBaseUrl?: string;
   deviceProfile: EndfieldDeviceProfile;
 };
 
@@ -236,6 +238,7 @@ async function getDecryptedBinding(c: AppContext, uid: string): Promise<Decrypte
     publicBinding: publicBinding(binding),
     cred,
     token,
+    wsBaseUrl: c.env.ENDFIELD_WS_BASE_URL,
     deviceProfile,
     expiresAt: now + DECRYPTED_BINDING_CACHE_TTL_MS
   };
@@ -263,6 +266,7 @@ async function refreshPositionCache(key: string, binding: DecryptedBinding): Pro
     serverId: Number(binding.binding.server_id),
     cred: binding.cred,
     token: binding.token,
+    wsBaseUrl: binding.wsBaseUrl,
     deviceProfile: binding.deviceProfile
   })
     .then((data) => {
@@ -311,31 +315,37 @@ async function handleEndfieldPositionSocket(c: AppContext) {
   const user = requireUser(c);
   const includeBinding = shouldIncludeBinding(c);
   const binding = await getDecryptedBinding(c, user.uid);
-  const cacheKey = getPositionCacheKey(user.uid, binding.binding);
   const pair = new WebSocketPair();
   const [client, server] = Object.values(pair);
   let closed = false;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  let inFlight = false;
-
-  const clearTimer = () => {
-    if (timer !== undefined) {
-      clearTimeout(timer);
-      timer = undefined;
-    }
-  };
+  let upstream: WebSocket | undefined;
+  let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+  let upstreamGeneration = 0;
 
   const close = () => {
     closed = true;
-    clearTimer();
+    if (reconnectTimer !== undefined) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = undefined;
+    }
+    try {
+      upstream?.close(1000, "client closed");
+    } catch {
+      // upstream is already closed
+    }
   };
 
-  const schedule = (delayMs: number) => {
-    if (closed) return;
-    clearTimer();
-    timer = setTimeout(() => {
-      void pushPosition();
-    }, delayMs);
+  const scheduleReconnect = () => {
+    if (closed || reconnectTimer !== undefined) return;
+    try {
+      upstream?.close(1000, "reconnecting");
+    } catch {
+      // upstream is already closed
+    }
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = undefined;
+      void bridgeUpstream();
+    }, POSITION_STREAM_RECONNECT_MS);
   };
 
   const sendJson = (payload: unknown) => {
@@ -347,25 +357,70 @@ async function handleEndfieldPositionSocket(c: AppContext) {
     }
   };
 
-  const pushPosition = async () => {
-    if (closed || inFlight) return;
-    inFlight = true;
+  const bridgeUpstream = async () => {
+    const generation = upstreamGeneration + 1;
+    upstreamGeneration = generation;
     try {
-      const position = await refreshPositionCache(cacheKey, binding);
       sendJson({
-        type: "position",
-        data: position.data,
-        ...(includeBinding ? { binding: binding.publicBinding } : {})
+        type: "status",
+        status: "connecting"
       });
-      schedule(POSITION_SOCKET_INTERVAL_MS);
+      upstream = await connectEndfieldPositionSocket({
+        provider: binding.binding.provider,
+        roleId: binding.binding.role_id,
+        serverId: Number(binding.binding.server_id),
+        cred: binding.cred,
+        token: binding.token,
+        wsBaseUrl: c.env.ENDFIELD_WS_BASE_URL,
+        deviceProfile: binding.deviceProfile
+      });
+      sendJson({
+        type: "status",
+        status: "connected"
+      });
+
+      upstream.addEventListener("message", (event) => {
+        if (generation !== upstreamGeneration) return;
+        const position = parseEndfieldPositionSocketMessage(event.data as string | ArrayBuffer);
+        if (!position) return;
+        positionCache.set(getPositionCacheKey(user.uid, binding.binding), {
+          data: position,
+          refreshedAt: Date.now()
+        });
+        sendJson({
+          type: "position",
+          data: position,
+          ...(includeBinding ? { binding: binding.publicBinding } : {})
+        });
+      });
+      upstream.addEventListener("close", () => {
+        if (!closed && generation === upstreamGeneration) {
+          upstreamGeneration += 1;
+          sendJson({
+            type: "status",
+            status: "reconnecting",
+            reason: "upstream closed"
+          });
+          scheduleReconnect();
+        }
+      });
+      upstream.addEventListener("error", () => {
+        if (!closed && generation === upstreamGeneration) {
+          upstreamGeneration += 1;
+          sendJson({
+            type: "status",
+            status: "reconnecting",
+            reason: "upstream error"
+          });
+          scheduleReconnect();
+        }
+      });
     } catch (error) {
       sendJson({
         type: "error",
         error: serializeLocatorError(error)
       });
-      schedule(POSITION_SOCKET_RETRY_MS);
-    } finally {
-      inFlight = false;
+      scheduleReconnect();
     }
   };
 
@@ -379,7 +434,7 @@ async function handleEndfieldPositionSocket(c: AppContext) {
     }
   });
 
-  void pushPosition();
+  c.executionCtx.waitUntil(bridgeUpstream());
 
   return new Response(null, {
     status: 101,

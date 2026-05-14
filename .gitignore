@@ -144,6 +144,7 @@ desktop.ini
 PRD.md
 PROGRESS.md
 UGC.md
+ENDPOINTS.md
 migrations/*
 src/lib/endfield-client-ua.json
 src/lib/karma-config.json
