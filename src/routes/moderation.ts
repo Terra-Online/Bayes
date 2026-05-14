@@ -20,6 +20,7 @@ import {
 import { applyUserPointsDelta } from "../repositories/users";
 import { getModerationPointsDeltaWithDailyBackoff, markKarmaDirty } from "../services/karma";
 import { ensureModerationBackfill, moderateSubmissionIds, moderateSubmissionOnce } from "../services/moderation";
+import { notifyPendingOpenAICompleted } from "../services/notifications";
 import type { AppEnv } from "../types/app";
 
 const updateSchema = z.object({
@@ -125,12 +126,21 @@ async function runModeration(
       payload.ids,
       25_000
     );
+    c.executionCtx.waitUntil(
+      notifyPendingOpenAICompleted(c.env, {
+        mode: "selected",
+        requested: payload.ids.length,
+        stats: processed.stats
+      })
+    );
 
     return {
       ok: true,
       mode: "selected" as const,
       requested: payload.ids.length,
-      processed
+      processed: processed.processed,
+      pendingAudit: processed.stats.pendingAudit,
+      stale: processed.stats.stale
     };
   }
 
@@ -143,12 +153,21 @@ async function runModeration(
     limit,
     25_000
   );
+  c.executionCtx.waitUntil(
+    notifyPendingOpenAICompleted(c.env, {
+      mode: "queue",
+      requested: limit,
+      stats: processed.stats
+    })
+  );
 
   return {
     ok: true,
     mode: "queue" as const,
     requested: limit,
-    processed
+    processed: processed.processed,
+    pendingAudit: processed.stats.pendingAudit,
+    stale: processed.stats.stale
   };
 }
 

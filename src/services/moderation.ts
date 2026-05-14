@@ -2,9 +2,15 @@ import type { Redis } from "@upstash/redis";
 import { AI_STALE_MODERATION_NOTE_PREFIX } from "../lib/moderation";
 import { getModerationPointsDeltaWithDailyBackoff, markKarmaDirty } from "./karma";
 import {
+  createEmptyPendingOpenAICompletionStats,
+  recordPendingOpenAICompletionStatus,
+  type PendingOpenAICompletionStats
+} from "./notifications";
+import {
   getPendingOpenAISubmissions,
   getSubmissionById,
-  updateSubmissionStatus
+  updateSubmissionStatus,
+  type SubmissionStatus
 } from "../repositories/submissions";
 import { applyUserPointsDelta } from "../repositories/users";
 
@@ -14,6 +20,11 @@ const OPENAI_MODERATION_TIMEOUT_MS = 8_000;
 interface OpenAIModerationResult {
   flagged: boolean;
   categorySummary: string;
+}
+
+export interface ModerationProcessResult {
+  processed: number;
+  stats: PendingOpenAICompletionStats;
 }
 
 export async function enqueueModeration(redis: Redis, submissionId: string): Promise<void> {
@@ -35,8 +46,8 @@ export async function moderateSubmissionOnce(
   },
   maxJobs = 10,
   maxRuntimeMs = 25_000
-): Promise<number> {
-  let processed = 0;
+): Promise<ModerationProcessResult> {
+  const stats = createEmptyPendingOpenAICompletionStats();
   const startedAt = Date.now();
 
   for (let i = 0; i < maxJobs; i += 1) {
@@ -49,12 +60,16 @@ export async function moderateSubmissionOnce(
       break;
     }
 
-    if (await moderateSubmissionById(db, submissionId, options)) {
-      processed += 1;
+    const status = await moderateSubmissionById(db, submissionId, options);
+    if (status) {
+      recordPendingOpenAICompletionStatus(stats, status);
     }
   }
 
-  return processed;
+  return {
+    processed: stats.processed,
+    stats
+  };
 }
 
 export async function moderateSubmissionIds(
@@ -71,8 +86,8 @@ export async function moderateSubmissionIds(
   },
   submissionIds: string[],
   maxRuntimeMs = 25_000
-): Promise<number> {
-  let processed = 0;
+): Promise<ModerationProcessResult> {
+  const stats = createEmptyPendingOpenAICompletionStats();
   const startedAt = Date.now();
   const ids = [...new Set(submissionIds.map((id) => id.trim()).filter(Boolean))];
 
@@ -81,12 +96,16 @@ export async function moderateSubmissionIds(
       break;
     }
 
-    if (await moderateSubmissionById(db, submissionId, options)) {
-      processed += 1;
+    const status = await moderateSubmissionById(db, submissionId, options);
+    if (status) {
+      recordPendingOpenAICompletionStatus(stats, status);
     }
   }
 
-  return processed;
+  return {
+    processed: stats.processed,
+    stats
+  };
 }
 
 async function moderateSubmissionById(
@@ -102,10 +121,10 @@ async function moderateSubmissionById(
     skipAiModeration?: boolean;
     localAutoApprove?: boolean;
   }
-): Promise<boolean> {
+): Promise<SubmissionStatus | null> {
   const submission = await getSubmissionById(db, submissionId);
   if (!submission || submission.status !== "pending_openai") {
-    return false;
+    return null;
   }
 
   if (options.skipAiModeration) {
@@ -114,7 +133,7 @@ async function moderateSubmissionById(
       status: "pending_audit",
       moderationNote: "AI moderation skipped; waiting for manual audit."
     });
-    return true;
+    return "pending_audit";
   }
 
   if (!options.openAiApiKey) {
@@ -140,7 +159,7 @@ async function moderateSubmissionById(
         await markKarmaDirty(options.redis, submission.userId);
       }
     }
-    return true;
+    return status;
   }
 
   let result: OpenAIModerationResult;
@@ -173,7 +192,7 @@ async function moderateSubmissionById(
       ? `${AI_STALE_MODERATION_NOTE_PREFIX} ${result.categorySummary}`
       : result.categorySummary
   });
-  return true;
+  return status;
 }
 
 async function resolveModerationImageUrl(

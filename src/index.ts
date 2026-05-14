@@ -3,6 +3,11 @@ import { getRuntimeConfig } from './lib/config';
 import { flushDirtyProgressToD1 } from './services/progress';
 import { ensureModerationBackfill, moderateSubmissionOnce } from './services/moderation';
 import { evaluateKarmaIfDue } from './services/karma';
+import {
+  createEmptyPendingOpenAICompletionStats,
+  notifyPendingOpenAICompleted,
+  type PendingOpenAICompletionStats,
+} from './services/notifications';
 import { createApp } from './app';
 import type { Bindings } from './types/app';
 import { initResend } from './lib/email';
@@ -30,7 +35,19 @@ function sleep(ms: number): Promise<void> {
 type ModerationCycleResult = {
   enqueued: number;
   processed: number;
+  stats: PendingOpenAICompletionStats;
 };
+
+function mergePendingOpenAICompletionStats(
+  first: PendingOpenAICompletionStats,
+  second: PendingOpenAICompletionStats
+): PendingOpenAICompletionStats {
+  return {
+    processed: first.processed + second.processed,
+    pendingAudit: first.pendingAudit + second.pendingAudit,
+    stale: first.stale + second.stale,
+  };
+}
 
 async function runModerationCycle(
   env: Bindings,
@@ -38,7 +55,7 @@ async function runModerationCycle(
   config: ReturnType<typeof getRuntimeConfig>
 ): Promise<ModerationCycleResult> {
   const enqueued = await ensureModerationBackfill(env.DB, redis, 20);
-  const processed = await moderateSubmissionOnce(
+  const moderation = await moderateSubmissionOnce(
     env.DB,
     redis,
     {
@@ -54,7 +71,11 @@ async function runModerationCycle(
     10
   );
 
-  return { enqueued, processed };
+  return {
+    enqueued,
+    processed: moderation.processed,
+    stats: moderation.stats,
+  };
 }
 
 async function runScheduledModeration(
@@ -68,7 +89,11 @@ async function runScheduledModeration(
   });
 
   if (!lockPlaced) {
-    return { enqueued: 0, processed: 0 };
+    return {
+      enqueued: 0,
+      processed: 0,
+      stats: createEmptyPendingOpenAICompletionStats(),
+    };
   }
 
   try {
@@ -82,6 +107,7 @@ async function runScheduledModeration(
     return {
       enqueued: firstPass.enqueued + secondPass.enqueued,
       processed: firstPass.processed + secondPass.processed,
+      stats: mergePendingOpenAICompletionStats(firstPass.stats, secondPass.stats),
     };
   } finally {
     await redis.del(MODERATION_RUN_LOCK_KEY).catch(() => undefined);
@@ -112,6 +138,11 @@ async function runScheduledJobs(env: Bindings): Promise<void> {
     const moderation = await runScheduledModeration(env, redis, config);
     enqueued = moderation.enqueued;
     processed = moderation.processed;
+    await notifyPendingOpenAICompleted(env, {
+      mode: 'queue',
+      requested: 20,
+      stats: moderation.stats,
+    });
   }
 
   console.warn('cron jobs completed', {

@@ -25,6 +25,12 @@ import {
 import { getUserByUid } from "../repositories/users";
 import { readImageDimensions } from "../services/image-metadata";
 import { enqueueModeration } from "../services/moderation";
+import {
+  notifyFlagCreated,
+  notifyFlagRemoved,
+  notifyRemoveRequestCancelled,
+  notifyRemoveRequestCreated
+} from "../services/notifications";
 import { buildUploadObjectKey, extensionFromMime, normalizePathPart, prepareUploadImageForStorage } from "../services/upload";
 import type { AppEnv } from "../types/app";
 
@@ -547,6 +553,17 @@ export function createUploadRoutes() {
       });
     }
     const flagCount = await countSubmissionFlags(c.env.DB, submissionId);
+    if (created) {
+      c.executionCtx.waitUntil(
+        notifyFlagCreated(c.env, {
+          submission,
+          actor: user,
+          changed: created,
+          flagCount,
+          nextStatus: "flagged"
+        })
+      );
+    }
 
     return c.json({ ok: true, created, status: "flagged", flagCount });
   });
@@ -587,6 +604,17 @@ export function createUploadRoutes() {
         moderationNote: status === "active" ? "User flag removed." : undefined
       });
     }
+    if (deleted) {
+      c.executionCtx.waitUntil(
+        notifyFlagRemoved(c.env, {
+          submission,
+          actor: user,
+          changed: deleted,
+          flagCount,
+          nextStatus: status
+        })
+      );
+    }
 
     return c.json({ ok: true, deleted, status, flagCount });
   });
@@ -620,6 +648,14 @@ export function createUploadRoutes() {
       status: "remove_request",
       moderationNote: "Removal requested by uploader."
     });
+    c.executionCtx.waitUntil(
+      notifyRemoveRequestCreated(c.env, {
+        submission,
+        actor: user,
+        nextStatus: "remove_request",
+        source: "remove_request"
+      })
+    );
 
     return c.json({ ok: true, status: "remove_request" });
   });
@@ -655,6 +691,14 @@ export function createUploadRoutes() {
       status,
       moderationNote: "Removal request cancelled by uploader."
     });
+    c.executionCtx.waitUntil(
+      notifyRemoveRequestCancelled(c.env, {
+        submission,
+        actor: user,
+        nextStatus: status,
+        flagCount
+      })
+    );
 
     return c.json({ ok: true, status, flagCount });
   });
@@ -691,6 +735,14 @@ export function createUploadRoutes() {
       status: "remove_request",
       moderationNote: `${RECALL_MODERATION_NOTE_PREFIX} upload error.`
     });
+    c.executionCtx.waitUntil(
+      notifyRemoveRequestCreated(c.env, {
+        submission,
+        actor: user,
+        nextStatus: "remove_request",
+        source: "recall"
+      })
+    );
 
     return c.json({ ok: true, status: "remove_request" });
   });

@@ -13,6 +13,7 @@ export interface Bindings {
   GOOGLE_CLIENT_SECRET?: string;
   DISCORD_CLIENT_ID?: string;
   DISCORD_CLIENT_SECRET?: string;
+  DISCORD_MODERATION_WEBHOOK_URL?: string;
   OPENAI_API_KEY?: string;
   SESSION_TTL_SECONDS?: string;
   PROGRESS_CACHE_TTL_SECONDS?: string;
