@@ -23,6 +23,11 @@ import {
   updateSubmissionStatus
 } from "../repositories/submissions";
 import { getUserByUid } from "../repositories/users";
+import {
+  UGC_PUBLIC_IMAGE_CACHE_CONTROL,
+  UGC_PUBLIC_LIST_CACHE_CONTROL,
+  prewarmPublicUgcAsset
+} from "../services/asset-cache";
 import { readImageDimensions } from "../services/image-metadata";
 import { enqueueModeration } from "../services/moderation";
 import {
@@ -302,7 +307,8 @@ export function createUploadRoutes() {
 
     await c.env.UGC_BUCKET.put(objectKey, preparedImage.body, {
       httpMetadata: {
-        contentType: preparedImage.mimeType
+        contentType: preparedImage.mimeType,
+        cacheControl: UGC_PUBLIC_IMAGE_CACHE_CONTROL
       },
       customMetadata: {
         sourceMimeType: normalizedMime,
@@ -393,7 +399,7 @@ export function createUploadRoutes() {
     const headers = new Headers();
     object.writeHttpMetadata(headers);
     headers.set("etag", object.httpEtag);
-    headers.set("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
+    headers.set("Cache-Control", UGC_PUBLIC_IMAGE_CACHE_CONTROL);
     headers.set("Content-Type", object.httpMetadata?.contentType ?? submission.mimeType ?? "application/octet-stream");
 
     return new Response(object.body, {
@@ -603,6 +609,10 @@ export function createUploadRoutes() {
         status,
         moderationNote: status === "active" ? "User flag removed." : undefined
       });
+      if (status === "active") {
+        const config = getRuntimeConfig(c.env);
+        c.executionCtx.waitUntil(prewarmPublicUgcAsset(config.ugcAssetBaseUrl, submission.filePath));
+      }
     }
     if (deleted) {
       c.executionCtx.waitUntil(
@@ -691,6 +701,10 @@ export function createUploadRoutes() {
       status,
       moderationNote: "Removal request cancelled by uploader."
     });
+    if (status === "active") {
+      const config = getRuntimeConfig(c.env);
+      c.executionCtx.waitUntil(prewarmPublicUgcAsset(config.ugcAssetBaseUrl, submission.filePath));
+    }
     c.executionCtx.waitUntil(
       notifyRemoveRequestCancelled(c.env, {
         submission,
@@ -798,7 +812,7 @@ export function createUploadRoutes() {
 
     const response = c.json({ items: images });
     if (cache && cacheKey) {
-      response.headers.set("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
+      response.headers.set("Cache-Control", UGC_PUBLIC_LIST_CACHE_CONTROL);
       c.executionCtx.waitUntil(cache.put(cacheKey, response.clone()));
     } else {
       response.headers.set("Cache-Control", "private, max-age=30");

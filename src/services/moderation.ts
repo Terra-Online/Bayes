@@ -1,5 +1,6 @@
 import type { Redis } from "@upstash/redis";
 import { AI_STALE_MODERATION_NOTE_PREFIX } from "../lib/moderation";
+import { prewarmPublicUgcAsset } from "./asset-cache";
 import { getModerationPointsDeltaWithDailyBackoff, markKarmaDirty } from "./karma";
 import {
   createEmptyPendingOpenAICompletionStats,
@@ -43,6 +44,7 @@ export async function moderateSubmissionOnce(
     surgeBackoffMultiplier?: number;
     skipAiModeration?: boolean;
     localAutoApprove?: boolean;
+    prewarmAsset?: typeof prewarmPublicUgcAsset;
   },
   maxJobs = 10,
   maxRuntimeMs = 25_000
@@ -83,6 +85,7 @@ export async function moderateSubmissionIds(
     surgeBackoffMultiplier?: number;
     skipAiModeration?: boolean;
     localAutoApprove?: boolean;
+    prewarmAsset?: typeof prewarmPublicUgcAsset;
   },
   submissionIds: string[],
   maxRuntimeMs = 25_000
@@ -120,6 +123,7 @@ async function moderateSubmissionById(
     surgeBackoffMultiplier?: number;
     skipAiModeration?: boolean;
     localAutoApprove?: boolean;
+    prewarmAsset?: typeof prewarmPublicUgcAsset;
   }
 ): Promise<SubmissionStatus | null> {
   const submission = await getSubmissionById(db, submissionId);
@@ -146,6 +150,7 @@ async function moderateSubmissionById(
         : "OpenAI moderation skipped in local mode; waiting for manual audit."
     });
     if (status === "active") {
+      await (options.prewarmAsset ?? prewarmPublicUgcAsset)(options.assetBaseUrl, submission.filePath);
       const pointsDelta = await getModerationPointsDeltaWithDailyBackoff(options.redis, {
         userId: submission.userId,
         kind: submission.kind,

@@ -18,6 +18,7 @@ import {
   type SubmissionStatus
 } from "../repositories/submissions";
 import { applyUserPointsDelta } from "../repositories/users";
+import { prewarmPublicUgcAsset } from "../services/asset-cache";
 import { evaluateKarmaBatch, getModerationPointsDeltaWithDailyBackoff, markKarmaDirty } from "../services/karma";
 import { ensureModerationBackfill, moderateSubmissionIds, moderateSubmissionOnce } from "../services/moderation";
 import { notifyPendingOpenAICompleted } from "../services/notifications";
@@ -266,6 +267,10 @@ export function createModerationRoutes() {
     });
     if (current.status === "flagged" && parsed.data.status === "active") {
       await clearSubmissionFlags(c.env.DB, submissionId);
+    }
+    if (current.status !== "active" && parsed.data.status === "active" && current.kind === "image") {
+      const config = getRuntimeConfig(c.env);
+      c.executionCtx.waitUntil(prewarmPublicUgcAsset(config.ugcAssetBaseUrl, current.filePath));
     }
     const effectiveModerationNote = parsed.data.moderationNote ?? current.moderationNote;
     if (shouldApplyModerationPoints(current.status, parsed.data.status, effectiveModerationNote)) {
