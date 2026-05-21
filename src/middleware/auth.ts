@@ -14,6 +14,16 @@ type CachedAuthUser = {
 
 const authUserCache = new Map<string, CachedAuthUser>();
 
+function buildAuthHeaders(headers: Headers, accessToken?: string | null): Headers {
+  if (!accessToken?.trim() || headers.has("authorization")) {
+    return headers;
+  }
+
+  const nextHeaders = new Headers(headers);
+  nextHeaders.set("authorization", `Bearer ${accessToken.trim()}`);
+  return nextHeaders;
+}
+
 function getAuthCacheKey(headers: Headers): string | null {
   const authorization = headers.get("authorization")?.trim();
   if (authorization) return `authorization:${authorization}`;
@@ -35,7 +45,8 @@ function pruneAuthUserCache(now: number): void {
 
 export const requireAuth: MiddlewareHandler<AppEnv> = async (c, next) => {
   const now = Date.now();
-  const cacheKey = getAuthCacheKey(c.req.raw.headers);
+  const authHeaders = buildAuthHeaders(c.req.raw.headers, c.req.query("access_token"));
+  const cacheKey = getAuthCacheKey(authHeaders);
   const cached = cacheKey ? authUserCache.get(cacheKey) : undefined;
   if (cached && cached.expiresAt > now) {
     c.set("authUser", cached.user);
@@ -45,11 +56,11 @@ export const requireAuth: MiddlewareHandler<AppEnv> = async (c, next) => {
 
   const auth = createAuth(c.env);
   const session = await auth.api.getSession({
-    headers: c.req.raw.headers
+    headers: authHeaders
   });
 
   if (!session) {
-    const authorization = c.req.header("authorization")?.trim() ?? "";
+    const authorization = authHeaders.get("authorization")?.trim() ?? "";
     const hasBearerToken = authorization.toLowerCase().startsWith("bearer ");
     if (hasBearerToken) {
       throw new ApiError(401, "TOKEN_EXPIRED", "Token is expired, missing, or invalid.");
@@ -71,6 +82,7 @@ export const requireAuth: MiddlewareHandler<AppEnv> = async (c, next) => {
     avatar: profile.avt,
     email: profile.email,
     nickname: profile.nickname,
+    registeredAt: profile.createdAt,
     needsProfileSetup: !profile.nicknameCustomized
   };
 

@@ -5,6 +5,10 @@ import type { AppEnv } from "../types/app";
 function errorJson(c: Context<AppEnv>, status: number, code: string, message: string, details?: unknown) {
   return new Response(
     JSON.stringify({
+      code,
+      message,
+      details,
+      requestId: c.get("requestId"),
       error: {
         code,
         message,

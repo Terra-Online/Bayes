@@ -80,6 +80,35 @@ function pickFile(value: FormDataEntryValue | FormDataEntryValue[] | undefined):
   return item instanceof File ? item : null;
 }
 
+function mimeFromFilename(filename: string): string {
+  const ext = filename.trim().toLowerCase().split(".").pop() ?? "";
+  switch (ext) {
+    case "jpg":
+    case "jpeg":
+      return "image/jpeg";
+    case "png":
+      return "image/png";
+    case "webp":
+      return "image/webp";
+    case "avif":
+      return "image/avif";
+    case "heic":
+      return "image/heic";
+    case "heif":
+      return "image/heif";
+    default:
+      return "";
+  }
+}
+
+function normalizeUploadMime(file: File): string {
+  const mimeType = file.type.trim().toLowerCase();
+  if (mimeType && mimeType !== "application/octet-stream") {
+    return mimeType;
+  }
+  return mimeFromFilename(file.name);
+}
+
 function parseObjectKey(raw: string | undefined): string {
   const key = raw?.trim() ?? "";
   if (!key || key.startsWith("/") || key.includes("..") || key.includes("\\")) {
@@ -264,7 +293,7 @@ export function createUploadRoutes() {
     }
 
     const config = getRuntimeConfig(c.env);
-    const normalizedMime = file.type.toLowerCase();
+    const normalizedMime = normalizeUploadMime(file);
     if (!config.allowedUploadMime.has(normalizedMime) || extensionFromMime(normalizedMime) === "bin") {
       throw new ApiError(422, "MIME_NOT_ALLOWED", "File MIME type is not allowed.");
     }

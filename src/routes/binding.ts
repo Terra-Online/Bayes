@@ -607,27 +607,41 @@ export function createBindingRoutes() {
 
   app.post("/endfield/exchange-token", async (c) => {
     const user = requireUser(c);
-    const parsed = exchangeTokenSchema.safeParse(await c.req.json());
+    const payload = await c.req.json().catch(() => undefined);
+    const parsed = exchangeTokenSchema.safeParse(payload);
     if (!parsed.success) {
       throw new ApiError(422, "VALIDATION_ERROR", "Invalid exchange payload.", parsed.error.flatten());
     }
 
-    const grant = await grantEndfieldOAuthCode(parsed.data.provider, parsed.data.token);
-    const generated = await generateEndfieldCredByCode(parsed.data.provider, grant.code);
-    const roles = await getEndfieldRoles(parsed.data.provider, generated.cred, generated.token);
-    if (roles.length === 0) {
-      throw new ApiError(404, "ENDFIELD_ROLE_NOT_FOUND", "No Endfield roles found on this account.");
+    try {
+      const grant = await grantEndfieldOAuthCode(parsed.data.provider, parsed.data.token);
+      const generated = await generateEndfieldCredByCode(parsed.data.provider, grant.code);
+      const roles = await getEndfieldRoles(parsed.data.provider, generated.cred, generated.token);
+      if (roles.length === 0) {
+        throw new ApiError(404, "ENDFIELD_ROLE_NOT_FOUND", "No Endfield roles found on this account.");
+      }
+
+      const flowId = await savePendingSession(c, user.uid, {
+        provider: parsed.data.provider,
+        cred: generated.cred,
+        token: generated.token,
+        roles,
+        createdAt: Date.now()
+      });
+
+      return c.json({ flowId, roles });
+    } catch (error) {
+      if (error instanceof ApiError) {
+        console.warn("[binding][endfield][exchange-token] failed", {
+          requestId: c.get("requestId"),
+          provider: parsed.data.provider,
+          code: error.code,
+          status: error.status,
+          details: error.details,
+        });
+      }
+      throw error;
     }
-
-    const flowId = await savePendingSession(c, user.uid, {
-      provider: parsed.data.provider,
-      cred: generated.cred,
-      token: generated.token,
-      roles,
-      createdAt: Date.now()
-    });
-
-    return c.json({ flowId, roles });
   });
 
   app.post("/endfield/exchange-code", async (c) => {

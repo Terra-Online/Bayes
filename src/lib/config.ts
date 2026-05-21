@@ -72,7 +72,7 @@ function parseBoolean(value: string | undefined, fallback: boolean): boolean {
 }
 
 export function getRuntimeConfig(env: Bindings): RuntimeConfig {
-  const allowed = (env.ALLOWED_UPLOAD_MIME ?? "image/jpeg,image/png,image/webp,image/avif")
+  const allowed = (env.ALLOWED_UPLOAD_MIME ?? "image/jpeg,image/png,image/webp,image/avif,image/heic,image/heif")
     .split(",")
     .map((item) => item.trim().toLowerCase())
     .filter(Boolean);

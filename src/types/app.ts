@@ -47,6 +47,7 @@ export interface AuthUser {
   avatar: number;
   email: string;
   nickname: string;
+  registeredAt?: string;
   needsProfileSetup: boolean;
 }
 

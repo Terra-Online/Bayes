@@ -38,9 +38,17 @@ export function extensionFromMime(mimeType: string): string {
       return "webp";
     case "image/avif":
       return "avif";
+    case "image/heic":
+      return "heic";
+    case "image/heif":
+      return "heif";
     default:
       return "bin";
   }
+}
+
+function isHeifMime(mimeType: string): boolean {
+  return mimeType === "image/heic" || mimeType === "image/heif";
 }
 
 export async function prepareUploadImageForStorage(payload: {
@@ -48,6 +56,15 @@ export async function prepareUploadImageForStorage(payload: {
   mimeType: string;
   dimensions: ImageDimensions | null;
 }): Promise<PreparedUploadImage> {
+  if (isHeifMime(payload.mimeType)) {
+    return {
+      body: payload.body,
+      mimeType: payload.mimeType,
+      sizeBytes: payload.body.byteLength,
+      converted: false
+    };
+  }
+
   if (payload.mimeType === "image/webp") {
     return {
       body: payload.body,

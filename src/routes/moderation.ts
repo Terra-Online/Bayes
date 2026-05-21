@@ -12,6 +12,7 @@ import {
   deleteSubmissionsByStatus,
   deleteSubmissionsByFilePathPrefix,
   getSubmissionFilePathsByStatus,
+  getReviewSubmissionStats,
   getReviewSubmissions,
   getSubmissionById,
   updateSubmissionStatus,
@@ -31,7 +32,9 @@ const updateSchema = z.object({
 
 const listSchema = z.object({
   status: z.string().max(200).optional(),
-  limit: z.coerce.number().int().min(1).max(500).optional()
+  from: z.iso.datetime({ offset: true }).optional(),
+  to: z.iso.datetime({ offset: true }).optional(),
+  limit: z.coerce.number().int().min(1).max(10000).optional()
 });
 
 const runSelectedSchema = z.object({
@@ -68,6 +71,10 @@ function parseStatuses(raw: string | undefined): SubmissionStatus[] | undefined 
     .filter((item): item is SubmissionStatus => ALL_STATUSES.includes(item as SubmissionStatus));
 
   return statuses.length > 0 ? [...new Set(statuses)] : undefined;
+}
+
+function toSqlTimestamp(date: Date): string {
+  return date.toISOString().slice(0, 19).replace("T", " ");
 }
 
 function assertStatusTransition(from: SubmissionStatus, to: SubmissionStatus): void {
@@ -221,18 +228,39 @@ export function createModerationRoutes() {
   app.get("/pending", requireAuth, requireRole(["p", "a"]), rateLimit("auth"), async (c) => {
     const parsed = listSchema.safeParse({
       status: c.req.query("status"),
+      from: c.req.query("from"),
+      to: c.req.query("to"),
       limit: c.req.query("limit")
     });
     if (!parsed.success) {
       throw new ApiError(422, "VALIDATION_ERROR", "Invalid moderation query.", parsed.error.flatten());
     }
+    const fromDate = parsed.data.from ? new Date(parsed.data.from) : null;
+    const toDate = parsed.data.to ? new Date(parsed.data.to) : null;
+    if (fromDate && toDate && fromDate.getTime() > toDate.getTime()) {
+      throw new ApiError(422, "VALIDATION_ERROR", "Invalid moderation query date range.", {
+        from: parsed.data.from,
+        to: parsed.data.to
+      });
+    }
 
-    const rows = await getReviewSubmissions(c.env.DB, {
+    const filters = {
       statuses: parseStatuses(parsed.data.status),
-      limit: parsed.data.limit ?? 100
-    });
+      createdFrom: fromDate ? toSqlTimestamp(fromDate) : undefined,
+      createdTo: toDate ? toSqlTimestamp(toDate) : undefined
+    };
+    const limit = parsed.data.limit ?? 1000;
+    const [rows, stats] = await Promise.all([
+      getReviewSubmissions(c.env.DB, {
+        ...filters,
+        limit
+      }),
+      getReviewSubmissionStats(c.env.DB, filters)
+    ]);
     return c.json({
-      items: rows
+      items: rows,
+      stats,
+      limit
     });
   });
 

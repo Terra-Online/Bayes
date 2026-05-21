@@ -41,11 +41,7 @@ export type SubmissionKind = "image" | "comment";
 export interface PublicSubmissionImage {
   id: string;
   markerId: string;
-  poiHash: string;
-  poiType: string;
-  snapshotId: string;
   url: string;
-  filePath: string;
   content: string | null;
   author: {
     nickname: string;
@@ -53,15 +49,31 @@ export interface PublicSubmissionImage {
   } | null;
   status: SubmissionStatus;
   upvoteCount: number;
-  flagCount: number;
   upvoted?: boolean;
   flagged?: boolean;
   createdAt: string;
 }
 
 export interface UserSubmissionImage extends PublicSubmissionImage {
+  poiHash: string;
+  poiType: string;
+  snapshotId: string;
+  filePath: string;
+  flagCount: number;
   status: SubmissionStatus;
 }
+
+export interface ReviewSubmissionStats {
+  total: number;
+  byType: { type: string; count: number }[];
+  byStatus: { status: SubmissionStatus; count: number }[];
+}
+
+type ReviewSubmissionFilters = {
+  statuses?: SubmissionStatus[];
+  createdFrom?: string;
+  createdTo?: string;
+};
 
 function toCount(value: unknown): number {
   const count = Number(value ?? 0);
@@ -194,12 +206,14 @@ export async function getReviewSubmissions(
   db: D1Database,
   payload: {
     statuses?: SubmissionStatus[];
+    createdFrom?: string;
+    createdTo?: string;
     limit?: number;
   } = {}
 ): Promise<SubmissionRecord[]> {
-  const statuses = payload.statuses?.length ? payload.statuses : ALL_STATUSES;
-  const placeholders = statuses.map((_, index) => `?${index + 1}`).join(", ");
-  const limit = Math.min(Math.max(payload.limit ?? 100, 1), 500);
+  const filters = buildReviewSubmissionWhere(payload);
+  const limit = Math.min(Math.max(payload.limit ?? 1000, 1), 10000);
+  const limitPlaceholder = filters.bindings.length + 1;
   const result = await db
     .prepare(
       `SELECT
@@ -212,7 +226,7 @@ export async function getReviewSubmissions(
          u.nickname AS user_nickname
        FROM ugc_submissions s
        LEFT JOIN users u ON u.uid = s.user_id
-       WHERE s.status IN (${placeholders})
+       WHERE ${filters.whereSql}
        ORDER BY
          CASE s.status
            WHEN 'pending_openai' THEN 0
@@ -223,12 +237,62 @@ export async function getReviewSubmissions(
            ELSE 1
          END,
          s.created_at ASC
-       LIMIT ?${statuses.length + 1}`
+       LIMIT ?${limitPlaceholder}`
     )
-    .bind(...statuses, limit)
+    .bind(...filters.bindings, limit)
     .all<Record<string, unknown>>();
 
   return (result.results ?? []).map((row) => mapSubmission(row));
+}
+
+export async function getReviewSubmissionStats(
+  db: D1Database,
+  payload: ReviewSubmissionFilters = {}
+): Promise<ReviewSubmissionStats> {
+  const filters = buildReviewSubmissionWhere(payload);
+  const [totalRow, typeRows, statusRows] = await Promise.all([
+    db
+      .prepare(
+        `SELECT COUNT(*) AS count
+         FROM ugc_submissions s
+         WHERE ${filters.whereSql}`
+      )
+      .bind(...filters.bindings)
+      .first<{ count: number | string }>(),
+    db
+      .prepare(
+        `SELECT COALESCE(NULLIF(poi_type, ''), 'unknown') AS type, COUNT(*) AS count
+         FROM ugc_submissions s
+         WHERE ${filters.whereSql}
+         GROUP BY COALESCE(NULLIF(poi_type, ''), 'unknown')
+         ORDER BY count DESC, type ASC`
+      )
+      .bind(...filters.bindings)
+      .all<{ type: string; count: number | string }>(),
+    db
+      .prepare(
+        `SELECT status, COUNT(*) AS count
+         FROM ugc_submissions s
+         WHERE ${filters.whereSql}
+         GROUP BY status`
+      )
+      .bind(...filters.bindings)
+      .all<{ status: string; count: number | string }>()
+  ]);
+
+  return {
+    total: toCount(totalRow?.count),
+    byType: (typeRows.results ?? []).map((row) => ({
+      type: String(row.type),
+      count: toCount(row.count)
+    })),
+    byStatus: (statusRows.results ?? [])
+      .map((row) => ({
+        status: mapStatus(row.status),
+        count: toCount(row.count)
+      }))
+      .filter((row) => ALL_STATUSES.includes(row.status))
+  };
 }
 
 export async function deleteSubmissionsByFilePathPrefix(db: D1Database, prefix: string): Promise<number> {
@@ -576,11 +640,7 @@ export async function listActiveImagesByMarker(
     return {
       id: submission.id,
       markerId: submission.markerId,
-      poiHash: submission.poiHash,
-      poiType: submission.poiType,
-      snapshotId: submission.snapshotId,
       url: `${payload.assetBaseUrl}/${filePath}`,
-      filePath,
       content: submission.content,
       author: submission.submitter?.publicUid && submission.submitter.nickname
         ? {
@@ -590,7 +650,6 @@ export async function listActiveImagesByMarker(
         : null,
       status: submission.status,
       upvoteCount: toCount(row.upvote_count),
-      flagCount: toCount(row.flag_count),
       upvoted: payload.viewerUserId ? Boolean(row.viewer_upvoted) : undefined,
       flagged: payload.viewerUserId ? Boolean(row.viewer_flagged) : undefined,
       createdAt: submission.createdAt
@@ -707,6 +766,29 @@ function mapStatus(value: unknown): SubmissionStatus {
     return value;
   }
   return "pending_openai";
+}
+
+function buildReviewSubmissionWhere(payload: ReviewSubmissionFilters): { whereSql: string; bindings: string[] } {
+  const statuses = payload.statuses?.length ? payload.statuses : ALL_STATUSES;
+  const bindings: string[] = [...statuses];
+  const clauses = [
+    `s.status IN (${statuses.map((_, index) => `?${index + 1}`).join(", ")})`
+  ];
+
+  if (payload.createdFrom) {
+    bindings.push(payload.createdFrom);
+    clauses.push(`s.created_at >= ?${bindings.length}`);
+  }
+
+  if (payload.createdTo) {
+    bindings.push(payload.createdTo);
+    clauses.push(`s.created_at <= ?${bindings.length}`);
+  }
+
+  return {
+    whereSql: clauses.join(" AND "),
+    bindings
+  };
 }
 
 export const ALL_STATUSES: SubmissionStatus[] = [

@@ -325,7 +325,16 @@ async function parseAuthEnvelope<T>(response: Response): Promise<T> {
     if (captcha) {
       throw new ApiError(409, "ENDFIELD_CAPTCHA_REQUIRED", json.msg ?? "Human-machine verification required.", captcha);
     }
-    throw new ApiError(response.status === 401 || response.status === 403 ? 401 : 502, "ENDFIELD_AUTH_REJECTED", json.msg ?? "Auth upstream rejected request.");
+    throw new ApiError(
+      401,
+      "ENDFIELD_AUTH_REJECTED",
+      json.msg ?? "Auth upstream rejected request.",
+      {
+        upstreamStatus: response.status,
+        upstreamCode: json.status,
+        upstreamMessage: json.msg,
+      },
+    );
   }
 
   return json.data;

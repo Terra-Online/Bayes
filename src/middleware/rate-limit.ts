@@ -13,6 +13,7 @@ const RESET_SEND_LIMIT_PER_MINUTE = 80;
 const EMAIL_COOLDOWN_SECONDS = 100;
 const ONE_MINUTE_MS = 60 * 1000;
 const ONE_HOUR_MS = 60 * ONE_MINUTE_MS;
+const PUBLIC_LOCAL_RATE_CACHE_MAX_ENTRIES = 5000;
 
 type RateLimitScope = "public" | "auth" | "binding" | "otp-send" | "reset-send" | "upload";
 
@@ -22,6 +23,23 @@ interface SlidingWindowResult {
   resetAt: number;
   exceeded: boolean;
 }
+
+type LocalWindowEntry = {
+  count: number;
+  resetAt: number;
+};
+
+function buildRateLimitDetails(result: SlidingWindowResult, limit: number): Record<string, number> {
+  const retryAfterSeconds = Math.max(1, Math.ceil((result.resetAt - Date.now()) / 1000));
+  return {
+    limit,
+    remaining: result.remaining,
+    resetAt: Math.floor(result.resetAt / 1000),
+    retryAfterSeconds
+  };
+}
+
+const publicLocalWindows = new Map<string, LocalWindowEntry>();
 
 function getWindowMs(scope: RateLimitScope): number {
   if (scope === "otp-send") {
@@ -61,6 +79,61 @@ function getLimitForRequest(scope: RateLimitScope, c: Parameters<MiddlewareHandl
   }
 
   return getScopeLimit(scope);
+}
+
+function prunePublicLocalWindows(now: number): void {
+  if (publicLocalWindows.size <= PUBLIC_LOCAL_RATE_CACHE_MAX_ENTRIES) {
+    return;
+  }
+
+  for (const [key, entry] of publicLocalWindows) {
+    if (entry.resetAt <= now || publicLocalWindows.size > PUBLIC_LOCAL_RATE_CACHE_MAX_ENTRIES) {
+      publicLocalWindows.delete(key);
+    }
+    if (publicLocalWindows.size <= PUBLIC_LOCAL_RATE_CACHE_MAX_ENTRIES) {
+      return;
+    }
+  }
+}
+
+function applyLocalFixedWindowLimit(
+  identity: string,
+  limit: number,
+  windowMs: number
+): SlidingWindowResult {
+  const now = Date.now();
+  const entry = publicLocalWindows.get(identity);
+  const active = entry && entry.resetAt > now
+    ? entry
+    : {
+      count: 0,
+      resetAt: now + windowMs,
+    };
+
+  if (active.count >= limit) {
+    return {
+      count: active.count,
+      remaining: 0,
+      resetAt: active.resetAt,
+      exceeded: true,
+    };
+  }
+
+  active.count += 1;
+  prunePublicLocalWindows(now);
+  publicLocalWindows.set(identity, active);
+
+  return {
+    count: active.count,
+    remaining: Math.max(0, limit - active.count),
+    resetAt: active.resetAt,
+    exceeded: false,
+  };
+}
+
+function canUseLocalPublicLimit(c: Parameters<MiddlewareHandler<AppEnv>>[0]): boolean {
+  const method = c.req.method.toUpperCase();
+  return method === "GET" || method === "HEAD" || method === "OPTIONS";
 }
 
 function normalizeEmail(input: string): string {
@@ -145,6 +218,22 @@ export function rateLimit(scope: RateLimitScope): MiddlewareHandler<AppEnv> {
     const windowMs = getWindowMs(scope);
 
     try {
+      if (scope === "public" && canUseLocalPublicLimit(c)) {
+        const result = applyLocalFixedWindowLimit(identity, limit, windowMs);
+        c.header("x-ratelimit-limit", String(limit));
+        c.header("x-ratelimit-remaining", String(result.remaining));
+        c.header("x-ratelimit-reset", String(Math.floor(result.resetAt / 1000)));
+        c.header("x-ratelimit-backend", "local");
+
+        if (result.exceeded) {
+          c.header("retry-after", String(buildRateLimitDetails(result, limit).retryAfterSeconds));
+          throw new ApiError(429, "RATE_LIMITED", "Too many requests.", buildRateLimitDetails(result, limit));
+        }
+
+        await next();
+        return;
+      }
+
       const redis = createRedisClient(c.env);
       const redisKey = `rate:${scope}:${identity}`;
       const result = await applySlidingWindowLimit(c, redisKey, limit, windowMs);
@@ -154,7 +243,8 @@ export function rateLimit(scope: RateLimitScope): MiddlewareHandler<AppEnv> {
       c.header("x-ratelimit-reset", String(Math.floor(result.resetAt / 1000)));
 
       if (result.exceeded) {
-        throw new ApiError(429, "RATE_LIMITED", "Too many requests.");
+        c.header("retry-after", String(buildRateLimitDetails(result, limit).retryAfterSeconds));
+        throw new ApiError(429, "RATE_LIMITED", "Too many requests.", buildRateLimitDetails(result, limit));
       }
 
       if (scope === "otp-send") {

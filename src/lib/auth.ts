@@ -236,6 +236,11 @@ export function createAuth(env: Bindings) {
     },
     account: {
       modelName: 'auth_accounts',
+      // CN frontend starts OAuth cross-site against the ORG API. Some browsers
+      // drop the state cookie set during that third-party fetch, so persist
+      // OAuth state in D1 and do not require the auxiliary state cookie.
+      storeStateStrategy: 'database',
+      skipStateCookieCheck: true,
     },
     verification: {
       modelName: 'auth_verifications',
