@@ -63,24 +63,16 @@ export interface UserSubmissionImage extends PublicSubmissionImage {
   status: SubmissionStatus;
 }
 
-export interface ReviewSubmissionStats {
-  total: number;
-  byType: { type: string; count: number }[];
-  byStatus: { status: SubmissionStatus; count: number }[];
-}
-
-type ReviewSubmissionFilters = {
-  statuses?: SubmissionStatus[];
-  createdFrom?: string;
-  createdTo?: string;
-};
-
-function toCount(value: unknown): number {
+export function toCount(value: unknown): number {
   const count = Number(value ?? 0);
   return Number.isFinite(count) ? Math.max(0, Math.floor(count)) : 0;
 }
 
-function mapSubmission(row: Record<string, unknown>): SubmissionRecord {
+export function imageStatusListSql(statuses: SubmissionStatus[]): string {
+  return statuses.map((status) => `'${status}'`).join(", ");
+}
+
+export function mapSubmission(row: Record<string, unknown>): SubmissionRecord {
   const uidNumber = row.user_uid_number === null || row.user_uid_number === undefined
     ? null
     : Number(row.user_uid_number);
@@ -200,190 +192,6 @@ export async function getPendingAuditSubmissions(db: D1Database, limit = 50): Pr
     .all<Record<string, unknown>>();
 
   return (result.results ?? []).map((row) => mapSubmission(row));
-}
-
-export async function getReviewSubmissions(
-  db: D1Database,
-  payload: {
-    statuses?: SubmissionStatus[];
-    createdFrom?: string;
-    createdTo?: string;
-    limit?: number;
-  } = {}
-): Promise<SubmissionRecord[]> {
-  const filters = buildReviewSubmissionWhere(payload);
-  const limit = Math.min(Math.max(payload.limit ?? 1000, 1), 10000);
-  const limitPlaceholder = filters.bindings.length + 1;
-  const result = await db
-    .prepare(
-      `SELECT
-         s.*,
-         u.uid AS submitter_uid,
-         u.uid_number AS user_uid_number,
-         u.uid_suffix AS user_uid_suffix,
-         u.role AS user_role,
-         u.karma AS user_karma,
-         u.nickname AS user_nickname
-       FROM ugc_submissions s
-       LEFT JOIN users u ON u.uid = s.user_id
-       WHERE ${filters.whereSql}
-       ORDER BY
-         CASE s.status
-           WHEN 'pending_openai' THEN 0
-           WHEN 'pending_audit' THEN 0
-           WHEN 'flagged' THEN 1
-           WHEN 'remove_request' THEN 2
-           WHEN 'active' THEN 3
-           ELSE 1
-         END,
-         s.created_at ASC
-       LIMIT ?${limitPlaceholder}`
-    )
-    .bind(...filters.bindings, limit)
-    .all<Record<string, unknown>>();
-
-  return (result.results ?? []).map((row) => mapSubmission(row));
-}
-
-export async function getReviewSubmissionStats(
-  db: D1Database,
-  payload: ReviewSubmissionFilters = {}
-): Promise<ReviewSubmissionStats> {
-  const filters = buildReviewSubmissionWhere(payload);
-  const [totalRow, typeRows, statusRows] = await Promise.all([
-    db
-      .prepare(
-        `SELECT COUNT(*) AS count
-         FROM ugc_submissions s
-         WHERE ${filters.whereSql}`
-      )
-      .bind(...filters.bindings)
-      .first<{ count: number | string }>(),
-    db
-      .prepare(
-        `SELECT COALESCE(NULLIF(poi_type, ''), 'unknown') AS type, COUNT(*) AS count
-         FROM ugc_submissions s
-         WHERE ${filters.whereSql}
-         GROUP BY COALESCE(NULLIF(poi_type, ''), 'unknown')
-         ORDER BY count DESC, type ASC`
-      )
-      .bind(...filters.bindings)
-      .all<{ type: string; count: number | string }>(),
-    db
-      .prepare(
-        `SELECT status, COUNT(*) AS count
-         FROM ugc_submissions s
-         WHERE ${filters.whereSql}
-         GROUP BY status`
-      )
-      .bind(...filters.bindings)
-      .all<{ status: string; count: number | string }>()
-  ]);
-
-  return {
-    total: toCount(totalRow?.count),
-    byType: (typeRows.results ?? []).map((row) => ({
-      type: String(row.type),
-      count: toCount(row.count)
-    })),
-    byStatus: (statusRows.results ?? [])
-      .map((row) => ({
-        status: mapStatus(row.status),
-        count: toCount(row.count)
-      }))
-      .filter((row) => ALL_STATUSES.includes(row.status))
-  };
-}
-
-export async function deleteSubmissionsByFilePathPrefix(db: D1Database, prefix: string): Promise<number> {
-  const escapedPrefix = `${prefix.replace(/%/g, "\\%")}/%`;
-  await db
-    .prepare(
-      `DELETE FROM ugc_submission_upvotes
-       WHERE submission_id IN (
-         SELECT id
-         FROM ugc_submissions
-         WHERE kind = 'image'
-           AND file_path LIKE ?1
-       )`
-    )
-    .bind(escapedPrefix)
-    .run();
-  await db
-    .prepare(
-      `DELETE FROM ugc_submission_flags
-       WHERE submission_id IN (
-         SELECT id
-         FROM ugc_submissions
-         WHERE kind = 'image'
-           AND file_path LIKE ?1
-       )`
-    )
-    .bind(escapedPrefix)
-    .run();
-
-  const result = await db
-    .prepare("DELETE FROM ugc_submissions WHERE kind = 'image' AND file_path LIKE ?1")
-    .bind(escapedPrefix)
-    .run();
-
-  return result.meta.changes ?? 0;
-}
-
-export async function getSubmissionFilePathsByStatus(
-  db: D1Database,
-  status: SubmissionStatus,
-  limit = 1000,
-  offset = 0
-): Promise<string[]> {
-  const result = await db
-    .prepare(
-      `SELECT file_path
-       FROM ugc_submissions
-       WHERE kind = 'image'
-         AND file_path IS NOT NULL
-         AND status = ?1
-       ORDER BY created_at ASC
-       LIMIT ?2 OFFSET ?3`
-    )
-    .bind(status, Math.min(Math.max(limit, 1), 1000), Math.max(offset, 0))
-    .all<{ file_path: string }>();
-
-  return (result.results ?? [])
-    .map((row) => row.file_path)
-    .filter(Boolean);
-}
-
-export async function deleteSubmissionsByStatus(db: D1Database, status: SubmissionStatus): Promise<number> {
-  await db
-    .prepare(
-      `DELETE FROM ugc_submission_upvotes
-       WHERE submission_id IN (
-         SELECT id
-         FROM ugc_submissions
-         WHERE status = ?1
-       )`
-    )
-    .bind(status)
-    .run();
-  await db
-    .prepare(
-      `DELETE FROM ugc_submission_flags
-       WHERE submission_id IN (
-         SELECT id
-         FROM ugc_submissions
-         WHERE status = ?1
-       )`
-    )
-    .bind(status)
-    .run();
-
-  const result = await db
-    .prepare("DELETE FROM ugc_submissions WHERE status = ?1")
-    .bind(status)
-    .run();
-
-  return result.meta.changes ?? 0;
 }
 
 export async function getSubmissionById(db: D1Database, id: string): Promise<SubmissionRecord | null> {
@@ -555,6 +363,49 @@ export async function clearSubmissionFlags(db: D1Database, submissionId: string)
   return result.meta.changes ?? 0;
 }
 
+export function buildImageScopeFilters(payload: {
+  pathPrefix?: string;
+  excludePathPrefix?: string;
+}, bindingOffset = 0): { clauses: string[]; bindings: string[] } {
+  const clauses: string[] = [];
+  const bindings: string[] = [];
+  if (payload.pathPrefix) {
+    bindings.push(`${payload.pathPrefix}/%`);
+    clauses.push(`file_path LIKE ?${bindingOffset + bindings.length}`);
+  }
+  if (payload.excludePathPrefix) {
+    bindings.push(`${payload.excludePathPrefix}/%`);
+    clauses.push(`file_path NOT LIKE ?${bindingOffset + bindings.length}`);
+  }
+  return { clauses, bindings };
+}
+
+export function publicImageFromRow(
+  row: Record<string, unknown>,
+  assetBaseUrl: string,
+  viewerUserId?: string
+): PublicSubmissionImage {
+  const submission = mapSubmission(row);
+  const filePath = submission.filePath ?? "";
+  return {
+    id: submission.id,
+    markerId: submission.markerId,
+    url: `${assetBaseUrl}/${filePath}`,
+    content: submission.content,
+    author: submission.submitter?.publicUid && submission.submitter.nickname
+      ? {
+          nickname: submission.submitter.nickname,
+          publicUid: submission.submitter.publicUid
+        }
+      : null,
+    status: submission.status,
+    upvoteCount: toCount(row.upvote_count),
+    upvoted: viewerUserId ? Boolean(row.viewer_upvoted) : undefined,
+    flagged: viewerUserId ? Boolean(row.viewer_flagged) : undefined,
+    createdAt: submission.createdAt
+  };
+}
+
 export async function listActiveImagesByMarker(
   db: D1Database,
   payload: {
@@ -580,16 +431,9 @@ export async function listActiveImagesByMarker(
     "kind = 'image'",
     "status IN ('active', 'flagged', 'remove_request')"
   ];
-  const extraBindings: Array<string | number> = [];
-  if (payload.pathPrefix) {
-    filters.push(`file_path LIKE ?${markerIds.length + extraBindings.length + 1}`);
-    extraBindings.push(`${payload.pathPrefix}/%`);
-  }
-  if (payload.excludePathPrefix) {
-    filters.push(`file_path NOT LIKE ?${markerIds.length + extraBindings.length + 1}`);
-    extraBindings.push(`${payload.excludePathPrefix}/%`);
-  }
-  const viewerBindingOffset = markerIds.length + extraBindings.length;
+  const scope = buildImageScopeFilters(payload, markerIds.length);
+  filters.push(...scope.clauses);
+  const viewerBindingOffset = markerIds.length + scope.bindings.length;
   const viewerSelect = payload.viewerUserId
     ? `,
          CASE WHEN uv.user_id IS NULL THEN 0 ELSE 1 END AS viewer_upvoted,
@@ -629,32 +473,12 @@ export async function listActiveImagesByMarker(
        LEFT JOIN users u ON u.uid = s.user_id
        WHERE ${filters.join(" AND ")}
        ORDER BY poi_id ASC, created_at DESC
-       LIMIT ?${markerIds.length + extraBindings.length + viewerBindings.length + 1}`
+       LIMIT ?${markerIds.length + scope.bindings.length + viewerBindings.length + 1}`
     )
-    .bind(...markerIds, ...extraBindings, ...viewerBindings, limit * markerIds.length)
+    .bind(...markerIds, ...scope.bindings, ...viewerBindings, limit * markerIds.length)
     .all<Record<string, unknown>>();
 
-  return (result.results ?? []).map((row) => {
-    const submission = mapSubmission(row);
-    const filePath = submission.filePath ?? "";
-    return {
-      id: submission.id,
-      markerId: submission.markerId,
-      url: `${payload.assetBaseUrl}/${filePath}`,
-      content: submission.content,
-      author: submission.submitter?.publicUid && submission.submitter.nickname
-        ? {
-            nickname: submission.submitter.nickname,
-            publicUid: submission.submitter.publicUid
-          }
-        : null,
-      status: submission.status,
-      upvoteCount: toCount(row.upvote_count),
-      upvoted: payload.viewerUserId ? Boolean(row.viewer_upvoted) : undefined,
-      flagged: payload.viewerUserId ? Boolean(row.viewer_flagged) : undefined,
-      createdAt: submission.createdAt
-    };
-  });
+  return (result.results ?? []).map((row) => publicImageFromRow(row, payload.assetBaseUrl, payload.viewerUserId));
 }
 
 export async function listUserImagesByMarker(
@@ -750,11 +574,11 @@ export async function listUserImagesByMarker(
   });
 }
 
-function mapKind(value: unknown): SubmissionKind {
+export function mapKind(value: unknown): SubmissionKind {
   return value === "comment" ? "comment" : "image";
 }
 
-function mapStatus(value: unknown): SubmissionStatus {
+export function mapStatus(value: unknown): SubmissionStatus {
   if (
     value === "pending_openai" ||
     value === "pending_audit" ||
@@ -766,29 +590,6 @@ function mapStatus(value: unknown): SubmissionStatus {
     return value;
   }
   return "pending_openai";
-}
-
-function buildReviewSubmissionWhere(payload: ReviewSubmissionFilters): { whereSql: string; bindings: string[] } {
-  const statuses = payload.statuses?.length ? payload.statuses : ALL_STATUSES;
-  const bindings: string[] = [...statuses];
-  const clauses = [
-    `s.status IN (${statuses.map((_, index) => `?${index + 1}`).join(", ")})`
-  ];
-
-  if (payload.createdFrom) {
-    bindings.push(payload.createdFrom);
-    clauses.push(`s.created_at >= ?${bindings.length}`);
-  }
-
-  if (payload.createdTo) {
-    bindings.push(payload.createdTo);
-    clauses.push(`s.created_at <= ?${bindings.length}`);
-  }
-
-  return {
-    whereSql: clauses.join(" AND "),
-    bindings
-  };
 }
 
 export const ALL_STATUSES: SubmissionStatus[] = [

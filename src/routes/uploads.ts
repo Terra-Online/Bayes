@@ -22,6 +22,7 @@ import {
   listUserImagesByMarker,
   updateSubmissionStatus
 } from "../repositories/submissions";
+import { getDuplicateImageMarkerSummary } from "../repositories/submission-duplicates";
 import { getUserByUid } from "../repositories/users";
 import {
   UGC_PUBLIC_IMAGE_CACHE_CONTROL,
@@ -326,6 +327,7 @@ export function createUploadRoutes() {
     const poiType = normalizePathPart(parsed.data.poiType);
     const poiHash = normalizePathPart(parsed.data.poiHash);
     const uploadPrefix = resolveUploadPrefix(c.req.raw, config.ugcUploadPathPrefix);
+    const uploadScope = resolveImageScope(c.req.raw, config.ugcUploadPathPrefix, undefined);
     const objectKey = buildUploadObjectKey({
       poiType,
       poiHash,
@@ -360,6 +362,11 @@ export function createUploadRoutes() {
       status: "pending_openai"
     });
     await enqueueModeration(createRedisClient(c.env), submissionId);
+    const duplicatePoi = await getDuplicateImageMarkerSummary(c.env.DB, {
+      markerId: parsed.data.markerId,
+      pathPrefix: uploadScope.pathPrefix,
+      excludePathPrefix: uploadScope.excludePathPrefix
+    });
 
     return c.json({
       ok: true,
@@ -369,7 +376,14 @@ export function createUploadRoutes() {
         status: "pending_openai",
         filePath: objectKey,
         snapshotId
-      }
+      },
+      duplicatePoi: duplicatePoi
+        ? {
+            markerId: duplicatePoi.markerId,
+            imageCount: duplicatePoi.imageCount,
+            dashboardPath: `/ugc-review?duplicateMarker=${encodeURIComponent(duplicatePoi.markerId)}`
+          }
+        : null
     });
   });
 

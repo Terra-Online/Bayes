@@ -7,13 +7,19 @@ import { createRedisClient } from "../lib/redis";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { rateLimit } from "../middleware/rate-limit";
 import {
-  ALL_STATUSES,
-  clearSubmissionFlags,
+  listDuplicateImageMarkers,
+  listDuplicateMarkerImages
+} from "../repositories/submission-duplicates";
+import {
   deleteSubmissionsByStatus,
   deleteSubmissionsByFilePathPrefix,
   getSubmissionFilePathsByStatus,
   getReviewSubmissionStats,
-  getReviewSubmissions,
+  getReviewSubmissions
+} from "../repositories/submission-review";
+import {
+  ALL_STATUSES,
+  clearSubmissionFlags,
   getSubmissionById,
   updateSubmissionStatus,
   type SubmissionStatus
@@ -35,6 +41,18 @@ const listSchema = z.object({
   from: z.iso.datetime({ offset: true }).optional(),
   to: z.iso.datetime({ offset: true }).optional(),
   limit: z.coerce.number().int().min(1).max(10000).optional()
+});
+
+const duplicateImagesQuerySchema = z.object({
+  scope: z.enum(["test", "prod"]).optional(),
+  limit: z.coerce.number().int().min(1).max(100).optional(),
+  offset: z.coerce.number().int().min(0).max(100000).optional()
+});
+
+const duplicateMarkerImagesQuerySchema = z.object({
+  scope: z.enum(["test", "prod"]).optional(),
+  limit: z.coerce.number().int().min(1).max(200).optional(),
+  offset: z.coerce.number().int().min(0).max(100000).optional()
 });
 
 const runSelectedSchema = z.object({
@@ -75,6 +93,37 @@ function parseStatuses(raw: string | undefined): SubmissionStatus[] | undefined 
 
 function toSqlTimestamp(date: Date): string {
   return date.toISOString().slice(0, 19).replace("T", " ");
+}
+
+function isLocalHostname(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+}
+
+function resolvePublicAssetBaseUrl(requestUrl: string, configuredBaseUrl: string): string {
+  const url = new URL(requestUrl);
+  if (isLocalHostname(url.hostname)) {
+    return `${url.origin}/uploads/v1/public-file`;
+  }
+  return configuredBaseUrl;
+}
+
+function resolveImageScope(
+  configuredPrefix: string,
+  scope: "test" | "prod" | undefined
+): { pathPrefix?: string; excludePathPrefix?: string } {
+  if (configuredPrefix === "_test") {
+    return { pathPrefix: "_test" };
+  }
+
+  if (scope === "test") {
+    return { pathPrefix: "_test" };
+  }
+
+  if (scope === "prod") {
+    return { excludePathPrefix: "_test" };
+  }
+
+  return {};
 }
 
 function assertStatusTransition(from: SubmissionStatus, to: SubmissionStatus): void {
@@ -268,6 +317,71 @@ export function createModerationRoutes() {
     return c.json({
       statuses: ALL_STATUSES,
       transitions: STATUS_TRANSITIONS
+    });
+  });
+
+  app.get("/images/duplicates", requireAuth, requireRole(["p", "a"]), rateLimit("auth"), async (c) => {
+    const parsed = duplicateImagesQuerySchema.safeParse({
+      scope: c.req.query("scope"),
+      limit: c.req.query("limit"),
+      offset: c.req.query("offset")
+    });
+    if (!parsed.success) {
+      throw new ApiError(422, "VALIDATION_ERROR", "Invalid duplicate image query.", parsed.error.flatten());
+    }
+
+    const config = getRuntimeConfig(c.env);
+    const scope = resolveImageScope(config.ugcUploadPathPrefix, parsed.data.scope);
+    const result = await listDuplicateImageMarkers(c.env.DB, {
+      assetBaseUrl: resolvePublicAssetBaseUrl(c.req.url, config.ugcAssetBaseUrl),
+      pathPrefix: scope.pathPrefix,
+      excludePathPrefix: scope.excludePathPrefix,
+      limit: parsed.data.limit ?? 50,
+      offset: parsed.data.offset ?? 0
+    });
+
+    return c.json({
+      items: result.items,
+      total: result.total,
+      limit: parsed.data.limit ?? 50,
+      offset: parsed.data.offset ?? 0
+    });
+  });
+
+  app.get("/images/duplicates/:markerId", requireAuth, requireRole(["p", "a"]), rateLimit("auth"), async (c) => {
+    const markerId = c.req.param("markerId")?.trim();
+    if (!markerId) {
+      throw new ApiError(422, "VALIDATION_ERROR", "markerId is required.");
+    }
+
+    const parsed = duplicateMarkerImagesQuerySchema.safeParse({
+      scope: c.req.query("scope"),
+      limit: c.req.query("limit"),
+      offset: c.req.query("offset")
+    });
+    if (!parsed.success) {
+      throw new ApiError(422, "VALIDATION_ERROR", "Invalid duplicate image query.", parsed.error.flatten());
+    }
+
+    const config = getRuntimeConfig(c.env);
+    const scope = resolveImageScope(config.ugcUploadPathPrefix, parsed.data.scope);
+    const user = c.get("authUser");
+    const result = await listDuplicateMarkerImages(c.env.DB, {
+      markerId,
+      assetBaseUrl: resolvePublicAssetBaseUrl(c.req.url, config.ugcAssetBaseUrl),
+      pathPrefix: scope.pathPrefix,
+      excludePathPrefix: scope.excludePathPrefix,
+      limit: parsed.data.limit ?? 100,
+      offset: parsed.data.offset ?? 0,
+      viewerUserId: user?.uid
+    });
+
+    return c.json({
+      markerId,
+      items: result.items,
+      total: result.total,
+      limit: parsed.data.limit ?? 100,
+      offset: parsed.data.offset ?? 0
     });
   });
 
