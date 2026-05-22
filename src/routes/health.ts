@@ -7,7 +7,7 @@ export function createHealthRoutes() {
   app.get("/status", (c) => {
     return c.json({
       status: "ok",
-      service: "bayes-backend",
+      service: "oem-backend",
       now: new Date().toISOString(),
       requestId: c.get("requestId")
     });

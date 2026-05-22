@@ -143,7 +143,11 @@ desktop.ini
 .history/
 PRD.md
 PROGRESS.md
-migrations/
+UGC.md
+ENDPOINTS.md
+migrations/*
+src/lib/endfield-client-ua.json
+src/lib/karma-config.json
 
 # Cloudflare Workers local artifacts
 .wrangler/

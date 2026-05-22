@@ -6,7 +6,7 @@ EMAIL="yueandy597@outlook.com"
 LOCALE="zh-HK"
 
 # Optional variables.
-BASE_URL="${BASE_URL:-http://127.0.0.1:8787}"
+BASE_URL="${BASE_URL:-https://api.opendfieldmap.org}"
 
 # CLI arguments override the defaults above.
 if [[ $# -ge 1 ]]; then

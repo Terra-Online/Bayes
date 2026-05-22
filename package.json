@@ -1,23 +1,31 @@
 {
-  "name": "bayes-backend",
-  "version": "0.1.0",
+  "name": "oem-backend",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
-    "dev:local": "cp .dev.vars.local .dev.vars && wrangler dev",
-    "deploy": "wrangler deploy",
+    "dev:remote": "wrangler dev --remote",
+    "dev:local": "wrangler dev --env local",
+    "deploy": "bash scripts/deploy-with-dev-vars.sh",
+    "deploy:raw": "wrangler deploy",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "db:migrate:local": "wrangler d1 migrations apply DB --local",
     "db:migrate:remote": "wrangler d1 migrations apply DB --remote"
   },
   "dependencies": {
+    "@jsquash/avif": "^2.1.1",
+    "@jsquash/jpeg": "^1.6.0",
+    "@jsquash/png": "^3.1.1",
+    "@jsquash/resize": "^2.1.1",
+    "@jsquash/webp": "^1.5.0",
     "@upstash/redis": "^1.35.3",
     "better-auth": "^1.6.0",
     "hono": "^4.7.7",
     "nanoid": "^5.1.5",
     "resend": "^6.10.0",
+    "wasm-feature-detect": "^1.8.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {

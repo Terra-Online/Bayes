@@ -42,11 +42,13 @@ This is a foundation implementation based on PRD and is intentionally incrementa
 - Session endpoints: /auth/v1/session, /auth/v1/logout
 - GET /progress/v1/state
 - POST /progress/v1/sync
-- POST /uploads/v1/presign
-- PUT /uploads/v1/direct/:ticketId
+- POST /uploads/v1/images
+- GET /uploads/v1/images
 - GET /moderation/v1/pending (pioneer/admin)
 - PATCH /moderation/v1/:id/status (pioneer/admin)
+- POST /moderation/v1/run (admin)
 - POST /moderation/v1/run-once (admin)
+- DELETE /moderation/v1/stale (admin)
 
 ## User Group and Karma Model
 
@@ -57,14 +59,23 @@ This is a foundation implementation based on PRD and is intentionally incrementa
 	- s = suspend
 	- r = robot
 - points is internal-only and should not be returned to client payloads.
-- karma is derived from points and returned to client as 0-5.
+- karma is derived from an internal score and returned to client as 0-5.
+- Karma thresholds, upload rate bands, scoring inputs, and evaluation cadence live in `src/lib/karma-config.json`.
 - Current karma thresholds:
 	- 0: [0, 50)
 	- 1: [50, 200)
 	- 2: [200, 400)
 	- 3: [400, 800)
-	- 4: [800, 1500)
-	- 5: [1500, +inf)
+	- 4: [800, 2700)
+	- 5: [2700, +inf), never downgraded after reaching 5
+- Karma evaluation score is based on points, asymptotic passive activity points, image approval rate, and square-root long inactivity decay.
+- Passive activity alone can contribute at most 120 points, with 90 active-span days reaching 60 points.
+- Approved image/comment points use per-user daily backoff curves before being written to points.
+- Pioneer/admin users keep at least 1 point for each approved image/comment after daily backoff.
+- Surge mode is controlled by `SURGE_MODE_ENABLED`; when enabled, approved image/comment daily backoff nodes are multiplied by `SURGE_BACKOFF_MULTIPLIER` (default 3).
+- Moderation approval/rejection affects points directly; approved content counts are not added again during karma evaluation.
+- Karma is evaluated by scheduled jobs roughly every two days from a dirty-user queue plus a cursor-based whole-user sweep, not on every point write.
+- Upload and comment submissions use karma-based per-user rate limits.
 
 ## Local Development
 
@@ -87,12 +98,13 @@ Then fill values in .dev.vars:
 - UPSTASH_REDIS_REST_URL
 - UPSTASH_REDIS_REST_TOKEN
 - BETTER_AUTH_SECRET (at least 32 chars, random)
-- BETTER_AUTH_URL (for local: http://127.0.0.1:8787)
+- BETTER_AUTH_URL (production: https://api.opendfieldmap.org)
 - GOOGLE_CLIENT_ID
 - GOOGLE_CLIENT_SECRET
 - DISCORD_CLIENT_ID
 - DISCORD_CLIENT_SECRET
 - OPENAI_API_KEY (optional in local mode)
+- ENABLE_SCHEDULED_MODERATION (optional, default: false)
 - RESEND_AUTH_KEY
 - RESEND_FROM_EMAIL (optional, default: noreply@opendfieldmap.org)
 - EMAIL_TEMPLATE_DEFAULT_LOCALE (optional: zh-CN / zh-HK / en / ja / ko, default: en)
@@ -131,9 +143,9 @@ Update group code by uid:
 
 pnpm exec wrangler d1 execute DB --local --command "UPDATE users SET role='p' WHERE uid='YOUR_UID';"
 
-Update points and recalc karma by uid:
+Update points by uid:
 
-pnpm exec wrangler d1 execute DB --local --command "UPDATE users SET points=900, karma=CASE WHEN 900 >= 1500 THEN 5 WHEN 900 >= 800 THEN 4 WHEN 900 >= 400 THEN 3 WHEN 900 >= 200 THEN 2 WHEN 900 >= 50 THEN 1 ELSE 0 END WHERE uid='YOUR_UID';"
+pnpm exec wrangler d1 execute DB --local --command "UPDATE users SET points=900 WHERE uid='YOUR_UID';"
 
 Reset one user progress:
 
@@ -143,9 +155,11 @@ pnpm exec wrangler d1 execute DB --local --command "UPDATE users SET progress_ve
 
 pnpm run dev
 
+Wrangler local dev writes D1/R2 data to `.wrangler/state`. Uploaded UGC objects will not be visible through `https://assets.opendfieldmap.org/...` in this mode. Use `pnpm run dev:remote` when local requests must write to the real Cloudflare R2 bucket.
+
 Default endpoint:
 
-- http://127.0.0.1:8787
+- https://api.opendfieldmap.org
 
 ### 6) Trigger cron manually (local)
 
@@ -161,7 +175,7 @@ pnpm install
 pnpm run db:migrate:local
 pnpm run dev
 
-Backend URL: http://127.0.0.1:8787
+Backend URL: https://api.opendfieldmap.org
 
 ### 2) Start Atlos frontend
 
@@ -170,37 +184,45 @@ Run in Atlos talos directory:
 pnpm install
 pnpm dev
 
-Frontend URL: http://localhost:5173
+Frontend URL: https://opendfieldmap.org
 
 ### 3) Auth flow smoke test (curl)
 
+Set API base URL (production default):
+
+BASE_URL="${BASE_URL:-https://api.opendfieldmap.org}"
+
+For local debugging only:
+
+BASE_URL="$BETTER_AUTH_URL"
+
 Start social sign-in (Google):
 
-curl -i -X POST http://127.0.0.1:8787/auth/v1/sign-in/social \
+curl -i -X POST "$BASE_URL/auth/v1/sign-in/social" \
 	-H "content-type: application/json" \
 	-d '{"provider":"google"}'
 
 Start social sign-in (Discord):
 
-curl -i -X POST http://127.0.0.1:8787/auth/v1/sign-in/social \
+curl -i -X POST "$BASE_URL/auth/v1/sign-in/social" \
 	-H "content-type: application/json" \
 	-d '{"provider":"discord"}'
 
 Then finish OAuth in browser and call session:
 
-curl -i http://127.0.0.1:8787/auth/v1/session
+curl -i "$BASE_URL/auth/v1/session"
 
 Email registration and login are enabled:
 
-curl -i -X POST http://127.0.0.1:8787/auth/v1/email-otp/send-verification-otp \
+curl -i -X POST "$BASE_URL/auth/v1/email-otp/send-verification-otp" \
 	-H "content-type: application/json" \
 	-d '{"email":"user@example.com","type":"sign-in"}'
 
-curl -i -X POST http://127.0.0.1:8787/auth/v1/register \
+curl -i -X POST "$BASE_URL/auth/v1/register" \
 	-H "content-type: application/json" \
 	-d '{"email":"user@example.com","password":"StrongPass123!","otp":"123456","name":"Demo User"}'
 
-curl -i -X POST http://127.0.0.1:8787/auth/v1/sign-in/email \
+curl -i -X POST "$BASE_URL/auth/v1/sign-in/email" \
 	-H "content-type: application/json" \
 	-d '{"email":"user@example.com","password":"StrongPass123!"}'
 
@@ -225,8 +247,8 @@ Manual OTP end-to-end helper script (interactive):
 
 ### 5) Upload and moderation smoke test
 
-- POST /uploads/v1/presign
-- PUT binary to returned uploadUrl with matching content-type
+- POST multipart image to /uploads/v1/images with markerId, poiHash, poiType, and file
+- POST JSON comment to /uploads/v1/comments with markerId, poiHash, poiType, and content shorter than 200 characters
 - Verify submission appears in GET /moderation/v1/pending (pioneer/admin role)
 - POST /moderation/v1/run-once as admin
 
@@ -262,7 +284,7 @@ Manual OTP end-to-end helper script (interactive):
 - Auth flow: Better Auth social sign-in (google/discord) -> session -> logout
 - Progress flow: cold read fallback to D1 and Redis backfill
 - Sync flow: stale version conflict and valid version acceptance
-- Upload flow: presign ticket + direct upload + pending submission creation
+- Upload flow: multipart image upload + Worker-side image normalization + pending submission creation
 - Moderation flow: queue consumption and status update
 
 ### End-to-end scenario

@@ -21,7 +21,7 @@
     "passwordResetMagicLink": {
       "subject": "[OEM] Link: Reset Password",
       "title": "Reset Your Password",
-      "intro": "Click the button below to reset your Bayes password:",
+      "intro": "Click the button below to reset your OEM password:",
       "actionLabel": "Reset password",
       "fallbackLabel": "If the button does not work, copy and open this URL in your browser:",
       "expires": "This link will expire in 1 day.",
