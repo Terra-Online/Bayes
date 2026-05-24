@@ -487,7 +487,9 @@ export function createUploadRoutes() {
       limit: parsed.data.limit ?? 6
     });
 
-    return c.json({ items });
+    const response = c.json({ items });
+    response.headers.set("Cache-Control", "private, no-store");
+    return response;
   });
 
   app.get("/file/*", requireAuth, requireRole(["p", "a"]), rateLimit("auth"), async (c) => {
@@ -858,7 +860,7 @@ export function createUploadRoutes() {
       response.headers.set("Cache-Control", UGC_PUBLIC_LIST_CACHE_CONTROL);
       c.executionCtx.waitUntil(cache.put(cacheKey, response.clone()));
     } else {
-      response.headers.set("Cache-Control", "private, max-age=30");
+      response.headers.set("Cache-Control", "private, no-store");
     }
     return response;
   });
