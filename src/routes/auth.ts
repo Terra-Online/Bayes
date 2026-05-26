@@ -2,6 +2,7 @@ import { Context, Hono } from "hono";
 import { z } from "zod";
 import { createAuth } from "../lib/auth";
 import { ApiError } from "../lib/errors";
+import { isDisposableEmail } from "../lib/disposable-email";
 import { requireAuth } from "../middleware/auth";
 import { rateLimit } from "../middleware/rate-limit";
 import { ensureUserProfile, formatPublicUid, getErrorMessage, updateUserNickname } from "../repositories/users";
@@ -663,6 +664,14 @@ export function createAuthRoutes() {
     }
 
     const email = normalizeEmail(parsed.data.email);
+    if (isDisposableEmail(email)) {
+      throw new ApiError(
+        422,
+        "DISPOSABLE_EMAIL_NOT_ALLOWED",
+        "Disposable email addresses are not allowed for registration.",
+      );
+    }
+
     const password = parsed.data.password;
     const otp = parsed.data.otp;
     const name = parsed.data.name?.trim() || deriveDisplayName(email);
@@ -729,6 +738,14 @@ export function createAuthRoutes() {
     }
 
     const email = normalizeEmail(parsed.data.email);
+    if (isDisposableEmail(email)) {
+      throw new ApiError(
+        422,
+        "DISPOSABLE_EMAIL_NOT_ALLOWED",
+        "Disposable email addresses are not allowed for registration.",
+      );
+    }
+
     const locale = parsed.data.locale?.trim();
     const requestHeaders = locale
       ? {
