@@ -24,10 +24,10 @@ export interface UserRecord {
   progressFormatVersion: number;
   progressBitsPerPoint: number;
   progressPointCount: number;
-  progressUpdatedAt: string | null;
+  progressUpdatedAt: number | null;
   progressLastMutationId: string | null;
   progressCloudSynced: boolean;
-  progressSyncedAt: string | null;
+  progressSyncedAt: number | null;
   points: number;
   karma: number;
   createdAt: string;
@@ -187,10 +187,14 @@ function mapUser(row: Record<string, unknown>): UserRecord {
     progressFormatVersion: Number(row.progress_format_version ?? 1),
     progressBitsPerPoint: Number(row.progress_bits_per_point ?? 1),
     progressPointCount: Number(row.progress_point_count ?? 0),
-    progressUpdatedAt: row.progress_updated_at === null ? null : String(row.progress_updated_at ?? ""),
+    progressUpdatedAt: row.progress_updated_at === null || row.progress_updated_at === undefined
+      ? null
+      : Number(row.progress_updated_at),
     progressLastMutationId: row.progress_last_mutation_id === null ? null : String(row.progress_last_mutation_id ?? ""),
     progressCloudSynced: Number(row.progress_cloud_synced ?? 0) === 1,
-    progressSyncedAt: row.progress_synced_at === null ? null : String(row.progress_synced_at ?? ""),
+    progressSyncedAt: row.progress_synced_at === null || row.progress_synced_at === undefined
+      ? null
+      : Number(row.progress_synced_at),
     points,
     karma,
     createdAt: String(row.created_at),
@@ -392,10 +396,10 @@ export interface UserProgressWrite {
   formatVersion: number;
   bitsPerPoint: number;
   pointCount: number;
-  updatedAt: string;
+  updatedAt: number;
   clientMutationId: string | null;
   cloudSynced: boolean;
-  syncedAt: string | null;
+  syncedAt: number | null;
 }
 
 export async function updateProgressInD1(

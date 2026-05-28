@@ -14,10 +14,11 @@ import {
   isEmptyProgress,
   normalizeBitmapBytes,
   normalizeNonNegativeInt,
-  normalizeOptionalTimestamp,
+  nowTimestampMs,
   parseStatsCountsBase64,
   progressStateFromUser,
   publicProgressState,
+  requireTimestampMs,
   setBitmapBit,
   type ProgressManifestPayload,
   type ProgressState,
@@ -43,7 +44,7 @@ type NormalizedSyncPatch = {
   setPointIds: string[];
   clearPointIds: string[];
   clientMutationId: string | null;
-  updatedAt: string;
+  updatedAt: number;
 };
 
 const STATS_STORAGE_KEY = "stats:snapshot:v1";
@@ -175,7 +176,7 @@ function normalizeSyncPatch(raw: unknown): NormalizedSyncPatch {
     setPointIds: normalizePointIds(payload.setPointIds ?? [], "setPointIds"),
     clearPointIds: normalizePointIds(payload.clearPointIds ?? [], "clearPointIds"),
     clientMutationId,
-    updatedAt: normalizeOptionalTimestamp(payload.updatedAt)
+    updatedAt: requireTimestampMs(payload.updatedAt, "updatedAt")
   };
 }
 
@@ -299,8 +300,8 @@ export class ProgressUserDO {
     await this.env.DB
       .prepare(
         `INSERT INTO progress_marker_manifests
-           (marker_index_hash, format_version, bits_per_point, point_count, point_ids)
-         VALUES (?1, ?2, ?3, ?4, ?5)
+           (marker_index_hash, format_version, bits_per_point, point_count, point_ids, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)
          ON CONFLICT(marker_index_hash) DO NOTHING`
       )
       .bind(
@@ -308,7 +309,8 @@ export class ProgressUserDO {
         manifest.formatVersion,
         manifest.bitsPerPoint,
         manifest.pointCount,
-        JSON.stringify(manifest.pointIds)
+        JSON.stringify(manifest.pointIds),
+        nowTimestampMs()
       )
       .run();
     await this.state.storage.put(ACTIVE_MANIFEST_HASH_KEY, manifest.markerIndexHash);
@@ -443,7 +445,7 @@ export class ProgressUserDO {
     }
 
     const diff = diffOneBitBitmaps(currentBytes, nextBytes, manifest.pointCount);
-    const now = new Date().toISOString();
+    const now = nowTimestampMs();
     const nextProgress: ProgressState = {
       version: current.version + 1,
       revision: buildProgressRevision(computedChecksum),
@@ -453,7 +455,7 @@ export class ProgressUserDO {
       formatVersion: manifest.formatVersion,
       bitsPerPoint: manifest.bitsPerPoint,
       pointCount: manifest.pointCount,
-      updatedAt: incoming.updatedAt || now,
+      updatedAt: incoming.updatedAt ?? now,
       format: current.format
     };
     const firstSync = !user.progressCloudSynced;
@@ -466,7 +468,7 @@ export class ProgressUserDO {
       formatVersion: nextProgress.formatVersion,
       bitsPerPoint: nextProgress.bitsPerPoint,
       pointCount: nextProgress.pointCount,
-      updatedAt: nextProgress.updatedAt || now,
+      updatedAt: nextProgress.updatedAt ?? now,
       clientMutationId: incoming.clientMutationId,
       cloudSynced: true,
       syncedAt: firstSync ? now : null
@@ -576,7 +578,7 @@ export class ProgressStatsDO {
         point_count: number;
         total_synced_users: number;
         counts: string;
-        updated_at: string;
+        updated_at: number | null;
       }>();
     if (!row) return;
 
@@ -585,7 +587,7 @@ export class ProgressStatsDO {
       pointCount: normalizeNonNegativeInt(row.point_count, 0),
       totalSyncedUsers: normalizeNonNegativeInt(row.total_synced_users, 0),
       counts: row.counts || "",
-      updatedAt: row.updated_at || null
+      updatedAt: row.updated_at ?? null
     };
     this.snapshot = snapshot;
     this.counts = parseStatsCountsBase64(snapshot.counts, snapshot.pointCount);
@@ -597,7 +599,7 @@ export class ProgressStatsDO {
     const next: ProgressStatsSnapshot = {
       ...this.snapshot,
       counts: buildStatsCountsBase64(this.counts),
-      updatedAt: new Date().toISOString()
+      updatedAt: nowTimestampMs()
     };
     this.snapshot = next;
     await this.state.storage.put(STATS_STORAGE_KEY, next);

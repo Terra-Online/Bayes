@@ -14,7 +14,7 @@ export interface ProgressState {
   formatVersion: number;
   bitsPerPoint: number;
   pointCount: number;
-  updatedAt: string | null;
+  updatedAt: number | null;
   format: string;
 }
 
@@ -23,7 +23,7 @@ export interface ProgressSyncPayload {
   setPointIds?: string[];
   clearPointIds?: string[];
   clientMutationId?: string;
-  updatedAt?: string | number | null;
+  updatedAt: number;
 }
 
 export interface ProgressManifestPayload {
@@ -44,13 +44,13 @@ export interface ProgressStatsSnapshot {
   pointCount: number;
   totalSyncedUsers: number;
   counts: string;
-  updatedAt: string | null;
+  updatedAt: number | null;
 }
 
 export interface PublicProgressState {
   revision: string;
   markerIndexHash: string;
-  updatedAt: string | null;
+  updatedAt: number | null;
   pointIds: string[];
 }
 
@@ -113,33 +113,15 @@ export function normalizeNonNegativeInt(value: unknown, fallback: number): numbe
   return Math.floor(normalized);
 }
 
-export function normalizeOptionalTimestamp(value: string | number | null | undefined): string {
-  if (value === undefined || value === null || value === "") {
-    return new Date().toISOString();
+export function requireTimestampMs(value: unknown, fieldName: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    throw new ApiError(422, "VALIDATION_ERROR", `${fieldName} must be an epoch milliseconds timestamp.`);
   }
+  return Math.floor(value);
+}
 
-  if (typeof value === "number" && Number.isFinite(value)) {
-    const ms = value < 1_000_000_000_000 ? value * 1000 : value;
-    return new Date(ms).toISOString();
-  }
-
-  if (typeof value === "string") {
-    const raw = value.trim();
-    if (!raw) return new Date().toISOString();
-    if (/^\d+$/.test(raw)) {
-      const numeric = Number(raw);
-      if (Number.isFinite(numeric)) {
-        const ms = numeric < 1_000_000_000_000 ? numeric * 1000 : numeric;
-        return new Date(ms).toISOString();
-      }
-    }
-    const date = new Date(raw);
-    if (!Number.isNaN(date.getTime())) {
-      return date.toISOString();
-    }
-  }
-
-  return new Date().toISOString();
+export function nowTimestampMs(): number {
+  return Date.now();
 }
 
 export function decodeBase64(value: string): Uint8Array {
