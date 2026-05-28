@@ -3,6 +3,8 @@ export type Role = "n" | "p" | "a" | "s" | "r";
 export interface Bindings {
   DB: D1Database;
   UGC_BUCKET: R2Bucket;
+  PROGRESS_USER_DO: DurableObjectNamespace;
+  PROGRESS_STATS_DO: DurableObjectNamespace;
   UPSTASH_REDIS_REST_URL: string;
   UPSTASH_REDIS_REST_TOKEN: string;
   BETTER_AUTH_SECRET?: string;

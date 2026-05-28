@@ -1,21 +1,51 @@
 import { Hono } from "hono";
-import { z } from "zod";
-import { getRuntimeConfig } from "../lib/config";
+import type { Context } from "hono";
 import { ApiError } from "../lib/errors";
-import { createRedisClient } from "../lib/redis";
 import { requireAuth } from "../middleware/auth";
 import { rateLimit } from "../middleware/rate-limit";
-import { readProgress, syncProgressToCache } from "../services/progress";
 import type { AppEnv } from "../types/app";
-
-const syncSchema = z.object({
-  version: z.number().int().min(0),
-  marker: z.string()
-});
 
 function isProgressLocked(flag: string | undefined): boolean {
   const normalized = (flag ?? "true").trim().toLowerCase();
   return !["0", "false", "off", "no"].includes(normalized);
+}
+
+async function proxyUserProgress(
+  c: Context<AppEnv>,
+  path: "state" | "sync" | "manifest"
+): Promise<Response> {
+  const user = c.get("authUser");
+  if (!user) {
+    throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
+  }
+
+  const id = c.env.PROGRESS_USER_DO.idFromName(user.uid);
+  const stub = c.env.PROGRESS_USER_DO.get(id);
+  const url = new URL(`https://progress-user/${path}`);
+  url.searchParams.set("uid", user.uid);
+
+  const request = path === "state"
+    ? new Request(url, { method: "GET" })
+    : new Request(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: await c.req.text()
+    });
+
+  return stub.fetch(request);
+}
+
+async function proxyStats(c: Context<AppEnv>): Promise<Response> {
+  const markerIndexHash = c.req.query("markerIndexHash")?.trim().toLowerCase();
+  if (!markerIndexHash) {
+    throw new ApiError(422, "VALIDATION_ERROR", "markerIndexHash is required.");
+  }
+
+  const id = c.env.PROGRESS_STATS_DO.idFromName(markerIndexHash);
+  const stub = c.env.PROGRESS_STATS_DO.get(id);
+  const url = new URL("https://progress-stats/state");
+  url.searchParams.set("markerIndexHash", markerIndexHash);
+  return stub.fetch(new Request(url, { method: "GET" }));
 }
 
 export function createProgressRoutes() {
@@ -32,58 +62,10 @@ export function createProgressRoutes() {
     await next();
   });
 
-  app.get("/state", requireAuth, rateLimit("auth"), async (c) => {
-    const user = c.get("authUser");
-    if (!user) {
-      throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
-    }
-
-    const redis = createRedisClient(c.env);
-    const config = getRuntimeConfig(c.env);
-    const progress = await readProgress(c.env.DB, redis, user.uid, config.progressCacheTtlSeconds);
-
-    return c.json({ progress });
-  });
-
-  app.post("/sync", requireAuth, rateLimit("auth"), async (c) => {
-    const user = c.get("authUser");
-    if (!user) {
-      throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
-    }
-
-    const parsed = syncSchema.safeParse(await c.req.json());
-    if (!parsed.success) {
-      throw new ApiError(422, "VALIDATION_ERROR", "Invalid progress payload.", parsed.error.flatten());
-    }
-
-    const redis = createRedisClient(c.env);
-    const config = getRuntimeConfig(c.env);
-    const current = await readProgress(c.env.DB, redis, user.uid, config.progressCacheTtlSeconds);
-
-    if (parsed.data.version <= current.version) {
-      throw new ApiError(409, "PROGRESS_VERSION_CONFLICT", "Incoming version is older or equal to current version.", {
-        serverVersion: current.version
-      });
-    }
-
-    await syncProgressToCache(
-      redis,
-      user.uid,
-      {
-        version: parsed.data.version,
-        marker: parsed.data.marker
-      },
-      config.progressCacheTtlSeconds
-    );
-
-    return c.json({
-      ok: true,
-      progress: {
-        version: parsed.data.version,
-        marker: parsed.data.marker
-      }
-    });
-  });
+  app.get("/state", requireAuth, async (c) => proxyUserProgress(c, "state"));
+  app.post("/manifest", requireAuth, async (c) => proxyUserProgress(c, "manifest"));
+  app.post("/sync", requireAuth, async (c) => proxyUserProgress(c, "sync"));
+  app.get("/stats", rateLimit("public"), async (c) => proxyStats(c));
 
   return app;
 }

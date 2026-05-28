@@ -160,3 +160,5 @@ src/lib/emailBlacklist.json
 .dev.vars.local
 .env.local
 /.idea/
+
+docs/

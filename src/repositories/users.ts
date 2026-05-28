@@ -19,6 +19,15 @@ export interface UserRecord {
   efPass: string | null;
   progressVersion: number;
   progressMarker: string;
+  progressChecksum: string;
+  progressMarkerIndexHash: string;
+  progressFormatVersion: number;
+  progressBitsPerPoint: number;
+  progressPointCount: number;
+  progressUpdatedAt: string | null;
+  progressLastMutationId: string | null;
+  progressCloudSynced: boolean;
+  progressSyncedAt: string | null;
   points: number;
   karma: number;
   createdAt: string;
@@ -173,6 +182,15 @@ function mapUser(row: Record<string, unknown>): UserRecord {
     efPass: row.ef_pass === null ? null : String(row.ef_pass ?? ""),
     progressVersion: Number(row.progress_version ?? 0),
     progressMarker: String(row.progress_marker ?? ""),
+    progressChecksum: String(row.progress_checksum ?? ""),
+    progressMarkerIndexHash: String(row.progress_marker_index_hash ?? ""),
+    progressFormatVersion: Number(row.progress_format_version ?? 1),
+    progressBitsPerPoint: Number(row.progress_bits_per_point ?? 1),
+    progressPointCount: Number(row.progress_point_count ?? 0),
+    progressUpdatedAt: row.progress_updated_at === null ? null : String(row.progress_updated_at ?? ""),
+    progressLastMutationId: row.progress_last_mutation_id === null ? null : String(row.progress_last_mutation_id ?? ""),
+    progressCloudSynced: Number(row.progress_cloud_synced ?? 0) === 1,
+    progressSyncedAt: row.progress_synced_at === null ? null : String(row.progress_synced_at ?? ""),
     points,
     karma,
     createdAt: String(row.created_at),
@@ -366,21 +384,56 @@ export async function updateUserNickname(
   return updated;
 }
 
+export interface UserProgressWrite {
+  version: number;
+  marker: string;
+  checksum: string;
+  markerIndexHash: string;
+  formatVersion: number;
+  bitsPerPoint: number;
+  pointCount: number;
+  updatedAt: string;
+  clientMutationId: string | null;
+  cloudSynced: boolean;
+  syncedAt: string | null;
+}
+
 export async function updateProgressInD1(
   db: D1Database,
   uid: string,
-  version: number,
-  marker: string
+  progress: UserProgressWrite
 ): Promise<void> {
   await db
     .prepare(
       `UPDATE users
        SET progress_version = ?2,
            progress_marker = ?3,
+           progress_checksum = ?4,
+           progress_marker_index_hash = ?5,
+           progress_format_version = ?6,
+           progress_bits_per_point = ?7,
+           progress_point_count = ?8,
+           progress_updated_at = ?9,
+           progress_last_mutation_id = ?10,
+           progress_cloud_synced = ?11,
+           progress_synced_at = COALESCE(?12, progress_synced_at),
            last_active = CURRENT_TIMESTAMP
        WHERE uid = ?1`
     )
-    .bind(uid, version, marker)
+    .bind(
+      uid,
+      progress.version,
+      progress.marker,
+      progress.checksum,
+      progress.markerIndexHash,
+      progress.formatVersion,
+      progress.bitsPerPoint,
+      progress.pointCount,
+      progress.updatedAt,
+      progress.clientMutationId,
+      progress.cloudSynced ? 1 : 0,
+      progress.syncedAt
+    )
     .run();
 }
 
