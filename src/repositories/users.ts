@@ -16,7 +16,6 @@ export interface UserRecord {
   avt: number;
   nickname: string;
   nicknameCustomized: boolean;
-  efPass: string | null;
   progressVersion: number;
   progressMarker: string;
   progressChecksum: string;
@@ -179,7 +178,6 @@ function mapUser(row: Record<string, unknown>): UserRecord {
     avt: Number(row.avt ?? 0),
     nickname: String(row.nickname),
     nicknameCustomized: Number(row.nickname_customized ?? 0) === 1,
-    efPass: row.ef_pass === null ? null : String(row.ef_pass ?? ""),
     progressVersion: Number(row.progress_version ?? 0),
     progressMarker: String(row.progress_marker ?? ""),
     progressChecksum: String(row.progress_checksum ?? ""),

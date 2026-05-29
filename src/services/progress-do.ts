@@ -1,4 +1,5 @@
 import { ApiError } from "../lib/errors";
+import { getJsonFromKv, putJsonToKv, sha256Hex } from "../lib/kv-cache";
 import { getUserByUid, updateProgressInD1 } from "../repositories/users";
 import type { Bindings } from "../types/app";
 import {
@@ -39,6 +40,8 @@ type RegisteredManifest = {
   indexById: Map<string, number>;
 };
 
+type StoredManifest = Omit<RegisteredManifest, "indexById">;
+
 type NormalizedSyncPatch = {
   baseRevision: string;
   setPointIds: string[];
@@ -51,6 +54,7 @@ const STATS_STORAGE_KEY = "stats:snapshot:v1";
 const STATS_D1_DIRTY_KEY = "stats:d1:dirty:v1";
 const STATS_D1_FLUSH_ALARM_MS = 60_000;
 const ACTIVE_MANIFEST_HASH_KEY = "progress:active-manifest-hash:v1";
+const MANIFEST_KV_KEY_PREFIX = "progress:manifest:v1:";
 
 function jsonResponse(payload: unknown, init?: ResponseInit): Response {
   return new Response(JSON.stringify(payload), {
@@ -105,13 +109,6 @@ function normalizePointIds(value: unknown, fieldName: string): string[] {
     return [...new Set(pointIds)];
   }
   return pointIds;
-}
-
-async function sha256Hex(value: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
-  return [...new Uint8Array(digest)]
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
 }
 
 function buildCanonicalMarkerManifest(pointIds: string[]): string {
@@ -191,6 +188,23 @@ function pointIdsFromBitmap(bytes: Uint8Array, manifest: RegisteredManifest): st
   return pointIds;
 }
 
+function manifestFromStored(stored: StoredManifest): RegisteredManifest {
+  return {
+    ...stored,
+    indexById: new Map(stored.pointIds.map((id, index) => [id, index]))
+  };
+}
+
+function manifestToStored(manifest: RegisteredManifest): StoredManifest {
+  return {
+    markerIndexHash: manifest.markerIndexHash,
+    formatVersion: manifest.formatVersion,
+    bitsPerPoint: manifest.bitsPerPoint,
+    pointIds: manifest.pointIds,
+    pointCount: manifest.pointCount
+  };
+}
+
 function emptyPublicProgress(markerIndexHash = ""): PublicProgressState {
   return publicProgressState({
     version: 0,
@@ -211,7 +225,7 @@ async function applyStatsDelta(env: ProgressDoEnv, delta: ProgressStatsDelta): P
     return;
   }
 
-  const stub = env.PROGRESS_STATS_DO.get(env.PROGRESS_STATS_DO.idFromName(delta.markerIndexHash));
+  const stub = env.OEM_STATS_DO.get(env.OEM_STATS_DO.idFromName(delta.markerIndexHash));
   const response = await stub.fetch("https://progress-stats/apply", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -223,7 +237,7 @@ async function applyStatsDelta(env: ProgressDoEnv, delta: ProgressStatsDelta): P
   }
 }
 
-export class ProgressUserDO {
+export class OEMUserDO {
   private queue: Promise<void> = Promise.resolve();
 
   constructor(
@@ -268,6 +282,14 @@ export class ProgressUserDO {
   }
 
   private async loadManifest(markerIndexHash: string): Promise<RegisteredManifest | null> {
+    const cached = await getJsonFromKv<StoredManifest>(
+      this.env.OEM_KV,
+      `${MANIFEST_KV_KEY_PREFIX}${markerIndexHash}`
+    );
+    if (cached) {
+      return manifestFromStored(cached);
+    }
+
     const row = await this.env.DB
       .prepare(
         `SELECT marker_index_hash, format_version, bits_per_point, point_count, point_ids
@@ -286,7 +308,7 @@ export class ProgressUserDO {
     if (!row) return null;
 
     const pointIds = JSON.parse(row.point_ids) as string[];
-    return {
+    const manifest = {
       markerIndexHash: row.marker_index_hash,
       formatVersion: normalizeNonNegativeInt(row.format_version, PROGRESS_FORMAT_VERSION),
       bitsPerPoint: normalizeNonNegativeInt(row.bits_per_point, PROGRESS_BITS_PER_POINT),
@@ -294,6 +316,12 @@ export class ProgressUserDO {
       pointIds,
       indexById: new Map(pointIds.map((id, index) => [id, index]))
     };
+    await putJsonToKv(
+      this.env.OEM_KV,
+      `${MANIFEST_KV_KEY_PREFIX}${manifest.markerIndexHash}`,
+      manifestToStored(manifest)
+    ).catch(() => undefined);
+    return manifest;
   }
 
   private async saveManifest(manifest: RegisteredManifest): Promise<void> {
@@ -314,6 +342,11 @@ export class ProgressUserDO {
       )
       .run();
     await this.state.storage.put(ACTIVE_MANIFEST_HASH_KEY, manifest.markerIndexHash);
+    await putJsonToKv(
+      this.env.OEM_KV,
+      `${MANIFEST_KV_KEY_PREFIX}${manifest.markerIndexHash}`,
+      manifestToStored(manifest)
+    ).catch(() => undefined);
   }
 
   private async loadActiveManifest(): Promise<RegisteredManifest> {
@@ -501,7 +534,7 @@ export class ProgressUserDO {
   }
 }
 
-export class ProgressStatsDO {
+export class OEMStatsDO {
   private snapshot: ProgressStatsSnapshot | null = null;
   private counts: Uint32Array | null = null;
   private queue: Promise<void> = Promise.resolve();

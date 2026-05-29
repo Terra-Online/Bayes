@@ -10,7 +10,10 @@ import {
 import { createApp } from './app';
 import type { Bindings } from './types/app';
 import { initResend } from './lib/email';
-export { ProgressStatsDO, ProgressUserDO } from './services/progress-do';
+export {
+  OEMStatsDO,
+  OEMUserDO,
+} from './services/progress-do';
 
 const app = createApp();
 const MODERATION_FOLLOW_UP_DELAY_MS = 30_000;

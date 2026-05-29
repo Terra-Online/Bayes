@@ -6,6 +6,7 @@ import { getRuntimeConfig } from "../lib/config";
 import { ApiError } from "../lib/errors";
 import { RECALL_MODERATION_NOTE_PREFIX } from "../lib/moderation";
 import { createRedisClient } from "../lib/redis";
+import { getJsonFromKv, putJsonToKv, sha256Hex } from "../lib/kv-cache";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { rateLimit } from "../middleware/rate-limit";
 import {
@@ -20,6 +21,7 @@ import {
   getSubmissionById,
   listActiveImagesByMarker,
   listUserImagesByMarker,
+  type PublicSubmissionImage,
   updateSubmissionStatus
 } from "../repositories/submissions";
 import { getDuplicateImageMarkerSummary } from "../repositories/submission-duplicates";
@@ -62,6 +64,8 @@ const commentSubmissionSchema = z.object({
 });
 
 const TEST_UPLOAD_PREFIX = "_test";
+const UGC_LIST_KV_KEY_PREFIX = "ugc:images:v1:";
+const UGC_LIST_KV_TTL_SECONDS = 10;
 const BETA_FRONTEND_HOSTNAMES = new Set([
   "beta.opendfieldmap.org"
 ]);
@@ -834,6 +838,7 @@ export function createUploadRoutes() {
     const useSharedCache = !session;
     let cache: Cache | null = null;
     let cacheKey: Request | null = null;
+    let kvKey: string | null = null;
     if (useSharedCache) {
       cache = await caches.open("ugc-images");
       const cacheNamespace = resolveImageCacheNamespace(scope);
@@ -843,6 +848,16 @@ export function createUploadRoutes() {
       const cached = await cache.match(cacheKey);
       if (cached) {
         return cached;
+      }
+
+      kvKey = `${UGC_LIST_KV_KEY_PREFIX}${await sha256Hex(cacheKey.url)}`;
+      const kvCached = await getJsonFromKv<{ items: PublicSubmissionImage[] }>(c.env.OEM_KV, kvKey);
+      if (kvCached) {
+        const response = c.json(kvCached);
+        response.headers.set("Cache-Control", UGC_PUBLIC_LIST_CACHE_CONTROL);
+        response.headers.set("x-oem-kv-cache", "hit");
+        c.executionCtx.waitUntil(cache.put(cacheKey, response.clone()));
+        return response;
       }
     }
 
@@ -858,6 +873,12 @@ export function createUploadRoutes() {
     const response = c.json({ items: images });
     if (cache && cacheKey) {
       response.headers.set("Cache-Control", UGC_PUBLIC_LIST_CACHE_CONTROL);
+      response.headers.set("x-oem-kv-cache", kvKey ? "miss" : "disabled");
+      if (kvKey) {
+        c.executionCtx.waitUntil(putJsonToKv(c.env.OEM_KV, kvKey, { items: images }, {
+          expirationTtl: UGC_LIST_KV_TTL_SECONDS
+        }).catch(() => undefined));
+      }
       c.executionCtx.waitUntil(cache.put(cacheKey, response.clone()));
     } else {
       response.headers.set("Cache-Control", "private, no-store");
