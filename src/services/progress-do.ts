@@ -50,6 +50,13 @@ type NormalizedSyncPatch = {
   updatedAt: number;
 };
 
+type PreparedProgress = {
+  progress: ProgressState;
+  bytes: Uint8Array;
+  retainedPointIds: string[];
+  migrated: boolean;
+};
+
 const STATS_STORAGE_KEY = "stats:snapshot:v1";
 const STATS_D1_DIRTY_KEY = "stats:d1:dirty:v1";
 const STATS_D1_FLUSH_ALARM_MS = 60_000;
@@ -186,6 +193,16 @@ function pointIdsFromBitmap(bytes: Uint8Array, manifest: RegisteredManifest): st
     }
   }
   return pointIds;
+}
+
+function normalizeRetainedPointIds(pointIds: string[]): string[] {
+  return [...new Set(pointIds.map((id) => String(id).trim()).filter(Boolean))];
+}
+
+function areStringArraysEqual(first: string[], second: string[]): boolean {
+  if (first.length !== second.length) return false;
+  const firstSet = new Set(first);
+  return second.every((item) => firstSet.has(item));
 }
 
 function manifestFromStored(stored: StoredManifest): RegisteredManifest {
@@ -363,7 +380,10 @@ export class OEMUserDO {
     return manifest;
   }
 
-  private async publicProgress(progress: ProgressState): Promise<PublicProgressState> {
+  private async publicProgress(
+    progress: ProgressState,
+    activeManifest?: RegisteredManifest
+  ): Promise<PublicProgressState> {
     if (isEmptyProgress(progress)) {
       return emptyPublicProgress(progress.markerIndexHash);
     }
@@ -374,7 +394,15 @@ export class OEMUserDO {
     }
 
     const bytes = normalizeBitmapBytes(progress.marker, manifest.pointCount, manifest.bitsPerPoint);
-    return publicProgressState(progress, pointIdsFromBitmap(bytes, manifest));
+    const pointIds = pointIdsFromBitmap(bytes, manifest);
+    if (!activeManifest) {
+      return publicProgressState(progress, pointIds);
+    }
+
+    return publicProgressState(
+      progress,
+      pointIds.filter((pointId) => activeManifest.indexById.has(pointId))
+    );
   }
 
   private async handleManifest(request: Request): Promise<Response> {
@@ -396,17 +424,82 @@ export class OEMUserDO {
       const activeManifestHash = await this.state.storage.get<string>(ACTIVE_MANIFEST_HASH_KEY);
       return jsonResponse({ progress: emptyPublicProgress(activeManifestHash ?? progress.markerIndexHash) });
     }
-    return jsonResponse({ progress: await this.publicProgress(progress) });
+    const activeManifest = await this.loadActiveManifest().catch(() => null);
+    return jsonResponse({ progress: await this.publicProgress(progress, activeManifest ?? undefined) });
   }
 
-  private pointIndicesForPatch(pointIds: string[], manifest: RegisteredManifest, fieldName: string): number[] {
-    return pointIds.map((pointId) => {
-      const index = manifest.indexById.get(pointId);
-      if (index === undefined) {
-        throw new ApiError(422, "UNKNOWN_PROGRESS_POINT", `Unknown point id in ${fieldName}.`, { pointId });
+  private async prepareProgressForManifest(
+    progress: ProgressState,
+    retainedPointIds: string[],
+    targetManifest: RegisteredManifest
+  ): Promise<PreparedProgress> {
+    const retained = new Set(normalizeRetainedPointIds(retainedPointIds));
+
+    if (isEmptyProgress(progress)) {
+      return {
+        progress,
+        bytes: emptyBitmapBytes(targetManifest.pointCount, targetManifest.bitsPerPoint),
+        retainedPointIds: [...retained],
+        migrated: false
+      };
+    }
+
+    const sameManifest = progress.markerIndexHash === targetManifest.markerIndexHash
+      && progress.formatVersion === targetManifest.formatVersion
+      && progress.bitsPerPoint === targetManifest.bitsPerPoint
+      && progress.pointCount === targetManifest.pointCount;
+
+    if (sameManifest) {
+      return {
+        progress,
+        bytes: normalizeBitmapBytes(progress.marker, targetManifest.pointCount, targetManifest.bitsPerPoint),
+        retainedPointIds: [...retained],
+        migrated: false
+      };
+    }
+
+    const sourceManifest = await this.loadManifest(progress.markerIndexHash);
+    if (!sourceManifest) {
+      throw new ApiError(
+        409,
+        "PROGRESS_MANIFEST_NOT_REGISTERED",
+        "Current cloud progress manifest is not registered."
+      );
+    }
+
+    const sourceBytes = normalizeBitmapBytes(progress.marker, sourceManifest.pointCount, sourceManifest.bitsPerPoint);
+    const nextBytes = emptyBitmapBytes(targetManifest.pointCount, targetManifest.bitsPerPoint);
+    for (const pointId of pointIdsFromBitmap(sourceBytes, sourceManifest)) {
+      const nextIndex = targetManifest.indexById.get(pointId);
+      if (nextIndex === undefined) {
+        retained.add(pointId);
+        continue;
       }
-      return index;
+      setBitmapBit(nextBytes, nextIndex, true);
+    }
+
+    const checksum = await checksumProgressBitmap(nextBytes, {
+      markerIndexHash: targetManifest.markerIndexHash,
+      formatVersion: targetManifest.formatVersion,
+      bitsPerPoint: targetManifest.bitsPerPoint,
+      pointCount: targetManifest.pointCount
     });
+
+    return {
+      progress: {
+        ...progress,
+        revision: buildProgressRevision(checksum),
+        marker: encodeBase64(nextBytes),
+        checksum,
+        markerIndexHash: targetManifest.markerIndexHash,
+        formatVersion: targetManifest.formatVersion,
+        bitsPerPoint: targetManifest.bitsPerPoint,
+        pointCount: targetManifest.pointCount
+      },
+      bytes: nextBytes,
+      retainedPointIds: [...retained],
+      migrated: true
+    };
   }
 
   private async handleSync(request: Request, url: URL): Promise<Response> {
@@ -425,44 +518,42 @@ export class OEMUserDO {
       && user.progressLastMutationId
       && incoming.clientMutationId === user.progressLastMutationId
     ) {
-      return jsonResponse({ ok: true, progress: await this.publicProgress(current), idempotent: true });
+      return jsonResponse({ ok: true, progress: await this.publicProgress(current, manifest), idempotent: true });
     }
+
+    const prepared = await this.prepareProgressForManifest(
+      current,
+      user.progressRetainedPointIds,
+      manifest
+    );
 
     if (
-      !isEmptyProgress(current)
-      && (
-        current.markerIndexHash !== manifest.markerIndexHash
-        || current.formatVersion !== manifest.formatVersion
-        || current.bitsPerPoint !== manifest.bitsPerPoint
-        || current.pointCount !== manifest.pointCount
-      )
+      incoming.baseRevision !== current.revision
+      && incoming.baseRevision !== prepared.progress.revision
     ) {
-      throw new ApiError(
-        409,
-        "PROGRESS_MANIFEST_CONFLICT",
-        "Current cloud progress was encoded with a different marker index.",
-        { current: await this.publicProgress(current) }
-      );
-    }
-
-    if (incoming.baseRevision !== current.revision) {
       throw new ApiError(
         409,
         "PROGRESS_REVISION_CONFLICT",
         "Incoming patch is based on an older cloud revision.",
-        { current: await this.publicProgress(current) }
+        { current: await this.publicProgress(prepared.progress, manifest) }
       );
     }
 
-    const currentBytes = isEmptyProgress(current)
-      ? emptyBitmapBytes(manifest.pointCount, manifest.bitsPerPoint)
-      : normalizeBitmapBytes(current.marker, manifest.pointCount, manifest.bitsPerPoint);
+    const currentBytes = prepared.bytes;
     const nextBytes = new Uint8Array(currentBytes);
+    const retainedPointIds = new Set(prepared.retainedPointIds);
 
-    for (const index of this.pointIndicesForPatch(incoming.clearPointIds, manifest, "clearPointIds")) {
+    for (const pointId of incoming.clearPointIds) {
+      const index = manifest.indexById.get(pointId);
+      if (index === undefined) continue;
       setBitmapBit(nextBytes, index, false);
     }
-    for (const index of this.pointIndicesForPatch(incoming.setPointIds, manifest, "setPointIds")) {
+    for (const pointId of incoming.setPointIds) {
+      const index = manifest.indexById.get(pointId);
+      if (index === undefined) {
+        retainedPointIds.add(pointId);
+        continue;
+      }
       setBitmapBit(nextBytes, index, true);
     }
 
@@ -473,11 +564,24 @@ export class OEMUserDO {
       pointCount: manifest.pointCount
     });
 
-    if (current.checksum && current.checksum === computedChecksum) {
-      return jsonResponse({ ok: true, progress: await this.publicProgress(current), unchanged: true });
+    const nextRetainedPointIds = normalizeRetainedPointIds([...retainedPointIds]);
+    const retainedChanged = !areStringArraysEqual(
+      normalizeRetainedPointIds(user.progressRetainedPointIds),
+      nextRetainedPointIds
+    );
+    const progressChanged = prepared.migrated || prepared.progress.checksum !== computedChecksum;
+
+    if (!progressChanged && !retainedChanged) {
+      return jsonResponse({ ok: true, progress: await this.publicProgress(prepared.progress, manifest), unchanged: true });
     }
 
-    const diff = diffOneBitBitmaps(currentBytes, nextBytes, manifest.pointCount);
+    const diff = prepared.migrated
+      ? diffOneBitBitmaps(
+        emptyBitmapBytes(manifest.pointCount, manifest.bitsPerPoint),
+        nextBytes,
+        manifest.pointCount
+      )
+      : diffOneBitBitmaps(currentBytes, nextBytes, manifest.pointCount);
     const now = nowTimestampMs();
     const nextProgress: ProgressState = {
       version: current.version + 1,
@@ -501,6 +605,7 @@ export class OEMUserDO {
       formatVersion: nextProgress.formatVersion,
       bitsPerPoint: nextProgress.bitsPerPoint,
       pointCount: nextProgress.pointCount,
+      retainedPointIds: nextRetainedPointIds,
       updatedAt: nextProgress.updatedAt ?? now,
       clientMutationId: incoming.clientMutationId,
       cloudSynced: true,
@@ -513,7 +618,7 @@ export class OEMUserDO {
         pointCount: manifest.pointCount,
         increments: diff.increments,
         decrements: diff.decrements,
-        firstSync
+        firstSync: firstSync || prepared.migrated
       });
     } catch (error) {
       console.warn("[progress][stats] failed to apply delta", {

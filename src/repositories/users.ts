@@ -23,6 +23,7 @@ export interface UserRecord {
   progressFormatVersion: number;
   progressBitsPerPoint: number;
   progressPointCount: number;
+  progressRetainedPointIds: string[];
   progressUpdatedAt: number | null;
   progressLastMutationId: string | null;
   progressCloudSynced: boolean;
@@ -132,6 +133,23 @@ function normalizeEditableNickname(raw: string): string {
   return value;
 }
 
+function parseStringArrayJson(raw: unknown): string[] {
+  if (Array.isArray(raw)) {
+    return [...new Set(raw.map((item) => String(item).trim()).filter(Boolean))];
+  }
+  if (typeof raw !== "string" || !raw.trim()) {
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return Array.isArray(parsed)
+      ? [...new Set(parsed.map((item) => String(item).trim()).filter(Boolean))]
+      : [];
+  } catch {
+    return [];
+  }
+}
+
 export function formatPublicUid(uidNumber: number, uidSuffix: string): string {
   const normalizedNumber = Number.isFinite(uidNumber) && uidNumber > 0 ? Math.floor(uidNumber) : 0;
   const normalizedSuffix = normalizeUidSuffix(uidSuffix);
@@ -185,6 +203,7 @@ function mapUser(row: Record<string, unknown>): UserRecord {
     progressFormatVersion: Number(row.progress_format_version ?? 1),
     progressBitsPerPoint: Number(row.progress_bits_per_point ?? 1),
     progressPointCount: Number(row.progress_point_count ?? 0),
+    progressRetainedPointIds: parseStringArrayJson(row.progress_retained_point_ids),
     progressUpdatedAt: row.progress_updated_at === null || row.progress_updated_at === undefined
       ? null
       : Number(row.progress_updated_at),
@@ -394,6 +413,7 @@ export interface UserProgressWrite {
   formatVersion: number;
   bitsPerPoint: number;
   pointCount: number;
+  retainedPointIds: string[];
   updatedAt: number;
   clientMutationId: string | null;
   cloudSynced: boolean;
@@ -415,10 +435,11 @@ export async function updateProgressInD1(
            progress_format_version = ?6,
            progress_bits_per_point = ?7,
            progress_point_count = ?8,
-           progress_updated_at = ?9,
-           progress_last_mutation_id = ?10,
-           progress_cloud_synced = ?11,
-           progress_synced_at = COALESCE(?12, progress_synced_at),
+           progress_retained_point_ids = ?9,
+           progress_updated_at = ?10,
+           progress_last_mutation_id = ?11,
+           progress_cloud_synced = ?12,
+           progress_synced_at = COALESCE(?13, progress_synced_at),
            last_active = CURRENT_TIMESTAMP
        WHERE uid = ?1`
     )
@@ -431,6 +452,7 @@ export async function updateProgressInD1(
       progress.formatVersion,
       progress.bitsPerPoint,
       progress.pointCount,
+      JSON.stringify(progress.retainedPointIds),
       progress.updatedAt,
       progress.clientMutationId,
       progress.cloudSynced ? 1 : 0,
