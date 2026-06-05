@@ -1,17 +1,22 @@
 import { Hono, type Context } from "hono";
 import { z } from "zod";
+import markerHashTable from "../lib/migrate_rainbowtable.json";
 import { createToken, decryptSecret, encryptSecret } from "../lib/crypto";
 import {
   agreePolicy,
   connectEndfieldPositionSocket,
   createEndfieldDeviceProfile,
   generateEndfieldCredByCode,
+  getEndfieldMapMarkList,
   getEndfieldPosition,
   getEndfieldRoles,
-  parseEndfieldPositionSocketMessage,
   grantEndfieldOAuthCode,
+  parseEndfieldPositionSocketMessage,
+  parseEndfieldPositionSocketError,
   parseEndfieldDeviceProfile,
+  refreshEndfieldAuth,
   serializeEndfieldDeviceProfile,
+  type EndfieldMapMarkListEnvelope,
   type EndfieldDeviceProfile,
   type EndfieldProvider,
   type EndfieldRoleOption
@@ -34,6 +39,7 @@ type EndfieldBindingRow = {
   server_name: string | null;
   cred_enc: string;
   token_enc: string;
+  account_token_enc: string | null;
   device_profile: string | null;
   status: BindingStatus;
   updated_at: string;
@@ -48,6 +54,7 @@ type PendingEndfieldSession = {
   provider: EndfieldProvider;
   cred: string;
   token: string;
+  accountToken?: string;
   roles: EndfieldRoleOption[];
   createdAt: number;
 };
@@ -63,6 +70,7 @@ type DecryptedBinding = {
   publicBinding: ReturnType<typeof publicBinding>;
   cred: string;
   token: string;
+  accountToken?: string;
   wsBaseUrl?: string;
   deviceProfile: EndfieldDeviceProfile;
 };
@@ -76,9 +84,20 @@ type PositionCacheEntry = {
   refreshedAt: number;
 };
 
+type OfficialMapMark = {
+  id: string;
+  isUserMarked: boolean;
+};
+
+type OfficialMarksResult = {
+  raw: Record<"map01" | "map02", EndfieldMapMarkListEnvelope>;
+  markers: OfficialMapMark[];
+};
+
 const decryptedBindingCache = new Map<string, DecryptedBindingCacheEntry>();
 const positionCache = new Map<string, PositionCacheEntry>();
 const positionRefreshInFlight = new Map<string, Promise<PositionCacheEntry>>();
+const MARKER_HASH_TO_POINT_ID = markerHashTable as Record<string, string>;
 
 const providerSchema = z.enum(["skland", "skport"]);
 const exchangeTokenSchema = z.object({
@@ -111,9 +130,14 @@ const pendingSessionSchema = z.object({
   provider: providerSchema,
   cred: z.string(),
   token: z.string(),
+  accountToken: z.string().optional(),
   roles: z.array(roleOptionSchema),
   createdAt: z.number()
 });
+
+function isMissingColumnError(error: unknown, column: string): boolean {
+  return error instanceof Error && error.message.toLowerCase().includes(column.toLowerCase());
+}
 
 function getCredentialSecret(c: AppContext): string {
   const secret = c.env.ENDFIELD_CREDENTIAL_SECRET ?? c.env.BETTER_AUTH_SECRET;
@@ -148,10 +172,25 @@ function publicBinding(row: EndfieldBindingRow | null) {
 }
 
 async function getBinding(db: D1Database, uid: string): Promise<EndfieldBindingRow | null> {
-  return db
-    .prepare("SELECT * FROM endfield_bindings WHERE uid = ?1 LIMIT 1")
-    .bind(uid)
-    .first<EndfieldBindingRow>();
+  try {
+    return await db
+      .prepare("SELECT * FROM endfield_bindings WHERE uid = ?1 LIMIT 1")
+      .bind(uid)
+      .first<EndfieldBindingRow>();
+  } catch (error) {
+    if (!isMissingColumnError(error, "account_token_enc")) {
+      throw error;
+    }
+    const row = await db
+      .prepare(
+        `SELECT uid, provider, server_id, role_id, role_nickname, server_name, cred_enc, token_enc,
+          NULL AS account_token_enc, device_profile, status, updated_at
+        FROM endfield_bindings WHERE uid = ?1 LIMIT 1`
+      )
+      .bind(uid)
+      .first<EndfieldBindingRow>();
+    return row;
+  }
 }
 
 async function getRoleDeviceProfile(db: D1Database, roleId: string): Promise<EndfieldDeviceProfile | null> {
@@ -228,9 +267,12 @@ async function getDecryptedBinding(c: AppContext, uid: string): Promise<Decrypte
   const deviceProfile = await getBindingDeviceProfile(c.env.DB, binding);
 
   const secret = getCredentialSecret(c);
-  const [cred, token] = await Promise.all([
+  const [cred, token, accountToken] = await Promise.all([
     decryptSecret(binding.cred_enc, secret),
-    decryptSecret(binding.token_enc, secret)
+    decryptSecret(binding.token_enc, secret),
+    binding.account_token_enc
+      ? decryptSecret(binding.account_token_enc, secret).catch(() => undefined)
+      : undefined
   ]);
 
   const decrypted: DecryptedBindingCacheEntry = {
@@ -238,12 +280,101 @@ async function getDecryptedBinding(c: AppContext, uid: string): Promise<Decrypte
     publicBinding: publicBinding(binding),
     cred,
     token,
+    accountToken,
     wsBaseUrl: c.env.ENDFIELD_WS_BASE_URL,
     deviceProfile,
     expiresAt: now + DECRYPTED_BINDING_CACHE_TTL_MS
   };
   decryptedBindingCache.set(uid, decrypted);
   return decrypted;
+}
+
+function isAutoRefreshableEndfieldError(error: unknown): boolean {
+  if (!(error instanceof ApiError)) return false;
+  const details = error.details as { upstreamCode?: unknown; upstreamStatus?: unknown } | undefined;
+  const upstreamCode = Number(details?.upstreamCode);
+  return error.code === "ENDFIELD_CREDENTIAL_REJECTED"
+    || error.code === "ENDFIELD_POSITION_SOCKET_UNAVAILABLE"
+    || details?.upstreamStatus === 401
+    || details?.upstreamStatus === 403
+    || upstreamCode === 10000;
+}
+
+async function updateStoredCredential(
+  c: AppContext,
+  uid: string,
+  generated: { cred: string; token: string }
+): Promise<void> {
+  const secret = getCredentialSecret(c);
+  await c.env.DB
+    .prepare(
+      `UPDATE endfield_bindings
+      SET cred_enc = ?2, token_enc = ?3, status = 'enabled', updated_at = CURRENT_TIMESTAMP
+      WHERE uid = ?1`
+    )
+    .bind(
+      uid,
+      await encryptSecret(generated.cred, secret),
+      await encryptSecret(generated.token, secret)
+    )
+    .run();
+  deleteLocatorCaches(uid);
+}
+
+async function refreshBindingCredentials(
+  c: AppContext,
+  uid: string,
+  binding: DecryptedBinding
+): Promise<DecryptedBinding | null> {
+  if (binding.accountToken) {
+    try {
+      const grant = await grantEndfieldOAuthCode(
+        binding.binding.provider,
+        binding.accountToken,
+        binding.deviceProfile
+      );
+      const generated = await generateEndfieldCredByCode(
+        binding.binding.provider,
+        grant.code,
+        binding.deviceProfile
+      );
+      await updateStoredCredential(c, uid, generated);
+      return getDecryptedBinding(c, uid);
+    } catch {
+      // Fall through to the lightweight refresh endpoint before forcing a rebind.
+    }
+  }
+
+  const refreshed = await refreshEndfieldAuth({
+    provider: binding.binding.provider,
+    cred: binding.cred,
+    deviceProfile: binding.deviceProfile
+  });
+  await updateStoredCredential(c, uid, {
+    cred: refreshed.cred ?? binding.cred,
+    token: refreshed.token!
+  });
+  return getDecryptedBinding(c, uid);
+}
+
+async function withAutoRefreshedBinding<T>(
+  c: AppContext,
+  uid: string,
+  operation: (binding: DecryptedBinding) => Promise<T>
+): Promise<T> {
+  const binding = await getDecryptedBinding(c, uid);
+  try {
+    return await operation(binding);
+  } catch (error) {
+    if (!isAutoRefreshableEndfieldError(error)) {
+      throw error;
+    }
+    const refreshed = await refreshBindingCredentials(c, uid, binding);
+    if (!refreshed) {
+      throw error;
+    }
+    return operation(refreshed);
+  }
 }
 
 function getPositionCacheKey(uid: string, binding: EndfieldBindingRow): string {
@@ -285,6 +416,70 @@ async function refreshPositionCache(key: string, binding: DecryptedBinding): Pro
   return promise;
 }
 
+function collectOfficialMarkers(value: unknown, output: OfficialMapMark[] = []): OfficialMapMark[] {
+  if (!value || typeof value !== "object") {
+    return output;
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      collectOfficialMarkers(item, output);
+    }
+    return output;
+  }
+
+  const record = value as Record<string, unknown>;
+  const candidate = record.marker && typeof record.marker === "object"
+    ? record.marker as Record<string, unknown>
+    : record;
+  if (
+    (typeof candidate.id === "string" || typeof candidate.id === "number")
+    && typeof candidate.isUserMarked === "boolean"
+  ) {
+    output.push({
+      id: String(candidate.id),
+      isUserMarked: candidate.isUserMarked
+    });
+    if (candidate !== record) {
+      return output;
+    }
+  }
+
+  for (const item of Object.values(record)) {
+    collectOfficialMarkers(item, output);
+  }
+  return output;
+}
+
+async function getOfficialMarks(binding: DecryptedBinding): Promise<OfficialMarksResult> {
+  const [map01, map02] = await Promise.all([
+    getEndfieldMapMarkList({
+      provider: binding.binding.provider,
+      roleId: binding.binding.role_id,
+      serverId: Number(binding.binding.server_id),
+      mapId: "map01",
+      cred: binding.cred,
+      token: binding.token,
+      deviceProfile: binding.deviceProfile
+    }),
+    getEndfieldMapMarkList({
+      provider: binding.binding.provider,
+      roleId: binding.binding.role_id,
+      serverId: Number(binding.binding.server_id),
+      mapId: "map02",
+      cred: binding.cred,
+      token: binding.token,
+      deviceProfile: binding.deviceProfile
+    })
+  ]);
+
+  const raw = { map01, map02 };
+  return {
+    raw,
+    markers: collectOfficialMarkers(raw)
+  };
+}
+
 function schedulePositionRefresh(c: AppContext, key: string, binding: DecryptedBinding): void {
   const refresh = refreshPositionCache(key, binding).catch(() => undefined);
   c.executionCtx.waitUntil(refresh);
@@ -314,7 +509,7 @@ async function handleEndfieldPositionSocket(c: AppContext) {
 
   const user = requireUser(c);
   const includeBinding = shouldIncludeBinding(c);
-  const binding = await getDecryptedBinding(c, user.uid);
+  let binding = await getDecryptedBinding(c, user.uid);
   const pair = new WebSocketPair();
   const [client, server] = Object.values(pair);
   let closed = false;
@@ -381,6 +576,23 @@ async function handleEndfieldPositionSocket(c: AppContext) {
 
       upstream.addEventListener("message", (event) => {
         if (generation !== upstreamGeneration) return;
+        const error = parseEndfieldPositionSocketError(event.data as string | ArrayBuffer);
+        if (error?.code === 10000) {
+          sendJson({
+            type: "error",
+            error: {
+              status: 401,
+              code: "ENDFIELD_CREDENTIAL_REJECTED",
+              message: error.message ?? "Endfield credential was rejected.",
+              details: {
+                upstreamCode: error.code,
+                upstreamMessage: error.message
+              }
+            }
+          });
+          return;
+        }
+
         const position = parseEndfieldPositionSocketMessage(event.data as string | ArrayBuffer);
         if (!position) return;
         positionCache.set(getPositionCacheKey(user.uid, binding.binding), {
@@ -416,6 +628,14 @@ async function handleEndfieldPositionSocket(c: AppContext) {
         }
       });
     } catch (error) {
+      if (isAutoRefreshableEndfieldError(error)) {
+        const refreshed = await refreshBindingCredentials(c, user.uid, binding).catch(() => null);
+        if (refreshed && !closed) {
+          binding = refreshed;
+          scheduleReconnect();
+          return;
+        }
+      }
       sendJson({
         type: "error",
         error: serializeLocatorError(error)
@@ -447,35 +667,70 @@ async function saveBinding(
   uid: string,
   provider: EndfieldProvider,
   role: EndfieldRoleOption,
-  encrypted: { cred: string; token: string }
+  encrypted: { cred: string; token: string; accountToken?: string }
 ): Promise<void> {
-  await db
-    .prepare(
-      `INSERT INTO endfield_bindings (
-        uid, provider, server_id, role_id, role_nickname, server_name, cred_enc, token_enc, status, updated_at
-      ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'enabled', CURRENT_TIMESTAMP)
-      ON CONFLICT(uid) DO UPDATE SET
-        provider = excluded.provider,
-        server_id = excluded.server_id,
-        role_id = excluded.role_id,
-        role_nickname = excluded.role_nickname,
-        server_name = excluded.server_name,
-        cred_enc = excluded.cred_enc,
-        token_enc = excluded.token_enc,
-        status = 'enabled',
-        updated_at = CURRENT_TIMESTAMP`
-    )
-    .bind(
-      uid,
-      provider,
-      role.serverId,
-      role.roleId,
-      role.nickname,
-      role.serverName,
-      encrypted.cred,
-      encrypted.token
-    )
-    .run();
+  try {
+    await db
+      .prepare(
+        `INSERT INTO endfield_bindings (
+          uid, provider, server_id, role_id, role_nickname, server_name, cred_enc, token_enc, account_token_enc, status, updated_at
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'enabled', CURRENT_TIMESTAMP)
+        ON CONFLICT(uid) DO UPDATE SET
+          provider = excluded.provider,
+          server_id = excluded.server_id,
+          role_id = excluded.role_id,
+          role_nickname = excluded.role_nickname,
+          server_name = excluded.server_name,
+          cred_enc = excluded.cred_enc,
+          token_enc = excluded.token_enc,
+          account_token_enc = excluded.account_token_enc,
+          status = 'enabled',
+          updated_at = CURRENT_TIMESTAMP`
+      )
+      .bind(
+        uid,
+        provider,
+        role.serverId,
+        role.roleId,
+        role.nickname,
+        role.serverName,
+        encrypted.cred,
+        encrypted.token,
+        encrypted.accountToken ?? null
+      )
+      .run();
+  } catch (error) {
+    if (!isMissingColumnError(error, "account_token_enc")) {
+      throw error;
+    }
+    await db
+      .prepare(
+        `INSERT INTO endfield_bindings (
+          uid, provider, server_id, role_id, role_nickname, server_name, cred_enc, token_enc, status, updated_at
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'enabled', CURRENT_TIMESTAMP)
+        ON CONFLICT(uid) DO UPDATE SET
+          provider = excluded.provider,
+          server_id = excluded.server_id,
+          role_id = excluded.role_id,
+          role_nickname = excluded.role_nickname,
+          server_name = excluded.server_name,
+          cred_enc = excluded.cred_enc,
+          token_enc = excluded.token_enc,
+          status = 'enabled',
+          updated_at = CURRENT_TIMESTAMP`
+      )
+      .bind(
+        uid,
+        provider,
+        role.serverId,
+        role.roleId,
+        role.nickname,
+        role.serverName,
+        encrypted.cred,
+        encrypted.token
+      )
+      .run();
+  }
 }
 
 async function savePendingSession(
@@ -524,36 +779,60 @@ function requireUser(c: AppContext) {
 async function handleEndfieldPosition(c: AppContext) {
   const user = requireUser(c);
   const includeBinding = shouldIncludeBinding(c);
-  const binding = await getDecryptedBinding(c, user.uid);
-  const cacheKey = getPositionCacheKey(user.uid, binding.binding);
-  const cached = positionCache.get(cacheKey);
-  const now = Date.now();
+  return withAutoRefreshedBinding(c, user.uid, async (binding) => {
+    const cacheKey = getPositionCacheKey(user.uid, binding.binding);
+    const cached = positionCache.get(cacheKey);
+    const now = Date.now();
 
-  if (cached && now - cached.refreshedAt <= POSITION_CACHE_STALE_MS) {
-    if (now - cached.refreshedAt > POSITION_CACHE_FRESH_MS) {
-      schedulePositionRefresh(c, cacheKey, binding);
+    if (cached && now - cached.refreshedAt <= POSITION_CACHE_STALE_MS) {
+      if (now - cached.refreshedAt > POSITION_CACHE_FRESH_MS) {
+        schedulePositionRefresh(c, cacheKey, binding);
+      }
+
+      const response = c.json({
+        data: cached.data,
+        ...(includeBinding ? { binding: binding.publicBinding } : {})
+      });
+      response.headers.set("cache-control", "private, no-store");
+      response.headers.set("x-locator-cache", now - cached.refreshedAt <= POSITION_CACHE_FRESH_MS ? "fresh" : "stale");
+      response.headers.set("x-locator-age-ms", String(now - cached.refreshedAt));
+      return response;
     }
 
+    const position = await refreshPositionCache(cacheKey, binding);
+
     const response = c.json({
-      data: cached.data,
+      data: position.data,
       ...(includeBinding ? { binding: binding.publicBinding } : {})
     });
     response.headers.set("cache-control", "private, no-store");
-    response.headers.set("x-locator-cache", now - cached.refreshedAt <= POSITION_CACHE_FRESH_MS ? "fresh" : "stale");
-    response.headers.set("x-locator-age-ms", String(now - cached.refreshedAt));
+    response.headers.set("x-locator-cache", "miss");
+    response.headers.set("x-locator-age-ms", "0");
     return response;
-  }
-
-  const position = await refreshPositionCache(cacheKey, binding);
-
-  const response = c.json({
-    data: position.data,
-    ...(includeBinding ? { binding: binding.publicBinding } : {})
   });
-  response.headers.set("cache-control", "private, no-store");
-  response.headers.set("x-locator-cache", "miss");
-  response.headers.set("x-locator-age-ms", "0");
-  return response;
+}
+
+async function handleOfficialMarks(c: AppContext) {
+  const user = requireUser(c);
+  return withAutoRefreshedBinding(c, user.uid, async (binding) => {
+    const result = await getOfficialMarks(binding);
+    const markedIds = [...new Set(result.markers
+      .filter((marker) => marker.isUserMarked)
+      .map((marker) => marker.id))];
+    const pointIds = [...new Set(markedIds
+      .map((id) => MARKER_HASH_TO_POINT_ID[id.toLowerCase()])
+      .filter((id): id is string => Boolean(id)))];
+    const response = c.json({
+      binding: binding.publicBinding,
+      timestamp: new Date().toISOString(),
+      markedIds,
+      pointIds,
+      markers: result.markers,
+      raw: result.raw
+    });
+    response.headers.set("cache-control", "private, no-store");
+    return response;
+  });
 }
 
 async function handleAgree(c: AppContext) {
@@ -625,6 +904,7 @@ export function createBindingRoutes() {
         provider: parsed.data.provider,
         cred: generated.cred,
         token: generated.token,
+        accountToken: parsed.data.token,
         roles,
         createdAt: Date.now()
       });
@@ -687,7 +967,8 @@ export function createBindingRoutes() {
     await getOrCreateRoleDeviceProfile(c.env.DB, role.roleId);
     await saveBinding(c.env.DB, user.uid, pending.provider, role, {
       cred: await encryptSecret(pending.cred, secret),
-      token: await encryptSecret(pending.token, secret)
+      token: await encryptSecret(pending.token, secret),
+      accountToken: pending.accountToken ? await encryptSecret(pending.accountToken, secret) : undefined
     });
     deleteLocatorCaches(user.uid);
 
@@ -726,6 +1007,15 @@ export function createLocatorRoutes() {
   app.get("/position", handleEndfieldPosition);
   app.get("/position-stream", handleEndfieldPositionSocket);
   app.post("/agree-policy", handleAgree);
+
+  return app;
+}
+
+export function createSyncRoutes() {
+  const app = new Hono<AppEnv>();
+
+  app.use("/*", requireAuth);
+  app.get("/official", handleOfficialMarks);
 
   return app;
 }

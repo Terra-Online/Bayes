@@ -145,9 +145,12 @@ PRD.md
 PROGRESS.md
 UGC.md
 ENDPOINTS.md
+REFRESH.md
 migrations/*
 src/lib/endfield-client-ua.json
 src/lib/karma-config.json
+src/lib/migrate_rainbowtable.json
+src/lib/emailBlacklist.json
 
 # Cloudflare Workers local artifacts
 .wrangler/
@@ -157,3 +160,5 @@ src/lib/karma-config.json
 .dev.vars.local
 .env.local
 /.idea/
+
+docs/

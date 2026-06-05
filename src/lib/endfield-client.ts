@@ -102,9 +102,18 @@ type GenerateCredData = {
   token: string;
 };
 
+type RefreshAuthData = {
+  cred?: string;
+  token?: string;
+};
+
 type WebSocketTokenData = {
   token: string;
 };
+
+export type EndfieldMapId = "map01" | "map02";
+
+export type EndfieldMapMarkListEnvelope = ApiEnvelope<unknown>;
 
 type BindingRole = {
   serverId: string;
@@ -314,6 +323,41 @@ async function parseApiEnvelope<T>(response: Response, options: ApiEnvelopeOptio
   return json.data;
 }
 
+async function parseRawApiEnvelope(response: Response): Promise<EndfieldMapMarkListEnvelope> {
+  const json = await response.json<ApiEnvelope<unknown>>().catch(() => null);
+  if (!json) {
+    throw new ApiError(502, "ENDFIELD_BAD_RESPONSE", `Failed to parse upstream response (${response.status}).`);
+  }
+
+  if (!response.ok || json.code !== 0) {
+    if (response.status === 401 || response.status === 403 || json.code === 401 || json.code === 403 || json.code === 10000) {
+      throw new ApiError(
+        401,
+        "ENDFIELD_CREDENTIAL_REJECTED",
+        json.message ?? "Endfield credential was rejected.",
+        {
+          upstreamCode: json.code,
+          upstreamStatus: response.status,
+          upstreamMessage: json.message
+        }
+      );
+    }
+
+    throw new ApiError(
+      502,
+      "ENDFIELD_UPSTREAM_REJECTED",
+      json.message ?? "Upstream rejected request.",
+      {
+        upstreamCode: json.code,
+        upstreamStatus: response.status,
+        upstreamMessage: json.message
+      }
+    );
+  }
+
+  return json;
+}
+
 async function parseAuthEnvelope<T>(response: Response): Promise<T> {
   const json = await response.json<AuthEnvelope<T>>().catch(() => null);
   if (!json) {
@@ -456,7 +500,7 @@ export function parseEndfieldPositionSocketMessage(data: string | ArrayBuffer): 
   return findPositionData(envelope);
 }
 
-function parseEndfieldPositionSocketError(data: string | ArrayBuffer): ApiEnvelope<unknown> | null {
+export function parseEndfieldPositionSocketError(data: string | ArrayBuffer): ApiEnvelope<unknown> | null {
   const envelope = parseEndfieldSocketEnvelope(data);
   if (!envelope?.data || typeof envelope.data !== "object") return null;
 
@@ -683,6 +727,38 @@ export async function generateEndfieldCredByCode(
   return data;
 }
 
+export async function refreshEndfieldAuth(args: {
+  provider: EndfieldProvider;
+  cred?: string;
+  deviceProfile?: EndfieldDeviceProfile;
+}): Promise<RefreshAuthData> {
+  const hosts = getEndfieldHosts(args.provider);
+  const path = "/web/v1/auth/refresh";
+  const timestamp = String(Math.floor(Date.now() / 1000));
+  const sign = await getSignature(path, timestamp, args.cred ?? "");
+
+  const response = await fetch(buildUrl(hosts.baseUrl, path), {
+    method: "GET",
+    headers: {
+      accept: "*/*",
+      ...(args.cred ? { cred: args.cred } : {}),
+      platform: "3",
+      timestamp,
+      vname: "1.0.0",
+      sign,
+      "accept-language": "en-US",
+      "sk-language": "en",
+      ...buildDeviceHeaders(args.deviceProfile)
+    }
+  });
+
+  const data = await parseApiEnvelope<RefreshAuthData>(response);
+  if (!data.token) {
+    throw new ApiError(502, "ENDFIELD_REFRESH_TOKEN_MISSING", "Auth refresh response did not include a token.");
+  }
+  return data;
+}
+
 export async function getEndfieldRoles(
   provider: EndfieldProvider,
   cred: string,
@@ -783,6 +859,49 @@ export async function getEndfieldPositionHttpFallback(args: {
   });
 
   return parseApiEnvelope<EndfieldPositionData>(response, { positionRequest: true });
+}
+
+export async function getEndfieldMapMarkList(args: {
+  provider: EndfieldProvider;
+  roleId: string;
+  serverId: number;
+  mapId: EndfieldMapId;
+  cred: string;
+  token: string;
+  deviceProfile?: EndfieldDeviceProfile;
+}): Promise<EndfieldMapMarkListEnvelope> {
+  const hosts = getEndfieldHosts(args.provider);
+  const path = "/web/v1/game/endfield/map/mark/list";
+  const signPath = `${path}mapId=${args.mapId}&roleId=${args.roleId}&serverId=${args.serverId}`;
+  const timestamp = String(Math.floor(Date.now() / 1000));
+  const sign = await getSignature(signPath, timestamp, args.token);
+  const query = new URLSearchParams({
+    mapId: args.mapId,
+    roleId: args.roleId,
+    serverId: String(args.serverId)
+  });
+  const origin = args.provider === "skland"
+    ? "https://game.skland.com"
+    : "https://game.skport.com";
+
+  const response = await fetch(`${buildUrl(hosts.baseUrl, path)}?${query.toString()}`, {
+    method: "GET",
+    headers: {
+      accept: "*/*",
+      cred: args.cred,
+      origin,
+      platform: "3",
+      referer: `${origin}/`,
+      timestamp,
+      vname: "1.0.0",
+      sign,
+      "accept-language": "en-US",
+      "sk-language": "en",
+      ...buildDeviceHeaders(args.deviceProfile)
+    }
+  });
+
+  return parseRawApiEnvelope(response);
 }
 
 export async function getEndfieldWebSocketToken(args: {

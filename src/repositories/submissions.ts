@@ -447,7 +447,26 @@ export async function listActiveImagesByMarker(
   const viewerBindings = payload.viewerUserId ? [payload.viewerUserId, payload.viewerUserId] : [];
   const result = await db
     .prepare(
-      `SELECT
+      `WITH selected_images AS (
+         SELECT *
+         FROM ugc_submissions
+         WHERE ${filters.join(" AND ")}
+         ORDER BY poi_id ASC, created_at DESC
+         LIMIT ?${markerIds.length + scope.bindings.length + viewerBindings.length + 1}
+       ),
+       upvote_counts AS (
+         SELECT submission_id, COUNT(*) AS upvote_count
+         FROM ugc_submission_upvotes
+         WHERE submission_id IN (SELECT id FROM selected_images)
+         GROUP BY submission_id
+       ),
+       flag_counts AS (
+         SELECT submission_id, COUNT(*) AS flag_count
+         FROM ugc_submission_flags
+         WHERE submission_id IN (SELECT id FROM selected_images)
+         GROUP BY submission_id
+       )
+       SELECT
          s.*,
          COALESCE(v.upvote_count, 0) AS upvote_count,
          COALESCE(f.flag_count, 0) AS flag_count,
@@ -458,22 +477,12 @@ export async function listActiveImagesByMarker(
          u.karma AS user_karma,
          u.nickname AS user_nickname
          ${viewerSelect}
-       FROM ugc_submissions s
-       LEFT JOIN (
-         SELECT submission_id, COUNT(*) AS upvote_count
-         FROM ugc_submission_upvotes
-         GROUP BY submission_id
-       ) v ON v.submission_id = s.id
-       LEFT JOIN (
-         SELECT submission_id, COUNT(*) AS flag_count
-         FROM ugc_submission_flags
-         GROUP BY submission_id
-       ) f ON f.submission_id = s.id
+       FROM selected_images s
+       LEFT JOIN upvote_counts v ON v.submission_id = s.id
+       LEFT JOIN flag_counts f ON f.submission_id = s.id
        ${viewerJoin}
        LEFT JOIN users u ON u.uid = s.user_id
-       WHERE ${filters.join(" AND ")}
-       ORDER BY poi_id ASC, created_at DESC
-       LIMIT ?${markerIds.length + scope.bindings.length + viewerBindings.length + 1}`
+       ORDER BY s.poi_id ASC, s.created_at DESC`
     )
     .bind(...markerIds, ...scope.bindings, ...viewerBindings, limit * markerIds.length)
     .all<Record<string, unknown>>();
@@ -519,7 +528,26 @@ export async function listUserImagesByMarker(
 
   const result = await db
     .prepare(
-      `SELECT
+      `WITH selected_images AS (
+         SELECT *
+         FROM ugc_submissions
+         WHERE ${filters.join(" AND ")}
+         ORDER BY poi_id ASC, created_at DESC
+         LIMIT ?${markerIds.length + extraBindings.length + 2}
+       ),
+       upvote_counts AS (
+         SELECT submission_id, COUNT(*) AS upvote_count
+         FROM ugc_submission_upvotes
+         WHERE submission_id IN (SELECT id FROM selected_images)
+         GROUP BY submission_id
+       ),
+       flag_counts AS (
+         SELECT submission_id, COUNT(*) AS flag_count
+         FROM ugc_submission_flags
+         WHERE submission_id IN (SELECT id FROM selected_images)
+         GROUP BY submission_id
+       )
+       SELECT
          s.*,
          COALESCE(v.upvote_count, 0) AS upvote_count,
          COALESCE(f.flag_count, 0) AS flag_count,
@@ -529,21 +557,11 @@ export async function listUserImagesByMarker(
          u.role AS user_role,
          u.karma AS user_karma,
          u.nickname AS user_nickname
-       FROM ugc_submissions s
-       LEFT JOIN (
-         SELECT submission_id, COUNT(*) AS upvote_count
-         FROM ugc_submission_upvotes
-         GROUP BY submission_id
-       ) v ON v.submission_id = s.id
-       LEFT JOIN (
-         SELECT submission_id, COUNT(*) AS flag_count
-         FROM ugc_submission_flags
-         GROUP BY submission_id
-       ) f ON f.submission_id = s.id
+       FROM selected_images s
+       LEFT JOIN upvote_counts v ON v.submission_id = s.id
+       LEFT JOIN flag_counts f ON f.submission_id = s.id
        LEFT JOIN users u ON u.uid = s.user_id
-       WHERE ${filters.join(" AND ")}
-       ORDER BY poi_id ASC, created_at DESC
-       LIMIT ?${markerIds.length + extraBindings.length + 2}`
+       ORDER BY s.poi_id ASC, s.created_at DESC`
     )
     .bind(payload.userId, ...markerIds, ...extraBindings, limit * markerIds.length)
     .all<Record<string, unknown>>();

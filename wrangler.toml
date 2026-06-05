@@ -16,6 +16,10 @@ mode = "smart"
 [observability]
 enabled = true
 
+[observability.traces]
+enabled = true
+head_sampling_rate = 0.05
+
 [[d1_databases]]
 binding = "DB"
 database_name = "oem-db"
@@ -26,5 +30,45 @@ migrations_dir = "migrations"
 binding = "UGC_BUCKET"
 bucket_name = "opendfieldmap-ugc"
 
+[[kv_namespaces]]
+binding = "OEM_KV"
+id = "d7432ab9beab4f858d10d661652ea7a2"
+
+[[durable_objects.bindings]]
+name = "OEM_USER_DO"
+class_name = "OEMUserDO"
+
+[[durable_objects.bindings]]
+name = "OEM_STATS_DO"
+class_name = "OEMStatsDO"
+
+[[migrations]]
+tag = "v1_progress_bitmap_sync"
+new_sqlite_classes = ["OEMUserDO", "OEMStatsDO"]
+
 [triggers]
 crons = ["*/1 * * * *"]
+
+[env.local]
+
+[[env.local.d1_databases]]
+binding = "DB"
+database_name = "oem-db"
+database_id = "9ba2f958-0e96-48e8-9049-57ce712b5faf"
+migrations_dir = "migrations"
+
+[[env.local.r2_buckets]]
+binding = "UGC_BUCKET"
+bucket_name = "opendfieldmap-ugc"
+
+[[env.local.kv_namespaces]]
+binding = "OEM_KV"
+id = "d7432ab9beab4f858d10d661652ea7a2"
+
+[[env.local.durable_objects.bindings]]
+name = "OEM_USER_DO"
+class_name = "OEMUserDO"
+
+[[env.local.durable_objects.bindings]]
+name = "OEM_STATS_DO"
+class_name = "OEMStatsDO"
