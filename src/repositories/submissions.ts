@@ -231,6 +231,21 @@ export async function getPublicSubmissionByFilePath(db: D1Database, filePath: st
   return row ? mapSubmission(row) : null;
 }
 
+export async function getImageSubmissionByFilePath(db: D1Database, filePath: string): Promise<SubmissionRecord | null> {
+  const row = await db
+    .prepare(
+      `SELECT *
+       FROM ugc_submissions
+       WHERE file_path = ?1
+         AND kind = 'image'
+       LIMIT 1`
+    )
+    .bind(filePath)
+    .first<Record<string, unknown>>();
+
+  return row ? mapSubmission(row) : null;
+}
+
 export async function updateSubmissionStatus(
   db: D1Database,
   payload: {
@@ -497,6 +512,7 @@ export async function listUserImagesByMarker(
     markerId?: string;
     markerIds?: string[];
     assetBaseUrl: string;
+    privateAssetBaseUrl: string;
     limit?: number;
     pathPrefix?: string;
     excludePathPrefix?: string;
@@ -569,13 +585,16 @@ export async function listUserImagesByMarker(
   return (result.results ?? []).map((row) => {
     const submission = mapSubmission(row);
     const filePath = submission.filePath ?? "";
+    const assetBaseUrl = submission.status === "pending_openai" || submission.status === "pending_audit"
+      ? payload.privateAssetBaseUrl
+      : payload.assetBaseUrl;
     return {
       id: submission.id,
       markerId: submission.markerId,
       poiHash: submission.poiHash,
       poiType: submission.poiType,
       snapshotId: submission.snapshotId,
-      url: `${payload.assetBaseUrl}/${filePath}`,
+      url: `${assetBaseUrl}/${filePath}`,
       filePath,
       content: submission.content,
       createdAt: submission.createdAt,

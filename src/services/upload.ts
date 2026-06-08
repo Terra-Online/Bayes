@@ -65,7 +65,7 @@ export async function prepareUploadImageForStorage(payload: {
     };
   }
 
-  if (payload.mimeType === "image/webp") {
+  if (payload.mimeType === "image/webp" || payload.mimeType === "image/avif") {
     return {
       body: payload.body,
       mimeType: payload.mimeType,

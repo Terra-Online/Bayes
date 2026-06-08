@@ -229,15 +229,21 @@ export async function getUserByUid(db: D1Database, uid: string): Promise<UserRec
   return row ? mapUser(row) : null;
 }
 
-function normalizeNickname(raw: string | undefined, uid: string): string[] {
+function normalizeNickname(raw: string | undefined, uid: string, email?: string): string[] {
   const source = (raw ?? "").replace(/[^A-Za-z0-9]/g, "").slice(0, 26);
-  const fallback = `U${uid.replace(/[^A-Za-z0-9]/g, "").slice(0, 24)}`;
+  const emailLocalPart = (email?.split("@")[0] ?? "")
+    .replace(/[^A-Za-z0-9]/g, "")
+    .slice(0, 26);
+  const compactUid = uid.replace(/[^A-Za-z0-9]/g, "");
+  const fallback = `U${compactUid.slice(0, 7)}`;
 
   const candidates = [
     source,
-    source ? `${source.slice(0, 20)}${uid.slice(0, 6)}` : "",
+    source ? `${source.slice(0, 20)}${compactUid.slice(0, 6)}` : "",
+    emailLocalPart,
+    emailLocalPart ? `${emailLocalPart.slice(0, 20)}${compactUid.slice(0, 6)}` : "",
     fallback,
-    `U${uid.slice(-12).replace(/[^A-Za-z0-9]/g, "")}`
+    `U${compactUid.slice(-7)}`
   ].filter((item) => item.length > 0 && item.length <= 26);
 
   return Array.from(new Set(candidates));
@@ -265,8 +271,8 @@ export async function ensureUserProfile(db: D1Database, payload: EnsureUserProfi
     return existingByEmail;
   }
 
-  const nicknameCandidates = normalizeNickname(payload.nickname ?? payload.displayName, payload.uid);
   const email = payload.email.toLowerCase();
+  const nicknameCandidates = normalizeNickname(payload.nickname ?? payload.displayName, payload.uid, email);
   const avt = Number.isFinite(payload.avt) ? Number(payload.avt) : 0;
   const shouldMarkNicknameCustomized = Boolean(payload.nickname && payload.nickname.trim().length > 0);
   const fallbackNickname = nicknameCandidates[0] ?? payload.uid;

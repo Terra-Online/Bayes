@@ -17,6 +17,7 @@ import {
   createSubmissionUpvote,
   deleteSubmissionFlag,
   deleteSubmissionUpvote,
+  getImageSubmissionByFilePath,
   getPublicSubmissionByFilePath,
   getSubmissionById,
   listActiveImagesByMarker,
@@ -236,6 +237,16 @@ function resolvePublicAssetBaseUrl(requestUrl: string, configuredBaseUrl: string
   return configuredBaseUrl;
 }
 
+function resolvePrivateAssetBaseUrl(requestUrl: string): string {
+  const url = new URL(requestUrl);
+  return `${url.origin}/uploads/v1/file`;
+}
+
+function canReadPrivateImage(user: NonNullable<AppEnv["Variables"]["authUser"]>, submissionUserId: string, status: string): boolean {
+  const effectiveRole = user.role === "r" ? "a" : user.role;
+  return effectiveRole === "p" || effectiveRole === "a" || (submissionUserId === user.uid && status !== "stale");
+}
+
 export function createUploadRoutes() {
   const app = new Hono<AppEnv>();
 
@@ -263,7 +274,10 @@ export function createUploadRoutes() {
     const isImageRead = c.req.method === "GET" && (
       c.req.path.endsWith("/uploads/v1/images") ||
       c.req.path.endsWith("/uploads/v1/images/mine") ||
-      c.req.path.includes("/uploads/v1/public-file/")
+      c.req.path.includes("/uploads/v1/public-file/") ||
+      c.req.path.includes("/uploads/v1/file/") ||
+      c.req.path.includes("/public-file/") ||
+      c.req.path.includes("/file/")
     );
     if (!isImageRead && isUploadsLocked(c.env.LOCK_UPLOAD_ENDPOINTS)) {
       throw new ApiError(
@@ -486,6 +500,7 @@ export function createUploadRoutes() {
       userId: user.uid,
       markerIds: ids,
       assetBaseUrl: resolvePublicAssetBaseUrl(c.req.url, config.ugcAssetBaseUrl),
+      privateAssetBaseUrl: resolvePrivateAssetBaseUrl(c.req.url),
       pathPrefix: scope.pathPrefix,
       excludePathPrefix: scope.excludePathPrefix,
       limit: parsed.data.limit ?? 6
@@ -496,8 +511,17 @@ export function createUploadRoutes() {
     return response;
   });
 
-  app.get("/file/*", requireAuth, requireRole(["p", "a"]), rateLimit("auth"), async (c) => {
+  app.get("/file/*", requireAuth, rateLimit("auth"), async (c) => {
+    const user = c.get("authUser");
+    if (!user) {
+      throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
+    }
     const objectKey = parseObjectKeyFromRequestPath(c.req.path);
+    const submission = await getImageSubmissionByFilePath(c.env.DB, objectKey);
+    if (!submission || !canReadPrivateImage(user, submission.userId, submission.status)) {
+      throw new ApiError(404, "IMAGE_NOT_FOUND", "Image file was not found.");
+    }
+
     const object = await c.env.UGC_BUCKET.get(objectKey);
     if (!object) {
       throw new ApiError(404, "IMAGE_NOT_FOUND", "Image file was not found.");
@@ -507,7 +531,7 @@ export function createUploadRoutes() {
     object.writeHttpMetadata(headers);
     headers.set("etag", object.httpEtag);
     headers.set("Cache-Control", "private, max-age=60");
-    headers.set("Content-Type", object.httpMetadata?.contentType ?? "application/octet-stream");
+    headers.set("Content-Type", object.httpMetadata?.contentType ?? submission.mimeType ?? "application/octet-stream");
 
     return new Response(object.body, {
       status: 200,
@@ -791,6 +815,15 @@ export function createUploadRoutes() {
         from: submission.status,
         to: "remove_request"
       });
+    }
+
+    if (submission.status === "pending_openai" || submission.status === "pending_audit") {
+      await updateSubmissionStatus(c.env.DB, {
+        id: submissionId,
+        status: "stale",
+        moderationNote: `${RECALL_MODERATION_NOTE_PREFIX} upload error.`
+      });
+      return c.json({ ok: true, status: "stale" });
     }
 
     await updateSubmissionStatus(c.env.DB, {
