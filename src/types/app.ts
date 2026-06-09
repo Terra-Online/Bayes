@@ -1,3 +1,5 @@
+import type { oem_imgTrans } from "../services/image-transcoder-container";
+
 export type Role = "n" | "p" | "a" | "s" | "r";
 
 export interface Bindings {
@@ -6,6 +8,7 @@ export interface Bindings {
   OEM_KV?: KVNamespace;
   OEM_USER_DO: DurableObjectNamespace;
   OEM_STATS_DO: DurableObjectNamespace;
+  OEM_IMG_TRANS: DurableObjectNamespace<oem_imgTrans>;
   UPSTASH_REDIS_REST_URL: string;
   UPSTASH_REDIS_REST_TOKEN: string;
   BETTER_AUTH_SECRET?: string;

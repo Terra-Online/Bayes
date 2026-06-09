@@ -42,9 +42,24 @@ class_name = "OEMUserDO"
 name = "OEM_STATS_DO"
 class_name = "OEMStatsDO"
 
+[[durable_objects.bindings]]
+name = "OEM_IMG_TRANS"
+class_name = "oem_imgTrans"
+
 [[migrations]]
 tag = "v1_progress_bitmap_sync"
 new_sqlite_classes = ["OEMUserDO", "OEMStatsDO"]
+
+[[migrations]]
+tag = "v2_image_transcoder_container"
+new_sqlite_classes = ["oem_imgTrans"]
+
+[[containers]]
+name = "oem-backend-oem_imgtrans"
+class_name = "oem_imgTrans"
+image = "./containers/oem_imgTrans/Dockerfile"
+image_build_context = "./containers/oem_imgTrans"
+max_instances = 5
 
 [triggers]
 crons = ["*/1 * * * *"]
@@ -72,3 +87,14 @@ class_name = "OEMUserDO"
 [[env.local.durable_objects.bindings]]
 name = "OEM_STATS_DO"
 class_name = "OEMStatsDO"
+
+[[env.local.durable_objects.bindings]]
+name = "OEM_IMG_TRANS"
+class_name = "oem_imgTrans"
+
+[[env.local.containers]]
+name = "oem-backend-oem_imgtrans"
+class_name = "oem_imgTrans"
+image = "./containers/oem_imgTrans/Dockerfile"
+image_build_context = "./containers/oem_imgTrans"
+max_instances = 3

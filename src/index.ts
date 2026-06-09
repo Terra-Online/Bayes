@@ -11,6 +11,9 @@ import { createApp } from './app';
 import type { Bindings } from './types/app';
 import { initResend } from './lib/email';
 export {
+  oem_imgTrans,
+} from './services/image-transcoder-container';
+export {
   OEMStatsDO,
   OEMUserDO,
 } from './services/progress-do';

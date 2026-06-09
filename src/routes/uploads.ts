@@ -32,7 +32,6 @@ import {
   UGC_PUBLIC_LIST_CACHE_CONTROL,
   prewarmPublicUgcAsset
 } from "../services/asset-cache";
-import { readImageDimensions } from "../services/image-metadata";
 import { enqueueModeration } from "../services/moderation";
 import {
   notifyFlagCreated,
@@ -324,11 +323,10 @@ export function createUploadRoutes() {
       });
     }
 
-    const dimensions = readImageDimensions(body, normalizedMime);
     const preparedImage = await prepareUploadImageForStorage({
       body,
       mimeType: normalizedMime,
-      dimensions
+      transcoder: c.env.OEM_IMG_TRANS
     }).catch((error) => {
       throw new ApiError(422, "IMAGE_PROCESSING_FAILED", "Image could not be processed.", {
         reason: error instanceof Error ? error.message : "unknown"
