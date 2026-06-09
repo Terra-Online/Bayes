@@ -34,6 +34,15 @@ export async function prepareUploadImageForStorage(payload: {
   mimeType: string;
   transcoder: DurableObjectNamespace<oem_imgTrans>;
 }): Promise<PreparedUploadImage> {
+  if (payload.mimeType === "image/webp" || payload.mimeType === "image/avif") {
+    return {
+      body: payload.body,
+      mimeType: payload.mimeType,
+      sizeBytes: payload.body.byteLength,
+      converted: false
+    };
+  }
+
   const container = await getRandom(payload.transcoder, IMAGE_TRANSFORM_CONTAINER_INSTANCES);
   const response = await container.fetch("http://oem-img-trans/prepare", {
     method: "POST",
