@@ -1,5 +1,6 @@
 export const UGC_PUBLIC_IMAGE_CACHE_CONTROL = "public, max-age=31536000, immutable";
-export const UGC_PUBLIC_LIST_CACHE_CONTROL = "public, max-age=10";
+export const UGC_PUBLIC_LIST_CACHE_CONTROL = "public, max-age=30";
+export const UGC_PUBLIC_EMPTY_LIST_CACHE_CONTROL = "public, max-age=10";
 
 export function buildPublicUgcAssetUrl(assetBaseUrl: string, filePath: string): string {
   return `${assetBaseUrl.replace(/\/$/, "")}/${filePath.split("/").map(encodeURIComponent).join("/")}`;

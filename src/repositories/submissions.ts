@@ -448,7 +448,8 @@ export async function listActiveImagesByMarker(
   ];
   const scope = buildImageScopeFilters(payload, markerIds.length);
   filters.push(...scope.clauses);
-  const viewerBindingOffset = markerIds.length + scope.bindings.length;
+  const limitBindingOffset = markerIds.length + scope.bindings.length;
+  const viewerBindingOffset = limitBindingOffset + 1;
   const viewerSelect = payload.viewerUserId
     ? `,
          CASE WHEN uv.user_id IS NULL THEN 0 ELSE 1 END AS viewer_upvoted,
@@ -462,12 +463,17 @@ export async function listActiveImagesByMarker(
   const viewerBindings = payload.viewerUserId ? [payload.viewerUserId, payload.viewerUserId] : [];
   const result = await db
     .prepare(
-      `WITH selected_images AS (
-         SELECT *
+      `WITH ranked_images AS (
+         SELECT
+           *,
+           ROW_NUMBER() OVER (PARTITION BY poi_id ORDER BY created_at DESC, id DESC) AS poi_rank
          FROM ugc_submissions
          WHERE ${filters.join(" AND ")}
-         ORDER BY poi_id ASC, created_at DESC
-         LIMIT ?${markerIds.length + scope.bindings.length + viewerBindings.length + 1}
+       ),
+       selected_images AS (
+         SELECT *
+         FROM ranked_images
+         WHERE poi_rank <= ?${limitBindingOffset + 1}
        ),
        upvote_counts AS (
          SELECT submission_id, COUNT(*) AS upvote_count
@@ -497,9 +503,9 @@ export async function listActiveImagesByMarker(
        LEFT JOIN flag_counts f ON f.submission_id = s.id
        ${viewerJoin}
        LEFT JOIN users u ON u.uid = s.user_id
-       ORDER BY s.poi_id ASC, s.created_at DESC`
+       ORDER BY s.poi_id ASC, s.created_at DESC, s.id DESC`
     )
-    .bind(...markerIds, ...scope.bindings, ...viewerBindings, limit * markerIds.length)
+    .bind(...markerIds, ...scope.bindings, limit, ...viewerBindings)
     .all<Record<string, unknown>>();
 
   return (result.results ?? []).map((row) => publicImageFromRow(row, payload.assetBaseUrl, payload.viewerUserId));
@@ -541,15 +547,21 @@ export async function listUserImagesByMarker(
     filters.push(`file_path NOT LIKE ?${markerIds.length + extraBindings.length + 2}`);
     extraBindings.push(`${payload.excludePathPrefix}/%`);
   }
+  const limitBindingOffset = markerIds.length + extraBindings.length + 1;
 
   const result = await db
     .prepare(
-      `WITH selected_images AS (
-         SELECT *
+      `WITH ranked_images AS (
+         SELECT
+           *,
+           ROW_NUMBER() OVER (PARTITION BY poi_id ORDER BY created_at DESC, id DESC) AS poi_rank
          FROM ugc_submissions
          WHERE ${filters.join(" AND ")}
-         ORDER BY poi_id ASC, created_at DESC
-         LIMIT ?${markerIds.length + extraBindings.length + 2}
+       ),
+       selected_images AS (
+         SELECT *
+         FROM ranked_images
+         WHERE poi_rank <= ?${limitBindingOffset + 1}
        ),
        upvote_counts AS (
          SELECT submission_id, COUNT(*) AS upvote_count
@@ -577,9 +589,9 @@ export async function listUserImagesByMarker(
        LEFT JOIN upvote_counts v ON v.submission_id = s.id
        LEFT JOIN flag_counts f ON f.submission_id = s.id
        LEFT JOIN users u ON u.uid = s.user_id
-       ORDER BY s.poi_id ASC, s.created_at DESC`
+       ORDER BY s.poi_id ASC, s.created_at DESC, s.id DESC`
     )
-    .bind(payload.userId, ...markerIds, ...extraBindings, limit * markerIds.length)
+    .bind(payload.userId, ...markerIds, ...extraBindings, limit)
     .all<Record<string, unknown>>();
 
   return (result.results ?? []).map((row) => {

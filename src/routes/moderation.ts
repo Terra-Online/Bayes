@@ -26,6 +26,7 @@ import {
 } from "../repositories/submissions";
 import { applyUserPointsDelta } from "../repositories/users";
 import { prewarmPublicUgcAsset } from "../services/asset-cache";
+import { deletePublicMarkerImageCache } from "../services/public-image-cache";
 import { evaluateKarmaBatch, getModerationPointsDeltaWithDailyBackoff, markKarmaDirty } from "../services/karma";
 import { ensureModerationBackfill, moderateSubmissionIds, moderateSubmissionOnce } from "../services/moderation";
 import { notifyPendingOpenAICompleted } from "../services/notifications";
@@ -169,6 +170,7 @@ async function runModeration(
     openAiApiKey: c.env.OPENAI_API_KEY,
     assetBaseUrl: config.ugcAssetBaseUrl,
     ugcBucket: c.env.UGC_BUCKET,
+    ugcKv: c.env.OEM_KV,
     redis,
     surgeModeEnabled: config.surgeModeEnabled,
     surgeBackoffMultiplier: config.surgeBackoffMultiplier,
@@ -413,6 +415,9 @@ export function createModerationRoutes() {
     if (current.status !== "active" && parsed.data.status === "active" && current.kind === "image") {
       const config = getRuntimeConfig(c.env);
       c.executionCtx.waitUntil(prewarmPublicUgcAsset(config.ugcAssetBaseUrl, current.filePath));
+    }
+    if (current.kind === "image") {
+      c.executionCtx.waitUntil(deletePublicMarkerImageCache(c.env.OEM_KV, current.markerId));
     }
     const effectiveModerationNote = parsed.data.moderationNote ?? current.moderationNote;
     if (shouldApplyModerationPoints(current.status, parsed.data.status, effectiveModerationNote)) {

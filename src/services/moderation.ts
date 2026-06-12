@@ -1,6 +1,7 @@
 import type { Redis } from "@upstash/redis";
 import { AI_STALE_MODERATION_NOTE_PREFIX } from "../lib/moderation";
 import { prewarmPublicUgcAsset } from "./asset-cache";
+import { deletePublicMarkerImageCache } from "./public-image-cache";
 import { getModerationPointsDeltaWithDailyBackoff, markKarmaDirty } from "./karma";
 import {
   createEmptyPendingOpenAICompletionStats,
@@ -39,6 +40,7 @@ export async function moderateSubmissionOnce(
     openAiApiKey?: string;
     assetBaseUrl: string;
     ugcBucket: R2Bucket;
+    ugcKv?: KVNamespace;
     redis?: Redis;
     surgeModeEnabled?: boolean;
     surgeBackoffMultiplier?: number;
@@ -80,6 +82,7 @@ export async function moderateSubmissionIds(
     openAiApiKey?: string;
     assetBaseUrl: string;
     ugcBucket: R2Bucket;
+    ugcKv?: KVNamespace;
     redis?: Redis;
     surgeModeEnabled?: boolean;
     surgeBackoffMultiplier?: number;
@@ -118,6 +121,7 @@ async function moderateSubmissionById(
     openAiApiKey?: string;
     assetBaseUrl: string;
     ugcBucket: R2Bucket;
+    ugcKv?: KVNamespace;
     redis?: Redis;
     surgeModeEnabled?: boolean;
     surgeBackoffMultiplier?: number;
@@ -151,6 +155,7 @@ async function moderateSubmissionById(
     });
     if (status === "active") {
       await (options.prewarmAsset ?? prewarmPublicUgcAsset)(options.assetBaseUrl, submission.filePath);
+      await deletePublicMarkerImageCache(options.ugcKv, submission.markerId);
       const pointsDelta = await getModerationPointsDeltaWithDailyBackoff(options.redis, {
         userId: submission.userId,
         kind: submission.kind,

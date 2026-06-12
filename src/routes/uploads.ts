@@ -6,7 +6,6 @@ import { getRuntimeConfig } from "../lib/config";
 import { ApiError } from "../lib/errors";
 import { RECALL_MODERATION_NOTE_PREFIX } from "../lib/moderation";
 import { createRedisClient } from "../lib/redis";
-import { getJsonFromKv, putJsonToKv, sha256Hex } from "../lib/kv-cache";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { rateLimit } from "../middleware/rate-limit";
 import {
@@ -29,9 +28,17 @@ import { getDuplicateImageMarkerSummary } from "../repositories/submission-dupli
 import { getUserByUid } from "../repositories/users";
 import {
   UGC_PUBLIC_IMAGE_CACHE_CONTROL,
+  UGC_PUBLIC_EMPTY_LIST_CACHE_CONTROL,
   UGC_PUBLIC_LIST_CACHE_CONTROL,
   prewarmPublicUgcAsset
 } from "../services/asset-cache";
+import {
+  PUBLIC_MARKER_IMAGE_CACHE_LIMIT,
+  deletePublicMarkerImageCache,
+  readPublicMarkerImageCache,
+  resolvePublicImageCacheNamespace,
+  writePublicMarkerImageCache
+} from "../services/public-image-cache";
 import { enqueueModeration } from "../services/moderation";
 import {
   notifyFlagCreated,
@@ -46,7 +53,8 @@ const imagesQuerySchema = z.object({
   markerId: z.string().min(1).max(128).optional(),
   markerIds: z.string().max(4000).optional(),
   scope: z.enum(["test", "prod"]).optional(),
-  limit: z.coerce.number().int().min(1).max(24).optional()
+  limit: z.coerce.number().int().min(1).max(24).optional(),
+  publicOnly: z.enum(["1"]).optional()
 });
 
 const imageUploadFieldsSchema = z.object({
@@ -64,8 +72,6 @@ const commentSubmissionSchema = z.object({
 });
 
 const TEST_UPLOAD_PREFIX = "_test";
-const UGC_LIST_KV_KEY_PREFIX = "ugc:images:v1:";
-const UGC_LIST_KV_TTL_SECONDS = 10;
 const BETA_FRONTEND_HOSTNAMES = new Set([
   "beta.opendfieldmap.org"
 ]);
@@ -218,16 +224,6 @@ function resolveImageScope(
   return {};
 }
 
-function resolveImageCacheNamespace(scope: { pathPrefix?: string; excludePathPrefix?: string }): string {
-  if (scope.pathPrefix === TEST_UPLOAD_PREFIX) {
-    return "test";
-  }
-  if (scope.excludePathPrefix === TEST_UPLOAD_PREFIX) {
-    return "prod";
-  }
-  return "default";
-}
-
 function resolvePublicAssetBaseUrl(requestUrl: string, configuredBaseUrl: string): string {
   const url = new URL(requestUrl);
   if (isLocalHostname(url.hostname)) {
@@ -239,6 +235,91 @@ function resolvePublicAssetBaseUrl(requestUrl: string, configuredBaseUrl: string
 function resolvePrivateAssetBaseUrl(requestUrl: string): string {
   const url = new URL(requestUrl);
   return `${url.origin}/uploads/v1/file`;
+}
+
+function groupPublicImagesByMarker(
+  markerIds: string[],
+  images: PublicSubmissionImage[]
+): Map<string, PublicSubmissionImage[]> {
+  const grouped = new Map<string, PublicSubmissionImage[]>();
+  markerIds.forEach((markerId) => grouped.set(markerId, []));
+  images.forEach((image) => {
+    const bucket = grouped.get(image.markerId);
+    if (bucket) {
+      bucket.push(image);
+    }
+  });
+  return grouped;
+}
+
+function flattenPublicImagesByMarker(
+  markerIds: string[],
+  grouped: Map<string, PublicSubmissionImage[]>,
+  limit: number
+): PublicSubmissionImage[] {
+  return markerIds.flatMap((markerId) => (grouped.get(markerId) ?? []).slice(0, limit));
+}
+
+async function listCachedPublicImagesByMarker(
+  payload: {
+    db: D1Database;
+    kv?: KVNamespace;
+    markerIds: string[];
+    assetBaseUrl: string;
+    pathPrefix?: string;
+    excludePathPrefix?: string;
+    limit: number;
+    cacheNamespace: ReturnType<typeof resolvePublicImageCacheNamespace>;
+    waitUntil: (promise: Promise<unknown>) => void;
+  }
+): Promise<PublicSubmissionImage[]> {
+  const grouped = new Map<string, PublicSubmissionImage[]>();
+  const missingIds: string[] = [];
+
+  if (payload.kv) {
+    const cacheResults = await Promise.all(
+      payload.markerIds.map(async (markerId) => ({
+        markerId,
+        images: await readPublicMarkerImageCache(payload.kv, payload.cacheNamespace, markerId)
+      }))
+    );
+
+    cacheResults.forEach(({ markerId, images }) => {
+      if (images) {
+        grouped.set(markerId, images);
+      } else {
+        missingIds.push(markerId);
+      }
+    });
+  } else {
+    missingIds.push(...payload.markerIds);
+  }
+
+  if (missingIds.length > 0) {
+    const dbImages = await listActiveImagesByMarker(payload.db, {
+      markerIds: missingIds,
+      assetBaseUrl: payload.assetBaseUrl,
+      pathPrefix: payload.pathPrefix,
+      excludePathPrefix: payload.excludePathPrefix,
+      limit: PUBLIC_MARKER_IMAGE_CACHE_LIMIT
+    });
+    const dbGrouped = groupPublicImagesByMarker(missingIds, dbImages);
+
+    missingIds.forEach((markerId) => {
+      const images = dbGrouped.get(markerId) ?? [];
+      grouped.set(markerId, images);
+      if (payload.kv) {
+        payload.waitUntil(writePublicMarkerImageCache(
+          payload.kv,
+          payload.cacheNamespace,
+          markerId,
+          images
+        ));
+      }
+    });
+  }
+
+  return flattenPublicImagesByMarker(payload.markerIds, grouped, payload.limit);
 }
 
 function canReadPrivateImage(user: NonNullable<AppEnv["Variables"]["authUser"]>, submissionUserId: string, status: string): boolean {
@@ -477,7 +558,8 @@ export function createUploadRoutes() {
       markerId: c.req.query("markerId"),
       markerIds: c.req.query("markerIds"),
       scope: c.req.query("scope"),
-      limit: c.req.query("limit")
+      limit: c.req.query("limit"),
+      publicOnly: c.req.query("publicOnly") === "1" ? "1" : undefined
     });
     if (!parsed.success) {
       throw new ApiError(422, "VALIDATION_ERROR", "Invalid image query.", parsed.error.flatten());
@@ -562,6 +644,7 @@ export function createUploadRoutes() {
       userId: user.uid
     });
     const upvoteCount = await countSubmissionUpvotes(c.env.DB, submissionId);
+    c.executionCtx.waitUntil(deletePublicMarkerImageCache(c.env.OEM_KV, submission.markerId));
 
     return c.json({ ok: true, created, upvoteCount });
   });
@@ -591,6 +674,7 @@ export function createUploadRoutes() {
       userId: user.uid
     });
     const upvoteCount = await countSubmissionUpvotes(c.env.DB, submissionId);
+    c.executionCtx.waitUntil(deletePublicMarkerImageCache(c.env.OEM_KV, submission.markerId));
 
     return c.json({ ok: true, deleted, upvoteCount });
   });
@@ -630,6 +714,7 @@ export function createUploadRoutes() {
       });
     }
     const flagCount = await countSubmissionFlags(c.env.DB, submissionId);
+    c.executionCtx.waitUntil(deletePublicMarkerImageCache(c.env.OEM_KV, submission.markerId));
     if (created) {
       c.executionCtx.waitUntil(
         notifyFlagCreated(c.env, {
@@ -685,6 +770,7 @@ export function createUploadRoutes() {
         c.executionCtx.waitUntil(prewarmPublicUgcAsset(config.ugcAssetBaseUrl, submission.filePath));
       }
     }
+    c.executionCtx.waitUntil(deletePublicMarkerImageCache(c.env.OEM_KV, submission.markerId));
     if (deleted) {
       c.executionCtx.waitUntil(
         notifyFlagRemoved(c.env, {
@@ -729,6 +815,7 @@ export function createUploadRoutes() {
       status: "remove_request",
       moderationNote: "Removal requested by uploader."
     });
+    c.executionCtx.waitUntil(deletePublicMarkerImageCache(c.env.OEM_KV, submission.markerId));
     c.executionCtx.waitUntil(
       notifyRemoveRequestCreated(c.env, {
         submission,
@@ -776,6 +863,7 @@ export function createUploadRoutes() {
       const config = getRuntimeConfig(c.env);
       c.executionCtx.waitUntil(prewarmPublicUgcAsset(config.ugcAssetBaseUrl, submission.filePath));
     }
+    c.executionCtx.waitUntil(deletePublicMarkerImageCache(c.env.OEM_KV, submission.markerId));
     c.executionCtx.waitUntil(
       notifyRemoveRequestCancelled(c.env, {
         submission,
@@ -821,6 +909,7 @@ export function createUploadRoutes() {
         status: "stale",
         moderationNote: `${RECALL_MODERATION_NOTE_PREFIX} upload error.`
       });
+      c.executionCtx.waitUntil(deletePublicMarkerImageCache(c.env.OEM_KV, submission.markerId));
       return c.json({ ok: true, status: "stale" });
     }
 
@@ -829,6 +918,7 @@ export function createUploadRoutes() {
       status: "remove_request",
       moderationNote: `${RECALL_MODERATION_NOTE_PREFIX} upload error.`
     });
+    c.executionCtx.waitUntil(deletePublicMarkerImageCache(c.env.OEM_KV, submission.markerId));
     c.executionCtx.waitUntil(
       notifyRemoveRequestCreated(c.env, {
         submission,
@@ -856,60 +946,66 @@ export function createUploadRoutes() {
       ?.split(",")
       .map((item) => item.trim())
       .filter(Boolean);
-    const ids = markerIds?.length ? markerIds : parsed.data.markerId ? [parsed.data.markerId] : [];
+    const ids = [...new Set(markerIds?.length ? markerIds : parsed.data.markerId ? [parsed.data.markerId] : [])].slice(0, 100);
     if (ids.length === 0) {
       throw new ApiError(422, "VALIDATION_ERROR", "markerId or markerIds is required.");
     }
 
     const config = getRuntimeConfig(c.env);
     const scope = resolveImageScope(c.req.raw, config.ugcUploadPathPrefix, parsed.data.scope);
-    const session = await createAuth(c.env).api.getSession({
-      headers: c.req.raw.headers
-    });
-    const useSharedCache = !session;
+    const limit = parsed.data.limit ?? 6;
+    const session = parsed.data.publicOnly === "1"
+      ? null
+      : await createAuth(c.env).api.getSession({
+        headers: c.req.raw.headers
+      });
+    const useSharedCache = parsed.data.publicOnly === "1" || !session;
     let cache: Cache | null = null;
     let cacheKey: Request | null = null;
-    let kvKey: string | null = null;
     if (useSharedCache) {
       cache = await caches.open("ugc-images");
-      const cacheNamespace = resolveImageCacheNamespace(scope);
+      const cacheNamespace = resolvePublicImageCacheNamespace(scope);
       const cacheUrl = new URL(c.req.url);
+      cacheUrl.searchParams.delete("markerId");
+      cacheUrl.searchParams.set("markerIds", [...ids].sort().join(","));
+      cacheUrl.searchParams.set("limit", String(limit));
       cacheUrl.searchParams.set("_cache_ns", cacheNamespace);
       cacheKey = new Request(cacheUrl.toString(), { method: "GET" });
       const cached = await cache.match(cacheKey);
       if (cached) {
         return cached;
       }
-
-      kvKey = `${UGC_LIST_KV_KEY_PREFIX}${await sha256Hex(cacheKey.url)}`;
-      const kvCached = await getJsonFromKv<{ items: PublicSubmissionImage[] }>(c.env.OEM_KV, kvKey);
-      if (kvCached) {
-        const response = c.json(kvCached);
-        response.headers.set("Cache-Control", UGC_PUBLIC_LIST_CACHE_CONTROL);
-        response.headers.set("x-oem-kv-cache", "hit");
-        c.executionCtx.waitUntil(cache.put(cacheKey, response.clone()));
-        return response;
-      }
     }
 
-    const images = await listActiveImagesByMarker(c.env.DB, {
-      markerIds: ids,
-      assetBaseUrl: resolvePublicAssetBaseUrl(c.req.url, config.ugcAssetBaseUrl),
-      pathPrefix: scope.pathPrefix,
-      excludePathPrefix: scope.excludePathPrefix,
-      limit: parsed.data.limit ?? 6,
-      viewerUserId: session?.user.id
-    });
+    const assetBaseUrl = resolvePublicAssetBaseUrl(c.req.url, config.ugcAssetBaseUrl);
+    const images = useSharedCache
+      ? await listCachedPublicImagesByMarker({
+        db: c.env.DB,
+        kv: c.env.OEM_KV,
+        markerIds: ids,
+        assetBaseUrl,
+        pathPrefix: scope.pathPrefix,
+        excludePathPrefix: scope.excludePathPrefix,
+        limit,
+        cacheNamespace: resolvePublicImageCacheNamespace(scope),
+        waitUntil: (promise) => c.executionCtx.waitUntil(promise)
+      })
+      : await listActiveImagesByMarker(c.env.DB, {
+        markerIds: ids,
+        assetBaseUrl,
+        pathPrefix: scope.pathPrefix,
+        excludePathPrefix: scope.excludePathPrefix,
+        limit,
+        viewerUserId: session?.user.id
+      });
 
     const response = c.json({ items: images });
     if (cache && cacheKey) {
-      response.headers.set("Cache-Control", UGC_PUBLIC_LIST_CACHE_CONTROL);
-      response.headers.set("x-oem-kv-cache", kvKey ? "miss" : "disabled");
-      if (kvKey) {
-        c.executionCtx.waitUntil(putJsonToKv(c.env.OEM_KV, kvKey, { items: images }, {
-          expirationTtl: UGC_LIST_KV_TTL_SECONDS
-        }).catch(() => undefined));
-      }
+      response.headers.set(
+        "Cache-Control",
+        images.length > 0 ? UGC_PUBLIC_LIST_CACHE_CONTROL : UGC_PUBLIC_EMPTY_LIST_CACHE_CONTROL
+      );
+      response.headers.set("x-oem-marker-kv-cache", "enabled");
       c.executionCtx.waitUntil(cache.put(cacheKey, response.clone()));
     } else {
       response.headers.set("Cache-Control", "private, no-store");
