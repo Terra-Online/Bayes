@@ -43,24 +43,21 @@ function pruneAuthUserCache(now: number): void {
   }
 }
 
-export const requireAuth: MiddlewareHandler<AppEnv> = async (c, next) => {
+export async function resolveAuthUser(env: AppEnv["Bindings"], headers: Headers): Promise<AuthUser> {
   const now = Date.now();
-  const authHeaders = buildAuthHeaders(c.req.raw.headers, c.req.query("access_token"));
-  const cacheKey = getAuthCacheKey(authHeaders);
+  const cacheKey = getAuthCacheKey(headers);
   const cached = cacheKey ? authUserCache.get(cacheKey) : undefined;
   if (cached && cached.expiresAt > now) {
-    c.set("authUser", cached.user);
-    await next();
-    return;
+    return cached.user;
   }
 
-  const auth = createAuth(c.env);
+  const auth = createAuth(env);
   const session = await auth.api.getSession({
-    headers: authHeaders
+    headers
   });
 
   if (!session) {
-    const authorization = authHeaders.get("authorization")?.trim() ?? "";
+    const authorization = headers.get("authorization")?.trim() ?? "";
     const hasBearerToken = authorization.toLowerCase().startsWith("bearer ");
     if (hasBearerToken) {
       throw new ApiError(401, "TOKEN_EXPIRED", "Token is expired, missing, or invalid.");
@@ -68,7 +65,7 @@ export const requireAuth: MiddlewareHandler<AppEnv> = async (c, next) => {
     throw new ApiError(401, "SESSION_REQUIRED", "Session is required.");
   }
 
-  const profile = await ensureUserProfile(c.env.DB, {
+  const profile = await ensureUserProfile(env.DB, {
     uid: session.user.id,
     email: session.user.email,
     displayName: session.user.name
@@ -94,8 +91,13 @@ export const requireAuth: MiddlewareHandler<AppEnv> = async (c, next) => {
     });
   }
 
-  c.set("authUser", authUser);
+  return authUser;
+}
 
+export const requireAuth: MiddlewareHandler<AppEnv> = async (c, next) => {
+  const authHeaders = buildAuthHeaders(c.req.raw.headers, c.req.query("access_token"));
+  const authUser = await resolveAuthUser(c.env, authHeaders);
+  c.set("authUser", authUser);
   await next();
 };
 

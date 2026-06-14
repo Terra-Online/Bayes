@@ -937,34 +937,22 @@ export async function getEndfieldWebSocketToken(args: {
   return data.token;
 }
 
-function authenticateEndfieldPositionSocket(socket: WebSocket, token: string): void {
-  socket.send(JSON.stringify({
-    type: 1,
-    data: { token },
-    msgId: createMessageId()
-  }));
+function closeEndfieldSocket(socket: WebSocket, reason: string): void {
+  try {
+    socket.close(1011, reason);
+  } catch {
+    // socket is already closed
+  }
 }
 
-function subscribeEndfieldPositionSocket(
-  socket: WebSocket,
-  payload: { roleId: string; serverId: number }
-): void {
-  socket.send(JSON.stringify({
-    type: 1011,
-    data: {
-      roleId: payload.roleId,
-      serverId: String(payload.serverId)
-    },
-    msgId: createMessageId()
-  }));
-}
-
-function pingEndfieldPositionSocket(socket: WebSocket): void {
-  socket.send(JSON.stringify({
-    type: 3,
-    data: {},
-    msgId: createMessageId()
-  }));
+function trySendEndfieldPositionSocket(socket: WebSocket, payload: unknown): boolean {
+  try {
+    socket.send(JSON.stringify(payload));
+    return true;
+  } catch {
+    closeEndfieldSocket(socket, "send failed");
+    return false;
+  }
 }
 
 export async function connectEndfieldPositionSocket(args: {
@@ -1027,22 +1015,45 @@ export async function connectEndfieldPositionSocket(args: {
   }
 
   response.webSocket.accept();
-  authenticateEndfieldPositionSocket(response.webSocket, socketToken);
+  if (!trySendEndfieldPositionSocket(response.webSocket, {
+    type: 1,
+    data: { token: socketToken },
+    msgId: createMessageId()
+  })) {
+    throw new ApiError(
+      502,
+      "ENDFIELD_POSITION_SOCKET_SEND_FAILED",
+      "Endfield realtime position socket closed during authentication."
+    );
+  }
   const heartbeat = setInterval(() => {
-    try {
-      pingEndfieldPositionSocket(response.webSocket!);
-    } catch {
+    if (!trySendEndfieldPositionSocket(response.webSocket!, {
+      type: 3,
+      data: {},
+      msgId: createMessageId()
+    })) {
       clearInterval(heartbeat);
     }
   }, ENDFIELD_POSITION_SOCKET_HEARTBEAT_MS);
   response.webSocket.addEventListener("message", (event) => {
     const message = parseEndfieldSocketEnvelope(event.data as string | ArrayBuffer);
     if (message?.type === 2) {
-      subscribeEndfieldPositionSocket(response.webSocket!, {
-        roleId: args.roleId,
-        serverId: args.serverId
+      if (!trySendEndfieldPositionSocket(response.webSocket!, {
+        type: 1011,
+        data: {
+          roleId: args.roleId,
+          serverId: String(args.serverId)
+        },
+        msgId: createMessageId()
+      })) {
+        clearInterval(heartbeat);
+        return;
+      }
+      trySendEndfieldPositionSocket(response.webSocket!, {
+        type: 3,
+        data: {},
+        msgId: createMessageId()
       });
-      pingEndfieldPositionSocket(response.webSocket!);
     }
   });
   response.webSocket.addEventListener("close", () => clearInterval(heartbeat));
