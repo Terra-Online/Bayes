@@ -1,12 +1,13 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { ApiError } from "../lib/errors";
-import { getJsonFromKv, putJsonToKv } from "../lib/kv-cache";
+import { getJsonFromKv, MIN_KV_EXPIRATION_TTL_SECONDS, putJsonToKv } from "../lib/kv-cache";
 import { requireAuth } from "../middleware/auth";
 import { rateLimit } from "../middleware/rate-limit";
 import type { AppEnv } from "../types/app";
 
-const PROGRESS_STATS_KV_TTL_SECONDS = 10;
+const PROGRESS_STATS_HTTP_MAX_AGE_SECONDS = 10;
+const PROGRESS_STATS_KV_TTL_SECONDS = MIN_KV_EXPIRATION_TTL_SECONDS;
 const PROGRESS_STATS_KV_KEY_PREFIX = "progress:stats:v1:";
 
 function isProgressLocked(flag: string | undefined): boolean {
@@ -49,7 +50,7 @@ async function proxyStats(c: Context<AppEnv>): Promise<Response> {
   const cached = await getJsonFromKv<unknown>(c.env.OEM_KV, kvKey);
   if (cached) {
     const response = c.json(cached);
-    response.headers.set("Cache-Control", `public, max-age=${PROGRESS_STATS_KV_TTL_SECONDS}`);
+    response.headers.set("Cache-Control", `public, max-age=${PROGRESS_STATS_HTTP_MAX_AGE_SECONDS}`);
     response.headers.set("x-oem-kv-cache", "hit");
     return response;
   }
@@ -71,7 +72,7 @@ async function proxyStats(c: Context<AppEnv>): Promise<Response> {
   }
 
   const nextResponse = c.json(payload);
-  nextResponse.headers.set("Cache-Control", `public, max-age=${PROGRESS_STATS_KV_TTL_SECONDS}`);
+  nextResponse.headers.set("Cache-Control", `public, max-age=${PROGRESS_STATS_HTTP_MAX_AGE_SECONDS}`);
   nextResponse.headers.set("x-oem-kv-cache", "miss");
   return nextResponse;
 }

@@ -4,8 +4,8 @@ import type { PublicSubmissionImage } from "../repositories/submissions";
 export const PUBLIC_MARKER_IMAGE_CACHE_LIMIT = 24;
 
 const PUBLIC_MARKER_IMAGE_KV_KEY_PREFIX = "ugc:marker-images:v2:";
-const PUBLIC_MARKER_IMAGE_POSITIVE_TTL_SECONDS = 30 * 60;
-const PUBLIC_MARKER_IMAGE_EMPTY_TTL_SECONDS = 10;
+const PUBLIC_MARKER_IMAGE_POSITIVE_TTL_SECONDS = 30 * 24 * 60 * 60;
+const PUBLIC_MARKER_IMAGE_EMPTY_TTL_SECONDS = 60 * 60;
 const PUBLIC_IMAGE_CACHE_NAMESPACES = ["default", "test", "prod"] as const;
 
 type PublicImageCacheNamespace = typeof PUBLIC_IMAGE_CACHE_NAMESPACES[number];

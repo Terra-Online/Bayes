@@ -1,3 +1,5 @@
+export const MIN_KV_EXPIRATION_TTL_SECONDS = 60;
+
 export async function sha256Hex(value: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
   return [...new Uint8Array(digest)]
@@ -24,5 +26,8 @@ export async function putJsonToKv(
   options?: { expirationTtl?: number }
 ): Promise<void> {
   if (!kv) return;
-  await kv.put(key, JSON.stringify(value), options);
+  const putOptions = options?.expirationTtl === undefined
+    ? options
+    : { ...options, expirationTtl: Math.max(options.expirationTtl, MIN_KV_EXPIRATION_TTL_SECONDS) };
+  await kv.put(key, JSON.stringify(value), putOptions);
 }
