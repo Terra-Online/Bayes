@@ -153,28 +153,17 @@ function toSerializableError(error: unknown): unknown {
   };
 }
 
-function pickOptionalProvider(
-  provider: string,
-  clientId: string | undefined,
-  clientSecret: string | undefined,
-) {
-  const id = readEnv(clientId);
-  const secret = readEnv(clientSecret);
-
-  if (!id && !secret) {
-    return null;
-  }
-
-  if (!id || !secret) {
-    throw new Error(
-      `Incomplete OAuth config for ${provider}. Both clientId and clientSecret are required.`,
-    );
-  }
-
+function createSocialProviderConfig<TExtra extends Record<string, unknown> = Record<string, never>>(
+  env: Bindings,
+  clientIdKey: keyof Bindings,
+  clientSecretKey: keyof Bindings,
+  extra?: TExtra,
+): { clientId: string; clientSecret: string } & TExtra {
   return {
-    clientId: id,
-    clientSecret: secret,
-  };
+    clientId: envOrThrow(env[clientIdKey] as string | undefined, String(clientIdKey)),
+    clientSecret: envOrThrow(env[clientSecretKey] as string | undefined, String(clientSecretKey)),
+    ...extra,
+  } as { clientId: string; clientSecret: string } & TExtra;
 }
 
 export function createAuth(env: Bindings) {
@@ -184,24 +173,15 @@ export function createAuth(env: Bindings) {
 
   const socialProviders: {
     discord: { clientId: string; clientSecret: string; prompt: 'consent' };
-    google?: { clientId: string; clientSecret: string };
+    github: { clientId: string; clientSecret: string };
+    google: { clientId: string; clientSecret: string };
   } = {
-    discord: {
-      clientId: envOrThrow(env.DISCORD_CLIENT_ID, 'DISCORD_CLIENT_ID'),
-      clientSecret: envOrThrow(env.DISCORD_CLIENT_SECRET, 'DISCORD_CLIENT_SECRET'),
+    google: createSocialProviderConfig(env, 'GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET'),
+    discord: createSocialProviderConfig(env, 'DISCORD_CLIENT_ID', 'DISCORD_CLIENT_SECRET', {
       prompt: 'consent',
-    },
+    }),
+    github: createSocialProviderConfig(env, 'GITHUB_CLIENT_ID', 'GITHUB_CLIENT_SECRET'),
   };
-
-  const googleProvider = pickOptionalProvider(
-    'google',
-    env.GOOGLE_CLIENT_ID,
-    env.GOOGLE_CLIENT_SECRET,
-  );
-
-  if (googleProvider) {
-    socialProviders.google = googleProvider;
-  }
 
   return betterAuth({
     database: env.DB,
