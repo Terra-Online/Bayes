@@ -26,6 +26,7 @@ import {
 } from "../repositories/submissions";
 import { applyUserPointsDelta } from "../repositories/users";
 import { prewarmPublicUgcAsset } from "../services/asset-cache";
+import { deletePublicMarkerCommentCache } from "../services/public-comment-cache";
 import { deletePublicMarkerImageCache } from "../services/public-image-cache";
 import { evaluateKarmaBatch, getModerationPointsDeltaWithDailyBackoff, markKarmaDirty } from "../services/karma";
 import { ensureModerationBackfill, moderateSubmissionIds, moderateSubmissionOnce } from "../services/moderation";
@@ -418,6 +419,8 @@ export function createModerationRoutes() {
     }
     if (current.kind === "image") {
       c.executionCtx.waitUntil(deletePublicMarkerImageCache(c.env.OEM_KV, current.markerId));
+    } else {
+      c.executionCtx.waitUntil(deletePublicMarkerCommentCache(c.env.OEM_KV, current.markerId));
     }
     const effectiveModerationNote = parsed.data.moderationNote ?? current.moderationNote;
     if (shouldApplyModerationPoints(current.status, parsed.data.status, effectiveModerationNote)) {

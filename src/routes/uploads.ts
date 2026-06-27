@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 import { createAuth } from "../lib/auth";
@@ -16,11 +16,16 @@ import {
   createSubmissionUpvote,
   deleteSubmissionFlag,
   deleteSubmissionUpvote,
+  getSubmissionScore,
   getImageSubmissionByFilePath,
   getPublicSubmissionByFilePath,
   getSubmissionById,
+  listActiveCommentsByMarker,
   listActiveImagesByMarker,
+  listUserCommentsByMarker,
   listUserImagesByMarker,
+  setSubmissionVote,
+  type PublicSubmissionComment,
   type PublicSubmissionImage,
   updateSubmissionStatus
 } from "../repositories/submissions";
@@ -39,6 +44,15 @@ import {
   resolvePublicImageCacheNamespace,
   writePublicMarkerImageCache
 } from "../services/public-image-cache";
+import {
+  PUBLIC_MARKER_COMMENT_CACHE_LIMIT,
+  PUBLIC_MARKER_COMMENT_REPLY_CACHE_LIMIT,
+  deletePublicMarkerCommentCache,
+  readPublicMarkerCommentCache,
+  resolvePublicCommentCacheNamespace,
+  writePublicMarkerCommentCache
+} from "../services/public-comment-cache";
+import { translateVisibleComments } from "../services/comment-translation";
 import { enqueueModeration } from "../services/moderation";
 import {
   notifyFlagCreated,
@@ -57,6 +71,15 @@ const imagesQuerySchema = z.object({
   publicOnly: z.enum(["1"]).optional()
 });
 
+const commentsQuerySchema = z.object({
+  markerId: z.string().min(1).max(128).optional(),
+  markerIds: z.string().max(4000).optional(),
+  scope: z.enum(["test", "prod"]).optional(),
+  limit: z.coerce.number().int().min(1).max(50).optional(),
+  replyLimit: z.coerce.number().int().min(0).max(10).optional(),
+  publicOnly: z.enum(["1"]).optional()
+});
+
 const imageUploadFieldsSchema = z.object({
   markerId: z.string().min(1).max(128),
   poiHash: z.string().min(1).max(128),
@@ -68,7 +91,14 @@ const commentSubmissionSchema = z.object({
   markerId: z.string().min(1).max(128),
   poiHash: z.string().min(1).max(128),
   poiType: z.string().min(1).max(128),
-  content: z.string().trim().min(1).max(199)
+  content: z.string().trim().min(1).max(199),
+  parentId: z.string().min(1).max(64).optional()
+});
+
+const commentTranslationSchema = z.object({
+  commentIds: z.array(z.string().min(1).max(64)).min(1).max(100),
+  targetLanguage: z.string().min(2).max(16),
+  sourceLanguage: z.string().min(2).max(16).optional()
 });
 
 const TEST_UPLOAD_PREFIX = "_test";
@@ -260,6 +290,100 @@ function flattenPublicImagesByMarker(
   return markerIds.flatMap((markerId) => (grouped.get(markerId) ?? []).slice(0, limit));
 }
 
+function groupPublicCommentsByMarker(
+  markerIds: string[],
+  comments: PublicSubmissionComment[]
+): Map<string, PublicSubmissionComment[]> {
+  const grouped = new Map<string, PublicSubmissionComment[]>();
+  markerIds.forEach((markerId) => grouped.set(markerId, []));
+  comments.forEach((comment) => {
+    const bucket = grouped.get(comment.markerId);
+    if (bucket) {
+      bucket.push(comment);
+    }
+  });
+  return grouped;
+}
+
+function sliceCommentTree(
+  comment: PublicSubmissionComment,
+  replyLimit: number
+): PublicSubmissionComment {
+  return {
+    ...comment,
+    replies: comment.replies.slice(0, replyLimit)
+  };
+}
+
+function flattenPublicCommentsByMarker(
+  markerIds: string[],
+  grouped: Map<string, PublicSubmissionComment[]>,
+  limit: number,
+  replyLimit: number
+): PublicSubmissionComment[] {
+  return markerIds.flatMap((markerId) => (grouped.get(markerId) ?? [])
+    .slice(0, limit)
+    .map((comment) => sliceCommentTree(comment, replyLimit)));
+}
+
+async function listCachedPublicCommentsByMarker(
+  payload: {
+    db: D1Database;
+    kv?: KVNamespace;
+    markerIds: string[];
+    limit: number;
+    replyLimit: number;
+    cacheNamespace: ReturnType<typeof resolvePublicCommentCacheNamespace>;
+    waitUntil: (promise: Promise<unknown>) => void;
+  }
+): Promise<PublicSubmissionComment[]> {
+  const grouped = new Map<string, PublicSubmissionComment[]>();
+  const missingIds: string[] = [];
+
+  if (payload.kv) {
+    const cacheResults = await Promise.all(
+      payload.markerIds.map(async (markerId) => ({
+        markerId,
+        comments: await readPublicMarkerCommentCache(payload.kv, payload.cacheNamespace, markerId)
+      }))
+    );
+
+    cacheResults.forEach(({ markerId, comments }) => {
+      if (comments) {
+        grouped.set(markerId, comments);
+      } else {
+        missingIds.push(markerId);
+      }
+    });
+  } else {
+    missingIds.push(...payload.markerIds);
+  }
+
+  if (missingIds.length > 0) {
+    const dbComments = await listActiveCommentsByMarker(payload.db, {
+      markerIds: missingIds,
+      limit: PUBLIC_MARKER_COMMENT_CACHE_LIMIT,
+      replyLimit: PUBLIC_MARKER_COMMENT_REPLY_CACHE_LIMIT
+    });
+    const dbGrouped = groupPublicCommentsByMarker(missingIds, dbComments);
+
+    missingIds.forEach((markerId) => {
+      const comments = dbGrouped.get(markerId) ?? [];
+      grouped.set(markerId, comments);
+      if (payload.kv) {
+        payload.waitUntil(writePublicMarkerCommentCache(
+          payload.kv,
+          payload.cacheNamespace,
+          markerId,
+          comments
+        ));
+      }
+    });
+  }
+
+  return flattenPublicCommentsByMarker(payload.markerIds, grouped, payload.limit, payload.replyLimit);
+}
+
 async function listCachedPublicImagesByMarker(
   payload: {
     db: D1Database;
@@ -354,12 +478,15 @@ export function createUploadRoutes() {
     const isImageRead = c.req.method === "GET" && (
       c.req.path.endsWith("/uploads/v1/images") ||
       c.req.path.endsWith("/uploads/v1/images/mine") ||
+      c.req.path.endsWith("/uploads/v1/comments") ||
+      c.req.path.endsWith("/uploads/v1/comments/mine") ||
       c.req.path.includes("/uploads/v1/public-file/") ||
       c.req.path.includes("/uploads/v1/file/") ||
       c.req.path.includes("/public-file/") ||
       c.req.path.includes("/file/")
     );
-    if (!isImageRead && isUploadsLocked(c.env.LOCK_UPLOAD_ENDPOINTS)) {
+    const isPublicTranslation = c.req.method === "POST" && c.req.path.endsWith("/uploads/v1/comments/translations");
+    if (!isImageRead && !isPublicTranslation && isUploadsLocked(c.env.LOCK_UPLOAD_ENDPOINTS)) {
       throw new ApiError(
         503,
         "UPLOADS_TEMPORARILY_DISABLED",
@@ -499,6 +626,29 @@ export function createUploadRoutes() {
     const snapshotId = nanoid(12);
     const poiType = normalizePathPart(parsed.data.poiType);
     const poiHash = normalizePathPart(parsed.data.poiHash);
+    let parentId: string | null = null;
+    let commentDepth = 0;
+
+    if (parsed.data.parentId) {
+      const parent = await getSubmissionById(c.env.DB, parsed.data.parentId);
+      if (!parent || parent.kind !== "comment" || parent.commentDepth !== 0 || parent.parentId !== null) {
+        throw new ApiError(404, "PARENT_COMMENT_NOT_FOUND", "Parent comment was not found.");
+      }
+      if (
+        parent.markerId !== parsed.data.markerId ||
+        parent.poiHash !== poiHash ||
+        parent.poiType !== poiType
+      ) {
+        throw new ApiError(409, "PARENT_COMMENT_MISMATCH", "Parent comment belongs to a different POI.");
+      }
+      if (!["active", "flagged", "remove_request"].includes(parent.status)) {
+        throw new ApiError(409, "PARENT_COMMENT_NOT_VISIBLE", "Replies can only target visible top-level comments.", {
+          status: parent.status
+        });
+      }
+      parentId = parent.id;
+      commentDepth = 1;
+    }
 
     await createPendingSubmission(c.env.DB, {
       id: submissionId,
@@ -509,7 +659,9 @@ export function createUploadRoutes() {
       userId: user.uid,
       content: parsed.data.content,
       kind: "comment",
-      status: "pending_openai"
+      status: "pending_openai",
+      parentId,
+      commentDepth
     });
     await enqueueModeration(createRedisClient(c.env), submissionId);
 
@@ -518,10 +670,355 @@ export function createUploadRoutes() {
       submission: {
         id: submissionId,
         markerId: parsed.data.markerId,
+        parentId,
+        depth: commentDepth,
         status: "pending_openai",
         snapshotId
       }
     });
+  });
+
+  app.post("/comments/translations", rateLimit("public"), async (c) => {
+    const parsed = commentTranslationSchema.safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) {
+      throw new ApiError(422, "VALIDATION_ERROR", "Invalid translation payload.", parsed.error.flatten());
+    }
+
+    return c.json(await translateVisibleComments(c.env, parsed.data));
+  });
+
+  app.get("/comments/mine", requireAuth, rateLimit("auth"), async (c) => {
+    const user = c.get("authUser");
+    if (!user) {
+      throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
+    }
+
+    const parsed = commentsQuerySchema.safeParse({
+      markerId: c.req.query("markerId"),
+      markerIds: c.req.query("markerIds"),
+      scope: c.req.query("scope"),
+      limit: c.req.query("limit"),
+      replyLimit: c.req.query("replyLimit"),
+      publicOnly: c.req.query("publicOnly") === "1" ? "1" : undefined
+    });
+    if (!parsed.success) {
+      throw new ApiError(422, "VALIDATION_ERROR", "Invalid comment query.", parsed.error.flatten());
+    }
+
+    const markerIds = parsed.data.markerIds
+      ?.split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+    const ids = [...new Set(markerIds?.length ? markerIds : parsed.data.markerId ? [parsed.data.markerId] : [])].slice(0, 100);
+    if (ids.length === 0) {
+      throw new ApiError(422, "VALIDATION_ERROR", "markerId or markerIds is required.");
+    }
+
+    const items = await listUserCommentsByMarker(c.env.DB, {
+      userId: user.uid,
+      markerIds: ids,
+      limit: parsed.data.limit ?? 50
+    });
+
+    const response = c.json({ items });
+    response.headers.set("Cache-Control", "private, no-store");
+    return response;
+  });
+
+  app.get("/comments", rateLimit("public"), async (c) => {
+    const parsed = commentsQuerySchema.safeParse({
+      markerId: c.req.query("markerId"),
+      markerIds: c.req.query("markerIds"),
+      scope: c.req.query("scope"),
+      limit: c.req.query("limit"),
+      replyLimit: c.req.query("replyLimit"),
+      publicOnly: c.req.query("publicOnly") === "1" ? "1" : undefined
+    });
+    if (!parsed.success) {
+      throw new ApiError(422, "VALIDATION_ERROR", "Invalid comment query.", parsed.error.flatten());
+    }
+
+    const markerIds = parsed.data.markerIds
+      ?.split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+    const ids = [...new Set(markerIds?.length ? markerIds : parsed.data.markerId ? [parsed.data.markerId] : [])].slice(0, 100);
+    if (ids.length === 0) {
+      throw new ApiError(422, "VALIDATION_ERROR", "markerId or markerIds is required.");
+    }
+
+    const limit = parsed.data.limit ?? 20;
+    const replyLimit = parsed.data.replyLimit ?? 3;
+    const session = parsed.data.publicOnly === "1"
+      ? null
+      : await createAuth(c.env).api.getSession({
+        headers: c.req.raw.headers
+      });
+    const useSharedCache = parsed.data.publicOnly === "1" || !session;
+
+    const items = useSharedCache
+      ? await listCachedPublicCommentsByMarker({
+        db: c.env.DB,
+        kv: c.env.OEM_KV,
+        markerIds: ids,
+        limit,
+        replyLimit,
+        cacheNamespace: resolvePublicCommentCacheNamespace(resolveImageScope(
+          c.req.raw,
+          getRuntimeConfig(c.env).ugcUploadPathPrefix,
+          parsed.data.scope
+        )),
+        waitUntil: (promise) => c.executionCtx.waitUntil(promise)
+      })
+      : await listActiveCommentsByMarker(c.env.DB, {
+        markerIds: ids,
+        limit,
+        replyLimit,
+        viewerUserId: session?.user.id
+      });
+
+    const response = c.json({ items });
+    if (useSharedCache) {
+      response.headers.set("Cache-Control", items.length > 0 ? "public, max-age=15" : "public, max-age=5");
+      response.headers.set("x-oem-marker-comment-kv-cache", "enabled");
+    } else {
+      response.headers.set("Cache-Control", "private, no-store");
+    }
+    return response;
+  });
+
+  async function handleCommentVote(c: Context<AppEnv>, value: 1 | -1) {
+    const user = c.get("authUser");
+    const submissionId = c.req.param("id");
+    if (!user) {
+      throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
+    }
+    if (!submissionId) {
+      throw new ApiError(422, "VALIDATION_ERROR", "Submission id is required.");
+    }
+
+    const submission = await getSubmissionById(c.env.DB, submissionId);
+    if (!submission || submission.kind !== "comment") {
+      throw new ApiError(404, "SUBMISSION_NOT_FOUND", "Comment submission was not found.");
+    }
+    if (!["active", "flagged", "remove_request"].includes(submission.status)) {
+      throw new ApiError(409, "INVALID_SUBMISSION_STATUS", "Only visible comments can be voted.", {
+        status: submission.status
+      });
+    }
+
+    const vote = await setSubmissionVote(c.env.DB, {
+      submissionId,
+      userId: user.uid,
+      value
+    });
+    const score = await getSubmissionScore(c.env.DB, submissionId);
+    c.executionCtx.waitUntil(deletePublicMarkerCommentCache(c.env.OEM_KV, submission.markerId));
+
+    return c.json({ ok: true, vote, score });
+  }
+
+  app.post("/comments/:id/upvote", requireAuth, rateLimit("auth"), async (c) => handleCommentVote(c, 1));
+  app.post("/comments/:id/downvote", requireAuth, rateLimit("auth"), async (c) => handleCommentVote(c, -1));
+
+  app.post("/comments/:id/flag", requireAuth, rateLimit("auth"), async (c) => {
+    const user = c.get("authUser");
+    const submissionId = c.req.param("id");
+    if (!user) {
+      throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
+    }
+    if (!submissionId) {
+      throw new ApiError(422, "VALIDATION_ERROR", "Submission id is required.");
+    }
+
+    const submission = await getSubmissionById(c.env.DB, submissionId);
+    if (!submission || submission.kind !== "comment") {
+      throw new ApiError(404, "SUBMISSION_NOT_FOUND", "Comment submission was not found.");
+    }
+    if (submission.userId === user.uid) {
+      throw new ApiError(403, "CANNOT_FLAG_OWN_SUBMISSION", "You cannot flag your own comment.");
+    }
+    if (submission.status !== "active" && submission.status !== "flagged") {
+      throw new ApiError(409, "INVALID_SUBMISSION_STATUS", "Only active or flagged comments can be flagged.", {
+        status: submission.status
+      });
+    }
+
+    const created = await createSubmissionFlag(c.env.DB, {
+      submissionId,
+      userId: user.uid
+    });
+    if (created && submission.status === "active") {
+      await updateSubmissionStatus(c.env.DB, {
+        id: submissionId,
+        status: "flagged",
+        moderationNote: "Flagged by user."
+      });
+    }
+    const flagCount = await countSubmissionFlags(c.env.DB, submissionId);
+    c.executionCtx.waitUntil(deletePublicMarkerCommentCache(c.env.OEM_KV, submission.markerId));
+    if (created) {
+      c.executionCtx.waitUntil(
+        notifyFlagCreated(c.env, {
+          submission,
+          actor: user,
+          changed: created,
+          flagCount,
+          nextStatus: "flagged"
+        })
+      );
+    }
+
+    return c.json({ ok: true, created, status: "flagged", flagCount });
+  });
+
+  app.post("/comments/:id/unflag", requireAuth, rateLimit("auth"), async (c) => {
+    const user = c.get("authUser");
+    const submissionId = c.req.param("id");
+    if (!user) {
+      throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
+    }
+    if (!submissionId) {
+      throw new ApiError(422, "VALIDATION_ERROR", "Submission id is required.");
+    }
+
+    const submission = await getSubmissionById(c.env.DB, submissionId);
+    if (!submission || submission.kind !== "comment") {
+      throw new ApiError(404, "SUBMISSION_NOT_FOUND", "Comment submission was not found.");
+    }
+    if (submission.userId === user.uid) {
+      throw new ApiError(403, "CANNOT_UNFLAG_OWN_SUBMISSION", "You cannot unflag your own comment.");
+    }
+    if (submission.status !== "active" && submission.status !== "flagged") {
+      throw new ApiError(409, "INVALID_SUBMISSION_STATUS", "Only active or flagged comments can be unflagged.", {
+        status: submission.status
+      });
+    }
+
+    const deleted = await deleteSubmissionFlag(c.env.DB, {
+      submissionId,
+      userId: user.uid
+    });
+    const flagCount = await countSubmissionFlags(c.env.DB, submissionId);
+    const status = flagCount > 0 ? "flagged" : "active";
+    if (submission.status !== status) {
+      await updateSubmissionStatus(c.env.DB, {
+        id: submissionId,
+        status,
+        moderationNote: status === "active" ? "User flag removed." : undefined
+      });
+    }
+    c.executionCtx.waitUntil(deletePublicMarkerCommentCache(c.env.OEM_KV, submission.markerId));
+    if (deleted) {
+      c.executionCtx.waitUntil(
+        notifyFlagRemoved(c.env, {
+          submission,
+          actor: user,
+          changed: deleted,
+          flagCount,
+          nextStatus: status
+        })
+      );
+    }
+
+    return c.json({ ok: true, deleted, status, flagCount });
+  });
+
+  app.post("/comments/:id/remove-request", requireAuth, rateLimit("auth"), async (c) => {
+    const user = c.get("authUser");
+    const submissionId = c.req.param("id");
+    if (!user) {
+      throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
+    }
+    if (!submissionId) {
+      throw new ApiError(422, "VALIDATION_ERROR", "Submission id is required.");
+    }
+
+    const submission = await getSubmissionById(c.env.DB, submissionId);
+    if (!submission || submission.kind !== "comment") {
+      throw new ApiError(404, "SUBMISSION_NOT_FOUND", "Comment submission was not found.");
+    }
+    if (submission.userId !== user.uid) {
+      throw new ApiError(403, "REMOVE_REQUEST_OWNER_ONLY", "Only the author can request comment removal.");
+    }
+    if (submission.status !== "active" && submission.status !== "flagged") {
+      throw new ApiError(409, "INVALID_STATUS_TRANSITION", "Only visible comments can receive a remove request.", {
+        from: submission.status,
+        to: "remove_request"
+      });
+    }
+
+    await updateSubmissionStatus(c.env.DB, {
+      id: submissionId,
+      status: "remove_request",
+      moderationNote: "Removal requested by author."
+    });
+    c.executionCtx.waitUntil(deletePublicMarkerCommentCache(c.env.OEM_KV, submission.markerId));
+    c.executionCtx.waitUntil(
+      notifyRemoveRequestCreated(c.env, {
+        submission,
+        actor: user,
+        nextStatus: "remove_request",
+        source: "remove_request"
+      })
+    );
+
+    return c.json({ ok: true, status: "remove_request" });
+  });
+
+  app.post("/comments/:id/recall", requireAuth, rateLimit("auth"), async (c) => {
+    const user = c.get("authUser");
+    const submissionId = c.req.param("id");
+    if (!user) {
+      throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
+    }
+    if (!submissionId) {
+      throw new ApiError(422, "VALIDATION_ERROR", "Submission id is required.");
+    }
+
+    const submission = await getSubmissionById(c.env.DB, submissionId);
+    if (!submission || submission.kind !== "comment") {
+      throw new ApiError(404, "SUBMISSION_NOT_FOUND", "Comment submission was not found.");
+    }
+    if (submission.userId !== user.uid) {
+      throw new ApiError(403, "RECALL_OWNER_ONLY", "Only the author can recall a comment.");
+    }
+    if (submission.status === "stale") {
+      return c.json({ ok: true, status: "stale" });
+    }
+    if (!["pending_openai", "pending_audit", "active", "flagged", "remove_request"].includes(submission.status)) {
+      throw new ApiError(409, "INVALID_STATUS_TRANSITION", "Comment cannot be recalled from its current status.", {
+        from: submission.status,
+        to: "remove_request"
+      });
+    }
+
+    if (submission.status === "pending_openai" || submission.status === "pending_audit") {
+      await updateSubmissionStatus(c.env.DB, {
+        id: submissionId,
+        status: "stale",
+        moderationNote: `${RECALL_MODERATION_NOTE_PREFIX} comment error.`
+      });
+      c.executionCtx.waitUntil(deletePublicMarkerCommentCache(c.env.OEM_KV, submission.markerId));
+      return c.json({ ok: true, status: "stale" });
+    }
+
+    await updateSubmissionStatus(c.env.DB, {
+      id: submissionId,
+      status: "remove_request",
+      moderationNote: `${RECALL_MODERATION_NOTE_PREFIX} comment error.`
+    });
+    c.executionCtx.waitUntil(deletePublicMarkerCommentCache(c.env.OEM_KV, submission.markerId));
+    c.executionCtx.waitUntil(
+      notifyRemoveRequestCreated(c.env, {
+        submission,
+        actor: user,
+        nextStatus: "remove_request",
+        source: "recall"
+      })
+    );
+
+    return c.json({ ok: true, status: "remove_request" });
   });
 
   app.get("/public-file/*", rateLimit("public"), async (c) => {

@@ -1,6 +1,7 @@
 import type { Redis } from "@upstash/redis";
 import { AI_STALE_MODERATION_NOTE_PREFIX } from "../lib/moderation";
 import { prewarmPublicUgcAsset } from "./asset-cache";
+import { deletePublicMarkerCommentCache } from "./public-comment-cache";
 import { deletePublicMarkerImageCache } from "./public-image-cache";
 import { getModerationPointsDeltaWithDailyBackoff, markKarmaDirty } from "./karma";
 import {
@@ -154,8 +155,12 @@ async function moderateSubmissionById(
         : "OpenAI moderation skipped in local mode; waiting for manual audit."
     });
     if (status === "active") {
-      await (options.prewarmAsset ?? prewarmPublicUgcAsset)(options.assetBaseUrl, submission.filePath);
-      await deletePublicMarkerImageCache(options.ugcKv, submission.markerId);
+      if (submission.kind === "image") {
+        await (options.prewarmAsset ?? prewarmPublicUgcAsset)(options.assetBaseUrl, submission.filePath);
+        await deletePublicMarkerImageCache(options.ugcKv, submission.markerId);
+      } else {
+        await deletePublicMarkerCommentCache(options.ugcKv, submission.markerId);
+      }
       const pointsDelta = await getModerationPointsDeltaWithDailyBackoff(options.redis, {
         userId: submission.userId,
         kind: submission.kind,
