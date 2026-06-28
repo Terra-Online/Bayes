@@ -56,6 +56,13 @@ export function requireMarkerIds(payload: { markerId?: string; markerIds?: strin
   return ids;
 }
 
+export function hasAuthHeaders(headers: Headers): boolean {
+  return Boolean(
+    headers.get("authorization")?.trim() ||
+    headers.get("cookie")?.trim()
+  );
+}
+
 function parseObjectKey(raw: string | undefined): string {
   const key = raw?.trim() ?? "";
   if (!key || key.startsWith("/") || key.includes("..") || key.includes("\\")) {

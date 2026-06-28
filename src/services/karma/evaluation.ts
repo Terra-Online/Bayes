@@ -85,8 +85,8 @@ export async function evaluateKarmaBatch(
   const selectedUids = [...new Set([...dirtyUids, ...sweepUids])].slice(0, limit);
   const updated = await evaluateKarmaUsers(db, selectedUids);
 
-  for (const uid of dirtyUids) {
-    await redis.srem(KARMA_DIRTY_SET_KEY, uid);
+  if (dirtyUids.length > 0) {
+    await redis.srem(KARMA_DIRTY_SET_KEY, ...dirtyUids);
   }
 
   return {

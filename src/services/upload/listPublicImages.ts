@@ -14,7 +14,7 @@ import {
 import { listActiveImagesByMarker, listUserImagesByMarker } from "../../repositories/submission/listImages";
 import type { PublicSubmissionImage } from "../../repositories/submission/types";
 import type { AppEnv } from "../../types/app";
-import { requireMarkerIds } from "./helpers";
+import { hasAuthHeaders, requireMarkerIds } from "./helpers";
 import { imagesQuerySchema } from "./schemas";
 import { resolveImageScope, resolvePrivateAssetBaseUrl, resolvePublicAssetBaseUrl } from "./scope";
 
@@ -143,7 +143,8 @@ export async function handleListPublicImages(c: import("hono").Context<AppEnv>) 
     markerId: c.req.query("markerId"),
     markerIds: c.req.query("markerIds"),
     scope: c.req.query("scope"),
-    limit: c.req.query("limit")
+    limit: c.req.query("limit"),
+    publicOnly: c.req.query("publicOnly") === "1" ? "1" : undefined
   });
   if (!parsed.success) {
     throw new ApiError(422, "VALIDATION_ERROR", "Invalid image query.", parsed.error.flatten());
@@ -153,11 +154,12 @@ export async function handleListPublicImages(c: import("hono").Context<AppEnv>) 
   const config = getRuntimeConfig(c.env);
   const scope = resolveImageScope(c.req.raw, config.ugcUploadPathPrefix, parsed.data.scope);
   const limit = parsed.data.limit ?? 6;
-  const session = parsed.data.publicOnly === "1"
-    ? null
-    : await createAuth(c.env).api.getSession({
+  const shouldReadSession = parsed.data.publicOnly !== "1" && hasAuthHeaders(c.req.raw.headers);
+  const session = shouldReadSession
+    ? await createAuth(c.env).api.getSession({
       headers: c.req.raw.headers
-    });
+    })
+    : null;
   const useSharedCache = parsed.data.publicOnly === "1" || !session;
   let cache: Cache | null = null;
   let cacheKey: Request | null = null;

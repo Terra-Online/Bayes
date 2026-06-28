@@ -178,7 +178,9 @@ export class OEMUserDO {
       return emptyPublicProgress(progress.markerIndexHash);
     }
 
-    const manifest = await loadProgressManifest(this.env, progress.markerIndexHash);
+    const manifest = activeManifest?.markerIndexHash === progress.markerIndexHash
+      ? activeManifest
+      : await loadProgressManifest(this.env, progress.markerIndexHash);
     if (!manifest) {
       throw new ApiError(409, "PROGRESS_MANIFEST_NOT_REGISTERED", "Progress manifest is not registered.");
     }

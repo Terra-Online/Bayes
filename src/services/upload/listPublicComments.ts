@@ -11,7 +11,7 @@ import {
 import { listActiveCommentsByMarker, listUserCommentsByMarker } from "../../repositories/submission/listComments";
 import type { PublicSubmissionComment } from "../../repositories/submission/types";
 import type { AppEnv } from "../../types/app";
-import { requireMarkerIds } from "./helpers";
+import { hasAuthHeaders, requireMarkerIds } from "./helpers";
 import { commentsQuerySchema } from "./schemas";
 import { resolveImageScope } from "./scope";
 
@@ -155,11 +155,12 @@ export async function handleListPublicComments(c: import("hono").Context<AppEnv>
   const ids = requireMarkerIds(parsed.data);
   const limit = parsed.data.limit ?? 20;
   const replyLimit = parsed.data.replyLimit ?? 3;
-  const session = parsed.data.publicOnly === "1"
-    ? null
-    : await createAuth(c.env).api.getSession({
+  const shouldReadSession = parsed.data.publicOnly !== "1" && hasAuthHeaders(c.req.raw.headers);
+  const session = shouldReadSession
+    ? await createAuth(c.env).api.getSession({
       headers: c.req.raw.headers
-    });
+    })
+    : null;
   const useSharedCache = parsed.data.publicOnly === "1" || !session;
 
   const items = useSharedCache
