@@ -1,5 +1,5 @@
 import type { AuthUser, Bindings } from "../types/app";
-import type { SubmissionKind, SubmissionRecord, SubmissionStatus } from "../repositories/submissions";
+import type { SubmissionKind, SubmissionRecord, SubmissionStatus } from "../repositories/submission/types";
 
 const DEFAULT_DISCORD_MODERATION_WEBHOOK_URL =
   "https://discord.com/api/webhooks/1503720535593451663/a6HnfmXj5UfV_5Mpcbkt13e6YvTt5jR9RM9w-82Sps30dWwdiGcaRcAc-Jxrb-4Weo_X";

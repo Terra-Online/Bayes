@@ -1,5 +1,5 @@
 import { ApiError } from "../lib/errors";
-import { getJsonFromKv, putJsonToKv, sha256Hex } from "../lib/kv-cache";
+import { getJsonFromKv, putJsonToKv, sha256Hex } from "../middleware/cache/kvJson";
 import { getUserByUid, updateProgressInD1 } from "../repositories/users";
 import type { Bindings } from "../types/app";
 import {

@@ -1,5 +1,5 @@
-import { getJsonFromKv, putJsonToKv, sha256Hex } from "../lib/kv-cache";
-import type { PublicSubmissionImage } from "../repositories/submissions";
+import type { PublicSubmissionImage } from "../../repositories/submission/types";
+import { getJsonFromKv, putJsonToKv, sha256Hex } from "./kvJson";
 
 export const PUBLIC_MARKER_IMAGE_CACHE_LIMIT = 24;
 
@@ -8,7 +8,7 @@ const PUBLIC_MARKER_IMAGE_POSITIVE_TTL_SECONDS = 30 * 24 * 60 * 60;
 const PUBLIC_MARKER_IMAGE_EMPTY_TTL_SECONDS = 60 * 60;
 const PUBLIC_IMAGE_CACHE_NAMESPACES = ["default", "test", "prod"] as const;
 
-type PublicImageCacheNamespace = typeof PUBLIC_IMAGE_CACHE_NAMESPACES[number];
+export type PublicImageCacheNamespace = typeof PUBLIC_IMAGE_CACHE_NAMESPACES[number];
 
 type PublicMarkerImageCacheEntry = {
   items: PublicSubmissionImage[];

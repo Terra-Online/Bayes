@@ -1,5 +1,5 @@
-import { getJsonFromKv, putJsonToKv, sha256Hex } from "../lib/kv-cache";
-import type { PublicSubmissionComment } from "../repositories/submissions";
+import type { PublicSubmissionComment } from "../../repositories/submission/types";
+import { getJsonFromKv, putJsonToKv, sha256Hex } from "./kvJson";
 
 export const PUBLIC_MARKER_COMMENT_CACHE_LIMIT = 50;
 export const PUBLIC_MARKER_COMMENT_REPLY_CACHE_LIMIT = 5;
@@ -9,7 +9,7 @@ const PUBLIC_MARKER_COMMENT_POSITIVE_TTL_SECONDS = 7 * 24 * 60 * 60;
 const PUBLIC_MARKER_COMMENT_EMPTY_TTL_SECONDS = 10 * 60;
 const PUBLIC_COMMENT_CACHE_NAMESPACES = ["default", "test", "prod"] as const;
 
-type PublicCommentCacheNamespace = typeof PUBLIC_COMMENT_CACHE_NAMESPACES[number];
+export type PublicCommentCacheNamespace = typeof PUBLIC_COMMENT_CACHE_NAMESPACES[number];
 
 type PublicMarkerCommentCacheEntry = {
   items: PublicSubmissionComment[];

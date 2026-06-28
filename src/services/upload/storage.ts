@@ -1,5 +1,5 @@
 import { getRandom } from "@cloudflare/containers";
-import type { oem_imgTrans } from "./image-transcoder-container";
+import type { oem_imgTrans } from "../image-transcoder-container";
 
 const IMAGE_TRANSFORM_CONTAINER_INSTANCES = 3;
 

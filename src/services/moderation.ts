@@ -1,8 +1,8 @@
 import type { Redis } from "@upstash/redis";
 import { AI_STALE_MODERATION_NOTE_PREFIX } from "../lib/moderation";
-import { prewarmPublicUgcAsset } from "./asset-cache";
-import { deletePublicMarkerCommentCache } from "./public-comment-cache";
-import { deletePublicMarkerImageCache } from "./public-image-cache";
+import { deletePublicMarkerCommentCache } from "../middleware/cache/publicMarkerComments";
+import { deletePublicMarkerImageCache } from "../middleware/cache/publicMarkerImages";
+import { prewarmPublicUgcAsset } from "../middleware/cache/publicUgcAssets";
 import { getModerationPointsDeltaWithDailyBackoff, markKarmaDirty } from "./karma";
 import {
   createEmptyPendingOpenAICompletionStats,
@@ -11,10 +11,9 @@ import {
 } from "./notifications";
 import {
   getPendingOpenAISubmissions,
-  getSubmissionById,
-  updateSubmissionStatus,
-  type SubmissionStatus
-} from "../repositories/submissions";
+} from "../repositories/submission/createSubmission";
+import { getSubmissionById, updateSubmissionStatus } from "../repositories/submission/statusSubmission";
+import type { SubmissionStatus } from "../repositories/submission/types";
 import { applyUserPointsDelta } from "../repositories/users";
 
 const MODERATION_QUEUE_KEY = "moderation:queue";

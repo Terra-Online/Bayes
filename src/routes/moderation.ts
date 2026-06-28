@@ -19,15 +19,14 @@ import {
 } from "../repositories/submission-review";
 import {
   ALL_STATUSES,
-  clearSubmissionFlags,
-  getSubmissionById,
-  updateSubmissionStatus,
   type SubmissionStatus
-} from "../repositories/submissions";
+} from "../repositories/submission/types";
+import { clearSubmissionFlags } from "../repositories/submission/flagSubmission";
+import { getSubmissionById, updateSubmissionStatus } from "../repositories/submission/statusSubmission";
 import { applyUserPointsDelta } from "../repositories/users";
-import { prewarmPublicUgcAsset } from "../services/asset-cache";
-import { deletePublicMarkerCommentCache } from "../services/public-comment-cache";
-import { deletePublicMarkerImageCache } from "../services/public-image-cache";
+import { deletePublicMarkerCommentCache } from "../middleware/cache/publicMarkerComments";
+import { deletePublicMarkerImageCache } from "../middleware/cache/publicMarkerImages";
+import { prewarmPublicUgcAsset } from "../middleware/cache/publicUgcAssets";
 import { evaluateKarmaBatch, getModerationPointsDeltaWithDailyBackoff, markKarmaDirty } from "../services/karma";
 import { ensureModerationBackfill, moderateSubmissionIds, moderateSubmissionOnce } from "../services/moderation";
 import { notifyPendingOpenAICompleted } from "../services/notifications";

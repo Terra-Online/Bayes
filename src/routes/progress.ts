@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { ApiError } from "../lib/errors";
-import { getJsonFromKv, MIN_KV_EXPIRATION_TTL_SECONDS, putJsonToKv } from "../lib/kv-cache";
+import { getJsonFromKv, MIN_KV_EXPIRATION_TTL_SECONDS, putJsonToKv } from "../middleware/cache/kvJson";
 import { requireAuth } from "../middleware/auth";
 import { rateLimit } from "../middleware/rate-limit";
 import type { AppEnv } from "../types/app";

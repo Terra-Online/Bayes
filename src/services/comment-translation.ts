@@ -1,12 +1,11 @@
 import { getRuntimeConfig, type RuntimeConfig } from "../lib/config";
-import { sha256Hex } from "../lib/kv-cache";
+import { sha256Hex } from "../middleware/cache/kvJson";
 import {
   getCommentTranslations,
-  getVisibleCommentsByIds,
   upsertCommentTranslation,
-  type CommentTranslationRecord,
-  type SubmissionRecord
-} from "../repositories/submissions";
+} from "../repositories/submission/translationCache";
+import { getVisibleCommentsByIds } from "../repositories/submission/statusSubmission";
+import type { CommentTranslationRecord, SubmissionRecord } from "../repositories/submission/types";
 import type { Bindings } from "../types/app";
 
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
