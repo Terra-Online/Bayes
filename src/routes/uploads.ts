@@ -4,6 +4,7 @@ import { ApiError } from "../lib/errors";
 import { requireAuth } from "../middleware/auth";
 import { rateLimit } from "../middleware/rate-limit";
 import { getUserByUid } from "../repositories/users";
+import { translateVisibleComments } from "../services/comment-translation";
 import {
   handleCommentRemoveRequest,
   handleCommentVote,
@@ -23,9 +24,9 @@ import {
 import { handleListMyComments, handleListPublicComments } from "../services/upload/listPublicComments";
 import { handleListMyImages, handleListPublicImages } from "../services/upload/listPublicImages";
 import { handleServePrivateImageFile, handleServePublicImageFile } from "../services/upload/serveImageFile";
+import { commentTranslationSchema } from "../services/upload/schemas";
 import { handleSubmitComment } from "../services/upload/submitComment";
 import { handleSubmitImage } from "../services/upload/submitImage";
-import { handleTranslateComments } from "../services/upload/translateComments";
 import type { AppEnv } from "../types/app";
 
 function isUploadsLocked(flag: string | undefined): boolean {
@@ -84,7 +85,14 @@ export function createUploadRoutes() {
 
   app.post("/images", requireAuth, rateLimit("upload"), handleSubmitImage);
   app.post("/comments", requireAuth, rateLimit("upload"), handleSubmitComment);
-  app.post("/comments/translations", rateLimit("public"), handleTranslateComments);
+  app.post("/comments/translations", rateLimit("public"), async (c) => {
+    const parsed = commentTranslationSchema.safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) {
+      throw new ApiError(422, "VALIDATION_ERROR", "Invalid translation payload.", parsed.error.flatten());
+    }
+
+    return c.json(await translateVisibleComments(c.env, parsed.data));
+  });
 
   app.get("/comments/mine", requireAuth, rateLimit("auth"), handleListMyComments);
   app.get("/comments", rateLimit("public"), handleListPublicComments);

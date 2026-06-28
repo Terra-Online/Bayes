@@ -1,4 +1,4 @@
-import localeTemplates from "./email-template-locales.json";
+import localeTemplates from "./templateLocales.json";
 
 export type EmailLocale = "zh-HK" | "zh-CN" | "en" | "ja-JP" | "ko-KR" | "de-DE" | "fr-FR" | "es-ES" | "it-IT" | "id-ID" | "pt-BR" | "ru-RU" | "vi-VN" | "th-TH" | "ar-AE" | "hi-IN" | "el-GR" | "ms-MY" | "sv-SE" | "pl-PL";
 

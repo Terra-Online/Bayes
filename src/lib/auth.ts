@@ -1,12 +1,12 @@
 import { betterAuth } from 'better-auth';
 import { bearer, emailOTP } from 'better-auth/plugins';
 import type { Bindings } from '../types/app';
-import { initResend, sendEmail } from './email';
+import { initResend, sendEmail } from './email/sender';
 import {
   createOtpEmailTemplate,
   createResetPasswordMagicLinkTemplate,
   resolveEmailLocale,
-} from './email-templates';
+} from './email/templates';
 import { envOrThrow, readEnv } from './utils';
 
 const OEM_LOCALE_HEADER = 'x-oem-locale';

@@ -9,7 +9,7 @@ import {
 } from './services/notifications';
 import { createApp } from './app';
 import type { Bindings } from './types/app';
-import { initResend } from './lib/email';
+import { initResend } from './lib/email/sender';
 export {
   oem_imgTrans,
 } from './services/image-transcoder-container';

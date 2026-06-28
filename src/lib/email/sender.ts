@@ -1,6 +1,6 @@
 import { Resend } from 'resend';
-import { envOrThrow } from './utils';
-import { Bindings } from '../types/app';
+import type { Bindings } from '../../types/app';
+import { envOrThrow } from '../utils';
 
 let resend: Resend | undefined = undefined;
 
