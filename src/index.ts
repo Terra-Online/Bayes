@@ -12,11 +12,13 @@ import type { Bindings } from './types/app';
 import { initResend } from './lib/email/sender';
 export {
   oem_imgTrans,
-} from './services/image-transcoder-container';
+} from './services/upload/imageTranscoderContainer';
+export {
+  OEMUserDO,
+} from './services/progress/userDo';
 export {
   OEMStatsDO,
-  OEMUserDO,
-} from './services/progress-do';
+} from './services/progress/statsDo';
 
 const app = createApp();
 const MODERATION_FOLLOW_UP_DELAY_MS = 30_000;

@@ -8,7 +8,7 @@ import { createLocatorRoutes } from "./routes/binding/createLocatorRoutes";
 import { createSyncRoutes } from "./routes/binding/createSyncRoutes";
 import { createHealthRoutes } from "./routes/health";
 import { createModerationRoutes } from "./routes/moderation";
-import { createProgressRoutes } from "./routes/progress";
+import { createProgressRoutes } from "./routes/progress/createProgressRoutes";
 import { createUploadRoutes } from "./routes/uploads";
 import type { AppEnv } from "./types/app";
 

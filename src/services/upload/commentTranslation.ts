@@ -1,12 +1,12 @@
-import { getRuntimeConfig, type RuntimeConfig } from "../lib/config";
-import { sha256Hex } from "../middleware/cache/kvJson";
+import { getRuntimeConfig, type RuntimeConfig } from "../../lib/config";
+import { sha256Hex } from "../../middleware/cache/kvJson";
 import {
   getCommentTranslations,
   upsertCommentTranslation,
-} from "../repositories/submission/translationCache";
-import { getVisibleCommentsByIds } from "../repositories/submission/statusSubmission";
-import type { CommentTranslationRecord, SubmissionRecord } from "../repositories/submission/types";
-import type { Bindings } from "../types/app";
+} from "../../repositories/submission/translationCache";
+import { getVisibleCommentsByIds } from "../../repositories/submission/statusSubmission";
+import type { CommentTranslationRecord, SubmissionRecord } from "../../repositories/submission/types";
+import type { Bindings } from "../../types/app";
 
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
 const GOOGLE_TRANSLATION_SCOPE = "https://www.googleapis.com/auth/cloud-translation";

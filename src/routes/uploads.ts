@@ -4,7 +4,7 @@ import { ApiError } from "../lib/errors";
 import { requireAuth } from "../middleware/auth";
 import { rateLimit } from "../middleware/rate-limit";
 import { getUserByUid } from "../repositories/users";
-import { translateVisibleComments } from "../services/comment-translation";
+import { translateVisibleComments } from "../services/upload/commentTranslation";
 import {
   handleCommentRemoveRequest,
   handleCommentVote,

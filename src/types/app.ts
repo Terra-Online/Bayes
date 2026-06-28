@@ -1,4 +1,4 @@
-import type { oem_imgTrans } from "../services/image-transcoder-container";
+import type { oem_imgTrans } from "../services/upload/imageTranscoderContainer";
 
 export type Role = "n" | "p" | "a" | "s" | "r";
 
