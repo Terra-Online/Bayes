@@ -1,4 +1,4 @@
-import { createAuth } from "../../lib/auth";
+import { createAuth } from "../../lib/auth/createAuth";
 import { getRuntimeConfig } from "../../lib/config";
 import { ApiError } from "../../lib/errors";
 import {

@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { createAuth } from "../lib/auth";
+import { createAuth } from "../lib/auth/createAuth";
 import { ApiError } from "../lib/errors";
 import { requireAuth } from "../middleware/auth";
 import { rateLimit } from "../middleware/rate-limit";

@@ -1,5 +1,5 @@
 import type { MiddlewareHandler } from "hono";
-import { createAuth } from "../lib/auth";
+import { createAuth } from "../lib/auth/createAuth";
 import { ApiError } from "../lib/errors";
 import { ensureUserProfile, formatPublicUid } from "../repositories/users";
 import type { AppEnv, AuthUser, Role } from "../types/app";

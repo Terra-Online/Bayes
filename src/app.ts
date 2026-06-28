@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { onAppError } from "./middleware/error-handler";
 import { requestIdMiddleware } from "./middleware/request-id";
-import { createAuthRoutes } from "./routes/auth";
+import { createAuthRoutes } from "./routes/auth/createAuthRoutes";
 import { createBindingRoutes } from "./routes/binding/createBindingRoutes";
 import { createLocatorRoutes } from "./routes/binding/createLocatorRoutes";
 import { createSyncRoutes } from "./routes/binding/createSyncRoutes";
