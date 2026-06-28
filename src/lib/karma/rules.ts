@@ -1,4 +1,4 @@
-import karmaConfig from "./karma-config.json";
+import karmaConfig from "./karmaConfig.json";
 
 type KarmaLevel = {
   karma: number;
@@ -9,6 +9,9 @@ type RateLimitBand = {
   minKarma: number;
   limit: number;
 };
+
+export type KarmaModerationKind = "image" | "comment";
+export type KarmaModerationStatus = "active" | "stale";
 
 export interface KarmaEvaluationInput {
   points: number;
@@ -129,8 +132,8 @@ export function getApprovedCommentDailyBackoffTtlSeconds(): number {
 }
 
 export function getModerationPointsDelta(
-  kind: "image" | "comment",
-  status: "active" | "stale",
+  kind: KarmaModerationKind,
+  status: KarmaModerationStatus,
   dailyApprovedCount = 1,
   minimumActivePoints = 0,
   backoffMultiplier = 1

@@ -1,7 +1,7 @@
 import { createRedisClient } from './lib/redis';
 import { getRuntimeConfig } from './lib/config';
 import { ensureModerationBackfill, moderateSubmissionOnce } from './services/moderation';
-import { evaluateKarmaIfDue } from './services/karma';
+import { evaluateKarmaIfDue } from './services/karma/evaluation';
 import {
   createEmptyPendingOpenAICompletionStats,
   notifyPendingOpenAICompleted,

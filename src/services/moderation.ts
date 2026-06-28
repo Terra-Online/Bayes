@@ -3,7 +3,8 @@ import { AI_STALE_MODERATION_NOTE_PREFIX } from "../lib/moderation";
 import { deletePublicMarkerCommentCache } from "../middleware/cache/publicMarkerComments";
 import { deletePublicMarkerImageCache } from "../middleware/cache/publicMarkerImages";
 import { prewarmPublicUgcAsset } from "../middleware/cache/publicUgcAssets";
-import { getModerationPointsDeltaWithDailyBackoff, markKarmaDirty } from "./karma";
+import { markKarmaDirty } from "./karma/evaluation";
+import { getModerationPointsDeltaWithDailyBackoff } from "./karma/moderationPoints";
 import {
   createEmptyPendingOpenAICompletionStats,
   recordPendingOpenAICompletionStatus,

@@ -1,22 +1,18 @@
 import type { Redis } from "@upstash/redis";
-import { AI_STALE_MODERATION_NOTE_PREFIX, RECALL_MODERATION_NOTE_PREFIX } from "../lib/moderation";
+import { AI_STALE_MODERATION_NOTE_PREFIX, RECALL_MODERATION_NOTE_PREFIX } from "../../lib/moderation";
 import {
-  getApprovedCommentDailyBackoffTtlSeconds,
   calculateKarmaEvaluationScore,
-  getApprovedImageDailyBackoffTtlSeconds,
   getKarmaEvaluationBatchSize,
   getKarmaEvaluationIntervalSeconds,
-  getModerationPointsDelta,
   pointsToKarma
-} from "../lib/karma";
+} from "../../lib/karma/rules";
 
 const KARMA_EVALUATION_LOCK_KEY = "karma:evaluation:last-run";
 const KARMA_DIRTY_SET_KEY = "karma:evaluation:dirty-users";
 const KARMA_SWEEP_CURSOR_KEY = "karma:evaluation:sweep-cursor";
 const KARMA_EVALUATION_QUERY_CHUNK_SIZE = 90;
-const DAILY_APPROVED_SUBMISSION_KEY_PREFIX = "karma:approved-submissions:";
 
-type KarmaEvaluationResult = {
+export type KarmaEvaluationResult = {
   evaluated: boolean;
   selected: number;
   dirtySelected: number;
@@ -41,45 +37,6 @@ export async function markKarmaDirty(redis: Redis, uid: string): Promise<void> {
   }
 
   await redis.sadd(KARMA_DIRTY_SET_KEY, normalizedUid);
-}
-
-export async function getModerationPointsDeltaWithDailyBackoff(
-  redis: Redis | undefined,
-  payload: {
-    userId: string;
-    kind: "image" | "comment";
-    status: "active" | "stale";
-    role?: string | null;
-    surgeModeEnabled?: boolean;
-    surgeBackoffMultiplier?: number;
-  }
-): Promise<number> {
-  const minimumActivePoints = payload.role === "p" || payload.role === "a" || payload.role === "r" ? 1 : 0;
-  const backoffMultiplier = payload.surgeModeEnabled ? payload.surgeBackoffMultiplier ?? 3 : 1;
-  if (payload.status !== "active" || !redis) {
-    return getModerationPointsDelta(payload.kind, payload.status, 1, minimumActivePoints, backoffMultiplier);
-  }
-
-  const approvedCount = await incrementDailyApprovedSubmissionCount(redis, payload.userId, payload.kind);
-  return getModerationPointsDelta(payload.kind, payload.status, approvedCount, minimumActivePoints, backoffMultiplier);
-}
-
-async function incrementDailyApprovedSubmissionCount(
-  redis: Redis,
-  uid: string,
-  kind: "image" | "comment"
-): Promise<number> {
-  const key = `${DAILY_APPROVED_SUBMISSION_KEY_PREFIX}${kind}:${new Date().toISOString().slice(0, 10)}:${uid}`;
-  const count = await redis.incrby(key, 1);
-  await redis.expire(
-    key,
-    kind === "comment"
-      ? getApprovedCommentDailyBackoffTtlSeconds()
-      : getApprovedImageDailyBackoffTtlSeconds()
-  );
-
-  const normalized = Number(count);
-  return Number.isFinite(normalized) ? Math.max(1, Math.floor(normalized)) : 1;
 }
 
 export async function evaluateKarmaIfDue(
