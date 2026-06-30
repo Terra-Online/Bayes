@@ -59,15 +59,23 @@ export async function createPendingSubmission(
     .run();
 }
 
-export async function getPendingOpenAISubmissions(db: D1Database, limit = 50): Promise<SubmissionRecord[]> {
+export async function getPendingOpenAISubmissions(
+  db: D1Database,
+  limit = 50,
+  queuedBefore?: string
+): Promise<SubmissionRecord[]> {
+  const queueFilter = queuedBefore
+    ? "AND (moderation_queued_at IS NULL OR moderation_queued_at < ?2)"
+    : "";
   const result = await db
     .prepare(
       `SELECT * FROM ugc_submissions
        WHERE status = 'pending_openai'
+       ${queueFilter}
        ORDER BY created_at ASC
        LIMIT ?1`
     )
-    .bind(limit)
+    .bind(...(queuedBefore ? [limit, queuedBefore] : [limit]))
     .all<Record<string, unknown>>();
 
   return (result.results ?? []).map((row) => mapSubmission(row));

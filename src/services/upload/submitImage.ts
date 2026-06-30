@@ -1,11 +1,10 @@
 import { nanoid } from "nanoid";
 import { getRuntimeConfig } from "../../lib/config";
 import { ApiError } from "../../lib/errors";
-import { createRedisClient } from "../../lib/redis";
 import { UGC_PUBLIC_IMAGE_CACHE_CONTROL } from "../../middleware/cache/publicUgcAssets";
 import { getDuplicateImageMarkerSummary } from "../../repositories/submission-duplicates";
 import { createPendingSubmission } from "../../repositories/submission/createSubmission";
-import { enqueueModeration } from "../moderation";
+import { enqueueModeration } from "../moderation/queue";
 import type { AppEnv } from "../../types/app";
 import { pickFile, pickString, normalizeUploadMime } from "./helpers";
 import { imageUploadFieldsSchema } from "./schemas";
@@ -101,7 +100,7 @@ export async function handleSubmitImage(c: import("hono").Context<AppEnv>) {
     sizeBytes: preparedImage.sizeBytes,
     status: "pending_openai"
   });
-  await enqueueModeration(createRedisClient(c.env), submissionId);
+  await enqueueModeration(c.env, submissionId);
   const duplicatePoi = await getDuplicateImageMarkerSummary(c.env.DB, {
     markerId: parsed.data.markerId,
     pathPrefix: uploadScope.pathPrefix,

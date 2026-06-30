@@ -1,10 +1,9 @@
 import { nanoid } from "nanoid";
 import { ApiError } from "../../lib/errors";
-import { createRedisClient } from "../../lib/redis";
 import { createPendingSubmission } from "../../repositories/submission/createSubmission";
 import { getSubmissionById } from "../../repositories/submission/statusSubmission";
 import type { AppEnv } from "../../types/app";
-import { enqueueModeration } from "../moderation";
+import { enqueueModeration } from "../moderation/queue";
 import { commentSubmissionSchema } from "./schemas";
 import { normalizePathPart } from "./storage";
 
@@ -60,7 +59,7 @@ export async function handleSubmitComment(c: import("hono").Context<AppEnv>) {
     parentId,
     commentDepth
   });
-  await enqueueModeration(createRedisClient(c.env), submissionId);
+  await enqueueModeration(c.env, submissionId);
 
   return c.json({
     ok: true,

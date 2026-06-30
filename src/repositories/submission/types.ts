@@ -10,6 +10,7 @@ export interface SubmissionRecord {
   filePath: string | null;
   status: SubmissionStatus;
   moderationNote: string | null;
+  moderationQueuedAt: string | null;
   mimeType: string | null;
   sizeBytes: number | null;
   parentId: string | null;

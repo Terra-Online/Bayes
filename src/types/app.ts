@@ -1,4 +1,5 @@
 import type { oem_imgTrans } from "../services/upload/imageTranscoderContainer";
+import type { OemModQueueMessage } from "../services/moderation/messages";
 
 export type Role = "n" | "p" | "a" | "s" | "r";
 
@@ -9,6 +10,7 @@ export interface Bindings {
   OEM_USER_DO: DurableObjectNamespace;
   OEM_STATS_DO: DurableObjectNamespace;
   OEM_IMG_TRANS: DurableObjectNamespace<oem_imgTrans>;
+  OEM_MODQ: Queue<OemModQueueMessage>;
   UPSTASH_REDIS_REST_URL: string;
   UPSTASH_REDIS_REST_TOKEN: string;
   BETTER_AUTH_SECRET?: string;

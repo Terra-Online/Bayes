@@ -23,7 +23,7 @@ import {
   notifyFlagRemoved,
   notifyRemoveRequestCancelled,
   notifyRemoveRequestCreated
-} from "../notifications";
+} from "../moderation/notifications";
 
 function requireUserAndSubmissionId(c: import("hono").Context<AppEnv>) {
   const user = c.get("authUser");

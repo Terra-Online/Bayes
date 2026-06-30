@@ -34,6 +34,8 @@ export function registerSocialAuthRoutes(
     const provider = typeof nextBody.provider === "string" ? nextBody.provider : "unknown";
     console.warn("[auth][social-sign-in] forwarding", {
       provider,
+      requestSignUp: typeof nextBody.requestSignUp === "boolean" ? nextBody.requestSignUp : null,
+      disableRedirect: typeof nextBody.disableRedirect === "boolean" ? nextBody.disableRedirect : null,
       requestOrigin: resolveTrustedRequestOrigin(c),
       callbackURL: toSafeTrustedUrlLog(
         c,

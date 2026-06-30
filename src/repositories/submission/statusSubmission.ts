@@ -73,6 +73,25 @@ export async function updateSubmissionStatus(
     .run();
 }
 
+export async function markSubmissionModerationQueued(
+  db: D1Database,
+  payload: {
+    id: string;
+    queuedAt: string;
+  }
+): Promise<void> {
+  await db
+    .prepare(
+      `UPDATE ugc_submissions
+       SET moderation_queued_at = ?2,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?1
+         AND status = 'pending_openai'`
+    )
+    .bind(payload.id, payload.queuedAt)
+    .run();
+}
+
 export async function getVisibleCommentsByIds(
   db: D1Database,
   ids: string[]

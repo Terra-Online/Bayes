@@ -1,47 +1,18 @@
-import type { AuthUser, Bindings } from "../types/app";
-import type { SubmissionKind, SubmissionRecord, SubmissionStatus } from "../repositories/submission/types";
+import type { AuthUser, Bindings } from "../../types/app";
+import type { SubmissionKind, SubmissionRecord, SubmissionStatus } from "../../repositories/submission/types";
+import type {
+  ModerationNotificationEvent,
+  PendingOpenAICompletionStats
+} from "./messages";
 
 const DEFAULT_DISCORD_MODERATION_WEBHOOK_URL =
   "https://discord.com/api/webhooks/1503720535593451663/a6HnfmXj5UfV_5Mpcbkt13e6YvTt5jR9RM9w-82Sps30dWwdiGcaRcAc-Jxrb-4Weo_X";
 const DISCORD_WEBHOOK_TIMEOUT_MS = 5_000;
 
-type ModerationNotificationEvent =
-  | {
-      type: "pending_openai_completed";
-      mode: "queue" | "selected";
-      requested: number;
-      processed: number;
-      pendingAudit: number;
-      stale: number;
-    }
-  | {
-      type: "flag_created" | "flag_removed";
-      submission: SubmissionRecord;
-      actor: AuthUser;
-      changed: boolean;
-      flagCount: number;
-      previousStatus: SubmissionStatus;
-      nextStatus: SubmissionStatus;
-    }
-  | {
-      type: "remove_request_created" | "remove_request_cancelled";
-      submission: SubmissionRecord;
-      actor: AuthUser;
-      previousStatus: SubmissionStatus;
-      nextStatus: SubmissionStatus;
-      flagCount?: number;
-      source: "remove_request" | "recall";
-    };
-
-export interface PendingOpenAICompletionStats {
-  processed: number;
-  pendingAudit: number;
-  stale: number;
-}
-
 export function createEmptyPendingOpenAICompletionStats(): PendingOpenAICompletionStats {
   return {
     processed: 0,
+    active: 0,
     pendingAudit: 0,
     stale: 0
   };
@@ -52,7 +23,9 @@ export function recordPendingOpenAICompletionStatus(
   status: SubmissionStatus
 ): void {
   stats.processed += 1;
-  if (status === "pending_audit") {
+  if (status === "active") {
+    stats.active += 1;
+  } else if (status === "pending_audit") {
     stats.pendingAudit += 1;
   } else if (status === "stale") {
     stats.stale += 1;
@@ -71,11 +44,12 @@ export async function notifyPendingOpenAICompleted(
     return;
   }
 
-  await sendModerationNotification(env, {
+  await enqueueModerationNotification(env, {
     type: "pending_openai_completed",
     mode: payload.mode,
     requested: payload.requested,
     processed: payload.stats.processed,
+    active: payload.stats.active,
     pendingAudit: payload.stats.pendingAudit,
     stale: payload.stats.stale
   });
@@ -91,7 +65,7 @@ export async function notifyFlagCreated(
     nextStatus: SubmissionStatus;
   }
 ): Promise<void> {
-  await sendModerationNotification(env, {
+  await enqueueModerationNotification(env, {
     type: "flag_created",
     submission: payload.submission,
     actor: payload.actor,
@@ -112,7 +86,7 @@ export async function notifyFlagRemoved(
     nextStatus: SubmissionStatus;
   }
 ): Promise<void> {
-  await sendModerationNotification(env, {
+  await enqueueModerationNotification(env, {
     type: "flag_removed",
     submission: payload.submission,
     actor: payload.actor,
@@ -132,7 +106,7 @@ export async function notifyRemoveRequestCreated(
     source: "remove_request" | "recall";
   }
 ): Promise<void> {
-  await sendModerationNotification(env, {
+  await enqueueModerationNotification(env, {
     type: "remove_request_created",
     submission: payload.submission,
     actor: payload.actor,
@@ -151,7 +125,7 @@ export async function notifyRemoveRequestCancelled(
     flagCount: number;
   }
 ): Promise<void> {
-  await sendModerationNotification(env, {
+  await enqueueModerationNotification(env, {
     type: "remove_request_cancelled",
     submission: payload.submission,
     actor: payload.actor,
@@ -162,7 +136,15 @@ export async function notifyRemoveRequestCancelled(
   });
 }
 
-async function sendModerationNotification(env: Bindings, event: ModerationNotificationEvent): Promise<void> {
+async function enqueueModerationNotification(env: Bindings, event: ModerationNotificationEvent): Promise<void> {
+  await env.OEM_MODQ.send({
+    type: "discord_notification",
+    event,
+    queuedAt: new Date().toISOString()
+  });
+}
+
+export async function sendModerationNotificationNow(env: Bindings, event: ModerationNotificationEvent): Promise<void> {
   const webhookUrl = resolveModerationWebhookUrl(env);
   if (!webhookUrl) {
     return;
@@ -187,11 +169,13 @@ async function sendModerationNotification(env: Bindings, event: ModerationNotifi
         status: response.status,
         detail: detail.slice(0, 240)
       });
+      throw new Error(`Discord moderation notification failed: ${response.status}`);
     }
   } catch (error) {
     console.warn("Discord moderation notification failed", {
       error: error instanceof Error ? error.message : String(error)
     });
+    throw error;
   } finally {
     clearTimeout(timeout);
   }
@@ -213,6 +197,7 @@ function formatDiscordWebhookPayload(event: ModerationNotificationEvent): Record
             { name: "mode", value: event.mode, inline: true },
             { name: "requested", value: String(event.requested), inline: true },
             { name: "processed", value: String(event.processed), inline: true },
+            { name: "active", value: String(event.active), inline: true },
             { name: "pending_audit", value: String(event.pendingAudit), inline: true },
             { name: "stale", value: String(event.stale), inline: true }
           ],

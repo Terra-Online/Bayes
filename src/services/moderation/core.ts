@@ -1,26 +1,26 @@
 import type { Redis } from "@upstash/redis";
-import { AI_STALE_MODERATION_NOTE_PREFIX } from "../lib/moderation";
-import { deletePublicMarkerCommentCache } from "../middleware/cache/publicMarkerComments";
-import { deletePublicMarkerImageCache } from "../middleware/cache/publicMarkerImages";
-import { prewarmPublicUgcAsset } from "../middleware/cache/publicUgcAssets";
-import { markKarmaDirty } from "./karma/evaluation";
-import { getModerationPointsDeltaWithDailyBackoff } from "./karma/moderationPoints";
+import {
+  AI_ACTIVE_MODERATION_NOTE_PREFIX,
+  AI_PENDING_AUDIT_MODERATION_NOTE_PREFIX
+} from "../../lib/moderation";
+import { deletePublicMarkerCommentCache } from "../../middleware/cache/publicMarkerComments";
+import { deletePublicMarkerImageCache } from "../../middleware/cache/publicMarkerImages";
+import { prewarmPublicUgcAsset } from "../../middleware/cache/publicUgcAssets";
+import { markKarmaDirty } from "../karma/evaluation";
+import { getModerationPointsDeltaWithDailyBackoff } from "../karma/moderationPoints";
 import {
   createEmptyPendingOpenAICompletionStats,
-  recordPendingOpenAICompletionStatus,
-  type PendingOpenAICompletionStats
+  recordPendingOpenAICompletionStatus
 } from "./notifications";
-import {
-  getPendingOpenAISubmissions,
-} from "../repositories/submission/createSubmission";
-import { getSubmissionById, updateSubmissionStatus } from "../repositories/submission/statusSubmission";
-import type { SubmissionStatus } from "../repositories/submission/types";
-import { applyUserPointsDelta } from "../repositories/users";
+import type { PendingOpenAICompletionStats } from "./messages";
+import { getSubmissionById, updateSubmissionStatus } from "../../repositories/submission/statusSubmission";
+import type { SubmissionRecord, SubmissionStatus } from "../../repositories/submission/types";
+import { applyUserPointsDelta } from "../../repositories/users";
 
-const MODERATION_QUEUE_KEY = "moderation:queue";
 const OPENAI_MODERATION_TIMEOUT_MS = 8_000;
 
 interface OpenAIModerationResult {
+  approved: boolean;
   flagged: boolean;
   categorySummary: string;
 }
@@ -28,53 +28,6 @@ interface OpenAIModerationResult {
 export interface ModerationProcessResult {
   processed: number;
   stats: PendingOpenAICompletionStats;
-}
-
-export async function enqueueModeration(redis: Redis, submissionId: string): Promise<void> {
-  await redis.rpush(MODERATION_QUEUE_KEY, submissionId);
-}
-
-export async function moderateSubmissionOnce(
-  db: D1Database,
-  redis: Redis,
-  options: {
-    openAiApiKey?: string;
-    assetBaseUrl: string;
-    ugcBucket: R2Bucket;
-    ugcKv?: KVNamespace;
-    redis?: Redis;
-    surgeModeEnabled?: boolean;
-    surgeBackoffMultiplier?: number;
-    skipAiModeration?: boolean;
-    localAutoApprove?: boolean;
-    prewarmAsset?: typeof prewarmPublicUgcAsset;
-  },
-  maxJobs = 10,
-  maxRuntimeMs = 25_000
-): Promise<ModerationProcessResult> {
-  const stats = createEmptyPendingOpenAICompletionStats();
-  const startedAt = Date.now();
-
-  for (let i = 0; i < maxJobs; i += 1) {
-    if (Date.now() - startedAt >= maxRuntimeMs) {
-      break;
-    }
-
-    const submissionId = await redis.lpop<string>(MODERATION_QUEUE_KEY);
-    if (!submissionId) {
-      break;
-    }
-
-    const status = await moderateSubmissionById(db, submissionId, options);
-    if (status) {
-      recordPendingOpenAICompletionStatus(stats, status);
-    }
-  }
-
-  return {
-    processed: stats.processed,
-    stats
-  };
 }
 
 export async function moderateSubmissionIds(
@@ -115,7 +68,7 @@ export async function moderateSubmissionIds(
   };
 }
 
-async function moderateSubmissionById(
+export async function moderateSubmissionById(
   db: D1Database,
   submissionId: string,
   options: {
@@ -147,33 +100,18 @@ async function moderateSubmissionById(
 
   if (!options.openAiApiKey) {
     const status = options.localAutoApprove ? "active" : "pending_audit";
-    await updateSubmissionStatus(db, {
+    await applyModerationStatus(db, submission, status, {
+      assetBaseUrl: options.assetBaseUrl,
+      ugcKv: options.ugcKv,
+      redis: options.redis,
+      surgeModeEnabled: options.surgeModeEnabled,
+      surgeBackoffMultiplier: options.surgeBackoffMultiplier,
+      prewarmAsset: options.prewarmAsset,
       id: submissionId,
-      status,
       moderationNote: options.localAutoApprove
         ? "Local upload debug auto-approved (OPENAI_API_KEY missing)."
         : "OpenAI moderation skipped in local mode; waiting for manual audit."
     });
-    if (status === "active") {
-      if (submission.kind === "image") {
-        await (options.prewarmAsset ?? prewarmPublicUgcAsset)(options.assetBaseUrl, submission.filePath);
-        await deletePublicMarkerImageCache(options.ugcKv, submission.markerId);
-      } else {
-        await deletePublicMarkerCommentCache(options.ugcKv, submission.markerId);
-      }
-      const pointsDelta = await getModerationPointsDeltaWithDailyBackoff(options.redis, {
-        userId: submission.userId,
-        kind: submission.kind,
-        status,
-        role: submission.submitter?.role,
-        surgeModeEnabled: options.surgeModeEnabled,
-        surgeBackoffMultiplier: options.surgeBackoffMultiplier
-      });
-      await applyUserPointsDelta(db, submission.userId, pointsDelta);
-      if (options.redis) {
-        await markKarmaDirty(options.redis, submission.userId);
-      }
-    }
     return status;
   }
 
@@ -194,20 +132,72 @@ async function moderateSubmissionById(
     });
   } catch (error) {
     result = {
+      approved: false,
       flagged: false,
       categorySummary: `OpenAI moderation failed (${formatModerationError(error)}), sent to manual audit.`
     };
   }
 
-  const status = result.flagged ? "stale" : "pending_audit";
-  await updateSubmissionStatus(db, {
+  const status = result.approved ? "active" : "pending_audit";
+  await applyModerationStatus(db, submission, status, {
+    assetBaseUrl: options.assetBaseUrl,
+    ugcKv: options.ugcKv,
+    redis: options.redis,
+    surgeModeEnabled: options.surgeModeEnabled,
+    surgeBackoffMultiplier: options.surgeBackoffMultiplier,
+    prewarmAsset: options.prewarmAsset,
     id: submissionId,
-    status,
-    moderationNote: result.flagged
-      ? `${AI_STALE_MODERATION_NOTE_PREFIX} ${result.categorySummary}`
-      : result.categorySummary
+    moderationNote: result.approved
+      ? `${AI_ACTIVE_MODERATION_NOTE_PREFIX} ${result.categorySummary}`
+      : `${AI_PENDING_AUDIT_MODERATION_NOTE_PREFIX} ${result.categorySummary}`
   });
   return status;
+}
+
+async function applyModerationStatus(
+  db: D1Database,
+  submission: SubmissionRecord,
+  status: SubmissionStatus,
+  options: {
+    id: string;
+    moderationNote: string;
+    assetBaseUrl: string;
+    ugcKv?: KVNamespace;
+    redis?: Redis;
+    surgeModeEnabled?: boolean;
+    surgeBackoffMultiplier?: number;
+    prewarmAsset?: typeof prewarmPublicUgcAsset;
+  }
+): Promise<void> {
+  await updateSubmissionStatus(db, {
+    id: options.id,
+    status,
+    moderationNote: options.moderationNote
+  });
+
+  if (status !== "active") {
+    return;
+  }
+
+  if (submission.kind === "image") {
+    await (options.prewarmAsset ?? prewarmPublicUgcAsset)(options.assetBaseUrl, submission.filePath);
+    await deletePublicMarkerImageCache(options.ugcKv, submission.markerId);
+  } else {
+    await deletePublicMarkerCommentCache(options.ugcKv, submission.markerId);
+  }
+
+  const pointsDelta = await getModerationPointsDeltaWithDailyBackoff(options.redis, {
+    userId: submission.userId,
+    kind: submission.kind,
+    status,
+    role: submission.submitter?.role,
+    surgeModeEnabled: options.surgeModeEnabled,
+    surgeBackoffMultiplier: options.surgeBackoffMultiplier
+  });
+  await applyUserPointsDelta(db, submission.userId, pointsDelta);
+  if (options.redis) {
+    await markKarmaDirty(options.redis, submission.userId);
+  }
 }
 
 async function resolveModerationImageUrl(
@@ -248,6 +238,7 @@ async function callOpenAIModeration(
 
   if (input.length === 0) {
     return {
+      approved: false,
       flagged: false,
       categorySummary: "empty moderation input; sent to manual audit."
     };
@@ -281,6 +272,7 @@ async function callOpenAIModeration(
       detail: responseDetail
     });
     return {
+      approved: false,
       flagged: false,
       categorySummary: `OpenAI moderation unavailable (${response.status}, request_id=${requestId}${responseDetail ? `, ${responseDetail}` : ""}), sent to manual audit.`
     };
@@ -294,6 +286,14 @@ async function callOpenAIModeration(
   };
 
   const first = data.results?.[0];
+  if (!first || typeof first.flagged !== "boolean") {
+    return {
+      approved: false,
+      flagged: false,
+      categorySummary: "OpenAI moderation returned no explicit decision; sent to manual audit."
+    };
+  }
+
   const flagged = Boolean(first?.flagged);
   const categories = first?.categories ?? {};
   const activeCategories = Object.entries(categories)
@@ -302,6 +302,7 @@ async function callOpenAIModeration(
     .join(", ");
 
   return {
+    approved: !flagged,
     flagged,
     categorySummary: activeCategories || (flagged ? "flagged" : "clean")
   };
@@ -336,24 +337,4 @@ function parseOpenAIErrorDetail(raw: string): string {
   } catch {
     return raw.slice(0, 240).replace(/\s+/g, " ").trim();
   }
-}
-
-export async function ensureModerationBackfill(
-  db: D1Database,
-  redis: Redis,
-  targetQueueSize = 20
-): Promise<number> {
-  const currentLength = await redis.llen(MODERATION_QUEUE_KEY);
-  if (typeof currentLength === "number" && currentLength >= targetQueueSize) {
-    return 0;
-  }
-
-  const pending = await getPendingOpenAISubmissions(db, targetQueueSize);
-  let enqueued = 0;
-  for (const item of pending) {
-    await enqueueModeration(redis, item.id);
-    enqueued += 1;
-  }
-
-  return enqueued;
 }
