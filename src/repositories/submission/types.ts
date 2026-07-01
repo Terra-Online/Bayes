@@ -27,6 +27,7 @@ export interface SubmissionSubmitter {
   role: string | null;
   karma: number | null;
   nickname: string | null;
+  avatar: number | null;
 }
 
 export type SubmissionStatus =
@@ -69,6 +70,8 @@ export interface PublicSubmissionComment {
   author: {
     nickname: string;
     publicUid: string;
+    avatar?: number;
+    karma?: number;
   } | null;
   status: SubmissionStatus;
   score: number;

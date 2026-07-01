@@ -47,6 +47,9 @@ export function mapSubmission(row: Record<string, unknown>): SubmissionRecord {
   const submitterUid = row.submitter_uid === null || row.submitter_uid === undefined
     ? null
     : String(row.submitter_uid);
+  const avatar = row.user_avt === null || row.user_avt === undefined
+    ? null
+    : Number(row.user_avt);
 
   return {
     id: String(row.id),
@@ -76,7 +79,8 @@ export function mapSubmission(row: Record<string, unknown>): SubmissionRecord {
             : null,
           role: row.user_role === null || row.user_role === undefined ? null : String(row.user_role),
           karma: row.user_karma === null || row.user_karma === undefined ? null : Number(row.user_karma),
-          nickname: row.user_nickname === null || row.user_nickname === undefined ? null : String(row.user_nickname)
+          nickname: row.user_nickname === null || row.user_nickname === undefined ? null : String(row.user_nickname),
+          avatar: avatar !== null && Number.isFinite(avatar) ? avatar : null
         }
       : null,
     createdAt: String(row.created_at),
@@ -133,7 +137,11 @@ export function publicCommentFromRow(
     author: submission.submitter?.publicUid && submission.submitter.nickname
       ? {
           nickname: submission.submitter.nickname,
-          publicUid: submission.submitter.publicUid
+          publicUid: submission.submitter.publicUid,
+          ...(submission.submitter.avatar !== null ? { avatar: submission.submitter.avatar } : {}),
+          ...(submission.submitter.karma !== null && Number.isFinite(submission.submitter.karma)
+            ? { karma: submission.submitter.karma }
+            : {})
         }
       : null,
     status: submission.status,

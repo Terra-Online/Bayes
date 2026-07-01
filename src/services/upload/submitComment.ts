@@ -27,7 +27,7 @@ export async function handleSubmitComment(c: import("hono").Context<AppEnv>) {
 
   if (parsed.data.parentId) {
     const parent = await getSubmissionById(c.env.DB, parsed.data.parentId);
-    if (!parent || parent.kind !== "comment" || parent.commentDepth !== 0 || parent.parentId !== null) {
+    if (!parent || parent.kind !== "comment") {
       throw new ApiError(404, "PARENT_COMMENT_NOT_FOUND", "Parent comment was not found.");
     }
     if (
@@ -38,12 +38,12 @@ export async function handleSubmitComment(c: import("hono").Context<AppEnv>) {
       throw new ApiError(409, "PARENT_COMMENT_MISMATCH", "Parent comment belongs to a different POI.");
     }
     if (!["active", "flagged", "remove_request"].includes(parent.status)) {
-      throw new ApiError(409, "PARENT_COMMENT_NOT_VISIBLE", "Replies can only target visible top-level comments.", {
+      throw new ApiError(409, "PARENT_COMMENT_NOT_VISIBLE", "Replies can only target visible comments.", {
         status: parent.status
       });
     }
     parentId = parent.id;
-    commentDepth = 1;
+    commentDepth = parent.commentDepth + 1;
   }
 
   await createPendingSubmission(c.env.DB, {

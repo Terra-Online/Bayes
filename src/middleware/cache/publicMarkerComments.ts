@@ -4,7 +4,7 @@ import { getJsonFromKv, putJsonToKv, sha256Hex } from "./kvJson";
 export const PUBLIC_MARKER_COMMENT_CACHE_LIMIT = 50;
 export const PUBLIC_MARKER_COMMENT_REPLY_CACHE_LIMIT = 5;
 
-const PUBLIC_MARKER_COMMENT_KV_KEY_PREFIX = "ugc:marker-comments:v1:";
+const PUBLIC_MARKER_COMMENT_KV_KEY_PREFIX = "ugc:marker-comments:v2:";
 const PUBLIC_MARKER_COMMENT_POSITIVE_TTL_SECONDS = 7 * 24 * 60 * 60;
 const PUBLIC_MARKER_COMMENT_EMPTY_TTL_SECONDS = 10 * 60;
 const PUBLIC_COMMENT_CACHE_NAMESPACES = ["default", "test", "prod"] as const;

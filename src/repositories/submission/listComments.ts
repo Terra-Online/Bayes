@@ -6,15 +6,19 @@ function buildCommentTree(
   replies: PublicSubmissionComment[],
   replyLimit: number
 ): PublicSubmissionComment[] {
-  const rootById = new Map(roots.map((root) => [root.id, root]));
+  const commentById = new Map(roots.map((root) => [root.id, root]));
   for (const reply of replies) {
-    const root = reply.parentId ? rootById.get(reply.parentId) : undefined;
-    if (!root) continue;
-    root.replyCount += 1;
-    if (root.replies.length < replyLimit) {
-      root.replies.push(reply);
+    commentById.set(reply.id, reply);
+  }
+
+  for (const reply of replies) {
+    const parent = reply.parentId ? commentById.get(reply.parentId) : undefined;
+    if (!parent) continue;
+    if (parent.replies.length < replyLimit) {
+      parent.replies.push(reply);
     }
   }
+
   return roots;
 }
 
@@ -52,7 +56,7 @@ export async function listActiveCommentsByMarker(
 
   const rootResult = await db
     .prepare(
-      `WITH root_candidates AS (
+      `WITH RECURSIVE root_candidates AS (
          SELECT
            s.*,
            COALESCE(v.score, 0) AS score,
@@ -84,13 +88,22 @@ export async function listActiveCommentsByMarker(
          )
          WHERE poi_rank <= ?${limitPlaceholder}
        ),
-       reply_counts AS (
-         SELECT parent_id, COUNT(*) AS reply_count
+       visible_replies AS (
+         SELECT *
          FROM ugc_submissions
          WHERE parent_id IN (SELECT id FROM selected_comments)
            AND kind = 'comment'
-           AND comment_depth = 1
            AND status IN ('active', 'flagged', 'remove_request')
+         UNION ALL
+         SELECT child.*
+         FROM ugc_submissions child
+         INNER JOIN visible_replies parent ON child.parent_id = parent.id
+         WHERE child.kind = 'comment'
+           AND child.status IN ('active', 'flagged', 'remove_request')
+       ),
+       reply_counts AS (
+         SELECT parent_id, COUNT(*) AS reply_count
+         FROM visible_replies
          GROUP BY parent_id
        )
        SELECT
@@ -103,7 +116,8 @@ export async function listActiveCommentsByMarker(
          u.uid_suffix AS user_uid_suffix,
          u.role AS user_role,
          u.karma AS user_karma,
-         u.nickname AS user_nickname
+         u.nickname AS user_nickname,
+         u.avt AS user_avt
          ${viewerSelect}
        FROM selected_comments s
        LEFT JOIN reply_counts r ON r.parent_id = s.id
@@ -135,13 +149,28 @@ export async function listActiveCommentsByMarker(
   const replyViewerBindings = payload.viewerUserId ? [payload.viewerUserId, payload.viewerUserId] : [];
   const replyResult = await db
     .prepare(
-      `WITH reply_candidates AS (
+      `WITH RECURSIVE visible_replies AS (
+         SELECT
+           s.*
+         FROM ugc_submissions s
+         WHERE s.parent_id IN (${rootPlaceholders})
+           AND s.kind = 'comment'
+           AND s.status IN ('active', 'flagged', 'remove_request')
+         UNION ALL
+         SELECT
+           child.*
+         FROM ugc_submissions child
+         INNER JOIN visible_replies parent ON child.parent_id = parent.id
+         WHERE child.kind = 'comment'
+           AND child.status IN ('active', 'flagged', 'remove_request')
+       ),
+       reply_candidates AS (
          SELECT
            s.*,
            COALESCE(v.score, 0) AS score,
            COALESCE(f.flag_count, 0) AS flag_count,
            ROW_NUMBER() OVER (PARTITION BY s.parent_id ORDER BY s.created_at ASC, s.id ASC) AS reply_rank
-         FROM ugc_submissions s
+         FROM visible_replies s
          LEFT JOIN (
            SELECT submission_id, SUM(value) AS score
            FROM ugc_submission_votes
@@ -152,32 +181,35 @@ export async function listActiveCommentsByMarker(
            FROM ugc_submission_flags
            GROUP BY submission_id
          ) f ON f.submission_id = s.id
-         WHERE s.parent_id IN (${rootPlaceholders})
-           AND s.kind = 'comment'
-           AND s.comment_depth = 1
-           AND s.status IN ('active', 'flagged', 'remove_request')
        ),
        selected_comments AS (
          SELECT *
          FROM reply_candidates
          WHERE reply_rank <= ?${replyLimitPlaceholder}
+       ),
+       reply_counts AS (
+         SELECT parent_id, COUNT(*) AS reply_count
+         FROM visible_replies
+         GROUP BY parent_id
        )
        SELECT
          s.*,
          COALESCE(s.score, 0) AS score,
          COALESCE(s.flag_count, 0) AS flag_count,
-         0 AS reply_count,
+         COALESCE(r.reply_count, 0) AS reply_count,
          u.uid AS submitter_uid,
          u.uid_number AS user_uid_number,
          u.uid_suffix AS user_uid_suffix,
          u.role AS user_role,
          u.karma AS user_karma,
-         u.nickname AS user_nickname
+         u.nickname AS user_nickname,
+         u.avt AS user_avt
          ${replyViewerSelect}
        FROM selected_comments s
        ${replyViewerJoin}
+       LEFT JOIN reply_counts r ON r.parent_id = s.id
        LEFT JOIN users u ON u.uid = s.user_id
-       ORDER BY s.parent_id ASC, s.created_at ASC, s.id ASC`
+       ORDER BY s.comment_depth ASC, s.parent_id ASC, s.created_at ASC, s.id ASC`
     )
     .bind(...rootIds, replyLimit, ...replyViewerBindings)
     .all<Record<string, unknown>>();
@@ -227,7 +259,8 @@ export async function listUserCommentsByMarker(
          u.uid_suffix AS user_uid_suffix,
          u.role AS user_role,
          u.karma AS user_karma,
-         u.nickname AS user_nickname
+         u.nickname AS user_nickname,
+         u.avt AS user_avt
        FROM selected_comments s
        LEFT JOIN (
          SELECT submission_id, SUM(value) AS score
