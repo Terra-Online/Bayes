@@ -89,20 +89,6 @@ export interface UserSubmissionComment extends Omit<PublicSubmissionComment, "re
   replyCount?: number;
 }
 
-export interface CommentTranslationRecord {
-  commentId: string;
-  sourceLanguage: string;
-  detectedSourceLanguage: string | null;
-  targetLanguage: string;
-  glossaryKey: string;
-  sourceHash: string;
-  translatedContent: string;
-  provider: string;
-  glossaryApplied: boolean;
-  createdAt: string;
-  updatedAt: string;
-}
-
 export interface UserSubmissionImage extends PublicSubmissionImage {
   poiHash: string;
   poiType: string;

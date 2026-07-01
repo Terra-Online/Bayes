@@ -19,6 +19,8 @@ export interface RuntimeConfig {
     projectId?: string;
     location: string;
     glossary?: string;
+    glossaryVersion: string;
+    glossaryLanguages: Set<string>;
     allowedLanguages: Set<string>;
   };
 }
@@ -31,7 +33,32 @@ const DEFAULT_UGC_ASSET_BASE_URL = "https://assets.opendfieldmap.org";
 const DEFAULT_TEST_UPLOAD_PREFIX = "_test";
 const DEFAULT_SURGE_BACKOFF_MULTIPLIER = 3;
 const DEFAULT_GOOGLE_TRANSLATE_LOCATION = "global";
-const DEFAULT_GOOGLE_TRANSLATE_LANGUAGES = ["zh-CN", "zh-HK", "en", "ja", "ko"];
+const DEFAULT_GOOGLE_TRANSLATE_GLOSSARY_VERSION = "g2026-07-01";
+const DEFAULT_GOOGLE_TRANSLATE_GLOSSARY_LANGUAGES = [
+  "zh-CN",
+  "zh-HK",
+  "en",
+  "ja",
+  "ko",
+  "fr",
+  "de",
+  "es",
+  "pt-BR",
+  "ru",
+  "th",
+  "vi",
+  "id",
+  "ms"
+];
+const DEFAULT_GOOGLE_TRANSLATE_ALLOWED_LANGUAGES = [
+  ...DEFAULT_GOOGLE_TRANSLATE_GLOSSARY_LANGUAGES,
+  "pl",
+  "sv",
+  "it",
+  "ar",
+  "hi",
+  "el"
+];
 
 function parsePositiveInt(value: string | undefined, fallback: number): number {
   if (!value) {
@@ -89,6 +116,15 @@ function parseCsvSet(value: string | undefined, fallback: string[]): Set<string>
   return new Set(parsed.length > 0 ? parsed : fallback);
 }
 
+function normalizeCacheVersion(value: string | undefined, fallback: string): string {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return fallback;
+  }
+  const prefixed = trimmed.startsWith("g") ? trimmed : `g${trimmed}`;
+  return prefixed.replace(/[^a-zA-Z0-9_.-]/g, "-").slice(0, 64) || fallback;
+}
+
 function normalizePrivateKey(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   if (!trimmed) {
@@ -127,7 +163,15 @@ export function getRuntimeConfig(env: Bindings): RuntimeConfig {
       projectId: env.GOOGLE_TRANSLATE_PROJECT_ID?.trim() || undefined,
       location: env.GOOGLE_TRANSLATE_LOCATION?.trim() || DEFAULT_GOOGLE_TRANSLATE_LOCATION,
       glossary: env.GOOGLE_TRANSLATE_GLOSSARY?.trim() || undefined,
-      allowedLanguages: parseCsvSet(env.GOOGLE_TRANSLATE_ALLOWED_LANGUAGES, DEFAULT_GOOGLE_TRANSLATE_LANGUAGES)
+      glossaryVersion: normalizeCacheVersion(
+        env.GOOGLE_TRANSLATE_GLOSSARY_VERSION,
+        DEFAULT_GOOGLE_TRANSLATE_GLOSSARY_VERSION
+      ),
+      glossaryLanguages: parseCsvSet(
+        env.GOOGLE_TRANSLATE_GLOSSARY_LANGUAGES,
+        DEFAULT_GOOGLE_TRANSLATE_GLOSSARY_LANGUAGES
+      ),
+      allowedLanguages: parseCsvSet(env.GOOGLE_TRANSLATE_ALLOWED_LANGUAGES, DEFAULT_GOOGLE_TRANSLATE_ALLOWED_LANGUAGES)
     }
   };
 }

@@ -1,6 +1,5 @@
 import { formatPublicUid } from "../users";
 import type {
-  CommentTranslationRecord,
   PublicSubmissionComment,
   PublicSubmissionImage,
   SubmissionKind,
@@ -163,23 +162,5 @@ export function userCommentFromRow(row: Record<string, unknown>): UserSubmission
     flagCount: toCount(row.flag_count),
     replies: undefined,
     replyCount: undefined
-  };
-}
-
-export function mapCommentTranslation(row: Record<string, unknown>): CommentTranslationRecord {
-  return {
-    commentId: String(row.comment_id),
-    sourceLanguage: String(row.source_language),
-    detectedSourceLanguage: row.detected_source_language === null || row.detected_source_language === undefined
-      ? null
-      : String(row.detected_source_language),
-    targetLanguage: String(row.target_language),
-    glossaryKey: String(row.glossary_key ?? ""),
-    sourceHash: String(row.source_hash),
-    translatedContent: String(row.translated_content ?? ""),
-    provider: String(row.provider ?? "google_cloud_translation_v3"),
-    glossaryApplied: Boolean(row.glossary_applied),
-    createdAt: String(row.created_at),
-    updatedAt: String(row.updated_at)
   };
 }
