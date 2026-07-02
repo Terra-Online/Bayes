@@ -22,6 +22,7 @@ export interface RuntimeConfig {
     glossaryVersion: string;
     glossaryLanguages: Set<string>;
     allowedLanguages: Set<string>;
+    fetchProxyUrl?: string;
   };
 }
 
@@ -125,6 +126,22 @@ function normalizeCacheVersion(value: string | undefined, fallback: string): str
   return prefixed.replace(/[^a-zA-Z0-9_.-]/g, "-").slice(0, 64) || fallback;
 }
 
+function normalizeLocalProxyUrl(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  try {
+    const url = new URL(trimmed);
+    if (url.protocol !== "http:" || !["127.0.0.1", "localhost"].includes(url.hostname)) {
+      return undefined;
+    }
+    return url.toString();
+  } catch {
+    return undefined;
+  }
+}
+
 function normalizePrivateKey(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   if (!trimmed) {
@@ -171,7 +188,8 @@ export function getRuntimeConfig(env: Bindings): RuntimeConfig {
         env.GOOGLE_TRANSLATE_GLOSSARY_LANGUAGES,
         DEFAULT_GOOGLE_TRANSLATE_GLOSSARY_LANGUAGES
       ),
-      allowedLanguages: parseCsvSet(env.GOOGLE_TRANSLATE_ALLOWED_LANGUAGES, DEFAULT_GOOGLE_TRANSLATE_ALLOWED_LANGUAGES)
+      allowedLanguages: parseCsvSet(env.GOOGLE_TRANSLATE_ALLOWED_LANGUAGES, DEFAULT_GOOGLE_TRANSLATE_ALLOWED_LANGUAGES),
+      fetchProxyUrl: normalizeLocalProxyUrl(env.GOOGLE_TRANSLATE_FETCH_PROXY_URL)
     }
   };
 }

@@ -89,6 +89,22 @@ export interface UserSubmissionComment extends Omit<PublicSubmissionComment, "re
   replyCount?: number;
 }
 
+export interface TextTranslationRecord {
+  cacheKey: string;
+  textHash: string;
+  flowVersion: string;
+  sourceLanguage: string;
+  detectedSourceLanguage: string | null;
+  targetLanguage: string;
+  provider: string;
+  glossaryVersion: string;
+  glossaryKey: string;
+  translatedContent: string;
+  glossaryApplied: boolean;
+  translatedAt: string;
+  updatedAt: string;
+}
+
 export interface UserSubmissionImage extends PublicSubmissionImage {
   poiHash: string;
   poiType: string;

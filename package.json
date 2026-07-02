@@ -6,13 +6,14 @@
   "scripts": {
     "dev": "wrangler dev",
     "dev:remote": "wrangler dev --remote",
-    "dev:local": "wrangler dev --env local",
+    "dev:local": "node scripts/dev-with-google-proxy.mjs --env local",
     "deploy": "bash scripts/deploy-with-dev-vars.sh",
     "deploy:raw": "wrangler deploy",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "db:migrate:local": "wrangler d1 migrations apply DB --local",
-    "db:migrate:remote": "wrangler d1 migrations apply DB --remote"
+    "db:migrate:remote": "wrangler d1 migrations apply DB --remote",
+    "glossary:update": "node scripts/update-google-glossary.mjs"
   },
   "dependencies": {
     "@cloudflare/containers": "^0.3.7",
