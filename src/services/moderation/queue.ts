@@ -4,6 +4,7 @@ import { createRedisClient } from "../../lib/redis";
 import { getPendingOpenAISubmissions } from "../../repositories/submission/createSubmission";
 import { markSubmissionModerationQueued } from "../../repositories/submission/statusSubmission";
 import type { Bindings } from "../../types/app";
+import { prewarmApprovedCommentTranslations } from "../upload/commentTranslation";
 import {
   createEmptyPendingOpenAICompletionStats,
   notifyPendingOpenAICompleted,
@@ -31,7 +32,9 @@ function createModerationOptions(env: Bindings, redis: Redis): ModerationOptions
     surgeModeEnabled: config.surgeModeEnabled,
     surgeBackoffMultiplier: config.surgeBackoffMultiplier,
     skipAiModeration: config.skipAiModeration,
-    localAutoApprove: config.localUploadAutoApprove
+    localAutoApprove: config.localUploadAutoApprove,
+    enqueueApprovedCommentTranslationPrewarm: (submissionId) =>
+      enqueueApprovedCommentTranslationPrewarm(env, submissionId, "auto_moderation")
   };
 }
 
@@ -51,6 +54,19 @@ export async function enqueueModeration(env: Bindings, submissionId: string): Pr
       submissionId,
       error: error instanceof Error ? error.message : String(error)
     });
+  });
+}
+
+export async function enqueueApprovedCommentTranslationPrewarm(
+  env: Bindings,
+  submissionId: string,
+  source: "auto_moderation" | "manual_moderation"
+): Promise<void> {
+  await env.OEM_MODQ.send({
+    type: "comment_translation_prewarm",
+    submissionId,
+    source,
+    queuedAt: new Date().toISOString()
   });
 }
 
@@ -137,6 +153,11 @@ async function processModerationQueueMessage(
 
   if (message.type === "discord_notification") {
     await sendModerationNotificationNow(env, message.event);
+    return;
+  }
+
+  if (message.type === "comment_translation_prewarm") {
+    await prewarmApprovedCommentTranslations(env, message.submissionId);
     return;
   }
 

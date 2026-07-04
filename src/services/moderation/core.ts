@@ -43,6 +43,7 @@ export async function moderateSubmissionIds(
     skipAiModeration?: boolean;
     localAutoApprove?: boolean;
     prewarmAsset?: typeof prewarmPublicUgcAsset;
+    enqueueApprovedCommentTranslationPrewarm?: (submissionId: string) => Promise<void>;
   },
   submissionIds: string[],
   maxRuntimeMs = 25_000
@@ -82,6 +83,7 @@ export async function moderateSubmissionById(
     skipAiModeration?: boolean;
     localAutoApprove?: boolean;
     prewarmAsset?: typeof prewarmPublicUgcAsset;
+    enqueueApprovedCommentTranslationPrewarm?: (submissionId: string) => Promise<void>;
   }
 ): Promise<SubmissionStatus | null> {
   const submission = await getSubmissionById(db, submissionId);
@@ -107,6 +109,7 @@ export async function moderateSubmissionById(
       surgeModeEnabled: options.surgeModeEnabled,
       surgeBackoffMultiplier: options.surgeBackoffMultiplier,
       prewarmAsset: options.prewarmAsset,
+      enqueueApprovedCommentTranslationPrewarm: options.enqueueApprovedCommentTranslationPrewarm,
       id: submissionId,
       moderationNote: options.localAutoApprove
         ? "Local upload debug auto-approved (OPENAI_API_KEY missing)."
@@ -146,6 +149,7 @@ export async function moderateSubmissionById(
     surgeModeEnabled: options.surgeModeEnabled,
     surgeBackoffMultiplier: options.surgeBackoffMultiplier,
     prewarmAsset: options.prewarmAsset,
+    enqueueApprovedCommentTranslationPrewarm: options.enqueueApprovedCommentTranslationPrewarm,
     id: submissionId,
     moderationNote: result.approved
       ? `${AI_ACTIVE_MODERATION_NOTE_PREFIX} ${result.categorySummary}`
@@ -167,6 +171,7 @@ async function applyModerationStatus(
     surgeModeEnabled?: boolean;
     surgeBackoffMultiplier?: number;
     prewarmAsset?: typeof prewarmPublicUgcAsset;
+    enqueueApprovedCommentTranslationPrewarm?: (submissionId: string) => Promise<void>;
   }
 ): Promise<void> {
   await updateSubmissionStatus(db, {
@@ -184,6 +189,7 @@ async function applyModerationStatus(
     await deletePublicMarkerImageCache(options.ugcKv, submission.markerId);
   } else {
     await deletePublicMarkerCommentCache(options.ugcKv, submission.markerId);
+    await options.enqueueApprovedCommentTranslationPrewarm?.(options.id);
   }
 
   const pointsDelta = await getModerationPointsDeltaWithDailyBackoff(options.redis, {

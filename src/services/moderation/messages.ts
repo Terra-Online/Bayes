@@ -6,6 +6,10 @@ export type ModerationQueueSource =
   | "manual"
   | "scheduled_backfill";
 
+export type TranslationPrewarmSource =
+  | "auto_moderation"
+  | "manual_moderation";
+
 export type ModerationNotificationEvent =
   | {
       type: "pending_openai_completed";
@@ -52,5 +56,11 @@ export type OemModQueueMessage =
   | {
       type: "discord_notification";
       event: ModerationNotificationEvent;
+      queuedAt: string;
+    }
+  | {
+      type: "comment_translation_prewarm";
+      submissionId: string;
+      source: TranslationPrewarmSource;
       queuedAt: string;
     };

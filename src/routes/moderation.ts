@@ -30,7 +30,7 @@ import { prewarmPublicUgcAsset } from "../middleware/cache/publicUgcAssets";
 import { evaluateKarmaBatch, markKarmaDirty } from "../services/karma/evaluation";
 import { getModerationPointsDeltaWithDailyBackoff } from "../services/karma/moderationPoints";
 import { moderateSubmissionIds } from "../services/moderation/core";
-import { ensureModerationBackfill } from "../services/moderation/queue";
+import { ensureModerationBackfill, enqueueApprovedCommentTranslationPrewarm } from "../services/moderation/queue";
 import { notifyPendingOpenAICompleted } from "../services/moderation/notifications";
 import type { AppEnv } from "../types/app";
 
@@ -177,7 +177,9 @@ async function runModeration(
     surgeModeEnabled: config.surgeModeEnabled,
     surgeBackoffMultiplier: config.surgeBackoffMultiplier,
     skipAiModeration: config.skipAiModeration,
-    localAutoApprove: config.localUploadAutoApprove
+    localAutoApprove: config.localUploadAutoApprove,
+    enqueueApprovedCommentTranslationPrewarm: (submissionId: string) =>
+      enqueueApprovedCommentTranslationPrewarm(c.env, submissionId, "auto_moderation")
   };
 
   if (payload.ids && payload.ids.length > 0) {
@@ -411,6 +413,11 @@ export function createModerationRoutes() {
       c.executionCtx.waitUntil(deletePublicMarkerImageCache(c.env.OEM_KV, current.markerId));
     } else {
       c.executionCtx.waitUntil(deletePublicMarkerCommentCache(c.env.OEM_KV, current.markerId));
+      if (current.status !== "active" && parsed.data.status === "active") {
+        c.executionCtx.waitUntil(
+          enqueueApprovedCommentTranslationPrewarm(c.env, submissionId, "manual_moderation")
+        );
+      }
     }
     const effectiveModerationNote = parsed.data.moderationNote ?? current.moderationNote;
     if (shouldApplyModerationPoints(current.status, parsed.data.status, effectiveModerationNote)) {

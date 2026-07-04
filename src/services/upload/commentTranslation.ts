@@ -18,6 +18,7 @@ const GOOGLE_FETCH_TIMEOUT_MS = 15_000;
 const MAX_TRANSLATION_BATCH_SIZE = 100;
 const TRANSLATION_KV_CACHE_PREFIX = "translate:v1";
 const TRANSLATION_NO_GLOSSARY_CACHE_VERSION = "g0";
+const APPROVED_COMMENT_PREWARM_TARGET_LANGUAGES = ["en-US", "ru-RU", "ja-JP", "ko-KR"] as const;
 const GOOGLE_LANGUAGE_BY_LOCALE: Record<string, string> = {
   "en-US": "en",
   "zh-CN": "zh-CN",
@@ -785,6 +786,10 @@ function normalizeSourceLanguage(sourceLanguage: string | undefined): string {
   return sourceLanguage?.trim() || "auto";
 }
 
+function isGoogleTranslateConfigured(config: RuntimeConfig["googleTranslate"]): boolean {
+  return Boolean(config.clientEmail && config.privateKey && config.projectId);
+}
+
 function itemFromCachedTextTranslation(
   commentId: string,
   targetLanguage: string,
@@ -1068,4 +1073,30 @@ export async function translateVisibleComments(
       error: "COMMENT_NOT_TRANSLATABLE"
     })
   };
+}
+
+export async function prewarmApprovedCommentTranslations(
+  env: Bindings,
+  commentId: string
+): Promise<{ ok: boolean; skipped?: string; targets: string[] }> {
+  const id = commentId.trim();
+  const targets = [...APPROVED_COMMENT_PREWARM_TARGET_LANGUAGES];
+  if (!id) {
+    return { ok: false, skipped: "COMMENT_ID_EMPTY", targets };
+  }
+
+  const config = getRuntimeConfig(env).googleTranslate;
+  if (!isGoogleTranslateConfigured(config)) {
+    return { ok: true, skipped: "GOOGLE_TRANSLATE_NOT_CONFIGURED", targets };
+  }
+
+  await Promise.all(targets.map((targetLanguage) =>
+    translateVisibleComments(env, {
+      commentIds: [id],
+      sourceLanguage: "auto",
+      targetLanguage
+    })
+  ));
+
+  return { ok: true, targets };
 }
