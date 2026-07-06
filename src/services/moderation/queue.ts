@@ -8,8 +8,7 @@ import { prewarmApprovedCommentTrans } from "../upload/commentTranslation";
 import {
   createEmptyPendingOpenAICompletionStats,
   notifyCommentTransPrewarmDone,
-  notifyPendingOpenAICompleted,
-  notifySubmissionApproved,
+  notifySubmissionModerationResult,
   recordPendingOpenAICompletionStatus,
   sendModerationNotificationNow
 } from "./notifications";
@@ -37,10 +36,11 @@ function createModerationOptions(env: Bindings, redis: Redis): ModerationOptions
     localAutoApprove: config.localUploadAutoApprove,
     enqueueApprovedCommentTransPrewarm: (submissionId) =>
       enqueueApprovedCommentTransPrewarm(env, submissionId, "auto_moderation"),
-    enqueueApprovalNotice: (submission, previousStatus) =>
-      notifySubmissionApproved(env, {
+    enqueueSubmissionModerationNotice: (submission, previousStatus, nextStatus) =>
+      notifySubmissionModerationResult(env, {
         submission,
         previousStatus,
+        nextStatus,
         source: "auto_moderation"
       })
   };
@@ -128,18 +128,6 @@ export async function processModerationQueueBatch(
       });
       message.retry();
     }
-  }
-
-  if (stats.processed > 0) {
-    await notifyPendingOpenAICompleted(env, {
-      mode: "queue",
-      requested: stats.processed,
-      stats
-    }).catch((error) => {
-      console.warn("OpenAI moderation completion notification enqueue failed", {
-        error: error instanceof Error ? error.message : String(error)
-      });
-    });
   }
 
   return stats;

@@ -87,11 +87,26 @@ export async function notifySubmissionApproved(
     source: TransPrewarmSource;
   }
 ): Promise<void> {
+  await notifySubmissionModerationResult(env, {
+    ...payload,
+    nextStatus: "active"
+  });
+}
+
+export async function notifySubmissionModerationResult(
+  env: Bindings,
+  payload: {
+    submission: SubmissionRecord;
+    previousStatus: SubmissionStatus;
+    nextStatus: "active" | "pending_audit";
+    source: TransPrewarmSource;
+  }
+): Promise<void> {
   await enqueueModerationNotification(env, {
-    type: "submission_approved",
+    type: "submission_moderation_result",
     submission: payload.submission,
     previousStatus: payload.previousStatus,
-    nextStatus: "active",
+    nextStatus: payload.nextStatus,
     source: payload.source
   });
 }
@@ -181,6 +196,10 @@ async function enqueueModerationNotification(env: Bindings, event: ModerationNot
 }
 
 export async function sendModerationNotificationNow(env: Bindings, event: ModerationNotificationEvent): Promise<void> {
+  if (event.type === "pending_openai_completed") {
+    return;
+  }
+
   const webhookUrl = resolveModerationWebhookUrl(env);
   if (!webhookUrl) {
     return;
@@ -243,13 +262,14 @@ function formatDiscordWebhookPayload(event: ModerationNotificationEvent): Record
     };
   }
 
-  if (event.type === "submission_approved") {
+  if (event.type === "submission_moderation_result") {
+    const approved = event.nextStatus === "active";
     return {
       username: "OEM Moderation",
       embeds: [
         {
-          title: "Submission approved",
-          color: 0x2f855a,
+          title: approved ? "Submission approved" : "Submission needs manual review",
+          color: approved ? 0x2f855a : 0xdd6b20,
           fields: [
             ...submissionFields(event.submission),
             { name: "status", value: `${event.previousStatus} -> ${event.nextStatus}`, inline: true },
@@ -262,20 +282,17 @@ function formatDiscordWebhookPayload(event: ModerationNotificationEvent): Record
   }
 
   if (event.type === "comment_translation_prewarm_completed") {
-    const failed = event.targets.filter((target) => target.status === "failed");
-    const skipped = event.targets.filter((target) => target.status === "skipped");
     return {
       username: "OEM Moderation",
       embeds: [
         {
           title: "Comment translation prewarm completed",
-          color: failed.length > 0 ? 0xd83c3e : skipped.length > 0 ? 0xdd6b20 : 0x2f855a,
+          color: 0x3182ce,
           fields: [
             ...submissionFields(event.submission),
             { name: "source", value: event.source, inline: true },
-            { name: "success", value: formatTargetLangs(event.targets, "success"), inline: false },
-            { name: "failed", value: formatTargetLangs(event.targets, "failed"), inline: false },
-            { name: "skipped", value: formatTargetLangs(event.targets, "skipped"), inline: false }
+            { name: "completed", value: formatCompletedTargetLangs(event.targets), inline: false },
+            { name: "incomplete", value: formatIncompleteTargetLangs(event.targets), inline: false }
           ],
           timestamp: new Date().toISOString()
         }
@@ -359,17 +376,16 @@ function truncateFieldValue(value: string): string {
   return value.length > 512 ? `${value.slice(0, 509)}...` : value;
 }
 
-function formatTargetLangs(
-  targets: TransPrewarmTarget[],
-  status: TransPrewarmTarget["status"]
-): string {
-  const values = targets
-    .filter((target) => target.status === status)
-    .map((target) => {
-      const cached = target.cached ? " cached" : "";
-      const error = target.error ? `: ${target.error}` : "";
-      return `${target.lang}${cached}${error}`;
-    });
+function formatCompletedTargetLangs(targets: TransPrewarmTarget[]): string {
+  return formatTargetLangList(targets.filter((target) => target.status === "success"));
+}
+
+function formatIncompleteTargetLangs(targets: TransPrewarmTarget[]): string {
+  return formatTargetLangList(targets.filter((target) => target.status !== "success"));
+}
+
+function formatTargetLangList(targets: TransPrewarmTarget[]): string {
+  const values = targets.map((target) => target.lang);
 
   return truncateFieldValue(values.length > 0 ? values.join("\n") : "-");
 }

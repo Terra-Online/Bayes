@@ -928,6 +928,7 @@ export async function translateVisibleComments(
   env: Bindings,
   payload: {
     commentIds: string[];
+    cachedOnly?: boolean;
     sourceLanguage?: string;
     targetLanguage: string;
   }
@@ -1008,7 +1009,18 @@ export async function translateVisibleComments(
     misses.push(comment);
   }
 
-  if (misses.length > 0) {
+  if (payload.cachedOnly) {
+    misses.forEach((comment) => {
+      items.set(comment.id, {
+        commentId: comment.id,
+        targetLanguage,
+        provider: GOOGLE_TRANSLATION_PROVIDER,
+        glossaryApplied: false,
+        cached: false,
+        error: "TRANSLATION_CACHE_MISS"
+      });
+    });
+  } else if (misses.length > 0) {
     try {
       const translated = await callGoogleTranslate(config, {
         contents: misses.map((comment) => comment.content ?? ""),

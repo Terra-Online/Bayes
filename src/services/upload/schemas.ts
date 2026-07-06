@@ -35,5 +35,6 @@ export const commentSubmissionSchema = z.object({
 export const commentTranslationSchema = z.object({
   commentIds: z.array(z.string().min(1).max(64)).min(1).max(100),
   targetLanguage: z.string().min(2).max(16),
-  sourceLanguage: z.string().min(2).max(16).optional()
+  sourceLanguage: z.string().min(2).max(16).optional(),
+  cachedOnly: z.boolean().optional()
 });

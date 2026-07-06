@@ -39,10 +39,10 @@ export type ModerationNotificationEvent =
       nextStatus: SubmissionStatus;
     }
   | {
-      type: "submission_approved";
+      type: "submission_moderation_result";
       submission: SubmissionRecord;
       previousStatus: SubmissionStatus;
-      nextStatus: "active";
+      nextStatus: "active" | "pending_audit";
       source: TransPrewarmSource;
     }
   | {

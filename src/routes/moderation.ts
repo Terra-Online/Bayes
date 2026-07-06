@@ -32,7 +32,7 @@ import { evaluateKarmaBatch, markKarmaDirty } from "../services/karma/evaluation
 import { getModerationPointsDeltaWithDailyBackoff } from "../services/karma/moderationPoints";
 import { moderateSubmissionIds } from "../services/moderation/core";
 import { ensureModerationBackfill, enqueueApprovedCommentTransPrewarm } from "../services/moderation/queue";
-import { notifyPendingOpenAICompleted, notifySubmissionApproved } from "../services/moderation/notifications";
+import { notifySubmissionApproved, notifySubmissionModerationResult } from "../services/moderation/notifications";
 import type { AppEnv } from "../types/app";
 
 const updateSchema = z.object({
@@ -181,10 +181,15 @@ async function runModeration(
     localAutoApprove: config.localUploadAutoApprove,
     enqueueApprovedCommentTransPrewarm: (submissionId: string) =>
       enqueueApprovedCommentTransPrewarm(c.env, submissionId, "auto_moderation"),
-    enqueueApprovalNotice: (submission: SubmissionRecord, previousStatus: SubmissionStatus) =>
-      notifySubmissionApproved(c.env, {
+    enqueueSubmissionModerationNotice: (
+      submission: SubmissionRecord,
+      previousStatus: SubmissionStatus,
+      nextStatus: "active" | "pending_audit"
+    ) =>
+      notifySubmissionModerationResult(c.env, {
         submission,
         previousStatus,
+        nextStatus,
         source: "auto_moderation"
       })
   };
@@ -195,13 +200,6 @@ async function runModeration(
       options,
       payload.ids,
       25_000
-    );
-    c.executionCtx.waitUntil(
-      notifyPendingOpenAICompleted(c.env, {
-        mode: "selected",
-        requested: payload.ids.length,
-        stats: processed.stats
-      })
     );
 
     return {

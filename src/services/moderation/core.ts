@@ -31,7 +31,11 @@ export interface ModerationProcessResult {
 }
 
 type TransPrewarm = (submissionId: string) => Promise<void>;
-type ApprovalNotice = (submission: SubmissionRecord, prevStatus: SubmissionStatus) => Promise<void>;
+type SubmissionModerationNotice = (
+  submission: SubmissionRecord,
+  prevStatus: SubmissionStatus,
+  nextStatus: "active" | "pending_audit"
+) => Promise<void>;
 
 interface ModOptions {
   openAiApiKey?: string;
@@ -45,7 +49,7 @@ interface ModOptions {
   localAutoApprove?: boolean;
   prewarmAsset?: typeof prewarmPublicUgcAsset;
   enqueueApprovedCommentTransPrewarm?: TransPrewarm;
-  enqueueApprovalNotice?: ApprovalNotice;
+  enqueueSubmissionModerationNotice?: SubmissionModerationNotice;
 }
 
 interface ApplyStatusOptions extends Omit<ModOptions, "openAiApiKey" | "ugcBucket" | "skipAiModeration" | "localAutoApprove"> {
@@ -91,9 +95,16 @@ export async function moderateSubmissionById(
   }
 
   if (options.skipAiModeration) {
-    await updateSubmissionStatus(db, {
+    await applyModerationStatus(db, submission, "pending_audit", {
+      assetBaseUrl: options.assetBaseUrl,
+      ugcKv: options.ugcKv,
+      redis: options.redis,
+      surgeModeEnabled: options.surgeModeEnabled,
+      surgeBackoffMultiplier: options.surgeBackoffMultiplier,
+      prewarmAsset: options.prewarmAsset,
+      enqueueApprovedCommentTransPrewarm: options.enqueueApprovedCommentTransPrewarm,
+      enqueueSubmissionModerationNotice: options.enqueueSubmissionModerationNotice,
       id: submissionId,
-      status: "pending_audit",
       moderationNote: "AI moderation skipped; waiting for manual audit."
     });
     return "pending_audit";
@@ -109,7 +120,7 @@ export async function moderateSubmissionById(
       surgeBackoffMultiplier: options.surgeBackoffMultiplier,
       prewarmAsset: options.prewarmAsset,
       enqueueApprovedCommentTransPrewarm: options.enqueueApprovedCommentTransPrewarm,
-      enqueueApprovalNotice: options.enqueueApprovalNotice,
+      enqueueSubmissionModerationNotice: options.enqueueSubmissionModerationNotice,
       id: submissionId,
       moderationNote: options.localAutoApprove
         ? "Local upload debug auto-approved (OPENAI_API_KEY missing)."
@@ -150,7 +161,7 @@ export async function moderateSubmissionById(
     surgeBackoffMultiplier: options.surgeBackoffMultiplier,
     prewarmAsset: options.prewarmAsset,
     enqueueApprovedCommentTransPrewarm: options.enqueueApprovedCommentTransPrewarm,
-    enqueueApprovalNotice: options.enqueueApprovalNotice,
+    enqueueSubmissionModerationNotice: options.enqueueSubmissionModerationNotice,
     id: submissionId,
     moderationNote: result.approved
       ? `${AI_ACTIVE_MODERATION_NOTE_PREFIX} ${result.categorySummary}`
@@ -171,16 +182,18 @@ async function applyModerationStatus(
     moderationNote: options.moderationNote
   });
 
+  if (status === "active" || status === "pending_audit") {
+    await options.enqueueSubmissionModerationNotice?.(submission, submission.status, status).catch((error) => {
+      console.warn("submission moderation notification enqueue failed", {
+        submissionId: options.id,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    });
+  }
+
   if (status !== "active") {
     return;
   }
-
-  await options.enqueueApprovalNotice?.(submission, submission.status).catch((error) => {
-    console.warn("submission approval notification enqueue failed", {
-      submissionId: options.id,
-      error: error instanceof Error ? error.message : String(error)
-    });
-  });
 
   if (submission.kind === "image") {
     await (options.prewarmAsset ?? prewarmPublicUgcAsset)(options.assetBaseUrl, submission.filePath);
