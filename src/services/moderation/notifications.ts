@@ -1,8 +1,11 @@
 import type { AuthUser, Bindings } from "../../types/app";
+import { buildPointShareUrl } from "../../lib/pointShare";
 import type { SubmissionKind, SubmissionRecord, SubmissionStatus } from "../../repositories/submission/types";
 import type {
   ModerationNotificationEvent,
-  PendingOpenAICompletionStats
+  PendingOpenAICompletionStats,
+  TransPrewarmSource,
+  TransPrewarmTarget
 } from "./messages";
 
 const DEFAULT_DISCORD_MODERATION_WEBHOOK_URL =
@@ -73,6 +76,39 @@ export async function notifyFlagCreated(
     flagCount: payload.flagCount,
     previousStatus: payload.submission.status,
     nextStatus: payload.nextStatus
+  });
+}
+
+export async function notifySubmissionApproved(
+  env: Bindings,
+  payload: {
+    submission: SubmissionRecord;
+    previousStatus: SubmissionStatus;
+    source: TransPrewarmSource;
+  }
+): Promise<void> {
+  await enqueueModerationNotification(env, {
+    type: "submission_approved",
+    submission: payload.submission,
+    previousStatus: payload.previousStatus,
+    nextStatus: "active",
+    source: payload.source
+  });
+}
+
+export async function notifyCommentTransPrewarmDone(
+  env: Bindings,
+  payload: {
+    submission: SubmissionRecord;
+    source: TransPrewarmSource;
+    targets: TransPrewarmTarget[];
+  }
+): Promise<void> {
+  await enqueueModerationNotification(env, {
+    type: "comment_translation_prewarm_completed",
+    submission: payload.submission,
+    source: payload.source,
+    targets: payload.targets
   });
 }
 
@@ -207,6 +243,46 @@ function formatDiscordWebhookPayload(event: ModerationNotificationEvent): Record
     };
   }
 
+  if (event.type === "submission_approved") {
+    return {
+      username: "OEM Moderation",
+      embeds: [
+        {
+          title: "Submission approved",
+          color: 0x2f855a,
+          fields: [
+            ...submissionFields(event.submission),
+            { name: "status", value: `${event.previousStatus} -> ${event.nextStatus}`, inline: true },
+            { name: "source", value: event.source, inline: true }
+          ],
+          timestamp: new Date().toISOString()
+        }
+      ]
+    };
+  }
+
+  if (event.type === "comment_translation_prewarm_completed") {
+    const failed = event.targets.filter((target) => target.status === "failed");
+    const skipped = event.targets.filter((target) => target.status === "skipped");
+    return {
+      username: "OEM Moderation",
+      embeds: [
+        {
+          title: "Comment translation prewarm completed",
+          color: failed.length > 0 ? 0xd83c3e : skipped.length > 0 ? 0xdd6b20 : 0x2f855a,
+          fields: [
+            ...submissionFields(event.submission),
+            { name: "source", value: event.source, inline: true },
+            { name: "success", value: formatTargetLangs(event.targets, "success"), inline: false },
+            { name: "failed", value: formatTargetLangs(event.targets, "failed"), inline: false },
+            { name: "skipped", value: formatTargetLangs(event.targets, "skipped"), inline: false }
+          ],
+          timestamp: new Date().toISOString()
+        }
+      ]
+    };
+  }
+
   const actionTitle = {
     flag_created: "Flag created",
     flag_removed: "Flag removed",
@@ -250,6 +326,7 @@ function submissionFields(submission: SubmissionRecord): Array<{ name: string; v
     { name: "submission", value: submission.id, inline: true },
     { name: "kind", value: formatKind(submission.kind), inline: true },
     { name: "marker", value: truncateFieldValue(submission.markerId), inline: true },
+    { name: "point", value: buildPointShareUrl(submission), inline: false },
     { name: "uploader", value: formatSubmitter(submission), inline: true }
   ];
 }
@@ -280,4 +357,19 @@ function formatSubmitter(submission: SubmissionRecord): string {
 
 function truncateFieldValue(value: string): string {
   return value.length > 512 ? `${value.slice(0, 509)}...` : value;
+}
+
+function formatTargetLangs(
+  targets: TransPrewarmTarget[],
+  status: TransPrewarmTarget["status"]
+): string {
+  const values = targets
+    .filter((target) => target.status === status)
+    .map((target) => {
+      const cached = target.cached ? " cached" : "";
+      const error = target.error ? `: ${target.error}` : "";
+      return `${target.lang}${cached}${error}`;
+    });
+
+  return truncateFieldValue(values.length > 0 ? values.join("\n") : "-");
 }

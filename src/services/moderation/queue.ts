@@ -2,12 +2,14 @@ import type { Redis } from "@upstash/redis";
 import { getRuntimeConfig } from "../../lib/config";
 import { createRedisClient } from "../../lib/redis";
 import { getPendingOpenAISubmissions } from "../../repositories/submission/createSubmission";
-import { markSubmissionModerationQueued } from "../../repositories/submission/statusSubmission";
+import { getSubmissionById, markSubmissionModerationQueued } from "../../repositories/submission/statusSubmission";
 import type { Bindings } from "../../types/app";
-import { prewarmApprovedCommentTranslations } from "../upload/commentTranslation";
+import { prewarmApprovedCommentTrans } from "../upload/commentTranslation";
 import {
   createEmptyPendingOpenAICompletionStats,
+  notifyCommentTransPrewarmDone,
   notifyPendingOpenAICompleted,
+  notifySubmissionApproved,
   recordPendingOpenAICompletionStatus,
   sendModerationNotificationNow
 } from "./notifications";
@@ -33,8 +35,14 @@ function createModerationOptions(env: Bindings, redis: Redis): ModerationOptions
     surgeBackoffMultiplier: config.surgeBackoffMultiplier,
     skipAiModeration: config.skipAiModeration,
     localAutoApprove: config.localUploadAutoApprove,
-    enqueueApprovedCommentTranslationPrewarm: (submissionId) =>
-      enqueueApprovedCommentTranslationPrewarm(env, submissionId, "auto_moderation")
+    enqueueApprovedCommentTransPrewarm: (submissionId) =>
+      enqueueApprovedCommentTransPrewarm(env, submissionId, "auto_moderation"),
+    enqueueApprovalNotice: (submission, previousStatus) =>
+      notifySubmissionApproved(env, {
+        submission,
+        previousStatus,
+        source: "auto_moderation"
+      })
   };
 }
 
@@ -57,7 +65,7 @@ export async function enqueueModeration(env: Bindings, submissionId: string): Pr
   });
 }
 
-export async function enqueueApprovedCommentTranslationPrewarm(
+export async function enqueueApprovedCommentTransPrewarm(
   env: Bindings,
   submissionId: string,
   source: "auto_moderation" | "manual_moderation"
@@ -157,7 +165,23 @@ async function processModerationQueueMessage(
   }
 
   if (message.type === "comment_translation_prewarm") {
-    await prewarmApprovedCommentTranslations(env, message.submissionId);
+    const result = await prewarmApprovedCommentTrans(env, message.submissionId).catch((error) => {
+      console.warn("comment translation prewarm failed", {
+        submissionId: message.submissionId,
+        error: error instanceof Error ? error.message : String(error)
+      });
+      return null;
+    });
+    if (result && !result.skipped) {
+      const submission = await getSubmissionById(env.DB, message.submissionId);
+      if (submission) {
+        await notifyCommentTransPrewarmDone(env, {
+          submission,
+          source: message.source,
+          targets: result.targets
+        });
+      }
+    }
     return;
   }
 

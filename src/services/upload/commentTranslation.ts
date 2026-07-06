@@ -7,6 +7,7 @@ import {
   upsertTextTranslation
 } from "../../repositories/submission/textTranslationCache";
 import type { SubmissionRecord, TextTranslationRecord } from "../../repositories/submission/types";
+import type { TransPrewarmTarget } from "../moderation/messages";
 import type { Bindings } from "../../types/app";
 
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
@@ -18,7 +19,7 @@ const GOOGLE_FETCH_TIMEOUT_MS = 15_000;
 const MAX_TRANSLATION_BATCH_SIZE = 100;
 const TRANSLATION_KV_CACHE_PREFIX = "translate:v1";
 const TRANSLATION_NO_GLOSSARY_CACHE_VERSION = "g0";
-const APPROVED_COMMENT_PREWARM_TARGET_LANGUAGES = ["en-US", "ru-RU", "ja-JP", "ko-KR"] as const;
+const APPROVED_COMMENT_PREWARM_TARGET_LANGUAGES = ["zh-CN", "en-US", "ru-RU", "ja-JP", "ko-KR"] as const;
 const GOOGLE_LANGUAGE_BY_LOCALE: Record<string, string> = {
   "en-US": "en",
   "zh-CN": "zh-CN",
@@ -1075,28 +1076,71 @@ export async function translateVisibleComments(
   };
 }
 
-export async function prewarmApprovedCommentTranslations(
+export async function prewarmApprovedCommentTrans(
   env: Bindings,
   commentId: string
-): Promise<{ ok: boolean; skipped?: string; targets: string[] }> {
+): Promise<{ ok: boolean; skipped?: string; targets: TransPrewarmTarget[] }> {
   const id = commentId.trim();
-  const targets = [...APPROVED_COMMENT_PREWARM_TARGET_LANGUAGES];
+  const targetLangs = [...APPROVED_COMMENT_PREWARM_TARGET_LANGUAGES];
   if (!id) {
-    return { ok: false, skipped: "COMMENT_ID_EMPTY", targets };
+    return {
+      ok: false,
+      skipped: "COMMENT_ID_EMPTY",
+      targets: targetLangs.map((lang) => ({
+        lang,
+        status: "failed",
+        error: "COMMENT_ID_EMPTY"
+      }))
+    };
   }
 
   const config = getRuntimeConfig(env).googleTranslate;
   if (!isGoogleTranslateConfigured(config)) {
-    return { ok: true, skipped: "GOOGLE_TRANSLATE_NOT_CONFIGURED", targets };
+    return {
+      ok: true,
+      skipped: "GOOGLE_TRANSLATE_NOT_CONFIGURED",
+      targets: targetLangs.map((lang) => ({
+        lang,
+        status: "skipped",
+        error: "GOOGLE_TRANSLATE_NOT_CONFIGURED"
+      }))
+    };
   }
 
-  await Promise.all(targets.map((targetLanguage) =>
+  const results = await Promise.allSettled(targetLangs.map((targetLang) =>
     translateVisibleComments(env, {
       commentIds: [id],
       sourceLanguage: "auto",
-      targetLanguage
+      targetLanguage: targetLang
     })
   ));
 
-  return { ok: true, targets };
+  return {
+    ok: true,
+    targets: results.map((result, index) => {
+      const lang = targetLangs[index] ?? "";
+      if (result.status === "rejected") {
+        return {
+          lang,
+          status: "failed",
+          error: result.reason instanceof Error ? result.reason.message : String(result.reason)
+        };
+      }
+
+      const item = result.value.items[0];
+      if (item?.translatedContent) {
+        return {
+          lang,
+          status: "success",
+          cached: item.cached
+        };
+      }
+
+      return {
+        lang,
+        status: "failed",
+        error: item?.error ?? "TRANSLATION_EMPTY"
+      };
+    })
+  };
 }

@@ -30,21 +30,32 @@ export interface ModerationProcessResult {
   stats: PendingOpenAICompletionStats;
 }
 
+type TransPrewarm = (submissionId: string) => Promise<void>;
+type ApprovalNotice = (submission: SubmissionRecord, prevStatus: SubmissionStatus) => Promise<void>;
+
+interface ModOptions {
+  openAiApiKey?: string;
+  assetBaseUrl: string;
+  ugcBucket: R2Bucket;
+  ugcKv?: KVNamespace;
+  redis?: Redis;
+  surgeModeEnabled?: boolean;
+  surgeBackoffMultiplier?: number;
+  skipAiModeration?: boolean;
+  localAutoApprove?: boolean;
+  prewarmAsset?: typeof prewarmPublicUgcAsset;
+  enqueueApprovedCommentTransPrewarm?: TransPrewarm;
+  enqueueApprovalNotice?: ApprovalNotice;
+}
+
+interface ApplyStatusOptions extends Omit<ModOptions, "openAiApiKey" | "ugcBucket" | "skipAiModeration" | "localAutoApprove"> {
+  id: string;
+  moderationNote: string;
+}
+
 export async function moderateSubmissionIds(
   db: D1Database,
-  options: {
-    openAiApiKey?: string;
-    assetBaseUrl: string;
-    ugcBucket: R2Bucket;
-    ugcKv?: KVNamespace;
-    redis?: Redis;
-    surgeModeEnabled?: boolean;
-    surgeBackoffMultiplier?: number;
-    skipAiModeration?: boolean;
-    localAutoApprove?: boolean;
-    prewarmAsset?: typeof prewarmPublicUgcAsset;
-    enqueueApprovedCommentTranslationPrewarm?: (submissionId: string) => Promise<void>;
-  },
+  options: ModOptions,
   submissionIds: string[],
   maxRuntimeMs = 25_000
 ): Promise<ModerationProcessResult> {
@@ -72,19 +83,7 @@ export async function moderateSubmissionIds(
 export async function moderateSubmissionById(
   db: D1Database,
   submissionId: string,
-  options: {
-    openAiApiKey?: string;
-    assetBaseUrl: string;
-    ugcBucket: R2Bucket;
-    ugcKv?: KVNamespace;
-    redis?: Redis;
-    surgeModeEnabled?: boolean;
-    surgeBackoffMultiplier?: number;
-    skipAiModeration?: boolean;
-    localAutoApprove?: boolean;
-    prewarmAsset?: typeof prewarmPublicUgcAsset;
-    enqueueApprovedCommentTranslationPrewarm?: (submissionId: string) => Promise<void>;
-  }
+  options: ModOptions
 ): Promise<SubmissionStatus | null> {
   const submission = await getSubmissionById(db, submissionId);
   if (!submission || submission.status !== "pending_openai") {
@@ -109,7 +108,8 @@ export async function moderateSubmissionById(
       surgeModeEnabled: options.surgeModeEnabled,
       surgeBackoffMultiplier: options.surgeBackoffMultiplier,
       prewarmAsset: options.prewarmAsset,
-      enqueueApprovedCommentTranslationPrewarm: options.enqueueApprovedCommentTranslationPrewarm,
+      enqueueApprovedCommentTransPrewarm: options.enqueueApprovedCommentTransPrewarm,
+      enqueueApprovalNotice: options.enqueueApprovalNotice,
       id: submissionId,
       moderationNote: options.localAutoApprove
         ? "Local upload debug auto-approved (OPENAI_API_KEY missing)."
@@ -149,7 +149,8 @@ export async function moderateSubmissionById(
     surgeModeEnabled: options.surgeModeEnabled,
     surgeBackoffMultiplier: options.surgeBackoffMultiplier,
     prewarmAsset: options.prewarmAsset,
-    enqueueApprovedCommentTranslationPrewarm: options.enqueueApprovedCommentTranslationPrewarm,
+    enqueueApprovedCommentTransPrewarm: options.enqueueApprovedCommentTransPrewarm,
+    enqueueApprovalNotice: options.enqueueApprovalNotice,
     id: submissionId,
     moderationNote: result.approved
       ? `${AI_ACTIVE_MODERATION_NOTE_PREFIX} ${result.categorySummary}`
@@ -162,17 +163,7 @@ async function applyModerationStatus(
   db: D1Database,
   submission: SubmissionRecord,
   status: SubmissionStatus,
-  options: {
-    id: string;
-    moderationNote: string;
-    assetBaseUrl: string;
-    ugcKv?: KVNamespace;
-    redis?: Redis;
-    surgeModeEnabled?: boolean;
-    surgeBackoffMultiplier?: number;
-    prewarmAsset?: typeof prewarmPublicUgcAsset;
-    enqueueApprovedCommentTranslationPrewarm?: (submissionId: string) => Promise<void>;
-  }
+  options: ApplyStatusOptions
 ): Promise<void> {
   await updateSubmissionStatus(db, {
     id: options.id,
@@ -184,12 +175,19 @@ async function applyModerationStatus(
     return;
   }
 
+  await options.enqueueApprovalNotice?.(submission, submission.status).catch((error) => {
+    console.warn("submission approval notification enqueue failed", {
+      submissionId: options.id,
+      error: error instanceof Error ? error.message : String(error)
+    });
+  });
+
   if (submission.kind === "image") {
     await (options.prewarmAsset ?? prewarmPublicUgcAsset)(options.assetBaseUrl, submission.filePath);
     await deletePublicMarkerImageCache(options.ugcKv, submission.markerId);
   } else {
     await deletePublicMarkerCommentCache(options.ugcKv, submission.markerId);
-    await options.enqueueApprovedCommentTranslationPrewarm?.(options.id);
+    await options.enqueueApprovedCommentTransPrewarm?.(options.id);
   }
 
   const pointsDelta = await getModerationPointsDeltaWithDailyBackoff(options.redis, {

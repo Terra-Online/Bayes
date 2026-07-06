@@ -19,6 +19,7 @@ import {
 } from "../repositories/submission-review";
 import {
   ALL_STATUSES,
+  type SubmissionRecord,
   type SubmissionStatus
 } from "../repositories/submission/types";
 import { clearSubmissionFlags } from "../repositories/submission/flagSubmission";
@@ -30,8 +31,8 @@ import { prewarmPublicUgcAsset } from "../middleware/cache/publicUgcAssets";
 import { evaluateKarmaBatch, markKarmaDirty } from "../services/karma/evaluation";
 import { getModerationPointsDeltaWithDailyBackoff } from "../services/karma/moderationPoints";
 import { moderateSubmissionIds } from "../services/moderation/core";
-import { ensureModerationBackfill, enqueueApprovedCommentTranslationPrewarm } from "../services/moderation/queue";
-import { notifyPendingOpenAICompleted } from "../services/moderation/notifications";
+import { ensureModerationBackfill, enqueueApprovedCommentTransPrewarm } from "../services/moderation/queue";
+import { notifyPendingOpenAICompleted, notifySubmissionApproved } from "../services/moderation/notifications";
 import type { AppEnv } from "../types/app";
 
 const updateSchema = z.object({
@@ -178,8 +179,14 @@ async function runModeration(
     surgeBackoffMultiplier: config.surgeBackoffMultiplier,
     skipAiModeration: config.skipAiModeration,
     localAutoApprove: config.localUploadAutoApprove,
-    enqueueApprovedCommentTranslationPrewarm: (submissionId: string) =>
-      enqueueApprovedCommentTranslationPrewarm(c.env, submissionId, "auto_moderation")
+    enqueueApprovedCommentTransPrewarm: (submissionId: string) =>
+      enqueueApprovedCommentTransPrewarm(c.env, submissionId, "auto_moderation"),
+    enqueueApprovalNotice: (submission: SubmissionRecord, previousStatus: SubmissionStatus) =>
+      notifySubmissionApproved(c.env, {
+        submission,
+        previousStatus,
+        source: "auto_moderation"
+      })
   };
 
   if (payload.ids && payload.ids.length > 0) {
@@ -415,9 +422,18 @@ export function createModerationRoutes() {
       c.executionCtx.waitUntil(deletePublicMarkerCommentCache(c.env.OEM_KV, current.markerId));
       if (current.status !== "active" && parsed.data.status === "active") {
         c.executionCtx.waitUntil(
-          enqueueApprovedCommentTranslationPrewarm(c.env, submissionId, "manual_moderation")
+          enqueueApprovedCommentTransPrewarm(c.env, submissionId, "manual_moderation")
         );
       }
+    }
+    if (current.status !== "active" && parsed.data.status === "active") {
+      c.executionCtx.waitUntil(
+        notifySubmissionApproved(c.env, {
+          submission: current,
+          previousStatus: current.status,
+          source: "manual_moderation"
+        })
+      );
     }
     const effectiveModerationNote = parsed.data.moderationNote ?? current.moderationNote;
     if (shouldApplyModerationPoints(current.status, parsed.data.status, effectiveModerationNote)) {

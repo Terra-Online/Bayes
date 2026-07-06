@@ -6,9 +6,18 @@ export type ModerationQueueSource =
   | "manual"
   | "scheduled_backfill";
 
-export type TranslationPrewarmSource =
+export type TransPrewarmSource =
   | "auto_moderation"
   | "manual_moderation";
+
+export type TransPrewarmTargetStatus = "success" | "failed" | "skipped";
+
+export interface TransPrewarmTarget {
+  lang: string;
+  status: TransPrewarmTargetStatus;
+  cached?: boolean;
+  error?: string;
+}
 
 export type ModerationNotificationEvent =
   | {
@@ -30,6 +39,13 @@ export type ModerationNotificationEvent =
       nextStatus: SubmissionStatus;
     }
   | {
+      type: "submission_approved";
+      submission: SubmissionRecord;
+      previousStatus: SubmissionStatus;
+      nextStatus: "active";
+      source: TransPrewarmSource;
+    }
+  | {
       type: "remove_request_created" | "remove_request_cancelled";
       submission: SubmissionRecord;
       actor: AuthUser;
@@ -37,6 +53,12 @@ export type ModerationNotificationEvent =
       nextStatus: SubmissionStatus;
       flagCount?: number;
       source: "remove_request" | "recall";
+    }
+  | {
+      type: "comment_translation_prewarm_completed";
+      submission: SubmissionRecord;
+      source: TransPrewarmSource;
+      targets: TransPrewarmTarget[];
     };
 
 export interface PendingOpenAICompletionStats {
@@ -61,6 +83,6 @@ export type OemModQueueMessage =
   | {
       type: "comment_translation_prewarm";
       submissionId: string;
-      source: TranslationPrewarmSource;
+      source: TransPrewarmSource;
       queuedAt: string;
     };
