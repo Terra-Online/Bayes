@@ -2,11 +2,14 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { onAppError } from "./middleware/error-handler";
 import { requestIdMiddleware } from "./middleware/request-id";
-import { createAuthRoutes } from "./routes/auth";
-import { createBindingRoutes, createLocatorRoutes, createSyncRoutes } from "./routes/binding";
+import { createAuthRoutes } from "./routes/auth/createAuthRoutes";
+import { createLegacySocialAuthRoutes } from "./routes/auth/legacySocialRoutes";
+import { createBindingRoutes } from "./routes/binding/createBindingRoutes";
+import { createLocatorRoutes } from "./routes/binding/createLocatorRoutes";
+import { createSyncRoutes } from "./routes/binding/createSyncRoutes";
 import { createHealthRoutes } from "./routes/health";
 import { createModerationRoutes } from "./routes/moderation";
-import { createProgressRoutes } from "./routes/progress";
+import { createProgressRoutes } from "./routes/progress/createProgressRoutes";
 import { createUploadRoutes } from "./routes/uploads";
 import type { AppEnv } from "./types/app";
 
@@ -78,6 +81,7 @@ export function createApp() {
   app.onError(onAppError);
 
   app.route("/health/v1", createHealthRoutes());
+  app.route("/auth", createLegacySocialAuthRoutes());
   app.route("/auth/v1", createAuthRoutes());
   app.route("/binding/v1", createBindingRoutes());
   app.route("/locator", createLocatorRoutes());

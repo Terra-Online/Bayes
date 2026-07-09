@@ -1,11 +1,8 @@
 import {
   buildImageScopeFilters,
-  imageStatusListSql,
-  publicImageFromRow,
-  toCount,
-  type PublicSubmissionImage,
-  type SubmissionStatus
-} from "./submissions";
+} from "./submission/listImages";
+import { imageStatusListSql, publicImageFromRow, toCount } from "./submission/mapper";
+import type { PublicSubmissionImage, SubmissionStatus } from "./submission/types";
 
 export interface DuplicateImageMarker {
   markerId: string;
@@ -302,4 +299,3 @@ export async function listDuplicateMarkerImages(
     total
   };
 }
-

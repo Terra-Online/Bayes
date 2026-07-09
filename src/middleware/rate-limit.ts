@@ -1,6 +1,6 @@
 import type { MiddlewareHandler } from "hono";
 import { ApiError } from "../lib/errors";
-import { getUploadRateLimitForKarma } from "../lib/karma";
+import { getUploadRateLimitForKarma } from "../lib/karma/rules";
 import { createRedisClient } from "../lib/redis";
 import type { AppEnv } from "../types/app";
 

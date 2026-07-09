@@ -1,5 +1,5 @@
 import type { Role } from "../types/app";
-import { pointsToKarma } from "../lib/karma";
+import { pointsToKarma } from "../lib/karma/rules";
 
 const UID_START = 100000;
 const NICKNAME_PATTERN = /^[A-Za-z0-9_-]{2,26}$/;

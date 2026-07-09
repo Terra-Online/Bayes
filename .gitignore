@@ -148,7 +148,12 @@ ENDPOINTS.md
 REFRESH.md
 migrations/*
 src/lib/endfield-client-ua.json
+src/lib/endfieldClient/deviceProfilePool.json
+src/lib/karma/karmaConfig.json
+src/routes/binding/officialMarkerHashToPointId.json
+# Legacy local karma config path.
 src/lib/karma-config.json
+# Legacy local lookup data path.
 src/lib/migrate_rainbowtable.json
 src/lib/emailBlacklist.json
 

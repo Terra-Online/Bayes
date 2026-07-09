@@ -1,11 +1,13 @@
 import {
   ALL_STATUSES,
+  type SubmissionRecord,
+  type SubmissionStatus
+} from "./submission/types";
+import {
   mapStatus,
   mapSubmission,
   toCount,
-  type SubmissionRecord,
-  type SubmissionStatus
-} from "./submissions";
+} from "./submission/mapper";
 
 export interface ReviewSubmissionStats {
   total: number;
@@ -225,4 +227,3 @@ function buildReviewSubmissionWhere(payload: ReviewSubmissionFilters): { whereSq
     bindings
   };
 }
-

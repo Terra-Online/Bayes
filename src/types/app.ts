@@ -1,4 +1,5 @@
-import type { oem_imgTrans } from "../services/image-transcoder-container";
+import type { oem_imgTrans } from "../services/upload/imageTranscoderContainer";
+import type { OemModQueueMessage } from "../services/moderation/messages";
 
 export type Role = "n" | "p" | "a" | "s" | "r";
 
@@ -9,6 +10,7 @@ export interface Bindings {
   OEM_USER_DO: DurableObjectNamespace;
   OEM_STATS_DO: DurableObjectNamespace;
   OEM_IMG_TRANS: DurableObjectNamespace<oem_imgTrans>;
+  OEM_MODQ: Queue<OemModQueueMessage>;
   UPSTASH_REDIS_REST_URL: string;
   UPSTASH_REDIS_REST_TOKEN: string;
   BETTER_AUTH_SECRET?: string;
@@ -17,6 +19,15 @@ export interface Bindings {
   TRUSTED_ORIGINS?: string;
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET?: string;
+  GOOGLE_TRANSLATE_CLIENT_EMAIL?: string;
+  GOOGLE_TRANSLATE_PRIVATE_KEY?: string;
+  GOOGLE_TRANSLATE_PROJECT_ID?: string;
+  GOOGLE_TRANSLATE_LOCATION?: string;
+  GOOGLE_TRANSLATE_GLOSSARY?: string;
+  GOOGLE_TRANSLATE_GLOSSARY_VERSION?: string;
+  GOOGLE_TRANSLATE_GLOSSARY_LANGUAGES?: string;
+  GOOGLE_TRANSLATE_ALLOWED_LANGUAGES?: string;
+  GOOGLE_TRANSLATE_FETCH_PROXY_URL?: string;
   GITHUB_CLIENT_ID?: string;
   GITHUB_CLIENT_SECRET?: string;
   DISCORD_CLIENT_ID?: string;

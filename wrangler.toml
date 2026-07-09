@@ -61,6 +61,16 @@ image = "./containers/oem_imgTrans/Dockerfile"
 image_build_context = "./containers/oem_imgTrans"
 max_instances = 5
 
+[[queues.producers]]
+binding = "OEM_MODQ"
+queue = "oem-modq"
+
+[[queues.consumers]]
+queue = "oem-modq"
+max_batch_size = 10
+max_batch_timeout = 5
+dead_letter_queue = "oem-modq-dlq"
+
 [triggers]
 crons = ["*/1 * * * *"]
 
@@ -98,3 +108,13 @@ class_name = "oem_imgTrans"
 image = "./containers/oem_imgTrans/Dockerfile"
 image_build_context = "./containers/oem_imgTrans"
 max_instances = 3
+
+[[env.local.queues.producers]]
+binding = "OEM_MODQ"
+queue = "oem-modq"
+
+[[env.local.queues.consumers]]
+queue = "oem-modq"
+max_batch_size = 10
+max_batch_timeout = 5
+dead_letter_queue = "oem-modq-dlq"

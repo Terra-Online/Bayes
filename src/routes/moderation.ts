@@ -19,17 +19,20 @@ import {
 } from "../repositories/submission-review";
 import {
   ALL_STATUSES,
-  clearSubmissionFlags,
-  getSubmissionById,
-  updateSubmissionStatus,
+  type SubmissionRecord,
   type SubmissionStatus
-} from "../repositories/submissions";
+} from "../repositories/submission/types";
+import { clearSubmissionFlags } from "../repositories/submission/flagSubmission";
+import { getSubmissionById, updateSubmissionStatus } from "../repositories/submission/statusSubmission";
 import { applyUserPointsDelta } from "../repositories/users";
-import { prewarmPublicUgcAsset } from "../services/asset-cache";
-import { deletePublicMarkerImageCache } from "../services/public-image-cache";
-import { evaluateKarmaBatch, getModerationPointsDeltaWithDailyBackoff, markKarmaDirty } from "../services/karma";
-import { ensureModerationBackfill, moderateSubmissionIds, moderateSubmissionOnce } from "../services/moderation";
-import { notifyPendingOpenAICompleted } from "../services/notifications";
+import { deletePublicMarkerCommentCache } from "../middleware/cache/publicMarkerComments";
+import { deletePublicMarkerImageCache } from "../middleware/cache/publicMarkerImages";
+import { prewarmPublicUgcAsset } from "../middleware/cache/publicUgcAssets";
+import { evaluateKarmaBatch, markKarmaDirty } from "../services/karma/evaluation";
+import { getModerationPointsDeltaWithDailyBackoff } from "../services/karma/moderationPoints";
+import { moderateSubmissionIds } from "../services/moderation/core";
+import { ensureModerationBackfill, enqueueApprovedCommentTransPrewarm } from "../services/moderation/queue";
+import { notifySubmissionApproved, notifySubmissionModerationResult } from "../services/moderation/notifications";
 import type { AppEnv } from "../types/app";
 
 const updateSchema = z.object({
@@ -66,7 +69,7 @@ const runSchema = z.object({
 });
 
 const STATUS_TRANSITIONS: Record<SubmissionStatus, SubmissionStatus[]> = {
-  pending_openai: ["pending_audit", "stale"],
+  pending_openai: ["active", "pending_audit", "stale"],
   pending_audit: ["active", "stale"],
   active: ["stale"],
   flagged: ["active", "stale"],
@@ -175,7 +178,20 @@ async function runModeration(
     surgeModeEnabled: config.surgeModeEnabled,
     surgeBackoffMultiplier: config.surgeBackoffMultiplier,
     skipAiModeration: config.skipAiModeration,
-    localAutoApprove: config.localUploadAutoApprove
+    localAutoApprove: config.localUploadAutoApprove,
+    enqueueApprovedCommentTransPrewarm: (submissionId: string) =>
+      enqueueApprovedCommentTransPrewarm(c.env, submissionId, "auto_moderation"),
+    enqueueSubmissionModerationNotice: (
+      submission: SubmissionRecord,
+      previousStatus: SubmissionStatus,
+      nextStatus: "active" | "pending_audit"
+    ) =>
+      notifySubmissionModerationResult(c.env, {
+        submission,
+        previousStatus,
+        nextStatus,
+        source: "auto_moderation"
+      })
   };
 
   if (payload.ids && payload.ids.length > 0) {
@@ -185,48 +201,30 @@ async function runModeration(
       payload.ids,
       25_000
     );
-    c.executionCtx.waitUntil(
-      notifyPendingOpenAICompleted(c.env, {
-        mode: "selected",
-        requested: payload.ids.length,
-        stats: processed.stats
-      })
-    );
 
     return {
       ok: true,
       mode: "selected" as const,
       requested: payload.ids.length,
       processed: processed.processed,
+      active: processed.stats.active,
       pendingAudit: processed.stats.pendingAudit,
       stale: processed.stats.stale
     };
   }
 
   const limit = payload.limit ?? 5;
-  await ensureModerationBackfill(c.env.DB, redis, limit);
-  const processed = await moderateSubmissionOnce(
-    c.env.DB,
-    redis,
-    options,
-    limit,
-    25_000
-  );
-  c.executionCtx.waitUntil(
-    notifyPendingOpenAICompleted(c.env, {
-      mode: "queue",
-      requested: limit,
-      stats: processed.stats
-    })
-  );
+  const enqueued = await ensureModerationBackfill(c.env, limit);
 
   return {
     ok: true,
     mode: "queue" as const,
     requested: limit,
-    processed: processed.processed,
-    pendingAudit: processed.stats.pendingAudit,
-    stale: processed.stats.stale
+    enqueued,
+    processed: 0,
+    active: 0,
+    pendingAudit: 0,
+    stale: 0
   };
 }
 
@@ -418,6 +416,22 @@ export function createModerationRoutes() {
     }
     if (current.kind === "image") {
       c.executionCtx.waitUntil(deletePublicMarkerImageCache(c.env.OEM_KV, current.markerId));
+    } else {
+      c.executionCtx.waitUntil(deletePublicMarkerCommentCache(c.env.OEM_KV, current.markerId));
+      if (current.status !== "active" && parsed.data.status === "active") {
+        c.executionCtx.waitUntil(
+          enqueueApprovedCommentTransPrewarm(c.env, submissionId, "manual_moderation")
+        );
+      }
+    }
+    if (current.status !== "active" && parsed.data.status === "active") {
+      c.executionCtx.waitUntil(
+        notifySubmissionApproved(c.env, {
+          submission: current,
+          previousStatus: current.status,
+          source: "manual_moderation"
+        })
+      );
     }
     const effectiveModerationNote = parsed.data.moderationNote ?? current.moderationNote;
     if (shouldApplyModerationPoints(current.status, parsed.data.status, effectiveModerationNote)) {
