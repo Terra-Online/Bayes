@@ -24,7 +24,7 @@
       "intro": "Click the button below to reset your OEM password:",
       "actionLabel": "Reset password",
       "fallbackLabel": "If the button does not work, copy and open this URL in your browser:",
-      "expires": "This link will expire in 1 day.",
+      "expires": "This link will expire in 15 minutes.",
       "ignore": "If this wasn't you, you can safely ignore this email."
     }
   },
@@ -53,7 +53,7 @@
       "intro": "點擊下方按鈕重設終末地地圖集密碼：",
       "actionLabel": "重設密碼",
       "fallbackLabel": "如果按鈕無法使用，請複製以下連結並在瀏覽器中打開：",
-      "expires": "連結將在 1 天後失效。",
+      "expires": "連結將在 15 分鐘後失效。",
       "ignore": "若此封郵件非閣下本人操作，請安全忽略。"
     }
   },
@@ -82,7 +82,7 @@
       "intro": "点击下方按钮重置终末地地图集密码：",
       "actionLabel": "重置密码",
       "fallbackLabel": "如果按钮不可用，请复制以下链接到浏览器打开：",
-      "expires": "链接将在1天后失效。",
+      "expires": "链接将在 15 分钟后失效。",
       "ignore": "若此封链接非您本人操作，请忽略本邮件。"
     }
   },
@@ -111,7 +111,7 @@
       "intro": "下のボタンをクリックして終末地マップ集のパスワードを再設定してください：",
       "actionLabel": "パスワードを再設定",
       "fallbackLabel": "ボタンが機能しない場合は、次のURLをコピーしてブラウザで開いてください：",
-      "expires": "このリンクは1日で有効期限が切れます。",
+      "expires": "このリンクは15分で有効期限が切れます。",
       "ignore": "お心当たりがない場合は、このメールを無視していただいて構いません。"
     }
   },
@@ -140,7 +140,7 @@
       "intro": "아래 버튼을 클릭하여 OEM 비밀번호를 재설정하세요:",
       "actionLabel": "비밀번호 재설정",
       "fallbackLabel": "버튼이 작동하지 않으면 아래 URL을 복사하여 브라우저에서 여세요:",
-      "expires": "이 링크는 1일 후에 만료됩니다.",
+      "expires": "이 링크는 15분 후에 만료됩니다.",
       "ignore": "본인이 요청하지 않은 경우 이 이메일을 무시하셔도 됩니다."
     }
   },
@@ -169,7 +169,7 @@
       "intro": "Нажмите кнопку ниже, чтобы сбросить пароль OEM:",
       "actionLabel": "Сбросить пароль",
       "fallbackLabel": "Если кнопка не работает, скопируйте и откройте этот URL в вашем браузере:",
-      "expires": "Срок действия этой ссылки истекает через 1 день.",
+      "expires": "Срок действия этой ссылки истекает через 15 минут.",
       "ignore": "Если это были не вы, можете смело игнорировать это письмо."
     }
   },
@@ -198,7 +198,7 @@
       "intro": "Haz clic en el botón de abajo para restablecer tu contraseña de OEM:",
       "actionLabel": "Restablecer contraseña",
       "fallbackLabel": "Si el botón no funciona, copia y abre esta URL en tu navegador:",
-      "expires": "Este enlace caducará en 1 día.",
+      "expires": "Este enlace caducará en 15 minutos.",
       "ignore": "Si no has sido tú, puedes ignorar este correo electrónico de forma segura."
     }
   },
@@ -227,7 +227,7 @@
       "intro": "Cliquez sur le bouton ci-dessous pour réinitialiser votre mot de passe OEM :",
       "actionLabel": "Réinitialiser le mot de passe",
       "fallbackLabel": "Si le bouton ne fonctionne pas, copiez et ouvrez cette URL dans votre navigateur :",
-      "expires": "Ce lien expirera dans 1 jour.",
+      "expires": "Ce lien expirera dans 15 minutes.",
       "ignore": "Si vous n'êtes pas à l'origine de cette demande, vous pouvez ignorer cet e-mail."
     }
   },
@@ -256,7 +256,7 @@
       "intro": "Klicken Sie auf die Schaltfläche unten, um Ihr OEM-Passwort zurückzusetzen:",
       "actionLabel": "Passwort zurücksetzen",
       "fallbackLabel": "Wenn die Schaltfläche nicht funktioniert, kopieren Sie diese URL und öffnen Sie sie in Ihrem Browser:",
-      "expires": "Dieser Link läuft in 1 Tag ab.",
+      "expires": "Dieser Link läuft in 15 Minuten ab.",
       "ignore": "Wenn Sie dies nicht waren, können Sie diese E-Mail ignorieren."
     }
   },
@@ -285,7 +285,7 @@
       "intro": "Fai clic sul pulsante qui sotto per reimpostare la tua password OEM:",
       "actionLabel": "Reimposta password",
       "fallbackLabel": "Se il pulsante non funziona, copia e apri questo URL nel tuo browser:",
-      "expires": "Questo link scadrà tra 1 giorno.",
+      "expires": "Questo link scadrà tra 15 minuti.",
       "ignore": "Se non sei stato tu, puoi tranquillamente ignorare questa email."
     }
   },
@@ -314,7 +314,7 @@
       "intro": "Klik tombol di bawah ini untuk mengatur ulang kata sandi OEM Anda:",
       "actionLabel": "Atur ulang kata sandi",
       "fallbackLabel": "Jika tombol tidak berfungsi, salin dan buka URL ini di browser Anda:",
-      "expires": "Tautan ini akan kedaluwarsa dalam 1 hari.",
+      "expires": "Tautan ini akan kedaluwarsa dalam 15 menit.",
       "ignore": "Jika ini bukan Anda, Anda dapat mengabaikan email ini."
     }
   },
@@ -343,7 +343,7 @@
       "intro": "Clique no botão abaixo para redefinir sua senha do OEM:",
       "actionLabel": "Redefinir senha",
       "fallbackLabel": "Se o botão não funcionar, copie e abra este URL no seu navegador:",
-      "expires": "Este link expirará em 1 dia.",
+      "expires": "Este link expirará em 15 minutos.",
       "ignore": "Se não foi você, pode ignorar este e-mail com segurança."
     }
   },
@@ -372,7 +372,7 @@
       "intro": "انقر على الزر أدناه لإعادة تعيين كلمة مرور OEM الخاصة بك:",
       "actionLabel": "إعادة تعيين كلمة المرور",
       "fallbackLabel": "إذا كان الزر لا يعمل، انسخ هذا الرابط وافتحه في متصفحك:",
-      "expires": "ستنتهي صلاحية هذا الرابط خلال يوم واحد.",
+      "expires": "ستنتهي صلاحية هذا الرابط خلال 15 دقيقة.",
       "ignore": "إذا لم تكن أنت من طلب هذا، فيمكنك تجاهل هذا البريد الإلكتروني بأمان."
     }
   },
@@ -401,7 +401,7 @@
       "intro": "Klik butang di bawah untuk menetapkan semula kata laluan OEM anda:",
       "actionLabel": "Tetapkan semula kata laluan",
       "fallbackLabel": "Jika butang tidak berfungsi, salin dan buka URL ini dalam pelayar anda:",
-      "expires": "Pautan ini akan tamat tempoh dalam 1 hari.",
+      "expires": "Pautan ini akan tamat tempoh dalam 15 minit.",
       "ignore": "Jika ini bukan anda, anda boleh mengabaikan e-mel ini."
     }
   },
@@ -430,7 +430,7 @@
       "intro": "Kliknij przycisk poniżej, aby zresetować hasło OEM:",
       "actionLabel": "Zresetuj hasło",
       "fallbackLabel": "Jeśli przycisk nie działa, skopiuj i otwórz ten adres URL w przeglądarce:",
-      "expires": "Ten link wygaśnie za 1 dzień.",
+      "expires": "Ten link wygaśnie za 15 minut.",
       "ignore": "Jeśli to nie Ty, możesz bezpiecznie zignorować tego e-maila."
     }
   },
@@ -459,7 +459,7 @@
       "intro": "Klicka på knappen nedan för att återställa ditt OEM-lösenord:",
       "actionLabel": "Återställ lösenord",
       "fallbackLabel": "Om knappen inte fungerar, kopiera och öppna denna URL i din webbläsare:",
-      "expires": "Denna länk löper ut om 1 dag.",
+      "expires": "Denna länk löper ut om 15 minuter.",
       "ignore": "Om detta inte var du kan du säkert ignorera detta e-postmeddelande."
     }
   },
@@ -488,7 +488,7 @@
       "intro": "คลิกปุ่มด้านล่างเพื่อรีเซ็ตรหัสผ่าน OEM ของคุณ:",
       "actionLabel": "รีเซ็ตรหัสผ่าน",
       "fallbackLabel": "หากปุ่มไม่ทำงาน โปรดคัดลอกและเปิด URL นี้ในเบราว์เซอร์ของคุณ:",
-      "expires": "ลิงก์นี้จะหมดอายุใน 1 วัน",
+      "expires": "ลิงก์นี้จะหมดอายุใน 15 นาที",
       "ignore": "หากคุณไม่ได้เป็นผู้ดำเนินการ โปรดเพิกเฉยต่ออีเมลฉบับนี้"
     }
   },
@@ -517,7 +517,7 @@
       "intro": "Nhấp vào nút bên dưới để đặt lại mật khẩu OEM của bạn:",
       "actionLabel": "Đặt lại mật khẩu",
       "fallbackLabel": "Nếu nút không hoạt động, hãy sao chép và mở URL này trong trình duyệt của bạn:",
-      "expires": "Liên kết này sẽ hết hạn sau 1 ngày.",
+      "expires": "Liên kết này sẽ hết hạn sau 15 phút.",
       "ignore": "Nếu đây không phải là bạn, bạn có thể bỏ qua email này một cách an toàn."
     }
   },
@@ -546,7 +546,7 @@
       "intro": "Κάντε κλικ στο παρακάτω κουμπί για να επαναφέρετε τον κωδικό πρόσβασης OEM:",
       "actionLabel": "Επαναφορά κωδικού πρόσβασης",
       "fallbackLabel": "Εάν το κουμπί δεν λειτουργεί, αντιγράψτε και ανοίξτε αυτό το URL στο πρόγραμμα περιήγησής σας:",
-      "expires": "Αυτός ο σύνδεσμος θα λήξει σε 1 ημέρα.",
+      "expires": "Αυτός ο σύνδεσμος θα λήξει σε 15 λεπτά.",
       "ignore": "Εάν δεν ήσασταν εσείς, μπορείτε να αγνοήσετε με ασφάλεια αυτό το email."
     }
   },
@@ -575,7 +575,7 @@
       "intro": "अपना OEM पासवर्ड रीसेट करने के लिए नीचे दिए गए बटन पर क्लिक करें:",
       "actionLabel": "पासवर्ड रीसेट करें",
       "fallbackLabel": "यदि बटन काम नहीं करता है, तो इस URL को अपने ब्राउज़र में कॉपी करके खोलें:",
-      "expires": "यह लिंक 1 दिन में समाप्त हो जाएगा।",
+      "expires": "यह लिंक 15 मिनट में समाप्त हो जाएगा।",
       "ignore": "यदि यह आपने नहीं किया है, तो आप सुरक्षित रूप से इस ईमेल को अनदेखा कर सकते हैं।"
     }
   }

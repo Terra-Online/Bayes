@@ -35,7 +35,7 @@ export function createAuth(env: Bindings) {
     trustedOrigins: parseAuthTrustedOrigins(env),
     emailAndPassword: {
       enabled: true,
-      resetPasswordTokenExpiresIn: 300,
+      resetPasswordTokenExpiresIn: 15 * 60,
       sendResetPassword: async ({ user, url }, request) => {
         const locale = resolvePreferredEmailLocale(env, user, request);
         const content = createResetPasswordMagicLinkTemplate({ locale, url });
