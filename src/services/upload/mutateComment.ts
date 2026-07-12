@@ -1,25 +1,35 @@
+import { nanoid } from "nanoid";
 import { ApiError } from "../../lib/errors";
-import { RECALL_MODERATION_NOTE_PREFIX } from "../../lib/moderation";
+import {
+  COMMENT_EDIT_MODERATION_NOTE_PREFIX,
+  RECALL_MODERATION_NOTE_PREFIX
+} from "../../lib/moderation";
 import { invalidateUploadCaches } from "../../middleware/cache/uploadCaches";
 import {
   countSubmissionFlags,
+  clearSubmissionFlags,
   createSubmissionFlag,
   deleteSubmissionFlag,
 } from "../../repositories/submission/flagSubmission";
 import {
   getSubmissionById,
-  updateSubmissionStatus
+  revertCommentEdit,
+  updateCommentContentForModeration,
+  updateSubmissionStatus,
+  updateSubmissionStatusForSnapshot
 } from "../../repositories/submission/statusSubmission";
 import {
   getSubmissionScore,
   setSubmissionVote,
 } from "../../repositories/submission/voteSubmission";
 import type { AppEnv } from "../../types/app";
+import { enqueueModeration } from "../moderation/queue";
 import {
   notifyFlagCreated,
   notifyFlagRemoved,
   notifyRemoveRequestCreated
 } from "../moderation/notifications";
+import { commentEditSchema } from "./schemas";
 
 function requireUserAndSubmissionId(c: import("hono").Context<AppEnv>) {
   const user = c.get("authUser");
@@ -185,6 +195,68 @@ export async function handleCommentRemoveRequest(c: import("hono").Context<AppEn
   return c.json({ ok: true, status: "remove_request" });
 }
 
+export async function handleEditComment(c: import("hono").Context<AppEnv>) {
+  const { user, submissionId } = requireUserAndSubmissionId(c);
+  const parsed = commentEditSchema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) {
+    throw new ApiError(422, "VALIDATION_ERROR", "Invalid comment edit payload.", parsed.error.flatten());
+  }
+
+  const submission = await getSubmissionById(c.env.DB, submissionId);
+  if (!submission || submission.kind !== "comment") {
+    throw new ApiError(404, "SUBMISSION_NOT_FOUND", "Comment submission was not found.");
+  }
+  if (submission.userId !== user.uid) {
+    throw new ApiError(403, "COMMENT_EDIT_OWNER_ONLY", "Only the author can edit a comment.");
+  }
+  if (!["pending_openai", "pending_audit", "active", "flagged", "remove_request"].includes(submission.status)) {
+    throw new ApiError(409, "INVALID_SUBMISSION_STATUS", "Comment cannot be edited in its current status.", {
+      status: submission.status
+    });
+  }
+
+  if (submission.content === parsed.data.content) {
+    return c.json({
+      ok: true,
+      submission: {
+        id: submission.id,
+        markerId: submission.markerId,
+        parentId: submission.parentId,
+        depth: submission.commentDepth,
+        status: submission.status,
+        snapshotId: submission.snapshotId
+      }
+    });
+  }
+
+  const snapshotId = nanoid(12);
+  const updated = await updateCommentContentForModeration(c.env.DB, {
+    id: submissionId,
+    content: parsed.data.content,
+    expectedSnapshotId: submission.snapshotId,
+    snapshotId,
+    moderationNote: `${COMMENT_EDIT_MODERATION_NOTE_PREFIX} awaiting moderation.`
+  });
+  if (!updated) {
+    throw new ApiError(409, "COMMENT_EDIT_CONFLICT", "Comment changed while the edit was being submitted.");
+  }
+  await clearSubmissionFlags(c.env.DB, submissionId);
+  invalidateCommentCache(c, submission.markerId);
+  await enqueueModeration(c.env, submissionId, snapshotId);
+
+  return c.json({
+    ok: true,
+    submission: {
+      id: submission.id,
+      markerId: submission.markerId,
+      parentId: submission.parentId,
+      depth: submission.commentDepth,
+      status: "pending_openai",
+      snapshotId
+    }
+  });
+}
+
 export async function handleRecallComment(c: import("hono").Context<AppEnv>) {
   const { user, submissionId } = requireUserAndSubmissionId(c);
   const submission = await getSubmissionById(c.env.DB, submissionId);
@@ -194,40 +266,51 @@ export async function handleRecallComment(c: import("hono").Context<AppEnv>) {
   if (submission.userId !== user.uid) {
     throw new ApiError(403, "RECALL_OWNER_ONLY", "Only the author can recall a comment.");
   }
+  if (submission.editOriginalContent !== null) {
+    const originalStatus = submission.editOriginalStatus;
+    const status = originalStatus === "pending_openai" || originalStatus === "pending_audit"
+      ? originalStatus
+      : "active";
+    const reverted = await revertCommentEdit(c.env.DB, {
+      id: submissionId,
+      expectedSnapshotId: submission.snapshotId,
+      status,
+      moderationNote: "Comment edit reverted by author."
+    });
+    if (!reverted) {
+      throw new ApiError(409, "COMMENT_EDIT_CONFLICT", "Comment changed while the edit was being reverted.");
+    }
+    invalidateCommentCache(c, submission.markerId);
+    if (status === "pending_openai" && submission.editOriginalSnapshotId) {
+      await enqueueModeration(c.env, submissionId, submission.editOriginalSnapshotId);
+    }
+    return c.json({
+      ok: true,
+      status,
+      editReverted: true,
+      content: submission.editOriginalContent
+    });
+  }
   if (submission.status === "stale") {
     return c.json({ ok: true, status: "stale" });
   }
   if (!["pending_openai", "pending_audit", "active", "flagged", "remove_request"].includes(submission.status)) {
     throw new ApiError(409, "INVALID_STATUS_TRANSITION", "Comment cannot be recalled from its current status.", {
       from: submission.status,
-      to: "remove_request"
+      to: "stale"
     });
   }
 
-  if (submission.status === "pending_openai" || submission.status === "pending_audit") {
-    await updateSubmissionStatus(c.env.DB, {
-      id: submissionId,
-      status: "stale",
-      moderationNote: `${RECALL_MODERATION_NOTE_PREFIX} comment error.`
-    });
-    invalidateCommentCache(c, submission.markerId);
-    return c.json({ ok: true, status: "stale" });
-  }
-
-  await updateSubmissionStatus(c.env.DB, {
+  const recalled = await updateSubmissionStatusForSnapshot(c.env.DB, {
     id: submissionId,
-    status: "remove_request",
-    moderationNote: `${RECALL_MODERATION_NOTE_PREFIX} comment error.`
+    snapshotId: submission.snapshotId,
+    fromStatus: submission.status,
+    status: "stale",
+    moderationNote: `${RECALL_MODERATION_NOTE_PREFIX} comment withdrawn by author.`
   });
+  if (!recalled) {
+    throw new ApiError(409, "RECALL_CONFLICT", "Comment changed while it was being recalled.");
+  }
   invalidateCommentCache(c, submission.markerId);
-  c.executionCtx.waitUntil(
-    notifyRemoveRequestCreated(c.env, {
-      submission,
-      actor: user,
-      nextStatus: "remove_request",
-      source: "recall"
-    })
-  );
-
-  return c.json({ ok: true, status: "remove_request" });
+  return c.json({ ok: true, status: "stale" });
 }

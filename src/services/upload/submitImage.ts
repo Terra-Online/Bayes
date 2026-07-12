@@ -100,7 +100,7 @@ export async function handleSubmitImage(c: import("hono").Context<AppEnv>) {
     sizeBytes: preparedImage.sizeBytes,
     status: "pending_openai"
   });
-  await enqueueModeration(c.env, submissionId);
+  await enqueueModeration(c.env, submissionId, snapshotId);
   const duplicatePoi = await getDuplicateImageMarkerSummary(c.env.DB, {
     markerId: parsed.data.markerId,
     pathPrefix: uploadScope.pathPrefix,

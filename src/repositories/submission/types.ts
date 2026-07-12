@@ -7,6 +7,9 @@ export interface SubmissionRecord {
   snapshotId: string;
   userId: string;
   content: string | null;
+  editOriginalContent: string | null;
+  editOriginalStatus: SubmissionStatus | null;
+  editOriginalSnapshotId: string | null;
   filePath: string | null;
   status: SubmissionStatus;
   moderationNote: string | null;
@@ -67,6 +70,7 @@ export interface PublicSubmissionComment {
   parentId: string | null;
   depth: number;
   content: string;
+  editUndoAvailable: boolean;
   author: {
     nickname: string;
     publicUid: string;

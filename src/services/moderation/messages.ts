@@ -72,6 +72,7 @@ export type OemModQueueMessage =
   | {
       type: "moderation";
       submissionId: string;
+      snapshotId?: string;
       source: ModerationQueueSource;
       queuedAt: string;
     }

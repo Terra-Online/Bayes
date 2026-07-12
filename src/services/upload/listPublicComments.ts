@@ -9,7 +9,10 @@ import {
   writePublicMarkerCommentCache
 } from "../../middleware/cache/publicMarkerComments";
 import { listActiveCommentsByMarker, listUserCommentsByMarker } from "../../repositories/submission/listComments";
-import type { PublicSubmissionComment } from "../../repositories/submission/types";
+import type {
+  PublicSubmissionComment,
+  UserSubmissionComment
+} from "../../repositories/submission/types";
 import type { AppEnv } from "../../types/app";
 import { hasAuthHeaders, requireMarkerIds } from "./helpers";
 import { commentsQuerySchema } from "./schemas";
@@ -49,6 +52,49 @@ function flattenPublicCommentsByMarker(
   return markerIds.flatMap((markerId) => (grouped.get(markerId) ?? [])
     .slice(0, limit)
     .map((comment) => sliceCommentTree(comment, replyLimit)));
+}
+
+function mergeViewerPendingComments(
+  publicComments: PublicSubmissionComment[],
+  viewerComments: UserSubmissionComment[]
+): PublicSubmissionComment[] {
+  const commentById = new Map<string, PublicSubmissionComment>();
+  const indexTree = (comments: PublicSubmissionComment[]): void => {
+    comments.forEach((comment) => {
+      commentById.set(comment.id, comment);
+      indexTree(comment.replies);
+    });
+  };
+  indexTree(publicComments);
+
+  const pendingRoots: PublicSubmissionComment[] = [];
+  const pending = viewerComments
+    .filter((comment) => comment.status === "pending_openai" || comment.status === "pending_audit")
+    .sort((left, right) => (
+      left.depth - right.depth ||
+      right.createdAt.localeCompare(left.createdAt) ||
+      right.id.localeCompare(left.id)
+    ));
+
+  pending.forEach((comment) => {
+    if (commentById.has(comment.id)) return;
+
+    const normalized: PublicSubmissionComment = {
+      ...comment,
+      replyCount: comment.replyCount ?? 0,
+      replies: comment.replies ?? []
+    };
+    const parent = normalized.parentId ? commentById.get(normalized.parentId) : undefined;
+    if (parent) {
+      parent.replies.push(normalized);
+      parent.replyCount += 1;
+    } else {
+      pendingRoots.push(normalized);
+    }
+    commentById.set(normalized.id, normalized);
+  });
+
+  return pendingRoots.length > 0 ? [...pendingRoots, ...publicComments] : publicComments;
 }
 
 export async function listCachedPublicCommentsByMarker(
@@ -163,8 +209,9 @@ export async function handleListPublicComments(c: import("hono").Context<AppEnv>
     : null;
   const useSharedCache = parsed.data.publicOnly === "1" || !session;
 
-  const items = useSharedCache
-    ? await listCachedPublicCommentsByMarker({
+  let items: PublicSubmissionComment[];
+  if (useSharedCache) {
+    items = await listCachedPublicCommentsByMarker({
       db: c.env.DB,
       kv: c.env.OEM_KV,
       markerIds: ids,
@@ -176,13 +223,24 @@ export async function handleListPublicComments(c: import("hono").Context<AppEnv>
         parsed.data.scope
       )),
       waitUntil: (promise) => c.executionCtx.waitUntil(promise)
-    })
-    : await listActiveCommentsByMarker(c.env.DB, {
-      markerIds: ids,
-      limit,
-      replyLimit,
-      viewerUserId: session?.user.id
     });
+  } else {
+    const [publicComments, viewerComments] = await Promise.all([
+      listActiveCommentsByMarker(c.env.DB, {
+        markerIds: ids,
+        limit,
+        replyLimit,
+        viewerUserId: session?.user.id
+      }),
+      listUserCommentsByMarker(c.env.DB, {
+        userId: session!.user.id,
+        markerIds: ids,
+        limit: 200
+      })
+    ]);
+    items = publicComments;
+    items = mergeViewerPendingComments(items, viewerComments);
+  }
 
   const response = c.json({ items });
   if (useSharedCache) {

@@ -46,16 +46,22 @@ function createModerationOptions(env: Bindings, redis: Redis): ModerationOptions
   };
 }
 
-export async function enqueueModeration(env: Bindings, submissionId: string): Promise<void> {
+export async function enqueueModeration(
+  env: Bindings,
+  submissionId: string,
+  snapshotId: string
+): Promise<void> {
   const queuedAt = new Date().toISOString();
   await env.OEM_MODQ.send({
     type: "moderation",
     submissionId,
+    snapshotId,
     source: "upload",
     queuedAt
   });
   await markSubmissionModerationQueued(env.DB, {
     id: submissionId,
+    snapshotId,
     queuedAt
   }).catch((error) => {
     console.warn("moderation queued marker update failed", {
@@ -91,11 +97,13 @@ export async function ensureModerationBackfill(
     await env.OEM_MODQ.send({
       type: "moderation",
       submissionId: item.id,
+      snapshotId: item.snapshotId,
       source: "scheduled_backfill",
       queuedAt
     });
     await markSubmissionModerationQueued(env.DB, {
       id: item.id,
+      snapshotId: item.snapshotId,
       queuedAt
     }).catch((error) => {
       console.warn("moderation backfill marker update failed", {
@@ -140,7 +148,12 @@ async function processModerationQueueMessage(
   stats: PendingOpenAICompletionStats
 ): Promise<void> {
   if (message.type === "moderation") {
-    const status = await moderateSubmissionById(env.DB, message.submissionId, options);
+    const status = await moderateSubmissionById(
+      env.DB,
+      message.submissionId,
+      options,
+      message.snapshotId
+    );
     if (status) {
       recordPendingOpenAICompletionStatus(stats, status);
     }

@@ -6,6 +6,7 @@ import { rateLimit } from "../middleware/rate-limit";
 import { getUserByUid } from "../repositories/users";
 import { translateVisibleComments } from "../services/upload/commentTranslation";
 import {
+  handleEditComment,
   handleCommentRemoveRequest,
   handleCommentVote,
   handleFlagComment,
@@ -100,6 +101,7 @@ export function createUploadRoutes() {
   app.post("/comments/:id/downvote", requireAuth, rateLimit("auth"), (c) => handleCommentVote(c, -1));
   app.post("/comments/:id/flag", requireAuth, rateLimit("auth"), handleFlagComment);
   app.post("/comments/:id/unflag", requireAuth, rateLimit("auth"), handleUnflagComment);
+  app.post("/comments/:id/edit", requireAuth, rateLimit("upload"), handleEditComment);
   app.post("/comments/:id/remove-request", requireAuth, rateLimit("auth"), handleCommentRemoveRequest);
   app.post("/comments/:id/recall", requireAuth, rateLimit("auth"), handleRecallComment);
 

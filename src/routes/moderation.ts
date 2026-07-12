@@ -2,7 +2,10 @@ import { Hono, type Context } from "hono";
 import { z } from "zod";
 import { getRuntimeConfig } from "../lib/config";
 import { ApiError } from "../lib/errors";
-import { RECALL_MODERATION_NOTE_PREFIX } from "../lib/moderation";
+import {
+  COMMENT_EDIT_MODERATION_NOTE_PREFIX,
+  RECALL_MODERATION_NOTE_PREFIX
+} from "../lib/moderation";
 import { createRedisClient } from "../lib/redis";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { rateLimit } from "../middleware/rate-limit";
@@ -23,7 +26,11 @@ import {
   type SubmissionStatus
 } from "../repositories/submission/types";
 import { clearSubmissionFlags } from "../repositories/submission/flagSubmission";
-import { getSubmissionById, updateSubmissionStatus } from "../repositories/submission/statusSubmission";
+import {
+  getSubmissionById,
+  updateSubmissionStatus,
+  updateSubmissionStatusForSnapshot
+} from "../repositories/submission/statusSubmission";
 import { applyUserPointsDelta } from "../repositories/users";
 import { deletePublicMarkerCommentCache } from "../middleware/cache/publicMarkerComments";
 import { deletePublicMarkerImageCache } from "../middleware/cache/publicMarkerImages";
@@ -402,11 +409,16 @@ export function createModerationRoutes() {
     }
     assertStatusTransition(current.status, parsed.data.status);
 
-    await updateSubmissionStatus(c.env.DB, {
+    const updated = await updateSubmissionStatusForSnapshot(c.env.DB, {
       id: submissionId,
+      snapshotId: current.snapshotId,
+      fromStatus: current.status,
       status: parsed.data.status,
       moderationNote: parsed.data.moderationNote
     });
+    if (!updated) {
+      throw new ApiError(409, "MODERATION_CONFLICT", "Submission changed while it was being moderated.");
+    }
     if (current.status === "flagged" && parsed.data.status === "active") {
       await clearSubmissionFlags(c.env.DB, submissionId);
     }
@@ -434,7 +446,15 @@ export function createModerationRoutes() {
       );
     }
     const effectiveModerationNote = parsed.data.moderationNote ?? current.moderationNote;
-    if (shouldApplyModerationPoints(current.status, parsed.data.status, effectiveModerationNote)) {
+    const isPreviouslyApprovedEdit = (
+      current.moderationNote?.startsWith(COMMENT_EDIT_MODERATION_NOTE_PREFIX) &&
+      current.editOriginalStatus !== "pending_openai" &&
+      current.editOriginalStatus !== "pending_audit"
+    );
+    if (
+      !isPreviouslyApprovedEdit &&
+      shouldApplyModerationPoints(current.status, parsed.data.status, effectiveModerationNote)
+    ) {
       const reviewStatus = parsed.data.status === "active" ? "active" : "stale";
       const redis = createRedisClient(c.env);
       const config = getRuntimeConfig(c.env);

@@ -15,7 +15,8 @@ import {
 } from "../../repositories/submission/flagSubmission";
 import {
   getSubmissionById,
-  updateSubmissionStatus
+  updateSubmissionStatus,
+  updateSubmissionStatusForSnapshot
 } from "../../repositories/submission/statusSubmission";
 import type { AppEnv } from "../../types/app";
 import {
@@ -269,34 +270,20 @@ export async function handleRecallImage(c: import("hono").Context<AppEnv>) {
   if (!["pending_openai", "pending_audit", "active", "flagged", "remove_request"].includes(submission.status)) {
     throw new ApiError(409, "INVALID_STATUS_TRANSITION", "Image cannot be recalled from its current status.", {
       from: submission.status,
-      to: "remove_request"
+      to: "stale"
     });
   }
 
-  if (submission.status === "pending_openai" || submission.status === "pending_audit") {
-    await updateSubmissionStatus(c.env.DB, {
-      id: submissionId,
-      status: "stale",
-      moderationNote: `${RECALL_MODERATION_NOTE_PREFIX} upload error.`
-    });
-    invalidateImageCache(c, submission.markerId);
-    return c.json({ ok: true, status: "stale" });
-  }
-
-  await updateSubmissionStatus(c.env.DB, {
+  const recalled = await updateSubmissionStatusForSnapshot(c.env.DB, {
     id: submissionId,
-    status: "remove_request",
-    moderationNote: `${RECALL_MODERATION_NOTE_PREFIX} upload error.`
+    snapshotId: submission.snapshotId,
+    fromStatus: submission.status,
+    status: "stale",
+    moderationNote: `${RECALL_MODERATION_NOTE_PREFIX} image withdrawn by uploader.`
   });
+  if (!recalled) {
+    throw new ApiError(409, "RECALL_CONFLICT", "Image changed while it was being recalled.");
+  }
   invalidateImageCache(c, submission.markerId);
-  c.executionCtx.waitUntil(
-    notifyRemoveRequestCreated(c.env, {
-      submission,
-      actor: user,
-      nextStatus: "remove_request",
-      source: "recall"
-    })
-  );
-
-  return c.json({ ok: true, status: "remove_request" });
+  return c.json({ ok: true, status: "stale" });
 }
