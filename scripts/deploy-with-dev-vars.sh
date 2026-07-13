@@ -71,6 +71,9 @@ if [[ ${#ARGS[@]} -gt 0 && "${ARGS[0]}" == "--" ]]; then
   ARGS=("${ARGS[@]:1}")
 fi
 
+echo "[deploy-with-dev-vars] Applying remote D1 migrations"
+pnpm exec wrangler d1 migrations apply DB --remote
+
 if [[ ${#ARGS[@]} -gt 0 ]]; then
   pnpm exec wrangler deploy --keep-vars --secrets-file "$ENV_FILE" "${ARGS[@]}"
 else
