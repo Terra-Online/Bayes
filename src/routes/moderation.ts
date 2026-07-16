@@ -3,7 +3,7 @@ import { z } from "zod";
 import { getRuntimeConfig } from "../lib/config";
 import { ApiError } from "../lib/errors";
 import {
-  COMMENT_EDIT_MODERATION_NOTE_PREFIX,
+  isCommentEditModerationNote,
   RECALL_MODERATION_NOTE_PREFIX
 } from "../lib/moderation";
 import { createRedisClient } from "../lib/redis";
@@ -447,7 +447,7 @@ export function createModerationRoutes() {
     }
     const effectiveModerationNote = parsed.data.moderationNote ?? current.moderationNote;
     const isPreviouslyApprovedEdit = (
-      current.moderationNote?.startsWith(COMMENT_EDIT_MODERATION_NOTE_PREFIX) &&
+      isCommentEditModerationNote(current.moderationNote) &&
       current.editOriginalStatus !== "pending_openai" &&
       current.editOriginalStatus !== "pending_audit"
     );

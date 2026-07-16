@@ -1,4 +1,3 @@
-import { createAuth } from "../../lib/auth/createAuth";
 import { getRuntimeConfig } from "../../lib/config";
 import { ApiError } from "../../lib/errors";
 import {
@@ -14,7 +13,7 @@ import type {
   UserSubmissionComment
 } from "../../repositories/submission/types";
 import type { AppEnv } from "../../types/app";
-import { hasAuthHeaders, requireMarkerIds } from "./helpers";
+import { getOptionalSession, hasAuthHeaders, requireMarkerIds } from "./helpers";
 import { commentsQuerySchema } from "./schemas";
 import { resolveImageScope } from "./scope";
 
@@ -203,9 +202,7 @@ export async function handleListPublicComments(c: import("hono").Context<AppEnv>
   const replyLimit = parsed.data.replyLimit ?? 3;
   const shouldReadSession = parsed.data.publicOnly !== "1" && hasAuthHeaders(c.req.raw.headers);
   const session = shouldReadSession
-    ? await createAuth(c.env).api.getSession({
-      headers: c.req.raw.headers
-    })
+    ? await getOptionalSession(c.env, c.req.raw.headers)
     : null;
   const useSharedCache = parsed.data.publicOnly === "1" || !session;
 

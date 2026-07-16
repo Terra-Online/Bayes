@@ -50,15 +50,29 @@ function isReadOrPublicTranslation(method: string, path: string): boolean {
   return isImageRead || isPublicTranslation;
 }
 
+function isPublicReadOrTranslation(method: string, path: string): boolean {
+  return (
+    method === "GET" && (
+      path.endsWith("/uploads/v1/images") ||
+      path.endsWith("/uploads/v1/comments") ||
+      path.includes("/uploads/v1/public-file/") ||
+      path.includes("/public-file/")
+    )
+  ) || (
+    method === "POST" && path.endsWith("/uploads/v1/comments/translations")
+  );
+}
+
 export function createUploadRoutes() {
   const app = new Hono<AppEnv>();
 
   app.use("*", async (c, next) => {
+    const isPublicRequest = isPublicReadOrTranslation(c.req.method, c.req.path);
     const hasAuthHeaders = Boolean(
       c.req.header("authorization")?.trim() ||
       c.req.header("cookie")?.trim()
     );
-    if (hasAuthHeaders) {
+    if (hasAuthHeaders && !isPublicRequest) {
       const session = await createAuth(c.env).api.getSession({
         headers: c.req.raw.headers
       });

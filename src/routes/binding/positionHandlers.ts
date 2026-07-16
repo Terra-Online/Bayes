@@ -1,5 +1,9 @@
 import { connectEndfieldPositionSocket } from "../../lib/endfieldClient/positionSocket";
-import { parseEndfieldPositionSocketError, parseEndfieldPositionSocketMessage } from "../../lib/endfieldClient/positionParser";
+import {
+  isEndfieldCredentialErrorCode,
+  parseEndfieldPositionSocketError,
+  parseEndfieldPositionSocketMessage
+} from "../../lib/endfieldClient/positionParser";
 import { ApiError } from "../../lib/errors";
 import { resolveAuthUser } from "../../middleware/auth";
 import { getDecryptedBinding, isAutoRefreshableEndfieldError, refreshBindingCredentials, withAutoRefreshedBinding } from "./credentials";
@@ -79,7 +83,7 @@ export async function handleEndfieldPositionSocket(c: AppContext) {
         type: "status",
         status: "connecting"
       });
-      upstream = await connectEndfieldPositionSocket({
+      const connectedSocket = await connectEndfieldPositionSocket({
         provider: currentBinding.binding.provider,
         roleId: currentBinding.binding.role_id,
         serverId: Number(currentBinding.binding.server_id),
@@ -87,71 +91,127 @@ export async function handleEndfieldPositionSocket(c: AppContext) {
         token: currentBinding.token,
         wsBaseUrl: c.env.ENDFIELD_WS_BASE_URL,
         deviceProfile: currentBinding.deviceProfile
-      });
-      sendJson({
-        type: "status",
-        status: "connected"
-      });
-
-      upstream.addEventListener("message", (event) => {
-        if (generation !== upstreamGeneration) return;
-        const error = parseEndfieldPositionSocketError(event.data as string | ArrayBuffer);
-        if (error?.code === 10000) {
+      }, {
+        onSubscribed: () => {
+          if (closed || generation !== upstreamGeneration) return;
           sendJson({
-            type: "error",
-            error: {
-              status: 401,
-              code: "ENDFIELD_CREDENTIAL_REJECTED",
-              message: error.message ?? "Endfield credential was rejected.",
-              details: {
-                upstreamCode: error.code,
-                upstreamMessage: error.message
+            type: "status",
+            status: "connected"
+          });
+        },
+        onMessage: (data) => {
+          if (generation !== upstreamGeneration) return;
+          const error = parseEndfieldPositionSocketError(data);
+          if (error) {
+            const credentialRejected = isEndfieldCredentialErrorCode(error.code);
+            const errorPayload = {
+              type: "error",
+              error: {
+                status: 401,
+                code: credentialRejected ? "ENDFIELD_CREDENTIAL_REJECTED" : "ENDFIELD_POSITION_UNAVAILABLE",
+                message: credentialRejected
+                  ? (error.message ?? "Endfield credential was rejected.")
+                  : "Player is not currently logged into the game or position is unavailable.",
+                details: {
+                  upstreamCode: error.code,
+                  upstreamMessage: error.message
+                }
               }
+            };
+            if (credentialRejected) {
+              upstreamGeneration += 1;
+              sendJson({
+                type: "status",
+                status: "reconnecting",
+                reason: "refreshing credentials"
+              });
+              try {
+                upstream?.close(1000, "refreshing credentials");
+              } catch {
+                // upstream is already closed
+              }
+              const recovery = refreshBindingCredentials(c, currentUserUid, currentBinding)
+                .then((refreshed) => {
+                  if (closed || !refreshed) return;
+                  binding = refreshed;
+                  scheduleReconnect();
+                })
+                .catch(() => {
+                  if (!closed) sendJson(errorPayload);
+                });
+              c.executionCtx.waitUntil(recovery);
+              return;
             }
-          });
-          return;
-        }
+            sendJson(errorPayload);
+            return;
+          }
 
-        const position = parseEndfieldPositionSocketMessage(event.data as string | ArrayBuffer);
-        if (!position) return;
-        positionCache.set(getPositionCacheKey(currentUserUid, currentBinding.binding), {
-          data: position,
-          refreshedAt: Date.now()
-        });
-        sendJson({
-          type: "position",
-          data: position,
-          ...(includeBinding ? { binding: currentBinding.publicBinding } : {})
-        });
-      });
-      upstream.addEventListener("close", () => {
-        if (!closed && generation === upstreamGeneration) {
-          upstreamGeneration += 1;
-          sendJson({
-            type: "status",
-            status: "reconnecting",
-            reason: "upstream closed"
+          const position = parseEndfieldPositionSocketMessage(data);
+          if (!position) return;
+          positionCache.set(getPositionCacheKey(currentUserUid, currentBinding.binding), {
+            data: position,
+            refreshedAt: Date.now()
           });
-          scheduleReconnect();
+          sendJson({
+            type: "position",
+            data: position,
+            ...(includeBinding ? { binding: currentBinding.publicBinding } : {})
+          });
+        },
+        onClose: () => {
+          if (!closed && generation === upstreamGeneration) {
+            upstreamGeneration += 1;
+            sendJson({
+              type: "status",
+              status: "reconnecting",
+              reason: "upstream closed"
+            });
+            scheduleReconnect();
+          }
+        },
+        onError: () => {
+          if (!closed && generation === upstreamGeneration) {
+            upstreamGeneration += 1;
+            sendJson({
+              type: "status",
+              status: "reconnecting",
+              reason: "upstream error"
+            });
+            scheduleReconnect();
+          }
         }
       });
-      upstream.addEventListener("error", () => {
-        if (!closed && generation === upstreamGeneration) {
-          upstreamGeneration += 1;
-          sendJson({
-            type: "status",
-            status: "reconnecting",
-            reason: "upstream error"
-          });
-          scheduleReconnect();
-        }
-      });
+      if (closed || generation !== upstreamGeneration) {
+        connectedSocket.close(1000, "connection superseded");
+        return;
+      }
+      upstream = connectedSocket;
     } catch (error) {
       if (isAutoRefreshableEndfieldError(error)) {
         const refreshed = await refreshBindingCredentials(c, currentUserUid, currentBinding).catch(() => null);
         if (refreshed && !closed) {
           binding = refreshed;
           scheduleReconnect();
+          return;
+        }
+        const details = error instanceof ApiError
+          ? error.details as { upstreamCode?: unknown; upstreamStatus?: unknown } | undefined
+          : undefined;
+        if (
+          error instanceof ApiError
+          && (
+            error.code === "ENDFIELD_CREDENTIAL_REJECTED"
+            || isEndfieldCredentialErrorCode(details?.upstreamCode)
+            || (
+              error.code === "ENDFIELD_POSITION_SOCKET_UNAVAILABLE"
+              && (details?.upstreamStatus === 401 || details?.upstreamStatus === 403)
+            )
+          )
+        ) {
+          sendJson({
+            type: "error",
+            error: serializeLocatorError(error)
+          });
           return;
         }
       }

@@ -1,4 +1,6 @@
 import { ApiError } from "../../lib/errors";
+import { createAuth } from "../../lib/auth/createAuth";
+import type { AppEnv } from "../../types/app";
 
 export function pickString(value: FormDataEntryValue | FormDataEntryValue[] | undefined): string | undefined {
   const item = Array.isArray(value) ? value[0] : value;
@@ -61,6 +63,22 @@ export function hasAuthHeaders(headers: Headers): boolean {
     headers.get("authorization")?.trim() ||
     headers.get("cookie")?.trim()
   );
+}
+
+export async function getOptionalSession(
+  env: AppEnv["Bindings"],
+  headers: Headers
+): Promise<Awaited<ReturnType<ReturnType<typeof createAuth>["api"]["getSession"]>> | null> {
+  if (!hasAuthHeaders(headers)) return null;
+
+  try {
+    return await createAuth(env).api.getSession({ headers });
+  } catch (error) {
+    console.warn("[uploads] optional session lookup failed; serving anonymous response", {
+      error: error instanceof Error ? error.message : String(error)
+    });
+    return null;
+  }
 }
 
 function parseObjectKey(raw: string | undefined): string {

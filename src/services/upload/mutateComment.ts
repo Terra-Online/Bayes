@@ -1,6 +1,7 @@
 import { nanoid } from "nanoid";
 import { ApiError } from "../../lib/errors";
 import {
+  COMMENT_ADMIN_EDIT_MODERATION_NOTE_PREFIX,
   COMMENT_EDIT_MODERATION_NOTE_PREFIX,
   RECALL_MODERATION_NOTE_PREFIX
 } from "../../lib/moderation";
@@ -206,8 +207,10 @@ export async function handleEditComment(c: import("hono").Context<AppEnv>) {
   if (!submission || submission.kind !== "comment") {
     throw new ApiError(404, "SUBMISSION_NOT_FOUND", "Comment submission was not found.");
   }
-  if (submission.userId !== user.uid) {
-    throw new ApiError(403, "COMMENT_EDIT_OWNER_ONLY", "Only the author can edit a comment.");
+  const isAuthor = submission.userId === user.uid;
+  const isAdmin = user.role === "a" || user.role === "r";
+  if (!isAuthor && !isAdmin) {
+    throw new ApiError(403, "COMMENT_EDIT_OWNER_ONLY", "Only the author or an admin can edit a comment.");
   }
   if (!["pending_openai", "pending_audit", "active", "flagged", "remove_request"].includes(submission.status)) {
     throw new ApiError(409, "INVALID_SUBMISSION_STATUS", "Comment cannot be edited in its current status.", {
@@ -235,7 +238,11 @@ export async function handleEditComment(c: import("hono").Context<AppEnv>) {
     content: parsed.data.content,
     expectedSnapshotId: submission.snapshotId,
     snapshotId,
-    moderationNote: `${COMMENT_EDIT_MODERATION_NOTE_PREFIX} awaiting moderation.`
+    moderationNote: `${
+      isAuthor
+        ? COMMENT_EDIT_MODERATION_NOTE_PREFIX
+        : COMMENT_ADMIN_EDIT_MODERATION_NOTE_PREFIX
+    } awaiting moderation.`
   });
   if (!updated) {
     throw new ApiError(409, "COMMENT_EDIT_CONFLICT", "Comment changed while the edit was being submitted.");

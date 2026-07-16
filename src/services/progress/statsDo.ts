@@ -164,6 +164,7 @@ export class OEMStatsDO {
     if (!this.snapshot) {
       return jsonResponse({
         markerIndexHash,
+        pointCount: 0,
         totalSyncedUsers: 0,
         sampleSize: 0,
         counts: "",
@@ -172,6 +173,7 @@ export class OEMStatsDO {
     }
     return jsonResponse({
       markerIndexHash: this.snapshot.markerIndexHash,
+      pointCount: this.snapshot.pointCount,
       totalSyncedUsers: this.snapshot.totalSyncedUsers,
       sampleSize: this.snapshot.totalSyncedUsers,
       counts: this.snapshot.counts,

@@ -2,6 +2,21 @@ import type { ApiEnvelope, EndfieldPositionData } from "./types";
 
 const textDecoder = new TextDecoder();
 
+export function isEndfieldCredentialErrorCode(value: unknown): boolean {
+  const code = typeof value === "number"
+    ? value
+    : (typeof value === "string" && value.trim() !== "" ? Number(value) : Number.NaN);
+  return code === 10000 || code === 10002;
+}
+
+function normalizeCoordinate(value: unknown, fallback?: number): number | null {
+  if ((value === undefined || value === null) && fallback !== undefined) return fallback;
+  if (typeof value !== "number" && typeof value !== "string") return null;
+  if (typeof value === "string" && value.trim() === "") return null;
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function encodeWebSocketMessage(data: string | ArrayBuffer): string {
   if (typeof data === "string") return data;
   return textDecoder.decode(data);
@@ -17,8 +32,11 @@ export function parseEndfieldSocketEnvelope(data: string | ArrayBuffer): { type?
       data?: unknown;
       msgId?: unknown;
     };
+    const normalizedType = typeof parsed.type === "number"
+      ? parsed.type
+      : (typeof parsed.type === "string" && parsed.type.trim() !== "" ? Number(parsed.type) : Number.NaN);
     return {
-      type: typeof parsed.type === "number" ? parsed.type : undefined,
+      type: Number.isFinite(normalizedType) ? normalizedType : undefined,
       data: parsed.data,
       msgId: typeof parsed.msgId === "string" ? parsed.msgId : undefined
     };
@@ -27,16 +45,19 @@ export function parseEndfieldSocketEnvelope(data: string | ArrayBuffer): { type?
   }
 }
 
-function normalizePositionData(value: unknown): EndfieldPositionData | null {
+export function normalizeEndfieldPositionData(value: unknown): EndfieldPositionData | null {
   if (!value || typeof value !== "object") return null;
   const candidate = value as Partial<EndfieldPositionData>;
   const pos = candidate.pos;
+  const x = normalizeCoordinate((pos as { x?: unknown } | undefined)?.x);
+  const y = normalizeCoordinate((pos as { y?: unknown } | undefined)?.y, 0);
+  const z = normalizeCoordinate((pos as { z?: unknown } | undefined)?.z);
   if (
     !pos
     || typeof pos !== "object"
-    || typeof (pos as { x?: unknown }).x !== "number"
-    || typeof (pos as { y?: unknown }).y !== "number"
-    || typeof (pos as { z?: unknown }).z !== "number"
+    || x === null
+    || y === null
+    || z === null
     || typeof candidate.levelId !== "string"
     || typeof candidate.isOnline !== "boolean"
     || typeof candidate.mapId !== "string"
@@ -46,9 +67,9 @@ function normalizePositionData(value: unknown): EndfieldPositionData | null {
 
   return {
     pos: {
-      x: (pos as { x: number }).x,
-      y: (pos as { y: number }).y,
-      z: (pos as { z: number }).z
+      x,
+      y,
+      z
     },
     levelId: candidate.levelId,
     isOnline: candidate.isOnline,
@@ -71,7 +92,7 @@ function findPositionData(value: unknown, depth = 0): EndfieldPositionData | nul
 
   if (typeof value !== "object") return null;
 
-  const direct = normalizePositionData(value);
+  const direct = normalizeEndfieldPositionData(value);
   if (direct) return direct;
 
   if (Array.isArray(value)) {
@@ -103,10 +124,13 @@ export function parseEndfieldPositionSocketError(data: string | ArrayBuffer): Ap
   const envelope = parseEndfieldSocketEnvelope(data);
   if (!envelope?.data || typeof envelope.data !== "object") return null;
 
-  const parsed = envelope.data as Partial<ApiEnvelope<unknown>>;
-  return typeof parsed.code === "number" && parsed.code !== 0
+  const parsed = envelope.data as { code?: unknown; message?: string; data?: unknown };
+  const code = typeof parsed.code === "number"
+    ? parsed.code
+    : (typeof parsed.code === "string" && parsed.code.trim() !== "" ? Number(parsed.code) : Number.NaN);
+  return Number.isFinite(code) && code !== 0
       ? {
-        code: parsed.code,
+        code,
         message: parsed.message,
         data: parsed.data
       }

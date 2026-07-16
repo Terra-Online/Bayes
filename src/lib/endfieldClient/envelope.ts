@@ -15,6 +15,30 @@ export async function parseApiEnvelope<T>(response: Response, options: ApiEnvelo
 
   if (!response.ok || json.code !== 0) {
     if (options.positionRequest) {
+      if (!response.ok && response.status !== 401 && response.status !== 403) {
+        throw new ApiError(
+          502,
+          "ENDFIELD_POSITION_UPSTREAM_UNAVAILABLE",
+          "Endfield position upstream was unavailable.",
+          {
+            upstreamCode: json.code,
+            upstreamStatus: response.status,
+            upstreamMessage: json.message
+          }
+        );
+      }
+      if (json.code === 10000 || json.code === 10002) {
+        throw new ApiError(
+          401,
+          "ENDFIELD_CREDENTIAL_REJECTED",
+          json.message ?? "Endfield credential was rejected.",
+          {
+            upstreamCode: json.code,
+            upstreamStatus: response.status,
+            upstreamMessage: json.message
+          }
+        );
+      }
       throw new ApiError(
         401,
         "ENDFIELD_POSITION_UNAVAILABLE",

@@ -1,5 +1,6 @@
 import { decryptSecret, encryptSecret } from "../../lib/crypto";
 import { generateEndfieldCredByCode, grantEndfieldOAuthCode, refreshEndfieldAuth } from "../../lib/endfieldClient/authClient";
+import { isEndfieldCredentialErrorCode } from "../../lib/endfieldClient/positionParser";
 import { ApiError } from "../../lib/errors";
 import { deleteLocatorCaches, readDecryptedBindingCache, writeDecryptedBindingCache } from "./locatorCache";
 import { getBinding, getBindingDeviceProfile, publicBinding } from "./repository";
@@ -53,12 +54,10 @@ export async function getDecryptedBinding(c: AppContext, uid: string): Promise<D
 export function isAutoRefreshableEndfieldError(error: unknown): boolean {
   if (!(error instanceof ApiError)) return false;
   const details = error.details as { upstreamCode?: unknown; upstreamStatus?: unknown } | undefined;
-  const upstreamCode = Number(details?.upstreamCode);
   return error.code === "ENDFIELD_CREDENTIAL_REJECTED"
-    || error.code === "ENDFIELD_POSITION_SOCKET_UNAVAILABLE"
     || details?.upstreamStatus === 401
     || details?.upstreamStatus === 403
-    || upstreamCode === 10000;
+    || isEndfieldCredentialErrorCode(details?.upstreamCode);
 }
 
 async function updateStoredCredential(

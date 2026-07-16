@@ -2,7 +2,7 @@ import type { Redis } from "@upstash/redis";
 import {
   AI_ACTIVE_MODERATION_NOTE_PREFIX,
   AI_PENDING_AUDIT_MODERATION_NOTE_PREFIX,
-  COMMENT_EDIT_MODERATION_NOTE_PREFIX
+  isCommentEditModerationNote
 } from "../../lib/moderation";
 import { deletePublicMarkerCommentCache } from "../../middleware/cache/publicMarkerComments";
 import { deletePublicMarkerImageCache } from "../../middleware/cache/publicMarkerImages";
@@ -218,7 +218,7 @@ async function applyModerationStatus(
   }
 
   const isPreviouslyApprovedEdit = (
-    submission.moderationNote?.startsWith(COMMENT_EDIT_MODERATION_NOTE_PREFIX) &&
+    isCommentEditModerationNote(submission.moderationNote) &&
     submission.editOriginalStatus !== "pending_openai" &&
     submission.editOriginalStatus !== "pending_audit"
   );

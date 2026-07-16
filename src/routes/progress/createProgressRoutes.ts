@@ -4,6 +4,7 @@ import { ApiError } from "../../lib/errors";
 import { getJsonFromKv, MIN_KV_EXPIRATION_TTL_SECONDS, putJsonToKv } from "../../middleware/cache/kvJson";
 import { requireAuth } from "../../middleware/auth";
 import { rateLimit } from "../../middleware/rate-limit";
+import { isSha256Hex } from "../../services/progress/manifest";
 import type { AppEnv } from "../../types/app";
 
 const PROGRESS_STATS_HTTP_MAX_AGE_SECONDS = 10;
@@ -42,8 +43,8 @@ async function proxyUserProgress(
 
 async function proxyStats(c: Context<AppEnv>): Promise<Response> {
   const markerIndexHash = c.req.query("markerIndexHash")?.trim().toLowerCase();
-  if (!markerIndexHash) {
-    throw new ApiError(422, "VALIDATION_ERROR", "markerIndexHash is required.");
+  if (!markerIndexHash || !isSha256Hex(markerIndexHash)) {
+    throw new ApiError(422, "VALIDATION_ERROR", "markerIndexHash must be a SHA-256 hash.");
   }
 
   const kvKey = `${PROGRESS_STATS_KV_KEY_PREFIX}${markerIndexHash}`;
