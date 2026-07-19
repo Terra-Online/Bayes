@@ -37,6 +37,7 @@ export async function getReviewSubmissions(
     .prepare(
       `SELECT
          s.*,
+         COALESCE(f.flag_count, 0) AS flag_count,
          u.uid AS submitter_uid,
          u.uid_number AS user_uid_number,
          u.uid_suffix AS user_uid_suffix,
@@ -44,6 +45,11 @@ export async function getReviewSubmissions(
          u.karma AS user_karma,
          u.nickname AS user_nickname
        FROM ugc_submissions s
+       LEFT JOIN (
+         SELECT submission_id, COUNT(*) AS flag_count
+         FROM ugc_submission_flags
+         GROUP BY submission_id
+       ) f ON f.submission_id = s.id
        LEFT JOIN users u ON u.uid = s.user_id
        WHERE ${filters.whereSql}
        ORDER BY

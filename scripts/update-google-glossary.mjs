@@ -6,23 +6,23 @@ const DEFAULT_PROJECT_ID = "open-endfield-map";
 const DEFAULT_LOCATION = "us-central1";
 const DEFAULT_GLOSSARY_ID = "oem-glossary";
 const DEFAULT_BUCKET = "oem-glossary";
-const DEFAULT_LOCAL_FILE = "glossary.csv";
+const DEFAULT_LOCAL_FILE = "scripts/glossary.csv";
 const DEFAULT_GCS_URI = `gs://${DEFAULT_BUCKET}/glossary.csv`;
 const DEFAULT_LANGUAGE_CODES = [
   "zh-CN",
-  "zh-HK",
+  "zh-TW",
   "en",
   "ja",
   "ko",
   "fr",
   "de",
+  "it",
   "es",
-  "pt-BR",
+  "pt",
   "ru",
   "th",
   "vi",
-  "id",
-  "ms"
+  "id"
 ];
 
 function readArg(name, fallback) {

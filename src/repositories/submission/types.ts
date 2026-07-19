@@ -12,6 +12,7 @@ export interface SubmissionRecord {
   editOriginalSnapshotId: string | null;
   filePath: string | null;
   status: SubmissionStatus;
+  flagCount: number;
   moderationNote: string | null;
   moderationQueuedAt: string | null;
   mimeType: string | null;
@@ -57,6 +58,7 @@ export interface PublicSubmissionImage {
   } | null;
   status: SubmissionStatus;
   upvoteCount: number;
+  flagCount: number;
   upvoted?: boolean;
   flagged?: boolean;
   createdAt: string;

@@ -70,6 +70,7 @@ export function mapSubmission(row: Record<string, unknown>): SubmissionRecord {
       : String(row.edit_original_snapshot_id),
     filePath: row.file_path === null || row.file_path === undefined ? null : String(row.file_path),
     status: mapStatus(row.status),
+    flagCount: toCount(row.flag_count),
     moderationNote: row.moderation_note === null ? null : String(row.moderation_note ?? ""),
     moderationQueuedAt: row.moderation_queued_at === null || row.moderation_queued_at === undefined
       ? null
@@ -123,6 +124,7 @@ export function publicImageFromRow(
       : null,
     status: submission.status,
     upvoteCount: toCount(row.upvote_count),
+    flagCount: toCount(row.flag_count),
     upvoted: viewerUserId ? Boolean(row.viewer_upvoted) : undefined,
     flagged: viewerUserId ? Boolean(row.viewer_flagged) : undefined,
     createdAt: submission.createdAt
