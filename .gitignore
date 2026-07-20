@@ -167,3 +167,4 @@ src/lib/emailBlacklist.json
 /.idea/
 
 docs/
+src/data

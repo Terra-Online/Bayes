@@ -13,7 +13,8 @@
     "lint": "eslint .",
     "db:migrate:local": "wrangler d1 migrations apply DB --local",
     "db:migrate:remote": "wrangler d1 migrations apply DB --remote",
-    "glossary:update": "node scripts/update-google-glossary.mjs"
+    "glossary:update": "node scripts/update-google-glossary.mjs",
+    "coverage-manifest:update": "node scripts/update-image-coverage-manifest.mjs"
   },
   "dependencies": {
     "@cloudflare/containers": "^0.3.7",

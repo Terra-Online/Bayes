@@ -40,6 +40,7 @@ import { getModerationPointsDeltaWithDailyBackoff } from "../services/karma/mode
 import { moderateSubmissionIds } from "../services/moderation/core";
 import { ensureModerationBackfill, enqueueApprovedCommentTransPrewarm } from "../services/moderation/queue";
 import { notifySubmissionApproved, notifySubmissionModerationResult } from "../services/moderation/notifications";
+import { getImageCoverage } from "../services/moderation/imageCoverage";
 import type { AppEnv } from "../types/app";
 
 const updateSchema = z.object({
@@ -58,6 +59,10 @@ const duplicateImagesQuerySchema = z.object({
   scope: z.enum(["test", "prod"]).optional(),
   limit: z.coerce.number().int().min(1).max(100).optional(),
   offset: z.coerce.number().int().min(0).max(100000).optional()
+});
+
+const imageCoverageQuerySchema = z.object({
+  scope: z.enum(["test", "prod"]).optional()
 });
 
 const duplicateMarkerImagesQuerySchema = z.object({
@@ -325,6 +330,21 @@ export function createModerationRoutes() {
       statuses: ALL_STATUSES,
       transitions: STATUS_TRANSITIONS
     });
+  });
+
+  app.get("/images/coverage", requireAuth, requireRole(["a"]), rateLimit("auth"), async (c) => {
+    const parsed = imageCoverageQuerySchema.safeParse({
+      scope: c.req.query("scope")
+    });
+    if (!parsed.success) {
+      throw new ApiError(422, "VALIDATION_ERROR", "Invalid image coverage query.", parsed.error.flatten());
+    }
+
+    const requestedScope = parsed.data.scope ?? "prod";
+    return c.json(await getImageCoverage(c.env.DB, {
+      scope: requestedScope,
+      imageScope: resolveImageScope("", requestedScope)
+    }));
   });
 
   app.get("/images/duplicates", requireAuth, requireRole(["p", "a"]), rateLimit("auth"), async (c) => {
