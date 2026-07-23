@@ -15,6 +15,9 @@ export {
 export {
   OEMStatsDO,
 } from './services/progress/statsDo';
+export {
+  PublicReadCache,
+} from './middleware/cache/publicReadCache';
 
 const app = createApp();
 

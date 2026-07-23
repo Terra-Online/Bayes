@@ -1,5 +1,6 @@
 import { ApiError } from "../../lib/errors";
 import { getJsonFromKv, putJsonToKv, sha256Hex } from "../../middleware/cache/kvJson";
+import { CACHE_KEY_VERSIONS } from "../../middleware/cache/versions";
 import type { Bindings } from "../../types/app";
 import {
   PROGRESS_BITS_PER_POINT,
@@ -23,8 +24,8 @@ export type RegisteredManifest = {
 
 type StoredManifest = Omit<RegisteredManifest, "indexById">;
 
-const ACTIVE_MANIFEST_HASH_KEY = "progress:active-manifest-hash:v1";
-const MANIFEST_KV_KEY_PREFIX = "progress:manifest:v1:";
+const ACTIVE_MANIFEST_HASH_KEY = `progress:active-manifest-hash:${CACHE_KEY_VERSIONS.progressManifest}`;
+const MANIFEST_KV_KEY_PREFIX = `progress:manifest:${CACHE_KEY_VERSIONS.progressManifest}:`;
 
 export function normalizePointIds(value: unknown, fieldName: string): string[] {
   if (!Array.isArray(value)) {

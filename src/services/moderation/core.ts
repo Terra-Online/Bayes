@@ -4,9 +4,8 @@ import {
   AI_PENDING_AUDIT_MODERATION_NOTE_PREFIX,
   isCommentEditModerationNote
 } from "../../lib/moderation";
-import { deletePublicMarkerCommentCache } from "../../middleware/cache/publicMarkerComments";
-import { deletePublicMarkerImageCache } from "../../middleware/cache/publicMarkerImages";
 import { prewarmPublicUgcAsset } from "../../middleware/cache/publicUgcAssets";
+import { invalidateUploadCaches } from "../../middleware/cache/uploadCaches";
 import { markKarmaDirty } from "../karma/evaluation";
 import { getModerationPointsDeltaWithDailyBackoff } from "../karma/moderationPoints";
 import {
@@ -211,9 +210,17 @@ async function applyModerationStatus(
 
   if (submission.kind === "image") {
     await (options.prewarmAsset ?? prewarmPublicUgcAsset)(options.assetBaseUrl, submission.filePath);
-    await deletePublicMarkerImageCache(options.ugcKv, submission.markerId);
+    await invalidateUploadCaches({
+      kv: options.ugcKv,
+      kind: "image",
+      markerId: submission.markerId
+    });
   } else {
-    await deletePublicMarkerCommentCache(options.ugcKv, submission.markerId);
+    await invalidateUploadCaches({
+      kv: options.ugcKv,
+      kind: "comment",
+      markerId: submission.markerId
+    });
     await options.enqueueApprovedCommentTransPrewarm?.(options.id);
   }
 

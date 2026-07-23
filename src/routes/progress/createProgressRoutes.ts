@@ -1,15 +1,11 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { ApiError } from "../../lib/errors";
-import { getJsonFromKv, MIN_KV_EXPIRATION_TTL_SECONDS, putJsonToKv } from "../../middleware/cache/kvJson";
+import { fetchProgressStatsFromWorkersCache } from "../../middleware/cache/publicReadClient";
 import { requireAuth } from "../../middleware/auth";
 import { rateLimit } from "../../middleware/rate-limit";
 import { isSha256Hex } from "../../services/progress/manifest";
 import type { AppEnv } from "../../types/app";
-
-const PROGRESS_STATS_HTTP_MAX_AGE_SECONDS = 10;
-const PROGRESS_STATS_KV_TTL_SECONDS = MIN_KV_EXPIRATION_TTL_SECONDS;
-const PROGRESS_STATS_KV_KEY_PREFIX = "progress:stats:v1:";
 
 function isProgressLocked(flag: string | undefined): boolean {
   const normalized = (flag ?? "true").trim().toLowerCase();
@@ -46,36 +42,7 @@ async function proxyStats(c: Context<AppEnv>): Promise<Response> {
   if (!markerIndexHash || !isSha256Hex(markerIndexHash)) {
     throw new ApiError(422, "VALIDATION_ERROR", "markerIndexHash must be a SHA-256 hash.");
   }
-
-  const kvKey = `${PROGRESS_STATS_KV_KEY_PREFIX}${markerIndexHash}`;
-  const cached = await getJsonFromKv<unknown>(c.env.OEM_KV, kvKey);
-  if (cached) {
-    const response = c.json(cached);
-    response.headers.set("Cache-Control", `public, max-age=${PROGRESS_STATS_HTTP_MAX_AGE_SECONDS}`);
-    response.headers.set("x-oem-kv-cache", "hit");
-    return response;
-  }
-
-  const id = c.env.OEM_STATS_DO.idFromName(markerIndexHash);
-  const stub = c.env.OEM_STATS_DO.get(id);
-  const url = new URL("https://progress-stats/state");
-  url.searchParams.set("markerIndexHash", markerIndexHash);
-  const response = await stub.fetch(new Request(url, { method: "GET" }));
-  if (!response.ok) {
-    return response;
-  }
-
-  const payload = await response.clone().json().catch(() => null);
-  if (payload) {
-    await putJsonToKv(c.env.OEM_KV, kvKey, payload, {
-      expirationTtl: PROGRESS_STATS_KV_TTL_SECONDS
-    }).catch(() => undefined);
-  }
-
-  const nextResponse = c.json(payload);
-  nextResponse.headers.set("Cache-Control", `public, max-age=${PROGRESS_STATS_HTTP_MAX_AGE_SECONDS}`);
-  nextResponse.headers.set("x-oem-kv-cache", "miss");
-  return nextResponse;
+  return fetchProgressStatsFromWorkersCache(markerIndexHash);
 }
 
 export function createProgressRoutes() {

@@ -32,9 +32,8 @@ import {
   updateSubmissionStatusForSnapshot
 } from "../repositories/submission/statusSubmission";
 import { applyUserPointsDelta } from "../repositories/users";
-import { deletePublicMarkerCommentCache } from "../middleware/cache/publicMarkerComments";
-import { deletePublicMarkerImageCache } from "../middleware/cache/publicMarkerImages";
 import { prewarmPublicUgcAsset } from "../middleware/cache/publicUgcAssets";
+import { invalidateUploadCaches } from "../middleware/cache/uploadCaches";
 import { evaluateKarmaBatch, markKarmaDirty } from "../services/karma/evaluation";
 import { getModerationPointsDeltaWithDailyBackoff } from "../services/karma/moderationPoints";
 import { moderateSubmissionIds } from "../services/moderation/core";
@@ -446,10 +445,12 @@ export function createModerationRoutes() {
       const config = getRuntimeConfig(c.env);
       c.executionCtx.waitUntil(prewarmPublicUgcAsset(config.ugcAssetBaseUrl, current.filePath));
     }
-    if (current.kind === "image") {
-      c.executionCtx.waitUntil(deletePublicMarkerImageCache(c.env.OEM_KV, current.markerId));
-    } else {
-      c.executionCtx.waitUntil(deletePublicMarkerCommentCache(c.env.OEM_KV, current.markerId));
+    c.executionCtx.waitUntil(invalidateUploadCaches({
+      kv: c.env.OEM_KV,
+      kind: current.kind,
+      markerId: current.markerId
+    }));
+    if (current.kind === "comment") {
       if (current.status !== "active" && parsed.data.status === "active") {
         c.executionCtx.waitUntil(
           enqueueApprovedCommentTransPrewarm(c.env, submissionId, "manual_moderation")

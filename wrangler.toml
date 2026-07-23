@@ -1,10 +1,26 @@
 name = "oem-backend"
 main = "src/index.ts"
-compatibility_date = "2026-04-08"
+compatibility_date = "2026-07-22"
 compatibility_flags = ["nodejs_compat"]
 
 workers_dev = false
 preview_urls = false
+
+[cache]
+enabled = true
+cross_version_cache = true
+
+[exports.default]
+type = "worker"
+
+[exports.default.cache]
+enabled = false
+
+[exports.PublicReadCache]
+type = "worker"
+
+[exports.PublicReadCache.cache]
+enabled = true
 
 [[routes]]
 pattern = "api.opendfieldmap.org/*"

@@ -1,5 +1,6 @@
 import { getRuntimeConfig, type RuntimeConfig } from "../../lib/config";
 import { getJsonFromKv, putJsonToKv, sha256Hex } from "../../middleware/cache/kvJson";
+import { CACHE_KEY_VERSIONS } from "../../middleware/cache/versions";
 import { getVisibleCommentsByIds } from "../../repositories/submission/statusSubmission";
 import {
   getTextTranslation,
@@ -17,7 +18,7 @@ const GOOGLE_TRANSLATION_CACHE_PROVIDER = "google-v3";
 const GOOGLE_ACCESS_TOKEN_SKEW_SECONDS = 60;
 const GOOGLE_FETCH_TIMEOUT_MS = 15_000;
 const MAX_TRANSLATION_BATCH_SIZE = 100;
-const TRANSLATION_KV_CACHE_PREFIX = "translate:v1";
+const TRANSLATION_KV_CACHE_PREFIX = `translate:${CACHE_KEY_VERSIONS.commentTranslations}`;
 const TRANSLATION_NO_GLOSSARY_CACHE_VERSION = "g0";
 const APPROVED_COMMENT_PREWARM_TARGET_LANGUAGES = ["zh-CN", "en-US", "ru-RU", "ja-JP", "ko-KR"] as const;
 const GOOGLE_LANGUAGE_BY_LOCALE: Record<string, string> = {

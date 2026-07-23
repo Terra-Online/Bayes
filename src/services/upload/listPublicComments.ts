@@ -7,6 +7,7 @@ import {
   resolvePublicCommentCacheNamespace,
   writePublicMarkerCommentCache
 } from "../../middleware/cache/publicMarkerComments";
+import { fetchPublicCommentsFromWorkersCache } from "../../middleware/cache/publicReadClient";
 import { listActiveCommentsByMarker, listUserCommentsByMarker } from "../../repositories/submission/listComments";
 import type {
   PublicSubmissionComment,
@@ -206,11 +207,8 @@ export async function handleListPublicComments(c: import("hono").Context<AppEnv>
     : null;
   const useSharedCache = parsed.data.publicOnly === "1" || !session;
 
-  let items: PublicSubmissionComment[];
   if (useSharedCache) {
-    items = await listCachedPublicCommentsByMarker({
-      db: c.env.DB,
-      kv: c.env.OEM_KV,
+    return fetchPublicCommentsFromWorkersCache({
       markerIds: ids,
       limit,
       replyLimit,
@@ -218,33 +216,26 @@ export async function handleListPublicComments(c: import("hono").Context<AppEnv>
         c.req.raw,
         getRuntimeConfig(c.env).ugcUploadPathPrefix,
         parsed.data.scope
-      )),
-      waitUntil: (promise) => c.executionCtx.waitUntil(promise)
+      ))
     });
-  } else {
-    const [publicComments, viewerComments] = await Promise.all([
-      listActiveCommentsByMarker(c.env.DB, {
-        markerIds: ids,
-        limit,
-        replyLimit,
-        viewerUserId: session?.user.id
-      }),
-      listUserCommentsByMarker(c.env.DB, {
-        userId: session!.user.id,
-        markerIds: ids,
-        limit: 200
-      })
-    ]);
-    items = publicComments;
-    items = mergeViewerPendingComments(items, viewerComments);
   }
 
+  const [publicComments, viewerComments] = await Promise.all([
+    listActiveCommentsByMarker(c.env.DB, {
+      markerIds: ids,
+      limit,
+      replyLimit,
+      viewerUserId: session?.user.id
+    }),
+    listUserCommentsByMarker(c.env.DB, {
+      userId: session!.user.id,
+      markerIds: ids,
+      limit: 200
+    })
+  ]);
+  const items = mergeViewerPendingComments(publicComments, viewerComments);
+
   const response = c.json({ items });
-  if (useSharedCache) {
-    response.headers.set("Cache-Control", items.length > 0 ? "public, max-age=15" : "public, max-age=5");
-    response.headers.set("x-oem-marker-comment-kv-cache", "enabled");
-  } else {
-    response.headers.set("Cache-Control", "private, no-store");
-  }
+  response.headers.set("Cache-Control", "private, no-store");
   return response;
 }

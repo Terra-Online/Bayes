@@ -6,10 +6,7 @@ import {
   resolvePublicImageCacheNamespace,
   writePublicMarkerImageCache
 } from "../../middleware/cache/publicMarkerImages";
-import {
-  UGC_PUBLIC_EMPTY_LIST_CACHE_CONTROL,
-  UGC_PUBLIC_LIST_CACHE_CONTROL
-} from "../../middleware/cache/publicUgcAssets";
+import { fetchPublicImagesFromWorkersCache } from "../../middleware/cache/publicReadClient";
 import { listActiveImagesByMarker, listUserImagesByMarker } from "../../repositories/submission/listImages";
 import type { PublicSubmissionImage } from "../../repositories/submission/types";
 import type { AppEnv } from "../../types/app";
@@ -158,55 +155,26 @@ export async function handleListPublicImages(c: import("hono").Context<AppEnv>) 
     ? await getOptionalSession(c.env, c.req.raw.headers)
     : null;
   const useSharedCache = parsed.data.publicOnly === "1" || !session;
-  let cache: Cache | null = null;
-  let cacheKey: Request | null = null;
-  if (useSharedCache) {
-    cache = await caches.open("ugc-images");
-    const cacheNamespace = resolvePublicImageCacheNamespace(scope);
-    const cacheUrl = new URL(c.req.url);
-    cacheUrl.searchParams.delete("markerId");
-    cacheUrl.searchParams.set("markerIds", [...ids].sort().join(","));
-    cacheUrl.searchParams.set("limit", String(limit));
-    cacheUrl.searchParams.set("_cache_ns", cacheNamespace);
-    cacheKey = new Request(cacheUrl.toString(), { method: "GET" });
-    const cached = await cache.match(cacheKey);
-    if (cached) {
-      return cached;
-    }
-  }
-
   const assetBaseUrl = resolvePublicAssetBaseUrl(c.req.url, config.ugcAssetBaseUrl);
-  const images = useSharedCache
-    ? await listCachedPublicImagesByMarker({
-      db: c.env.DB,
-      kv: c.env.OEM_KV,
+  if (useSharedCache) {
+    return fetchPublicImagesFromWorkersCache({
       markerIds: ids,
-      assetBaseUrl,
-      pathPrefix: scope.pathPrefix,
-      excludePathPrefix: scope.excludePathPrefix,
       limit,
       cacheNamespace: resolvePublicImageCacheNamespace(scope),
-      waitUntil: (promise) => c.executionCtx.waitUntil(promise)
-    })
-    : await listActiveImagesByMarker(c.env.DB, {
-      markerIds: ids,
-      assetBaseUrl,
-      pathPrefix: scope.pathPrefix,
-      excludePathPrefix: scope.excludePathPrefix,
-      limit,
-      viewerUserId: session?.user.id
+      assetBaseUrl
     });
+  }
+
+  const images = await listActiveImagesByMarker(c.env.DB, {
+    markerIds: ids,
+    assetBaseUrl,
+    pathPrefix: scope.pathPrefix,
+    excludePathPrefix: scope.excludePathPrefix,
+    limit,
+    viewerUserId: session?.user.id
+  });
 
   const response = c.json({ items: images });
-  if (cache && cacheKey) {
-    response.headers.set(
-      "Cache-Control",
-      images.length > 0 ? UGC_PUBLIC_LIST_CACHE_CONTROL : UGC_PUBLIC_EMPTY_LIST_CACHE_CONTROL
-    );
-    response.headers.set("x-oem-marker-kv-cache", "enabled");
-    c.executionCtx.waitUntil(cache.put(cacheKey, response.clone()));
-  } else {
-    response.headers.set("Cache-Control", "private, no-store");
-  }
+  response.headers.set("Cache-Control", "private, no-store");
   return response;
 }
