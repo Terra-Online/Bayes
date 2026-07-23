@@ -5,7 +5,8 @@ import {
   parseEndfieldPositionSocketMessage
 } from "../../lib/endfieldClient/positionParser";
 import { ApiError } from "../../lib/errors";
-import { resolveAuthUser } from "../../middleware/auth";
+import { resolveAuthIdentity } from "../../middleware/auth";
+import { ensureUserProfile } from "../../repositories/users";
 import { getDecryptedBinding, isAutoRefreshableEndfieldError, refreshBindingCredentials, withAutoRefreshedBinding } from "./credentials";
 import { POSITION_STREAM_RECONNECT_MS, requireUser, serializeLocatorError, shouldIncludeBinding } from "./helpers";
 import {
@@ -72,17 +73,19 @@ export async function handleEndfieldPositionSocket(c: AppContext) {
     }
   };
 
-  const bridgeUpstream = async () => {
+  const bridgeUpstream = async (announceConnecting = true) => {
     const currentBinding = binding;
     const currentUserUid = userUid;
     if (!currentBinding || !currentUserUid) return;
     const generation = upstreamGeneration + 1;
     upstreamGeneration = generation;
     try {
-      sendJson({
-        type: "status",
-        status: "connecting"
-      });
+      if (announceConnecting) {
+        sendJson({
+          type: "status",
+          status: "connecting"
+        });
+      }
       const connectedSocket = await connectEndfieldPositionSocket({
         provider: currentBinding.binding.provider,
         roleId: currentBinding.binding.role_id,
@@ -230,13 +233,21 @@ export async function handleEndfieldPositionSocket(c: AppContext) {
       if (accessToken && !authHeaders.has("authorization")) {
         authHeaders.set("authorization", `Bearer ${accessToken}`);
       }
-      const user = await resolveAuthUser(c.env, authHeaders);
+      const identity = await resolveAuthIdentity(c.env, authHeaders);
+      const userActivity = ensureUserProfile(c.env.DB, {
+        uid: identity.uid,
+        email: identity.email,
+        displayName: identity.displayName
+      });
+
+      const [decrypted] = await Promise.all([
+        getDecryptedBinding(c, identity.uid),
+        userActivity
+      ]);
       if (closed) return;
-      const decrypted = await getDecryptedBinding(c, user.uid);
-      if (closed) return;
-      userUid = user.uid;
+      userUid = identity.uid;
       binding = decrypted;
-      void bridgeUpstream();
+      void bridgeUpstream(false);
     } catch (error) {
       sendJson({
         type: "error",
@@ -252,6 +263,10 @@ export async function handleEndfieldPositionSocket(c: AppContext) {
   };
 
   server.accept();
+  sendJson({
+    type: "status",
+    status: "connecting"
+  });
   server.addEventListener("close", close);
   server.addEventListener("error", close);
   server.addEventListener("message", (event) => {

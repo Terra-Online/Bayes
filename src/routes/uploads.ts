@@ -1,9 +1,7 @@
 import { Hono } from "hono";
-import { createAuth } from "../lib/auth/createAuth";
 import { ApiError } from "../lib/errors";
-import { requireAuth } from "../middleware/auth";
+import { requireAuth, resolveContextAuthUser } from "../middleware/auth";
 import { rateLimit } from "../middleware/rate-limit";
-import { getUserByUid } from "../repositories/users";
 import { translateVisibleComments } from "../services/upload/commentTranslation";
 import {
   handleEditComment,
@@ -68,23 +66,19 @@ export function createUploadRoutes() {
 
   app.use("*", async (c, next) => {
     const isPublicRequest = isPublicReadOrTranslation(c.req.method, c.req.path);
-    const hasAuthHeaders = Boolean(
+    const hasAuthCredentials = Boolean(
       c.req.header("authorization")?.trim() ||
-      c.req.header("cookie")?.trim()
+      c.req.header("cookie")?.trim() ||
+      c.req.query("access_token")?.trim()
     );
-    if (hasAuthHeaders && !isPublicRequest) {
-      const session = await createAuth(c.env).api.getSession({
-        headers: c.req.raw.headers
-      });
-      if (session) {
-        const user = await getUserByUid(c.env.DB, session.user.id);
-        if (user?.role === "s") {
-          throw new ApiError(
-            403,
-            "ACCESS_DENIED",
-            "Suspended users cannot access upload endpoints."
-          );
-        }
+    if (hasAuthCredentials && !isPublicRequest) {
+      const user = await resolveContextAuthUser(c);
+      if (user.role === "s") {
+        throw new ApiError(
+          403,
+          "ACCESS_DENIED",
+          "Suspended users cannot access upload endpoints."
+        );
       }
     }
 

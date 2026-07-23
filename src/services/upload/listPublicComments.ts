@@ -8,15 +8,20 @@ import {
   writePublicMarkerCommentCache
 } from "../../middleware/cache/publicMarkerComments";
 import { fetchPublicCommentsFromWorkersCache } from "../../middleware/cache/publicReadClient";
-import { listActiveCommentsByMarker, listUserCommentsByMarker } from "../../repositories/submission/listComments";
+import {
+  listActiveCommentsByMarker,
+  listCommentViewerStateByMarker,
+  listUserCommentsByMarker
+} from "../../repositories/submission/listComments";
 import type {
   PublicSubmissionComment,
   UserSubmissionComment
 } from "../../repositories/submission/types";
 import type { AppEnv } from "../../types/app";
-import { getOptionalSession, hasAuthHeaders, requireMarkerIds } from "./helpers";
+import { getOptionalAuthIdentity, hasAuthHeaders, requireMarkerIds } from "./helpers";
 import { commentsQuerySchema } from "./schemas";
 import { resolveImageScope } from "./scope";
+import { applyCommentViewerReactions } from "./viewerOverlay";
 
 function groupPublicCommentsByMarker(
   markerIds: string[],
@@ -201,41 +206,39 @@ export async function handleListPublicComments(c: import("hono").Context<AppEnv>
   const ids = requireMarkerIds(parsed.data);
   const limit = parsed.data.limit ?? 20;
   const replyLimit = parsed.data.replyLimit ?? 3;
-  const shouldReadSession = parsed.data.publicOnly !== "1" && hasAuthHeaders(c.req.raw.headers);
-  const session = shouldReadSession
-    ? await getOptionalSession(c.env, c.req.raw.headers)
-    : null;
-  const useSharedCache = parsed.data.publicOnly === "1" || !session;
+  const cacheNamespace = resolvePublicCommentCacheNamespace(resolveImageScope(
+    c.req.raw,
+    getRuntimeConfig(c.env).ugcUploadPathPrefix,
+    parsed.data.scope
+  ));
+  const publicResponsePromise = fetchPublicCommentsFromWorkersCache({
+    markerIds: ids,
+    limit,
+    replyLimit,
+    cacheNamespace
+  });
 
-  if (useSharedCache) {
-    return fetchPublicCommentsFromWorkersCache({
-      markerIds: ids,
-      limit,
-      replyLimit,
-      cacheNamespace: resolvePublicCommentCacheNamespace(resolveImageScope(
-        c.req.raw,
-        getRuntimeConfig(c.env).ugcUploadPathPrefix,
-        parsed.data.scope
-      ))
-    });
+  if (parsed.data.publicOnly === "1" || !hasAuthHeaders(c.req.raw.headers)) {
+    return publicResponsePromise;
   }
 
-  const [publicComments, viewerComments] = await Promise.all([
-    listActiveCommentsByMarker(c.env.DB, {
-      markerIds: ids,
-      limit,
-      replyLimit,
-      viewerUserId: session?.user.id
-    }),
-    listUserCommentsByMarker(c.env.DB, {
-      userId: session!.user.id,
-      markerIds: ids,
-      limit: 200
-    })
+  const [publicResponse, identity] = await Promise.all([
+    publicResponsePromise,
+    getOptionalAuthIdentity(c.env, c.req.raw.headers)
   ]);
-  const items = mergeViewerPendingComments(publicComments, viewerComments);
+  if (!identity || !publicResponse.ok) return publicResponse;
+
+  const payload = await publicResponse.json() as { items: PublicSubmissionComment[] };
+  const viewerState = await listCommentViewerStateByMarker(c.env.DB, {
+    userId: identity.uid,
+    markerIds: ids,
+    pendingLimit: 200
+  });
+  const publicComments = applyCommentViewerReactions(payload.items, viewerState.reactions);
+  const items = mergeViewerPendingComments(publicComments, viewerState.pendingComments);
 
   const response = c.json({ items });
   response.headers.set("Cache-Control", "private, no-store");
+  response.headers.set("x-oem-viewer-overlay", "comment");
   return response;
 }

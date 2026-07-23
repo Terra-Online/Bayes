@@ -26,9 +26,6 @@ enabled = true
 pattern = "api.opendfieldmap.org/*"
 zone_name = "opendfieldmap.org"
 
-[placement]
-mode = "smart"
-
 [observability]
 enabled = true
 

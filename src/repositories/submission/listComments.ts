@@ -1,5 +1,19 @@
 import { publicCommentFromRow, userCommentFromRow } from "./mapper";
-import type { PublicSubmissionComment, UserSubmissionComment } from "./types";
+import type {
+  PublicSubmissionComment,
+  UserSubmissionComment,
+  ViewerVoteValue
+} from "./types";
+
+export interface CommentViewerReaction {
+  viewerVote: ViewerVoteValue;
+  flagged: boolean;
+}
+
+export interface CommentViewerState {
+  pendingComments: UserSubmissionComment[];
+  reactions: Map<string, CommentViewerReaction>;
+}
 
 function buildCommentTree(
   roots: PublicSubmissionComment[],
@@ -283,4 +297,92 @@ export async function listUserCommentsByMarker(
     .all<Record<string, unknown>>();
 
   return (result.results ?? []).map((row) => userCommentFromRow(row));
+}
+
+export async function listCommentViewerStateByMarker(
+  db: D1Database,
+  payload: {
+    userId: string;
+    markerIds: string[];
+    pendingLimit?: number;
+  }
+): Promise<CommentViewerState> {
+  const markerIds = [...new Set(payload.markerIds.map((item) => item.trim()).filter(Boolean))].slice(0, 100);
+  if (markerIds.length === 0) {
+    return { pendingComments: [], reactions: new Map() };
+  }
+
+  const markerPlaceholders = markerIds.map((_, index) => `?${index + 2}`).join(", ");
+  const pendingLimit = Math.min(Math.max(payload.pendingLimit ?? 200, 1), 200);
+  const pendingLimitPlaceholder = markerIds.length + 2;
+  const pendingStatement = db.prepare(
+    `WITH selected_comments AS (
+       SELECT *
+       FROM ugc_submissions
+       WHERE user_id = ?1
+         AND poi_id IN (${markerPlaceholders})
+         AND kind = 'comment'
+         AND status IN ('pending_openai', 'pending_audit')
+       ORDER BY created_at DESC, id DESC
+       LIMIT ?${pendingLimitPlaceholder}
+     )
+     SELECT
+       s.*,
+       COALESCE(v.score, 0) AS score,
+       COALESCE(f.flag_count, 0) AS flag_count,
+       u.uid AS submitter_uid,
+       u.uid_number AS user_uid_number,
+       u.uid_suffix AS user_uid_suffix,
+       u.role AS user_role,
+       u.karma AS user_karma,
+       u.nickname AS user_nickname,
+       u.avt AS user_avt
+     FROM selected_comments s
+     LEFT JOIN (
+       SELECT submission_id, SUM(value) AS score
+       FROM ugc_submission_votes
+       WHERE submission_id IN (SELECT id FROM selected_comments)
+       GROUP BY submission_id
+     ) v ON v.submission_id = s.id
+     LEFT JOIN (
+       SELECT submission_id, COUNT(*) AS flag_count
+       FROM ugc_submission_flags
+       WHERE submission_id IN (SELECT id FROM selected_comments)
+       GROUP BY submission_id
+     ) f ON f.submission_id = s.id
+     LEFT JOIN users u ON u.uid = s.user_id
+     ORDER BY s.created_at DESC, s.id DESC`
+  ).bind(payload.userId, ...markerIds, pendingLimit);
+
+  const reactionStatement = db.prepare(
+    `SELECT
+       s.id,
+       COALESCE(v.value, 0) AS viewer_vote,
+       CASE WHEN f.user_id IS NULL THEN 0 ELSE 1 END AS viewer_flagged
+     FROM ugc_submissions s
+     LEFT JOIN ugc_submission_votes v ON v.submission_id = s.id AND v.user_id = ?1
+     LEFT JOIN ugc_submission_flags f ON f.submission_id = s.id AND f.user_id = ?1
+     WHERE s.poi_id IN (${markerPlaceholders})
+       AND s.kind = 'comment'
+       AND s.status IN ('active', 'flagged', 'remove_request')
+       AND (v.user_id IS NOT NULL OR f.user_id IS NOT NULL)`
+  ).bind(payload.userId, ...markerIds);
+
+  const [pendingResult, reactionResult] = await db.batch<Record<string, unknown>>([
+    pendingStatement,
+    reactionStatement
+  ]);
+  const reactions = new Map<string, CommentViewerReaction>();
+  (reactionResult.results ?? []).forEach((row) => {
+    const vote = Number(row.viewer_vote ?? 0);
+    reactions.set(String(row.id), {
+      viewerVote: vote === 1 ? 1 : vote === -1 ? -1 : 0,
+      flagged: Boolean(row.viewer_flagged)
+    });
+  });
+
+  return {
+    pendingComments: (pendingResult.results ?? []).map((row) => userCommentFromRow(row)),
+    reactions
+  };
 }

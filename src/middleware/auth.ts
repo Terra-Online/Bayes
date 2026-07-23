@@ -1,4 +1,4 @@
-import type { MiddlewareHandler } from "hono";
+import type { Context, MiddlewareHandler } from "hono";
 import { createAuth } from "../lib/auth/createAuth";
 import { ApiError } from "../lib/errors";
 import { ensureUserProfile, formatPublicUid } from "../repositories/users";
@@ -12,7 +12,21 @@ type CachedAuthUser = {
   expiresAt: number;
 };
 
+export type AuthIdentity = {
+  uid: string;
+  email: string;
+  displayName?: string;
+};
+
+type CachedAuthIdentity = {
+  identity: AuthIdentity;
+  expiresAt: number;
+};
+
 const authUserCache = new Map<string, CachedAuthUser>();
+const authIdentityCache = new Map<string, CachedAuthIdentity>();
+const authUserRequests = new Map<string, Promise<AuthUser>>();
+const authIdentityRequests = new Map<string, Promise<AuthIdentity>>();
 
 function buildAuthHeaders(headers: Headers, accessToken?: string | null): Headers {
   if (!accessToken?.trim() || headers.has("authorization")) {
@@ -43,19 +57,33 @@ function pruneAuthUserCache(now: number): void {
   }
 }
 
-export async function resolveAuthUser(env: AppEnv["Bindings"], headers: Headers): Promise<AuthUser> {
-  const now = Date.now();
-  const cacheKey = getAuthCacheKey(headers);
-  const cached = cacheKey ? authUserCache.get(cacheKey) : undefined;
-  if (cached && cached.expiresAt > now) {
-    return cached.user;
+function pruneAuthIdentityCache(now: number): void {
+  if (authIdentityCache.size <= AUTH_USER_CACHE_MAX_ENTRIES) return;
+
+  for (const [key, value] of authIdentityCache) {
+    if (value.expiresAt <= now || authIdentityCache.size > AUTH_USER_CACHE_MAX_ENTRIES) {
+      authIdentityCache.delete(key);
+    }
+    if (authIdentityCache.size <= AUTH_USER_CACHE_MAX_ENTRIES) return;
   }
+}
 
+function identityFromAuthUser(user: AuthUser): AuthIdentity {
+  return {
+    uid: user.uid,
+    email: user.email,
+    displayName: user.nickname
+  };
+}
+
+async function fetchAuthIdentity(
+  env: AppEnv["Bindings"],
+  headers: Headers,
+  cacheKey: string | null,
+  now: number
+): Promise<AuthIdentity> {
   const auth = createAuth(env);
-  const session = await auth.api.getSession({
-    headers
-  });
-
+  const session = await auth.api.getSession({ headers });
   if (!session) {
     const authorization = headers.get("authorization")?.trim() ?? "";
     const hasBearerToken = authorization.toLowerCase().startsWith("bearer ");
@@ -65,10 +93,62 @@ export async function resolveAuthUser(env: AppEnv["Bindings"], headers: Headers)
     throw new ApiError(401, "SESSION_REQUIRED", "Session is required.");
   }
 
-  const profile = await ensureUserProfile(env.DB, {
+  const identity = {
     uid: session.user.id,
     email: session.user.email,
     displayName: session.user.name
+  };
+  if (cacheKey) {
+    pruneAuthIdentityCache(now);
+    authIdentityCache.set(cacheKey, {
+      identity,
+      expiresAt: now + AUTH_USER_CACHE_TTL_MS
+    });
+  }
+  return identity;
+}
+
+export async function resolveAuthIdentity(env: AppEnv["Bindings"], headers: Headers): Promise<AuthIdentity> {
+  const now = Date.now();
+  const cacheKey = getAuthCacheKey(headers);
+  const cachedUser = cacheKey ? authUserCache.get(cacheKey) : undefined;
+  if (cachedUser && cachedUser.expiresAt > now) {
+    return identityFromAuthUser(cachedUser.user);
+  }
+  const cachedIdentity = cacheKey ? authIdentityCache.get(cacheKey) : undefined;
+  if (cachedIdentity && cachedIdentity.expiresAt > now) {
+    return cachedIdentity.identity;
+  }
+  if (!cacheKey) {
+    return fetchAuthIdentity(env, headers, null, now);
+  }
+
+  const pending = authIdentityRequests.get(cacheKey);
+  if (pending) return pending;
+
+  const request = fetchAuthIdentity(env, headers, cacheKey, now);
+  authIdentityRequests.set(cacheKey, request);
+  try {
+    return await request;
+  } finally {
+    if (authIdentityRequests.get(cacheKey) === request) {
+      authIdentityRequests.delete(cacheKey);
+    }
+  }
+}
+
+async function fetchAuthUser(
+  env: AppEnv["Bindings"],
+  headers: Headers,
+  cacheKey: string | null,
+  now: number
+): Promise<AuthUser> {
+  const identity = await resolveAuthIdentity(env, headers);
+
+  const profile = await ensureUserProfile(env.DB, {
+    uid: identity.uid,
+    email: identity.email,
+    displayName: identity.displayName
   });
 
   const authUser: AuthUser = {
@@ -94,10 +174,43 @@ export async function resolveAuthUser(env: AppEnv["Bindings"], headers: Headers)
   return authUser;
 }
 
-export const requireAuth: MiddlewareHandler<AppEnv> = async (c, next) => {
+export async function resolveAuthUser(env: AppEnv["Bindings"], headers: Headers): Promise<AuthUser> {
+  const now = Date.now();
+  const cacheKey = getAuthCacheKey(headers);
+  const cached = cacheKey ? authUserCache.get(cacheKey) : undefined;
+  if (cached && cached.expiresAt > now) {
+    return cached.user;
+  }
+  if (!cacheKey) {
+    return fetchAuthUser(env, headers, null, now);
+  }
+
+  const pending = authUserRequests.get(cacheKey);
+  if (pending) return pending;
+
+  const request = fetchAuthUser(env, headers, cacheKey, now);
+  authUserRequests.set(cacheKey, request);
+  try {
+    return await request;
+  } finally {
+    if (authUserRequests.get(cacheKey) === request) {
+      authUserRequests.delete(cacheKey);
+    }
+  }
+}
+
+export async function resolveContextAuthUser(c: Context<AppEnv>): Promise<AuthUser> {
+  const existing = c.get("authUser");
+  if (existing) return existing;
+
   const authHeaders = buildAuthHeaders(c.req.raw.headers, c.req.query("access_token"));
   const authUser = await resolveAuthUser(c.env, authHeaders);
   c.set("authUser", authUser);
+  return authUser;
+}
+
+export const requireAuth: MiddlewareHandler<AppEnv> = async (c, next) => {
+  await resolveContextAuthUser(c);
   await next();
 };
 

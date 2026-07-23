@@ -1,5 +1,5 @@
 import { ApiError } from "../../lib/errors";
-import { createAuth } from "../../lib/auth/createAuth";
+import { resolveAuthIdentity, type AuthIdentity } from "../../middleware/auth";
 import type { AppEnv } from "../../types/app";
 
 export function pickString(value: FormDataEntryValue | FormDataEntryValue[] | undefined): string | undefined {
@@ -65,16 +65,16 @@ export function hasAuthHeaders(headers: Headers): boolean {
   );
 }
 
-export async function getOptionalSession(
+export async function getOptionalAuthIdentity(
   env: AppEnv["Bindings"],
   headers: Headers
-): Promise<Awaited<ReturnType<ReturnType<typeof createAuth>["api"]["getSession"]>> | null> {
+): Promise<AuthIdentity | null> {
   if (!hasAuthHeaders(headers)) return null;
 
   try {
-    return await createAuth(env).api.getSession({ headers });
+    return await resolveAuthIdentity(env, headers);
   } catch (error) {
-    console.warn("[uploads] optional session lookup failed; serving anonymous response", {
+    console.warn("[uploads] optional identity lookup failed; serving anonymous response", {
       error: error instanceof Error ? error.message : String(error)
     });
     return null;

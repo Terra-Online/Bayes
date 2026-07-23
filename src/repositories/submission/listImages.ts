@@ -219,3 +219,49 @@ export async function listUserImagesByMarker(
     };
   });
 }
+
+export interface ImageViewerReaction {
+  upvoted: boolean;
+  flagged: boolean;
+}
+
+export async function listImageViewerReactionsByMarker(
+  db: D1Database,
+  payload: {
+    userId: string;
+    markerIds: string[];
+    pathPrefix?: string;
+    excludePathPrefix?: string;
+  }
+): Promise<Map<string, ImageViewerReaction>> {
+  const markerIds = [...new Set(payload.markerIds.map((item) => item.trim()).filter(Boolean))].slice(0, 100);
+  if (markerIds.length === 0) return new Map();
+
+  const markerPlaceholders = markerIds.map((_, index) => `?${index + 2}`).join(", ");
+  const scope = buildImageScopeFilters(payload, markerIds.length + 1);
+  const filters = [
+    `s.poi_id IN (${markerPlaceholders})`,
+    "s.kind = 'image'",
+    "s.status IN ('active', 'flagged', 'remove_request')",
+    ...scope.clauses.map((clause) => `s.${clause}`)
+  ];
+  const result = await db.prepare(
+    `SELECT
+       s.id,
+       CASE WHEN u.user_id IS NULL THEN 0 ELSE 1 END AS viewer_upvoted,
+       CASE WHEN f.user_id IS NULL THEN 0 ELSE 1 END AS viewer_flagged
+     FROM ugc_submissions s
+     LEFT JOIN ugc_submission_upvotes u ON u.submission_id = s.id AND u.user_id = ?1
+     LEFT JOIN ugc_submission_flags f ON f.submission_id = s.id AND f.user_id = ?1
+     WHERE ${filters.join(" AND ")}
+       AND (u.user_id IS NOT NULL OR f.user_id IS NOT NULL)`
+  ).bind(payload.userId, ...markerIds, ...scope.bindings).all<Record<string, unknown>>();
+
+  return new Map((result.results ?? []).map((row) => [
+    String(row.id),
+    {
+      upvoted: Boolean(row.viewer_upvoted),
+      flagged: Boolean(row.viewer_flagged)
+    }
+  ]));
+}

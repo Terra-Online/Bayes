@@ -13,7 +13,7 @@ const RESET_SEND_LIMIT_PER_MINUTE = 80;
 const EMAIL_COOLDOWN_SECONDS = 100;
 const ONE_MINUTE_MS = 60 * 1000;
 const ONE_HOUR_MS = 60 * ONE_MINUTE_MS;
-const PUBLIC_LOCAL_RATE_CACHE_MAX_ENTRIES = 5000;
+const LOCAL_READ_RATE_CACHE_MAX_ENTRIES = 5000;
 
 type RateLimitScope = "public" | "auth" | "binding" | "otp-send" | "reset-send" | "upload";
 
@@ -39,7 +39,7 @@ function buildRateLimitDetails(result: SlidingWindowResult, limit: number): Reco
   };
 }
 
-const publicLocalWindows = new Map<string, LocalWindowEntry>();
+const localReadWindows = new Map<string, LocalWindowEntry>();
 
 function getWindowMs(scope: RateLimitScope): number {
   if (scope === "otp-send") {
@@ -81,16 +81,16 @@ function getLimitForRequest(scope: RateLimitScope, c: Parameters<MiddlewareHandl
   return getScopeLimit(scope);
 }
 
-function prunePublicLocalWindows(now: number): void {
-  if (publicLocalWindows.size <= PUBLIC_LOCAL_RATE_CACHE_MAX_ENTRIES) {
+function pruneLocalReadWindows(now: number): void {
+  if (localReadWindows.size <= LOCAL_READ_RATE_CACHE_MAX_ENTRIES) {
     return;
   }
 
-  for (const [key, entry] of publicLocalWindows) {
-    if (entry.resetAt <= now || publicLocalWindows.size > PUBLIC_LOCAL_RATE_CACHE_MAX_ENTRIES) {
-      publicLocalWindows.delete(key);
+  for (const [key, entry] of localReadWindows) {
+    if (entry.resetAt <= now || localReadWindows.size > LOCAL_READ_RATE_CACHE_MAX_ENTRIES) {
+      localReadWindows.delete(key);
     }
-    if (publicLocalWindows.size <= PUBLIC_LOCAL_RATE_CACHE_MAX_ENTRIES) {
+    if (localReadWindows.size <= LOCAL_READ_RATE_CACHE_MAX_ENTRIES) {
       return;
     }
   }
@@ -102,7 +102,7 @@ function applyLocalFixedWindowLimit(
   windowMs: number
 ): SlidingWindowResult {
   const now = Date.now();
-  const entry = publicLocalWindows.get(identity);
+  const entry = localReadWindows.get(identity);
   const active = entry && entry.resetAt > now
     ? entry
     : {
@@ -120,8 +120,8 @@ function applyLocalFixedWindowLimit(
   }
 
   active.count += 1;
-  prunePublicLocalWindows(now);
-  publicLocalWindows.set(identity, active);
+  pruneLocalReadWindows(now);
+  localReadWindows.set(identity, active);
 
   return {
     count: active.count,
@@ -131,9 +131,13 @@ function applyLocalFixedWindowLimit(
   };
 }
 
-function canUseLocalPublicLimit(c: Parameters<MiddlewareHandler<AppEnv>>[0]): boolean {
+function canUseLocalReadLimit(
+  scope: RateLimitScope,
+  c: Parameters<MiddlewareHandler<AppEnv>>[0]
+): boolean {
   const method = c.req.method.toUpperCase();
-  return method === "GET" || method === "HEAD" || method === "OPTIONS";
+  const readMethod = method === "GET" || method === "HEAD" || method === "OPTIONS";
+  return readMethod && (scope === "public" || scope === "auth");
 }
 
 function normalizeEmail(input: string): string {
@@ -218,8 +222,8 @@ export function rateLimit(scope: RateLimitScope): MiddlewareHandler<AppEnv> {
     const windowMs = getWindowMs(scope);
 
     try {
-      if (scope === "public" && canUseLocalPublicLimit(c)) {
-        const result = applyLocalFixedWindowLimit(identity, limit, windowMs);
+      if (canUseLocalReadLimit(scope, c)) {
+        const result = applyLocalFixedWindowLimit(`${scope}:${identity}`, limit, windowMs);
         c.header("x-ratelimit-limit", String(limit));
         c.header("x-ratelimit-remaining", String(result.remaining));
         c.header("x-ratelimit-reset", String(Math.floor(result.resetAt / 1000)));

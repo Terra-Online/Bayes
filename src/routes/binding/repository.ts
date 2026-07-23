@@ -1,6 +1,10 @@
 import { createEndfieldDeviceProfile, parseEndfieldDeviceProfile, serializeEndfieldDeviceProfile } from "../../lib/endfieldClient/deviceProfile";
 import type { EndfieldDeviceProfile, EndfieldProvider, EndfieldRoleOption } from "../../lib/endfieldClient/types";
-import type { EndfieldBindingRow, EndfieldRoleDeviceProfileRow } from "./types";
+import type {
+  EndfieldBindingRow,
+  EndfieldBindingWithDeviceProfileRow,
+  EndfieldRoleDeviceProfileRow
+} from "./types";
 
 export function isMissingColumnError(error: unknown, column: string): boolean {
   return error instanceof Error && error.message.toLowerCase().includes(column.toLowerCase());
@@ -46,6 +50,34 @@ export async function getBinding(db: D1Database, uid: string): Promise<EndfieldB
       .first<EndfieldBindingRow>();
     return row;
   }
+}
+
+export async function getBindingWithDeviceProfile(
+  db: D1Database,
+  uid: string
+): Promise<{ binding: EndfieldBindingRow; deviceProfile: EndfieldDeviceProfile } | null> {
+  const row = await db
+    .prepare(
+      `SELECT b.*, p.device_profile AS role_device_profile
+       FROM endfield_bindings b
+       LEFT JOIN endfield_role_device_profiles p ON p.role_id = b.role_id
+       WHERE b.uid = ?1
+       LIMIT 1`
+    )
+    .bind(uid)
+    .first<EndfieldBindingWithDeviceProfileRow>();
+  if (!row) return null;
+
+  const { role_device_profile: roleDeviceProfile, ...binding } = row;
+  const parsedRoleProfile = parseEndfieldDeviceProfile(roleDeviceProfile);
+  return {
+    binding,
+    deviceProfile: parsedRoleProfile ?? await getOrCreateRoleDeviceProfile(
+      db,
+      binding.role_id,
+      parseEndfieldDeviceProfile(binding.device_profile)
+    )
+  };
 }
 
 export async function getRoleDeviceProfile(db: D1Database, roleId: string): Promise<EndfieldDeviceProfile | null> {

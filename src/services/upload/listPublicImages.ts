@@ -7,12 +7,17 @@ import {
   writePublicMarkerImageCache
 } from "../../middleware/cache/publicMarkerImages";
 import { fetchPublicImagesFromWorkersCache } from "../../middleware/cache/publicReadClient";
-import { listActiveImagesByMarker, listUserImagesByMarker } from "../../repositories/submission/listImages";
+import {
+  listActiveImagesByMarker,
+  listImageViewerReactionsByMarker,
+  listUserImagesByMarker
+} from "../../repositories/submission/listImages";
 import type { PublicSubmissionImage } from "../../repositories/submission/types";
 import type { AppEnv } from "../../types/app";
-import { getOptionalSession, hasAuthHeaders, requireMarkerIds } from "./helpers";
+import { getOptionalAuthIdentity, hasAuthHeaders, requireMarkerIds } from "./helpers";
 import { imagesQuerySchema } from "./schemas";
 import { resolveImageScope, resolvePrivateAssetBaseUrl, resolvePublicAssetBaseUrl } from "./scope";
+import { applyImageViewerReactions } from "./viewerOverlay";
 
 function groupPublicImagesByMarker(
   markerIds: string[],
@@ -150,31 +155,35 @@ export async function handleListPublicImages(c: import("hono").Context<AppEnv>) 
   const config = getRuntimeConfig(c.env);
   const scope = resolveImageScope(c.req.raw, config.ugcUploadPathPrefix, parsed.data.scope);
   const limit = parsed.data.limit ?? 6;
-  const shouldReadSession = parsed.data.publicOnly !== "1" && hasAuthHeaders(c.req.raw.headers);
-  const session = shouldReadSession
-    ? await getOptionalSession(c.env, c.req.raw.headers)
-    : null;
-  const useSharedCache = parsed.data.publicOnly === "1" || !session;
   const assetBaseUrl = resolvePublicAssetBaseUrl(c.req.url, config.ugcAssetBaseUrl);
-  if (useSharedCache) {
-    return fetchPublicImagesFromWorkersCache({
-      markerIds: ids,
-      limit,
-      cacheNamespace: resolvePublicImageCacheNamespace(scope),
-      assetBaseUrl
-    });
+  const publicResponsePromise = fetchPublicImagesFromWorkersCache({
+    markerIds: ids,
+    limit,
+    cacheNamespace: resolvePublicImageCacheNamespace(scope),
+    assetBaseUrl
+  });
+
+  if (parsed.data.publicOnly === "1" || !hasAuthHeaders(c.req.raw.headers)) {
+    return publicResponsePromise;
   }
 
-  const images = await listActiveImagesByMarker(c.env.DB, {
+  const [publicResponse, identity] = await Promise.all([
+    publicResponsePromise,
+    getOptionalAuthIdentity(c.env, c.req.raw.headers)
+  ]);
+  if (!identity || !publicResponse.ok) return publicResponse;
+
+  const payload = await publicResponse.json() as { items: PublicSubmissionImage[] };
+  const reactions = await listImageViewerReactionsByMarker(c.env.DB, {
+    userId: identity.uid,
     markerIds: ids,
-    assetBaseUrl,
     pathPrefix: scope.pathPrefix,
-    excludePathPrefix: scope.excludePathPrefix,
-    limit,
-    viewerUserId: session?.user.id
+    excludePathPrefix: scope.excludePathPrefix
   });
+  const images = applyImageViewerReactions(payload.items, reactions);
 
   const response = c.json({ items: images });
   response.headers.set("Cache-Control", "private, no-store");
+  response.headers.set("x-oem-viewer-overlay", "image");
   return response;
 }

@@ -250,16 +250,17 @@ function normalizeNickname(raw: string | undefined, uid: string, email?: string)
 }
 
 export async function ensureUserProfile(db: D1Database, payload: EnsureUserProfilePayload): Promise<UserRecord> {
-  const existing = await getUserByUid(db, payload.uid);
+  const existing = await db
+    .prepare(
+      `UPDATE users
+       SET email = ?2, last_active = CURRENT_TIMESTAMP
+       WHERE uid = ?1
+       RETURNING *`
+    )
+    .bind(payload.uid, payload.email.toLowerCase())
+    .first<Record<string, unknown>>();
   if (existing) {
-    await db
-      .prepare("UPDATE users SET email = ?2, last_active = CURRENT_TIMESTAMP WHERE uid = ?1")
-      .bind(payload.uid, payload.email.toLowerCase())
-      .run();
-    return {
-      ...existing,
-      email: payload.email.toLowerCase()
-    };
+    return mapUser(existing);
   }
 
   const existingByEmail = await getUserByEmail(db, payload.email.toLowerCase());

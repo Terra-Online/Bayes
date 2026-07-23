@@ -3,7 +3,7 @@ import { generateEndfieldCredByCode, grantEndfieldOAuthCode, refreshEndfieldAuth
 import { isEndfieldCredentialErrorCode } from "../../lib/endfieldClient/positionParser";
 import { ApiError } from "../../lib/errors";
 import { deleteLocatorCaches, readDecryptedBindingCache, writeDecryptedBindingCache } from "./locatorCache";
-import { getBinding, getBindingDeviceProfile, publicBinding } from "./repository";
+import { getBindingWithDeviceProfile, publicBinding } from "./repository";
 import type { AppContext, DecryptedBinding } from "./types";
 
 export function getCredentialSecret(c: AppContext): string {
@@ -20,14 +20,14 @@ export async function getDecryptedBinding(c: AppContext, uid: string): Promise<D
     return cached;
   }
 
-  const binding = await getBinding(c.env.DB, uid);
-  if (!binding) {
+  const stored = await getBindingWithDeviceProfile(c.env.DB, uid);
+  if (!stored) {
     throw new ApiError(404, "ENDFIELD_BINDING_NOT_FOUND", "Endfield binding is not configured.");
   }
+  const { binding, deviceProfile } = stored;
   if (binding.status !== "enabled") {
     throw new ApiError(409, "ENDFIELD_BINDING_DISABLED", "Endfield binding is disabled.");
   }
-  const deviceProfile = await getBindingDeviceProfile(c.env.DB, binding);
 
   const secret = getCredentialSecret(c);
   const [cred, token, accountToken] = await Promise.all([
