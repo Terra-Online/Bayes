@@ -8,8 +8,8 @@ export function createLocatorRoutes() {
   const app = new Hono<AppEnv>();
 
   app.get("/position-stream", handleEndfieldPositionSocket);
-  app.use("/*", requireAuth);
   app.get("/position", handleEndfieldPosition);
+  app.use("/*", requireAuth);
   app.post("/agree-policy", handleAgree);
 
   return app;

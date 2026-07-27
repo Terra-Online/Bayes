@@ -33,56 +33,24 @@ export async function getEndfieldPosition(args: {
   deviceProfile?: EndfieldDeviceProfile;
 }): Promise<EndfieldPositionData> {
   try {
-    return await getEndfieldPositionFromSocket(args);
-  } catch (socketError) {
-    const normalizedSocketError = socketError instanceof ApiError
-      ? socketError
-      : (socketError instanceof TypeError
-          ? new ApiError(
-            502,
-            "ENDFIELD_POSITION_SOCKET_UNAVAILABLE",
-            "Endfield realtime position socket was unavailable.",
-            { phase: "socket setup" }
-          )
-          : null);
-    const socketUnavailable = normalizedSocketError?.code === "ENDFIELD_POSITION_SOCKET_UNAVAILABLE"
-      && normalizedSocketError.status >= 500;
-    const socketDetails = normalizedSocketError?.details as { upstreamStatus?: unknown } | undefined;
-    const upstreamStatus = Number(socketDetails?.upstreamStatus);
-    const socketUpstreamUnavailable = normalizedSocketError?.code === "ENDFIELD_UPSTREAM_REJECTED"
-      && (upstreamStatus === 408 || upstreamStatus === 429 || upstreamStatus >= 500);
-    if (
-      !normalizedSocketError
-      || (
-        !socketUnavailable
-        && !socketUpstreamUnavailable
-        && ![
-          "ENDFIELD_POSITION_SOCKET_TIMEOUT",
-          "ENDFIELD_POSITION_SOCKET_CLOSED",
-          "ENDFIELD_POSITION_SOCKET_ERROR",
-          "ENDFIELD_POSITION_SOCKET_SEND_FAILED",
-          "ENDFIELD_POSITION_SOCKET_TOKEN_MISSING",
-          "ENDFIELD_BAD_RESPONSE"
-        ].includes(normalizedSocketError.code)
-      )
-    ) {
-      throw socketError;
+    return await getEndfieldPositionHttpFallback(args);
+  } catch (httpError) {
+    if (httpError instanceof ApiError && httpError.status < 500) {
+      throw httpError;
     }
-
     try {
-      return await getEndfieldPositionHttpFallback(args);
-    } catch (fallbackError) {
-      if (fallbackError instanceof ApiError && fallbackError.status === 401) {
-        throw fallbackError;
+      return await getEndfieldPositionFromSocket(args);
+    } catch (socketError) {
+      if (socketError instanceof ApiError && socketError.status === 401) {
+        throw socketError;
       }
-      const socketErrorDetails = normalizedSocketError.details && typeof normalizedSocketError.details === "object"
-        ? normalizedSocketError.details as Record<string, unknown>
+      const httpDetails = httpError instanceof ApiError && httpError.details && typeof httpError.details === "object"
+        ? httpError.details as Record<string, unknown>
         : {};
-      throw new ApiError(normalizedSocketError.status, normalizedSocketError.code, normalizedSocketError.message, {
-        ...socketErrorDetails,
-        httpFallbackAttempted: true,
-        httpFallbackStatus: fallbackError instanceof ApiError ? fallbackError.status : undefined,
-        httpFallbackCode: fallbackError instanceof ApiError ? fallbackError.code : "FETCH_FAILED"
+      throw new ApiError(502, "ENDFIELD_POSITION_UPSTREAM_UNAVAILABLE", "Endfield position upstream was unavailable.", {
+        ...httpDetails,
+        httpCode: httpError instanceof ApiError ? httpError.code : "FETCH_FAILED",
+        socketCode: socketError instanceof ApiError ? socketError.code : "FETCH_FAILED"
       });
     }
   }

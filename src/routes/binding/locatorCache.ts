@@ -1,7 +1,7 @@
 import { getEndfieldPosition } from "../../lib/endfieldClient/positionSocket";
 import type { DecryptedBinding, DecryptedBindingCacheEntry, EndfieldBindingRow, PositionCacheEntry } from "./types";
 
-const DECRYPTED_BINDING_CACHE_TTL_MS = 180_000;
+const DECRYPTED_BINDING_CACHE_TTL_MS = 10_000;
 export const POSITION_CACHE_FRESH_MS = 250;
 export const POSITION_CACHE_STALE_MS = 2_500;
 

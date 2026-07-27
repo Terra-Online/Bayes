@@ -8,7 +8,7 @@ import { ApiError } from "../../lib/errors";
 import { resolveAuthIdentity } from "../../middleware/auth";
 import { ensureUserProfile } from "../../repositories/users";
 import { getDecryptedBinding, isAutoRefreshableEndfieldError, refreshBindingCredentials, withAutoRefreshedBinding } from "./credentials";
-import { POSITION_STREAM_RECONNECT_MS, requireUser, serializeLocatorError, shouldIncludeBinding } from "./helpers";
+import { POSITION_STREAM_RECONNECT_MS, serializeLocatorError, shouldIncludeBinding } from "./helpers";
 import {
   getPositionCacheKey,
   POSITION_CACHE_FRESH_MS,
@@ -17,6 +17,25 @@ import {
   refreshPositionCache
 } from "./locatorCache";
 import type { AppContext, DecryptedBinding } from "./types";
+
+async function resolvePositionBinding(c: AppContext): Promise<{ uid: string; binding: DecryptedBinding }> {
+  const authHeaders = new Headers(c.req.raw.headers);
+  const accessToken = c.req.query("access_token")?.trim();
+  if (accessToken && !authHeaders.has("authorization")) {
+    authHeaders.set("authorization", `Bearer ${accessToken}`);
+  }
+
+  const identity = await resolveAuthIdentity(c.env, authHeaders);
+  const [binding] = await Promise.all([
+    getDecryptedBinding(c, identity.uid),
+    ensureUserProfile(c.env.DB, {
+      uid: identity.uid,
+      email: identity.email,
+      displayName: identity.displayName
+    })
+  ]);
+  return { uid: identity.uid, binding };
+}
 
 function schedulePositionRefresh(c: AppContext, key: string, binding: DecryptedBinding): void {
   const refresh = refreshPositionCache(key, binding).catch(() => undefined);
@@ -228,25 +247,10 @@ export async function handleEndfieldPositionSocket(c: AppContext) {
 
   const initializeStream = async () => {
     try {
-      const authHeaders = new Headers(c.req.raw.headers);
-      const accessToken = c.req.query("access_token")?.trim();
-      if (accessToken && !authHeaders.has("authorization")) {
-        authHeaders.set("authorization", `Bearer ${accessToken}`);
-      }
-      const identity = await resolveAuthIdentity(c.env, authHeaders);
-      const userActivity = ensureUserProfile(c.env.DB, {
-        uid: identity.uid,
-        email: identity.email,
-        displayName: identity.displayName
-      });
-
-      const [decrypted] = await Promise.all([
-        getDecryptedBinding(c, identity.uid),
-        userActivity
-      ]);
+      const resolved = await resolvePositionBinding(c);
       if (closed) return;
-      userUid = identity.uid;
-      binding = decrypted;
+      userUid = resolved.uid;
+      binding = resolved.binding;
       void bridgeUpstream(false);
     } catch (error) {
       sendJson({
@@ -285,10 +289,10 @@ export async function handleEndfieldPositionSocket(c: AppContext) {
 }
 
 export async function handleEndfieldPosition(c: AppContext) {
-  const user = requireUser(c);
+  const resolved = await resolvePositionBinding(c);
   const includeBinding = shouldIncludeBinding(c);
-  return withAutoRefreshedBinding(c, user.uid, async (binding) => {
-    const cacheKey = getPositionCacheKey(user.uid, binding.binding);
+  return withAutoRefreshedBinding(c, resolved.uid, async (binding) => {
+    const cacheKey = getPositionCacheKey(resolved.uid, binding.binding);
     const cached = positionCache.get(cacheKey);
     const now = Date.now();
 
@@ -317,5 +321,5 @@ export async function handleEndfieldPosition(c: AppContext) {
     response.headers.set("x-locator-cache", "miss");
     response.headers.set("x-locator-age-ms", "0");
     return response;
-  });
+  }, resolved.binding);
 }

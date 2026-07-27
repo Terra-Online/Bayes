@@ -6,6 +6,8 @@ import { deleteLocatorCaches, readDecryptedBindingCache, writeDecryptedBindingCa
 import { getBindingWithDeviceProfile, publicBinding } from "./repository";
 import type { AppContext, DecryptedBinding } from "./types";
 
+const credentialRefreshInFlight = new Map<string, Promise<DecryptedBinding | null>>();
+
 export function getCredentialSecret(c: AppContext): string {
   const secret = c.env.ENDFIELD_CREDENTIAL_SECRET ?? c.env.BETTER_AUTH_SECRET;
   if (!secret || secret.trim().length < 16) {
@@ -14,8 +16,12 @@ export function getCredentialSecret(c: AppContext): string {
   return secret;
 }
 
-export async function getDecryptedBinding(c: AppContext, uid: string): Promise<DecryptedBinding> {
-  const cached = readDecryptedBindingCache(uid);
+export async function getDecryptedBinding(
+  c: AppContext,
+  uid: string,
+  options: { bypassCache?: boolean } = {}
+): Promise<DecryptedBinding> {
+  const cached = options.bypassCache ? null : readDecryptedBindingCache(uid);
   if (cached) {
     return cached;
   }
@@ -63,30 +69,76 @@ export function isAutoRefreshableEndfieldError(error: unknown): boolean {
 async function updateStoredCredential(
   c: AppContext,
   uid: string,
+  binding: DecryptedBinding,
   generated: { cred: string; token: string }
-): Promise<void> {
+): Promise<DecryptedBinding> {
   const secret = getCredentialSecret(c);
-  await c.env.DB
+  const [encryptedCred, encryptedToken] = await Promise.all([
+    encryptSecret(generated.cred, secret),
+    encryptSecret(generated.token, secret)
+  ]);
+  const updated = await c.env.DB
     .prepare(
       `UPDATE endfield_bindings
       SET cred_enc = ?2, token_enc = ?3, status = 'enabled', updated_at = CURRENT_TIMESTAMP
-      WHERE uid = ?1`
+      WHERE uid = ?1
+      RETURNING updated_at`
     )
     .bind(
       uid,
-      await encryptSecret(generated.cred, secret),
-      await encryptSecret(generated.token, secret)
+      encryptedCred,
+      encryptedToken
     )
-    .run();
+    .first<{ updated_at: string }>();
+  if (!updated) {
+    throw new ApiError(404, "ENDFIELD_BINDING_NOT_FOUND", "Endfield binding is not configured.");
+  }
   deleteLocatorCaches(uid);
+
+  const updatedBinding = {
+    ...binding.binding,
+    cred_enc: encryptedCred,
+    token_enc: encryptedToken,
+    status: "enabled" as const,
+    updated_at: updated.updated_at
+  };
+  const refreshed: DecryptedBinding = {
+    ...binding,
+    binding: updatedBinding,
+    publicBinding: publicBinding(updatedBinding),
+    cred: generated.cred,
+    token: generated.token
+  };
+  writeDecryptedBindingCache(uid, refreshed);
+  return refreshed;
 }
 
-export async function refreshBindingCredentials(
+async function performCredentialRefresh(
   c: AppContext,
   uid: string,
   binding: DecryptedBinding
 ): Promise<DecryptedBinding | null> {
-  if (binding.accountToken) {
+  const latest = await getDecryptedBinding(c, uid, { bypassCache: true });
+  if (
+    latest.binding.cred_enc !== binding.binding.cred_enc
+    || latest.binding.token_enc !== binding.binding.token_enc
+  ) {
+    return latest;
+  }
+
+  try {
+    const refreshed = await refreshEndfieldAuth({
+      provider: binding.binding.provider,
+      cred: binding.cred,
+      deviceProfile: binding.deviceProfile
+    });
+    return updateStoredCredential(c, uid, binding, {
+      cred: refreshed.cred ?? binding.cred,
+      token: refreshed.token!
+    });
+  } catch (refreshError) {
+    if (!binding.accountToken) throw refreshError;
+
     try {
       const grant = await grantEndfieldOAuthCode(
         binding.binding.provider,
@@ -98,31 +150,39 @@ export async function refreshBindingCredentials(
         grant.code,
         binding.deviceProfile
       );
-      await updateStoredCredential(c, uid, generated);
-      return getDecryptedBinding(c, uid);
+      return updateStoredCredential(c, uid, binding, generated);
     } catch {
-      // Fall through to the lightweight refresh endpoint before forcing a rebind.
+      throw refreshError;
     }
   }
+}
 
-  const refreshed = await refreshEndfieldAuth({
-    provider: binding.binding.provider,
-    cred: binding.cred,
-    deviceProfile: binding.deviceProfile
-  });
-  await updateStoredCredential(c, uid, {
-    cred: refreshed.cred ?? binding.cred,
-    token: refreshed.token!
-  });
-  return getDecryptedBinding(c, uid);
+export async function refreshBindingCredentials(
+  c: AppContext,
+  uid: string,
+  binding: DecryptedBinding
+): Promise<DecryptedBinding | null> {
+  const pending = credentialRefreshInFlight.get(uid);
+  if (pending) return pending;
+
+  const refresh = performCredentialRefresh(c, uid, binding);
+  credentialRefreshInFlight.set(uid, refresh);
+  try {
+    return await refresh;
+  } finally {
+    if (credentialRefreshInFlight.get(uid) === refresh) {
+      credentialRefreshInFlight.delete(uid);
+    }
+  }
 }
 
 export async function withAutoRefreshedBinding<T>(
   c: AppContext,
   uid: string,
-  operation: (binding: DecryptedBinding) => Promise<T>
+  operation: (binding: DecryptedBinding) => Promise<T>,
+  initialBinding?: DecryptedBinding
 ): Promise<T> {
-  const binding = await getDecryptedBinding(c, uid);
+  const binding = initialBinding ?? await getDecryptedBinding(c, uid);
   try {
     return await operation(binding);
   } catch (error) {
