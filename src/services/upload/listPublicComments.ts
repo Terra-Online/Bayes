@@ -1,5 +1,6 @@
 import { getRuntimeConfig } from "../../lib/config";
 import { ApiError } from "../../lib/errors";
+import { InFlightBatchLoader } from "../../middleware/cache/inFlightBatchLoader";
 import {
   PUBLIC_MARKER_COMMENT_CACHE_LIMIT,
   PUBLIC_MARKER_COMMENT_REPLY_CACHE_LIMIT,
@@ -22,6 +23,29 @@ import { getOptionalAuthIdentity, hasAuthHeaders, requireMarkerIds } from "./hel
 import { commentsQuerySchema } from "./schemas";
 import { resolveImageScope } from "./scope";
 import { applyCommentViewerReactions } from "./viewerOverlay";
+
+const commentLoadersByDb = new WeakMap<
+  D1Database,
+  Map<string, InFlightBatchLoader<PublicSubmissionComment[]>>
+>();
+
+function getPublicCommentLoader(payload: {
+  db: D1Database;
+  cacheNamespace: ReturnType<typeof resolvePublicCommentCacheNamespace>;
+}): InFlightBatchLoader<PublicSubmissionComment[]> {
+  let loaders = commentLoadersByDb.get(payload.db);
+  if (!loaders) {
+    loaders = new Map();
+    commentLoadersByDb.set(payload.db, loaders);
+  }
+
+  let loader = loaders.get(payload.cacheNamespace);
+  if (!loader) {
+    loader = new InFlightBatchLoader<PublicSubmissionComment[]>();
+    loaders.set(payload.cacheNamespace, loader);
+  }
+  return loader;
+}
 
 function groupPublicCommentsByMarker(
   markerIds: string[],
@@ -136,24 +160,32 @@ export async function listCachedPublicCommentsByMarker(
   }
 
   if (missingIds.length > 0) {
-    const dbComments = await listActiveCommentsByMarker(payload.db, {
-      markerIds: missingIds,
-      limit: PUBLIC_MARKER_COMMENT_CACHE_LIMIT,
-      replyLimit: PUBLIC_MARKER_COMMENT_REPLY_CACHE_LIMIT
-    });
-    const dbGrouped = groupPublicCommentsByMarker(missingIds, dbComments);
+    const loader = getPublicCommentLoader(payload);
+    const loaded = await Promise.all(missingIds.map(async (markerId) => ({
+      markerId,
+      comments: await loader.load(markerId, async (markerIds) => {
+        const dbComments = await listActiveCommentsByMarker(payload.db, {
+          markerIds,
+          limit: PUBLIC_MARKER_COMMENT_CACHE_LIMIT,
+          replyLimit: PUBLIC_MARKER_COMMENT_REPLY_CACHE_LIMIT
+        });
+        const dbGrouped = groupPublicCommentsByMarker(markerIds, dbComments);
+        if (payload.kv) {
+          payload.waitUntil(Promise.all(markerIds.map((missingMarkerId) => (
+            writePublicMarkerCommentCache(
+              payload.kv,
+              payload.cacheNamespace,
+              missingMarkerId,
+              dbGrouped.get(missingMarkerId) ?? []
+            )
+          ))));
+        }
+        return dbGrouped;
+      })
+    })));
 
-    missingIds.forEach((markerId) => {
-      const comments = dbGrouped.get(markerId) ?? [];
+    loaded.forEach(({ markerId, comments }) => {
       grouped.set(markerId, comments);
-      if (payload.kv) {
-        payload.waitUntil(writePublicMarkerCommentCache(
-          payload.kv,
-          payload.cacheNamespace,
-          markerId,
-          comments
-        ));
-      }
     });
   }
 

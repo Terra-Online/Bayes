@@ -1,5 +1,10 @@
 import type { PublicSubmissionComment } from "../../repositories/submission/types";
-import { getJsonFromKv, putJsonToKv, sha256Hex } from "./kvJson";
+import {
+  DEFAULT_KV_READ_CACHE_TTL_SECONDS,
+  getJsonFromKv,
+  putJsonToKv,
+  sha256Hex
+} from "./kvJson";
 import { CACHE_KEY_VERSIONS } from "./versions";
 
 export const PUBLIC_MARKER_COMMENT_CACHE_LIMIT = 50;
@@ -42,7 +47,8 @@ export async function readPublicMarkerCommentCache(
 
   const entry = await getJsonFromKv<PublicMarkerCommentCacheEntry>(
     kv,
-    await getPublicMarkerCommentCacheKey(namespace, markerId)
+    await getPublicMarkerCommentCacheKey(namespace, markerId),
+    { cacheTtl: DEFAULT_KV_READ_CACHE_TTL_SECONDS }
   );
   if (!entry || !Array.isArray(entry.items)) {
     return null;

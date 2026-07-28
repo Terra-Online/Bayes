@@ -40,6 +40,9 @@ export function resolveImageScope(
   configuredPrefix: string,
   scope: "test" | "prod" | undefined
 ): { pathPrefix?: string; excludePathPrefix?: string } {
+  if (new URL(request.url).searchParams.get("demoLocal") === "1") {
+    return { excludePathPrefix: TEST_UPLOAD_PREFIX };
+  }
   if (isBetaFrontendRequest(request) || configuredPrefix === TEST_UPLOAD_PREFIX) {
     return { pathPrefix: TEST_UPLOAD_PREFIX };
   }

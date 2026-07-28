@@ -4,6 +4,5 @@ export const CACHE_KEY_VERSIONS = {
   progressStats: "v1",
   publicMarkerComments: "v2",
   publicMarkerImages: "v2",
-  publicReadResponses: "v1"
+  publicReadResponses: "v2"
 } as const;
-

@@ -1,5 +1,6 @@
 import { getRuntimeConfig } from "../../lib/config";
 import { ApiError } from "../../lib/errors";
+import { InFlightBatchLoader } from "../../middleware/cache/inFlightBatchLoader";
 import {
   PUBLIC_MARKER_IMAGE_CACHE_LIMIT,
   readPublicMarkerImageCache,
@@ -18,6 +19,38 @@ import { getOptionalAuthIdentity, hasAuthHeaders, requireMarkerIds } from "./hel
 import { imagesQuerySchema } from "./schemas";
 import { resolveImageScope, resolvePrivateAssetBaseUrl, resolvePublicAssetBaseUrl } from "./scope";
 import { applyImageViewerReactions } from "./viewerOverlay";
+
+const imageLoadersByDb = new WeakMap<
+  D1Database,
+  Map<string, InFlightBatchLoader<PublicSubmissionImage[]>>
+>();
+
+function getPublicImageLoader(payload: {
+  db: D1Database;
+  assetBaseUrl: string;
+  pathPrefix?: string;
+  excludePathPrefix?: string;
+  cacheNamespace: ReturnType<typeof resolvePublicImageCacheNamespace>;
+}): InFlightBatchLoader<PublicSubmissionImage[]> {
+  let loaders = imageLoadersByDb.get(payload.db);
+  if (!loaders) {
+    loaders = new Map();
+    imageLoadersByDb.set(payload.db, loaders);
+  }
+
+  const loaderKey = JSON.stringify([
+    payload.cacheNamespace,
+    payload.assetBaseUrl,
+    payload.pathPrefix ?? null,
+    payload.excludePathPrefix ?? null
+  ]);
+  let loader = loaders.get(loaderKey);
+  if (!loader) {
+    loader = new InFlightBatchLoader<PublicSubmissionImage[]>();
+    loaders.set(loaderKey, loader);
+  }
+  return loader;
+}
 
 function groupPublicImagesByMarker(
   markerIds: string[],
@@ -78,26 +111,34 @@ export async function listCachedPublicImagesByMarker(
   }
 
   if (missingIds.length > 0) {
-    const dbImages = await listActiveImagesByMarker(payload.db, {
-      markerIds: missingIds,
-      assetBaseUrl: payload.assetBaseUrl,
-      pathPrefix: payload.pathPrefix,
-      excludePathPrefix: payload.excludePathPrefix,
-      limit: PUBLIC_MARKER_IMAGE_CACHE_LIMIT
-    });
-    const dbGrouped = groupPublicImagesByMarker(missingIds, dbImages);
+    const loader = getPublicImageLoader(payload);
+    const loaded = await Promise.all(missingIds.map(async (markerId) => ({
+      markerId,
+      images: await loader.load(markerId, async (markerIds) => {
+        const dbImages = await listActiveImagesByMarker(payload.db, {
+          markerIds,
+          assetBaseUrl: payload.assetBaseUrl,
+          pathPrefix: payload.pathPrefix,
+          excludePathPrefix: payload.excludePathPrefix,
+          limit: PUBLIC_MARKER_IMAGE_CACHE_LIMIT
+        });
+        const dbGrouped = groupPublicImagesByMarker(markerIds, dbImages);
+        if (payload.kv) {
+          payload.waitUntil(Promise.all(markerIds.map((missingMarkerId) => (
+            writePublicMarkerImageCache(
+              payload.kv,
+              payload.cacheNamespace,
+              missingMarkerId,
+              dbGrouped.get(missingMarkerId) ?? []
+            )
+          ))));
+        }
+        return dbGrouped;
+      })
+    })));
 
-    missingIds.forEach((markerId) => {
-      const images = dbGrouped.get(markerId) ?? [];
+    loaded.forEach(({ markerId, images }) => {
       grouped.set(markerId, images);
-      if (payload.kv) {
-        payload.waitUntil(writePublicMarkerImageCache(
-          payload.kv,
-          payload.cacheNamespace,
-          markerId,
-          images
-        ));
-      }
     });
   }
 

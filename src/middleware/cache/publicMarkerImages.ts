@@ -1,5 +1,10 @@
 import type { PublicSubmissionImage } from "../../repositories/submission/types";
-import { getJsonFromKv, putJsonToKv, sha256Hex } from "./kvJson";
+import {
+  DEFAULT_KV_READ_CACHE_TTL_SECONDS,
+  getJsonFromKv,
+  putJsonToKv,
+  sha256Hex
+} from "./kvJson";
 import { CACHE_KEY_VERSIONS } from "./versions";
 
 export const PUBLIC_MARKER_IMAGE_CACHE_LIMIT = 24;
@@ -41,7 +46,8 @@ export async function readPublicMarkerImageCache(
 
   const entry = await getJsonFromKv<PublicMarkerImageCacheEntry>(
     kv,
-    await getPublicMarkerImageCacheKey(namespace, markerId)
+    await getPublicMarkerImageCacheKey(namespace, markerId),
+    { cacheTtl: DEFAULT_KV_READ_CACHE_TTL_SECONDS }
   );
   if (!entry || !Array.isArray(entry.items)) {
     return null;
