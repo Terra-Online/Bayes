@@ -54,8 +54,8 @@ export async function listActiveImagesByMarker(
     : "";
   const viewerJoin = payload.viewerUserId
     ? `
-       LEFT JOIN ugc_submission_upvotes uv ON uv.submission_id = s.id AND uv.user_id = ?${viewerBindingOffset + 1}
-       LEFT JOIN ugc_submission_flags uf ON uf.submission_id = s.id AND uf.user_id = ?${viewerBindingOffset + 2}`
+       LEFT JOIN ugc_submission_upvotes uv ON uv.submission_id = s.id AND uv.user_id = ?${viewerBindingOffset + 1} AND uv.active = 1
+       LEFT JOIN ugc_submission_flags uf ON uf.submission_id = s.id AND uf.user_id = ?${viewerBindingOffset + 2} AND uf.active = 1`
     : "";
   const viewerBindings = payload.viewerUserId ? [payload.viewerUserId, payload.viewerUserId] : [];
   const result = await db
@@ -75,13 +75,15 @@ export async function listActiveImagesByMarker(
        upvote_counts AS (
          SELECT submission_id, COUNT(*) AS upvote_count
          FROM ugc_submission_upvotes
-         WHERE submission_id IN (SELECT id FROM selected_images)
+         WHERE active = 1
+           AND submission_id IN (SELECT id FROM selected_images)
          GROUP BY submission_id
        ),
        flag_counts AS (
          SELECT submission_id, COUNT(*) AS flag_count
          FROM ugc_submission_flags
-         WHERE submission_id IN (SELECT id FROM selected_images)
+         WHERE active = 1
+           AND submission_id IN (SELECT id FROM selected_images)
          GROUP BY submission_id
        )
        SELECT
@@ -163,13 +165,15 @@ export async function listUserImagesByMarker(
        upvote_counts AS (
          SELECT submission_id, COUNT(*) AS upvote_count
          FROM ugc_submission_upvotes
-         WHERE submission_id IN (SELECT id FROM selected_images)
+         WHERE active = 1
+           AND submission_id IN (SELECT id FROM selected_images)
          GROUP BY submission_id
        ),
        flag_counts AS (
          SELECT submission_id, COUNT(*) AS flag_count
          FROM ugc_submission_flags
-         WHERE submission_id IN (SELECT id FROM selected_images)
+         WHERE active = 1
+           AND submission_id IN (SELECT id FROM selected_images)
          GROUP BY submission_id
        )
        SELECT
@@ -251,8 +255,8 @@ export async function listImageViewerReactionsByMarker(
        CASE WHEN u.user_id IS NULL THEN 0 ELSE 1 END AS viewer_upvoted,
        CASE WHEN f.user_id IS NULL THEN 0 ELSE 1 END AS viewer_flagged
      FROM ugc_submissions s
-     LEFT JOIN ugc_submission_upvotes u ON u.submission_id = s.id AND u.user_id = ?1
-     LEFT JOIN ugc_submission_flags f ON f.submission_id = s.id AND f.user_id = ?1
+     LEFT JOIN ugc_submission_upvotes u ON u.submission_id = s.id AND u.user_id = ?1 AND u.active = 1
+     LEFT JOIN ugc_submission_flags f ON f.submission_id = s.id AND f.user_id = ?1 AND f.active = 1
      WHERE ${filters.join(" AND ")}
        AND (u.user_id IS NOT NULL OR f.user_id IS NOT NULL)`
   ).bind(payload.userId, ...markerIds, ...scope.bindings).all<Record<string, unknown>>();

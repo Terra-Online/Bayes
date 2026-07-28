@@ -10,8 +10,11 @@ export async function createSubmissionUpvote(
 ): Promise<boolean> {
   const result = await db
     .prepare(
-      `INSERT OR IGNORE INTO ugc_submission_upvotes (submission_id, user_id)
-       VALUES (?1, ?2)`
+      `INSERT INTO ugc_submission_upvotes (submission_id, user_id, active)
+       VALUES (?1, ?2, 1)
+       ON CONFLICT(submission_id, user_id)
+       DO UPDATE SET active = 1
+       WHERE ugc_submission_upvotes.active = 0`
     )
     .bind(payload.submissionId, payload.userId)
     .run();
@@ -28,9 +31,11 @@ export async function deleteSubmissionUpvote(
 ): Promise<boolean> {
   const result = await db
     .prepare(
-      `DELETE FROM ugc_submission_upvotes
+      `UPDATE ugc_submission_upvotes
+       SET active = 0
        WHERE submission_id = ?1
-         AND user_id = ?2`
+         AND user_id = ?2
+         AND active = 1`
     )
     .bind(payload.submissionId, payload.userId)
     .run();
@@ -48,22 +53,25 @@ export async function setSubmissionVote(
 ): Promise<ViewerVoteValue> {
   const current = await db
     .prepare(
-      `SELECT value
+      `SELECT value, active
        FROM ugc_submission_votes
        WHERE submission_id = ?1
          AND user_id = ?2
        LIMIT 1`
     )
     .bind(payload.submissionId, payload.userId)
-    .first<{ value: number | string }>();
+    .first<{ value: number | string; active: number | string }>();
 
-  const currentValue = mapVoteValue(current?.value);
+  const currentValue = Number(current?.active ?? 0) === 1 ? mapVoteValue(current?.value) : 0;
   if (currentValue === payload.value) {
     await db
       .prepare(
-        `DELETE FROM ugc_submission_votes
+        `UPDATE ugc_submission_votes
+         SET active = 0,
+             updated_at = CURRENT_TIMESTAMP
          WHERE submission_id = ?1
-           AND user_id = ?2`
+           AND user_id = ?2
+           AND active = 1`
       )
       .bind(payload.submissionId, payload.userId)
       .run();
@@ -72,10 +80,11 @@ export async function setSubmissionVote(
 
   await db
     .prepare(
-      `INSERT INTO ugc_submission_votes (submission_id, user_id, value)
-       VALUES (?1, ?2, ?3)
+      `INSERT INTO ugc_submission_votes (submission_id, user_id, value, active)
+       VALUES (?1, ?2, ?3, 1)
        ON CONFLICT(submission_id, user_id)
        DO UPDATE SET value = excluded.value,
+                     active = 1,
                      updated_at = CURRENT_TIMESTAMP`
     )
     .bind(payload.submissionId, payload.userId, payload.value)
@@ -88,7 +97,8 @@ export async function countSubmissionUpvotes(db: D1Database, submissionId: strin
     .prepare(
       `SELECT COUNT(*) AS count
        FROM ugc_submission_upvotes
-       WHERE submission_id = ?1`
+       WHERE submission_id = ?1
+         AND active = 1`
     )
     .bind(submissionId)
     .first<{ count: number | string }>();
@@ -101,7 +111,8 @@ export async function getSubmissionScore(db: D1Database, submissionId: string): 
     .prepare(
       `SELECT COALESCE(SUM(value), 0) AS score
        FROM ugc_submission_votes
-       WHERE submission_id = ?1`
+       WHERE submission_id = ?1
+         AND active = 1`
     )
     .bind(submissionId)
     .first<{ score: number | string }>();

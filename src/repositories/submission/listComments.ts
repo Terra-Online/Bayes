@@ -63,8 +63,8 @@ export async function listActiveCommentsByMarker(
     : "";
   const viewerJoin = payload.viewerUserId
     ? `
-       LEFT JOIN ugc_submission_votes vv ON vv.submission_id = s.id AND vv.user_id = ?${limitPlaceholder + 1}
-       LEFT JOIN ugc_submission_flags vf ON vf.submission_id = s.id AND vf.user_id = ?${limitPlaceholder + 2}`
+       LEFT JOIN ugc_submission_votes vv ON vv.submission_id = s.id AND vv.user_id = ?${limitPlaceholder + 1} AND vv.active = 1
+       LEFT JOIN ugc_submission_flags vf ON vf.submission_id = s.id AND vf.user_id = ?${limitPlaceholder + 2} AND vf.active = 1`
     : "";
   const viewerBindings = payload.viewerUserId ? [payload.viewerUserId, payload.viewerUserId] : [];
 
@@ -79,11 +79,13 @@ export async function listActiveCommentsByMarker(
          LEFT JOIN (
            SELECT submission_id, SUM(value) AS score
            FROM ugc_submission_votes
+           WHERE active = 1
            GROUP BY submission_id
          ) v ON v.submission_id = s.id
          LEFT JOIN (
            SELECT submission_id, COUNT(*) AS flag_count
            FROM ugc_submission_flags
+           WHERE active = 1
            GROUP BY submission_id
          ) f ON f.submission_id = s.id
          WHERE s.poi_id IN (${markerPlaceholders})
@@ -157,8 +159,8 @@ export async function listActiveCommentsByMarker(
     : "";
   const replyViewerJoin = payload.viewerUserId
     ? `
-       LEFT JOIN ugc_submission_votes vv ON vv.submission_id = s.id AND vv.user_id = ?${replyLimitPlaceholder + 1}
-       LEFT JOIN ugc_submission_flags vf ON vf.submission_id = s.id AND vf.user_id = ?${replyLimitPlaceholder + 2}`
+       LEFT JOIN ugc_submission_votes vv ON vv.submission_id = s.id AND vv.user_id = ?${replyLimitPlaceholder + 1} AND vv.active = 1
+       LEFT JOIN ugc_submission_flags vf ON vf.submission_id = s.id AND vf.user_id = ?${replyLimitPlaceholder + 2} AND vf.active = 1`
     : "";
   const replyViewerBindings = payload.viewerUserId ? [payload.viewerUserId, payload.viewerUserId] : [];
   const replyResult = await db
@@ -188,11 +190,13 @@ export async function listActiveCommentsByMarker(
          LEFT JOIN (
            SELECT submission_id, SUM(value) AS score
            FROM ugc_submission_votes
+           WHERE active = 1
            GROUP BY submission_id
          ) v ON v.submission_id = s.id
          LEFT JOIN (
            SELECT submission_id, COUNT(*) AS flag_count
            FROM ugc_submission_flags
+           WHERE active = 1
            GROUP BY submission_id
          ) f ON f.submission_id = s.id
        ),
@@ -279,17 +283,19 @@ export async function listUserCommentsByMarker(
        LEFT JOIN (
          SELECT submission_id, SUM(value) AS score
          FROM ugc_submission_votes
-         WHERE submission_id IN (SELECT id FROM selected_comments)
+         WHERE active = 1
+           AND submission_id IN (SELECT id FROM selected_comments)
          GROUP BY submission_id
        ) v ON v.submission_id = s.id
        LEFT JOIN (
          SELECT submission_id, COUNT(*) AS flag_count
          FROM ugc_submission_flags
-         WHERE submission_id IN (SELECT id FROM selected_comments)
+         WHERE active = 1
+           AND submission_id IN (SELECT id FROM selected_comments)
          GROUP BY submission_id
        ) f ON f.submission_id = s.id
-       LEFT JOIN ugc_submission_votes vv ON vv.submission_id = s.id AND vv.user_id = ?1
-       LEFT JOIN ugc_submission_flags vf ON vf.submission_id = s.id AND vf.user_id = ?1
+       LEFT JOIN ugc_submission_votes vv ON vv.submission_id = s.id AND vv.user_id = ?1 AND vv.active = 1
+       LEFT JOIN ugc_submission_flags vf ON vf.submission_id = s.id AND vf.user_id = ?1 AND vf.active = 1
        LEFT JOIN users u ON u.uid = s.user_id
        ORDER BY s.created_at DESC, s.id DESC`
     )
@@ -341,13 +347,15 @@ export async function listCommentViewerStateByMarker(
      LEFT JOIN (
        SELECT submission_id, SUM(value) AS score
        FROM ugc_submission_votes
-       WHERE submission_id IN (SELECT id FROM selected_comments)
+       WHERE active = 1
+         AND submission_id IN (SELECT id FROM selected_comments)
        GROUP BY submission_id
      ) v ON v.submission_id = s.id
      LEFT JOIN (
        SELECT submission_id, COUNT(*) AS flag_count
        FROM ugc_submission_flags
-       WHERE submission_id IN (SELECT id FROM selected_comments)
+       WHERE active = 1
+         AND submission_id IN (SELECT id FROM selected_comments)
        GROUP BY submission_id
      ) f ON f.submission_id = s.id
      LEFT JOIN users u ON u.uid = s.user_id
@@ -360,8 +368,8 @@ export async function listCommentViewerStateByMarker(
        COALESCE(v.value, 0) AS viewer_vote,
        CASE WHEN f.user_id IS NULL THEN 0 ELSE 1 END AS viewer_flagged
      FROM ugc_submissions s
-     LEFT JOIN ugc_submission_votes v ON v.submission_id = s.id AND v.user_id = ?1
-     LEFT JOIN ugc_submission_flags f ON f.submission_id = s.id AND f.user_id = ?1
+     LEFT JOIN ugc_submission_votes v ON v.submission_id = s.id AND v.user_id = ?1 AND v.active = 1
+     LEFT JOIN ugc_submission_flags f ON f.submission_id = s.id AND f.user_id = ?1 AND f.active = 1
      WHERE s.poi_id IN (${markerPlaceholders})
        AND s.kind = 'comment'
        AND s.status IN ('active', 'flagged', 'remove_request')

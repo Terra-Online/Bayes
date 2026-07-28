@@ -131,13 +131,15 @@ export async function listDuplicateImageMarkers(
          upvote_counts AS (
            SELECT submission_id, COUNT(*) AS upvote_count
            FROM ugc_submission_upvotes
-           WHERE submission_id IN (SELECT id FROM latest_visible_images)
+           WHERE active = 1
+             AND submission_id IN (SELECT id FROM latest_visible_images)
            GROUP BY submission_id
          ),
          flag_counts AS (
            SELECT submission_id, COUNT(*) AS flag_count
            FROM ugc_submission_flags
-           WHERE submission_id IN (SELECT id FROM latest_visible_images)
+           WHERE active = 1
+             AND submission_id IN (SELECT id FROM latest_visible_images)
            GROUP BY submission_id
          )
          SELECT
@@ -230,8 +232,8 @@ export async function listDuplicateMarkerImages(
     : "";
   const viewerJoin = payload.viewerUserId
     ? `
-       LEFT JOIN ugc_submission_upvotes uv ON uv.submission_id = s.id AND uv.user_id = ?${viewerBindingOffset + 1}
-       LEFT JOIN ugc_submission_flags uf ON uf.submission_id = s.id AND uf.user_id = ?${viewerBindingOffset + 2}`
+       LEFT JOIN ugc_submission_upvotes uv ON uv.submission_id = s.id AND uv.user_id = ?${viewerBindingOffset + 1} AND uv.active = 1
+       LEFT JOIN ugc_submission_flags uf ON uf.submission_id = s.id AND uf.user_id = ?${viewerBindingOffset + 2} AND uf.active = 1`
     : "";
   const viewerBindings = payload.viewerUserId ? [payload.viewerUserId, payload.viewerUserId] : [];
   const limitBinding = 1 + scope.bindings.length + viewerBindings.length + 1;
@@ -250,13 +252,15 @@ export async function listDuplicateMarkerImages(
          upvote_counts AS (
            SELECT submission_id, COUNT(*) AS upvote_count
            FROM ugc_submission_upvotes
-           WHERE submission_id IN (SELECT id FROM selected_images)
+           WHERE active = 1
+             AND submission_id IN (SELECT id FROM selected_images)
            GROUP BY submission_id
          ),
          flag_counts AS (
            SELECT submission_id, COUNT(*) AS flag_count
            FROM ugc_submission_flags
-           WHERE submission_id IN (SELECT id FROM selected_images)
+           WHERE active = 1
+             AND submission_id IN (SELECT id FROM selected_images)
            GROUP BY submission_id
          )
          SELECT

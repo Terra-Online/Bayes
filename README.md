@@ -45,10 +45,12 @@ This is a foundation implementation based on PRD and is intentionally incrementa
 - POST /uploads/v1/images
 - GET /uploads/v1/images
 - GET /moderation/v1/pending (pioneer/admin)
+- GET /moderation/v1/images/orphans (admin)
 - PATCH /moderation/v1/:id/status (pioneer/admin)
 - POST /moderation/v1/run (admin)
 - POST /moderation/v1/run-once (admin)
-- DELETE /moderation/v1/stale (admin)
+- DELETE /moderation/v1/test-images (admin; marks matching submissions stale and retains objects)
+- DELETE /moderation/v1/stale (admin; rejected by append-only retention policy)
 
 ## Local Development
 

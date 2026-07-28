@@ -14,11 +14,9 @@ import {
   listDuplicateMarkerImages
 } from "../repositories/submission-duplicates";
 import {
-  deleteSubmissionsByStatus,
-  deleteSubmissionsByFilePathPrefix,
-  getSubmissionFilePathsByStatus,
   getReviewSubmissionStats,
-  getReviewSubmissions
+  getReviewSubmissions,
+  markImageSubmissionsStaleByFilePathPrefix
 } from "../repositories/submission-review";
 import {
   ALL_STATUSES,
@@ -40,6 +38,7 @@ import { moderateSubmissionIds } from "../services/moderation/core";
 import { ensureModerationBackfill, enqueueApprovedCommentTransPrewarm } from "../services/moderation/queue";
 import { notifySubmissionApproved, notifySubmissionModerationResult } from "../services/moderation/notifications";
 import { getImageCoverage } from "../services/moderation/imageCoverage";
+import { getOrphanImages } from "../services/moderation/orphanImages";
 import type { AppEnv } from "../types/app";
 
 const updateSchema = z.object({
@@ -239,38 +238,6 @@ async function runModeration(
   };
 }
 
-async function deleteR2Prefix(bucket: R2Bucket, prefix: string): Promise<number> {
-  let cursor: string | undefined;
-  let deleted = 0;
-
-  do {
-    const listed = await bucket.list({
-      prefix: `${prefix}/`,
-      cursor,
-      limit: 1000
-    });
-    const keys = listed.objects.map((object) => object.key);
-    if (keys.length > 0) {
-      await Promise.all(keys.map((key) => bucket.delete(key)));
-      deleted += keys.length;
-    }
-    cursor = listed.truncated ? listed.cursor : undefined;
-  } while (cursor);
-
-  return deleted;
-}
-
-async function deleteR2Objects(bucket: R2Bucket, keys: string[]): Promise<number> {
-  const uniqueKeys = [...new Set(keys.map((key) => key.trim()).filter(Boolean))];
-  let deleted = 0;
-  for (let index = 0; index < uniqueKeys.length; index += 100) {
-    const batch = uniqueKeys.slice(index, index + 100);
-    await Promise.all(batch.map((key) => bucket.delete(key)));
-    deleted += batch.length;
-  }
-  return deleted;
-}
-
 export function createModerationRoutes() {
   const app = new Hono<AppEnv>();
 
@@ -343,6 +310,15 @@ export function createModerationRoutes() {
     return c.json(await getImageCoverage(c.env.DB, {
       scope: requestedScope,
       imageScope: resolveImageScope("", requestedScope)
+    }));
+  });
+
+  app.get("/images/orphans", requireAuth, requireRole(["a"]), rateLimit("auth"), async (c) => {
+    const config = getRuntimeConfig(c.env);
+    return c.json(await getOrphanImages({
+      db: c.env.DB,
+      bucket: c.env.UGC_BUCKET,
+      assetBaseUrl: config.ugcAssetBaseUrl
     }));
   });
 
@@ -544,41 +520,33 @@ export function createModerationRoutes() {
       throw new ApiError(409, "TEST_PREFIX_DISABLED", "Test image cleanup is only available for the _test prefix.");
     }
 
-    const deletedObjects = await deleteR2Prefix(c.env.UGC_BUCKET, prefix);
-    const deletedRows = await deleteSubmissionsByFilePathPrefix(c.env.DB, prefix);
+    const archived = await markImageSubmissionsStaleByFilePathPrefix(
+      c.env.DB,
+      prefix,
+      "Archived from the test namespace; object retained by append-only policy."
+    );
+    c.executionCtx.waitUntil(Promise.all(archived.markerIds.map((markerId) => invalidateUploadCaches({
+      kv: c.env.OEM_KV,
+      kind: "image",
+      markerId
+    }))));
 
     return c.json({
       ok: true,
       prefix,
-      deletedObjects,
-      deletedRows
+      archivedRows: archived.changedRows,
+      retainedObjects: true,
+      deletedObjects: 0,
+      deletedRows: 0
     });
   });
 
-  app.delete("/stale", requireAuth, requireRole(["a"]), rateLimit("auth"), async (c) => {
-    const filePaths: string[] = [];
-    let offset = 0;
-    for (;;) {
-      const batch = await getSubmissionFilePathsByStatus(c.env.DB, "stale", 1000, offset);
-      if (batch.length === 0) {
-        break;
-      }
-      filePaths.push(...batch);
-      if (batch.length < 1000) {
-        break;
-      }
-      offset += batch.length;
-    }
-
-    const deletedObjects = await deleteR2Objects(c.env.UGC_BUCKET, filePaths);
-    const deletedRows = await deleteSubmissionsByStatus(c.env.DB, "stale");
-
-    return c.json({
-      ok: true,
-      status: "stale",
-      deletedObjects,
-      deletedRows
-    });
+  app.delete("/stale", requireAuth, requireRole(["a"]), rateLimit("auth"), async () => {
+    throw new ApiError(
+      409,
+      "APPEND_ONLY_RETENTION",
+      "Stale submissions and their R2 objects are retained. Update status instead of deleting records."
+    );
   });
 
   return app;

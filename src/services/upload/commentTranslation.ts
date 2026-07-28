@@ -1095,6 +1095,19 @@ export async function prewarmApprovedCommentTrans(
 ): Promise<{ ok: boolean; skipped?: string; targets: TransPrewarmTarget[] }> {
   const id = commentId.trim();
   const targetLangs = [...APPROVED_COMMENT_PREWARM_TARGET_LANGUAGES];
+  const runtimeConfig = getRuntimeConfig(env);
+  if (!runtimeConfig.commentTranslationPrewarmEnabled) {
+    return {
+      ok: true,
+      skipped: "COMMENT_TRANSLATION_PREWARM_DISABLED",
+      targets: targetLangs.map((lang) => ({
+        lang,
+        status: "skipped",
+        error: "COMMENT_TRANSLATION_PREWARM_DISABLED"
+      }))
+    };
+  }
+
   if (!id) {
     return {
       ok: false,
@@ -1107,7 +1120,7 @@ export async function prewarmApprovedCommentTrans(
     };
   }
 
-  const config = getRuntimeConfig(env).googleTranslate;
+  const config = runtimeConfig.googleTranslate;
   if (!isGoogleTranslateConfigured(config)) {
     return {
       ok: true,

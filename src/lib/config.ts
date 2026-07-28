@@ -13,6 +13,7 @@ export interface RuntimeConfig {
   scheduledModerationEnabled: boolean;
   surgeModeEnabled: boolean;
   surgeBackoffMultiplier: number;
+  commentTranslationPrewarmEnabled: boolean;
   googleTranslate: {
     clientEmail?: string;
     privateKey?: string;
@@ -173,6 +174,7 @@ export function getRuntimeConfig(env: Bindings): RuntimeConfig {
     scheduledModerationEnabled: parseBoolean(env.ENABLE_SCHEDULED_MODERATION, true),
     surgeModeEnabled: parseBoolean(env.SURGE_MODE_ENABLED, false),
     surgeBackoffMultiplier: parsePositiveInt(env.SURGE_BACKOFF_MULTIPLIER, DEFAULT_SURGE_BACKOFF_MULTIPLIER),
+    commentTranslationPrewarmEnabled: parseBoolean(env.ENABLE_COMMENT_TRANSLATION_PREWARM, false),
     googleTranslate: {
       clientEmail: env.GOOGLE_TRANSLATE_CLIENT_EMAIL?.trim() || undefined,
       privateKey: normalizePrivateKey(env.GOOGLE_TRANSLATE_PRIVATE_KEY),

@@ -76,6 +76,10 @@ export async function enqueueApprovedCommentTransPrewarm(
   submissionId: string,
   source: "auto_moderation" | "manual_moderation"
 ): Promise<void> {
+  if (!getRuntimeConfig(env).commentTranslationPrewarmEnabled) {
+    return;
+  }
+
   await env.OEM_MODQ.send({
     type: "comment_translation_prewarm",
     submissionId,
@@ -166,6 +170,10 @@ async function processModerationQueueMessage(
   }
 
   if (message.type === "comment_translation_prewarm") {
+    if (!getRuntimeConfig(env).commentTranslationPrewarmEnabled) {
+      return;
+    }
+
     const result = await prewarmApprovedCommentTrans(env, message.submissionId).catch((error) => {
       console.warn("comment translation prewarm failed", {
         submissionId: message.submissionId,
