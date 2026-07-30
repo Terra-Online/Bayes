@@ -140,6 +140,7 @@ vite.config.ts.timestamp-*
 .DS_Store
 Thumbs.db
 desktop.ini
+*.test.ts
 .history/
 PRD.md
 PROGRESS.md

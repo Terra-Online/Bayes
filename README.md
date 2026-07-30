@@ -46,6 +46,9 @@ This is a foundation implementation based on PRD and is intentionally incrementa
 - GET /uploads/v1/images
 - GET /moderation/v1/pending (pioneer/admin)
 - GET /moderation/v1/images/orphans (admin)
+- GET /admin/v1/reports/registrations (admin; daily registrations and source distribution from `users`)
+- GET /admin/v1/reports/translations (admin; persisted translation trends, language shares, and flows)
+- GET /admin/v1/reports/ugc-likes (admin; image likes and comment vote activity)
 - PATCH /moderation/v1/:id/status (pioneer/admin)
 - POST /moderation/v1/run (admin)
 - POST /moderation/v1/run-once (admin)
