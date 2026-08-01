@@ -24,7 +24,6 @@ export type RegisteredManifest = {
 
 type StoredManifest = Omit<RegisteredManifest, "indexById">;
 
-const ACTIVE_MANIFEST_HASH_KEY = `progress:active-manifest-hash:${CACHE_KEY_VERSIONS.progressManifest}`;
 const MANIFEST_KV_KEY_PREFIX = `progress:manifest:${CACHE_KEY_VERSIONS.progressManifest}:`;
 
 export function normalizePointIds(value: unknown, fieldName: string): string[] {
@@ -160,7 +159,6 @@ export async function loadProgressManifest(
 
 export async function saveProgressManifest(
   env: ProgressDoEnv,
-  state: DurableObjectState,
   manifest: RegisteredManifest
 ): Promise<void> {
   await env.DB
@@ -179,31 +177,9 @@ export async function saveProgressManifest(
       nowTimestampMs()
     )
     .run();
-  await state.storage.put(ACTIVE_MANIFEST_HASH_KEY, manifest.markerIndexHash);
   await putJsonToKv(
     env.OEM_KV,
     `${MANIFEST_KV_KEY_PREFIX}${manifest.markerIndexHash}`,
     manifestToStored(manifest)
   ).catch(() => undefined);
-}
-
-export async function loadActiveProgressManifest(
-  env: ProgressDoEnv,
-  state: DurableObjectState
-): Promise<RegisteredManifest> {
-  const markerIndexHash = await state.storage.get<string>(ACTIVE_MANIFEST_HASH_KEY);
-  if (!markerIndexHash) {
-    throw new ApiError(409, "PROGRESS_MANIFEST_NOT_REGISTERED", "Progress manifest must be registered before sync.");
-  }
-
-  const manifest = await loadProgressManifest(env, markerIndexHash);
-  if (!manifest) {
-    throw new ApiError(409, "PROGRESS_MANIFEST_NOT_REGISTERED", "Progress manifest must be registered before sync.");
-  }
-
-  return manifest;
-}
-
-export async function getActiveProgressManifestHash(state: DurableObjectState): Promise<string | undefined> {
-  return state.storage.get<string>(ACTIVE_MANIFEST_HASH_KEY);
 }

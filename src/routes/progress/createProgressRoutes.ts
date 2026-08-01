@@ -4,7 +4,12 @@ import { ApiError } from "../../lib/errors";
 import { fetchProgressStatsFromWorkersCache } from "../../middleware/cache/publicReadClient";
 import { requireAuth } from "../../middleware/auth";
 import { rateLimit } from "../../middleware/rate-limit";
-import { isSha256Hex } from "../../services/progress/manifest";
+import {
+  isSha256Hex,
+  normalizeManifestPayload,
+  saveProgressManifest
+} from "../../services/progress/manifest";
+import { jsonResponse } from "../../services/progress/responses";
 import type { AppEnv } from "../../types/app";
 
 function isProgressLocked(flag: string | undefined): boolean {
@@ -14,17 +19,19 @@ function isProgressLocked(flag: string | undefined): boolean {
 
 async function proxyUserProgress(
   c: Context<AppEnv>,
-  path: "state" | "sync" | "manifest"
+  path: "state" | "sync"
 ): Promise<Response> {
   const user = c.get("authUser");
   if (!user) {
     throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
   }
 
-  const id = c.env.OEM_USER_DO.idFromName(user.uid);
-  const stub = c.env.OEM_USER_DO.get(id);
+  const stub = c.env.OEM_USER_DO.getByName(user.uid);
   const url = new URL(`https://progress-user/${path}`);
-  url.searchParams.set("uid", user.uid);
+  if (path === "state") {
+    const markerIndexHash = c.req.query("markerIndexHash")?.trim().toLowerCase() ?? "";
+    url.searchParams.set("markerIndexHash", markerIndexHash);
+  }
 
   const request = path === "state"
     ? new Request(url, { method: "GET" })
@@ -35,6 +42,15 @@ async function proxyUserProgress(
     });
 
   return stub.fetch(request);
+}
+
+async function registerManifest(c: Context<AppEnv>): Promise<Response> {
+  const manifest = await normalizeManifestPayload(await c.req.json().catch(() => null));
+  await saveProgressManifest(c.env, manifest);
+  return jsonResponse({
+    ok: true,
+    manifest: { markerIndexHash: manifest.markerIndexHash }
+  });
 }
 
 async function proxyStats(c: Context<AppEnv>): Promise<Response> {
@@ -60,7 +76,7 @@ export function createProgressRoutes() {
   });
 
   app.get("/state", requireAuth, async (c) => proxyUserProgress(c, "state"));
-  app.post("/manifest", requireAuth, async (c) => proxyUserProgress(c, "manifest"));
+  app.post("/manifest", requireAuth, registerManifest);
   app.post("/sync", requireAuth, async (c) => proxyUserProgress(c, "sync"));
   app.get("/stats", rateLimit("public"), async (c) => proxyStats(c));
 

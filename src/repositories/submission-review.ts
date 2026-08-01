@@ -1,5 +1,6 @@
 import {
   ALL_STATUSES,
+  type SubmissionKind,
   type SubmissionRecord,
   type SubmissionStatus
 } from "./submission/types";
@@ -11,6 +12,7 @@ import {
 
 export interface ReviewSubmissionStats {
   total: number;
+  byKind: { kind: SubmissionKind; count: number }[];
   byType: { type: string; count: number }[];
   byStatus: { status: SubmissionStatus; count: number }[];
 }
@@ -76,7 +78,7 @@ export async function getReviewSubmissionStats(
   payload: ReviewSubmissionFilters = {}
 ): Promise<ReviewSubmissionStats> {
   const filters = buildReviewSubmissionWhere(payload);
-  const [totalRow, typeRows, statusRows] = await Promise.all([
+  const [totalRow, kindRows, typeRows, statusRows] = await Promise.all([
     db
       .prepare(
         `SELECT COUNT(*) AS count
@@ -85,6 +87,16 @@ export async function getReviewSubmissionStats(
       )
       .bind(...filters.bindings)
       .first<{ count: number | string }>(),
+    db
+      .prepare(
+        `SELECT kind, COUNT(*) AS count
+         FROM ugc_submissions s
+         WHERE ${filters.whereSql}
+         GROUP BY kind
+         ORDER BY kind ASC`
+      )
+      .bind(...filters.bindings)
+      .all<{ kind: string; count: number | string }>(),
     db
       .prepare(
         `SELECT COALESCE(NULLIF(poi_type, ''), 'unknown') AS type, COUNT(*) AS count
@@ -108,6 +120,14 @@ export async function getReviewSubmissionStats(
 
   return {
     total: toCount(totalRow?.count),
+    byKind: (kindRows.results ?? [])
+      .filter((row): row is { kind: SubmissionKind; count: number | string } => (
+        row.kind === "image" || row.kind === "comment"
+      ))
+      .map((row) => ({
+        kind: row.kind,
+        count: toCount(row.count)
+      })),
     byType: (typeRows.results ?? []).map((row) => ({
       type: String(row.type),
       count: toCount(row.count)

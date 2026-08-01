@@ -6,6 +6,11 @@ import type { Bindings } from './types/app';
 import { initResend } from './lib/email/sender';
 import { ensureModerationBackfill, processModerationQueueBatch } from './services/moderation/queue';
 import type { OemModQueueMessage } from './services/moderation/messages';
+import { drainProgressStatsOutbox } from './services/progress/outbox';
+import {
+  cleanupProgressConsistencyRecords,
+  getProgressStatsOutboxHealth,
+} from './services/progress/repository';
 export {
   oem_imgTrans,
 } from './services/upload/imageTranscoderContainer';
@@ -60,10 +65,31 @@ async function runScheduledJobs(env: Bindings): Promise<void> {
   });
 }
 
+async function runProgressRecovery(env: Bindings): Promise<void> {
+  const now = Date.now();
+  try {
+    await drainProgressStatsOutbox(env);
+    if (new Date(now).getUTCMinutes() === 0) {
+      await cleanupProgressConsistencyRecords(env.DB, now);
+    }
+    const health = await getProgressStatsOutboxHealth(env.DB, now);
+    const unhealthy = health.blocked > 0 || health.oldestAgeMs > 5 * 60 * 1_000;
+    const log = unhealthy ? console.error : console.warn;
+    log('[progress][outbox] health', health);
+  } catch (error) {
+    console.error('[progress][outbox] recovery failed', {
+      error: error instanceof Error ? error.message : String(error),
+      at: new Date().toISOString(),
+    });
+    throw error;
+  }
+}
+
 export default {
   fetch: app.fetch,
   async scheduled(_event: ScheduledEvent, env: Bindings, ctx: ExecutionContext) {
     initResend(env);
+    ctx.waitUntil(runProgressRecovery(env));
     ctx.waitUntil(runScheduledJobs(env));
   },
   async queue(batch: MessageBatch<OemModQueueMessage>, env: Bindings) {

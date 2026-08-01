@@ -100,6 +100,17 @@ export function createUploadRoutes() {
       throw new ApiError(422, "VALIDATION_ERROR", "Invalid translation payload.", parsed.error.flatten());
     }
 
+    if (parsed.data.cachedOnly !== true) {
+      const user = await resolveContextAuthUser(c);
+      if (user.role === "s") {
+        throw new ApiError(
+          403,
+          "ACCESS_DENIED",
+          "Suspended users cannot request live translations."
+        );
+      }
+    }
+
     return c.json(await translateVisibleComments(c.env, parsed.data));
   });
 
