@@ -4,8 +4,17 @@ import { evaluateKarmaIfDue } from './services/karma/evaluation';
 import { createApp } from './app';
 import type { Bindings } from './types/app';
 import { initResend } from './lib/email/sender';
-import { ensureModerationBackfill, processModerationQueueBatch } from './services/moderation/queue';
-import type { OemModQueueMessage } from './services/moderation/messages';
+import {
+  ensureModerationBackfill,
+  processModerationQueueBatch,
+  processTranslationQueueBatch,
+} from './services/moderation/queue';
+import { processWebhookQueueBatch } from './services/moderation/notifications';
+import type {
+  OemModerationQueueMessage,
+  OemTranslationQueueMessage,
+  OemWebhookQueueMessage,
+} from './services/moderation/messages';
 import { drainProgressStatsOutbox } from './services/progress/outbox';
 import {
   cleanupProgressConsistencyRecords,
@@ -92,7 +101,27 @@ export default {
     ctx.waitUntil(runProgressRecovery(env));
     ctx.waitUntil(runScheduledJobs(env));
   },
-  async queue(batch: MessageBatch<OemModQueueMessage>, env: Bindings) {
-    await processModerationQueueBatch(env, batch);
+  async queue(
+    batch: MessageBatch<OemModerationQueueMessage | OemTranslationQueueMessage | OemWebhookQueueMessage>,
+    env: Bindings
+  ) {
+    if (batch.queue === 'oem-moderation') {
+      await processModerationQueueBatch(env, batch as MessageBatch<OemModerationQueueMessage>);
+      return;
+    }
+    if (batch.queue === 'oem-translation') {
+      await processTranslationQueueBatch(env, batch as MessageBatch<OemTranslationQueueMessage>);
+      return;
+    }
+    if (batch.queue === 'oem-webhook') {
+      await processWebhookQueueBatch(env, batch as MessageBatch<OemWebhookQueueMessage>);
+      return;
+    }
+
+    console.warn('unknown queue batch received', {
+      queue: batch.queue,
+      messages: batch.messages.length,
+    });
+    batch.retryAll();
   },
 };

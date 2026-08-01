@@ -3,7 +3,6 @@ import { cors } from "hono/cors";
 import { onAppError } from "./middleware/error-handler";
 import { requestIdMiddleware } from "./middleware/request-id";
 import { createAuthRoutes } from "./routes/auth/createAuthRoutes";
-import { createLegacySocialAuthRoutes } from "./routes/auth/legacySocialRoutes";
 import { createAdminReportRoutes } from "./routes/admin-reports";
 import { createBindingRoutes } from "./routes/binding/createBindingRoutes";
 import { createLocatorRoutes } from "./routes/binding/createLocatorRoutes";
@@ -97,13 +96,11 @@ export function createApp() {
 
   app.route("/health/v1", createHealthRoutes());
   app.route("/admin/v1/reports", createAdminReportRoutes());
-  app.route("/auth", createLegacySocialAuthRoutes());
   app.route("/auth/v1", createAuthRoutes());
   app.route("/binding/v1", createBindingRoutes());
   app.route("/locator", createLocatorRoutes());
   app.route("/progress/v1", createProgressRoutes());
   app.route("/sync/v1", createSyncRoutes());
-  app.route("/sync/v1/progress", createProgressRoutes());
   app.route("/uploads/v1", createUploadRoutes());
   app.route("/moderation/v1", createModerationRoutes());
 

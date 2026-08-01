@@ -69,10 +69,6 @@ const duplicateMarkerImagesQuerySchema = z.object({
   offset: z.coerce.number().int().min(0).max(100000).optional()
 });
 
-const runSelectedSchema = z.object({
-  ids: z.array(z.string().min(1).max(64)).min(1).max(500)
-});
-
 const runSchema = z.object({
   ids: z.array(z.string().min(1).max(64)).min(1).max(500).optional(),
   limit: z.coerce.number().int().min(1).max(20).optional()
@@ -291,13 +287,6 @@ export function createModerationRoutes() {
     });
   });
 
-  app.get("/statuses", requireAuth, requireRole(["p", "a"]), rateLimit("auth"), async (c) => {
-    return c.json({
-      statuses: ALL_STATUSES,
-      transitions: STATUS_TRANSITIONS
-    });
-  });
-
   app.get("/images/coverage", requireAuth, requireRole(["a"]), rateLimit("auth"), async (c) => {
     const parsed = imageCoverageQuerySchema.safeParse({
       scope: c.req.query("scope")
@@ -484,15 +473,6 @@ export function createModerationRoutes() {
 
   app.post("/run-once", requireAuth, requireRole(["a"]), rateLimit("auth"), async (c) => {
     return c.json(await runModeration(c, { limit: 5 }));
-  });
-
-  app.post("/run-selected", requireAuth, requireRole(["a"]), rateLimit("auth"), async (c) => {
-    const parsed = runSelectedSchema.safeParse(await c.req.json());
-    if (!parsed.success) {
-      throw new ApiError(422, "VALIDATION_ERROR", "Invalid moderation selection.", parsed.error.flatten());
-    }
-
-    return c.json(await runModeration(c, { ids: parsed.data.ids }));
   });
 
   app.post("/karma/run-once", requireAuth, requireRole(["a"]), rateLimit("auth"), async (c) => {

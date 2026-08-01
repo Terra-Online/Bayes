@@ -68,22 +68,28 @@ export interface PendingOpenAICompletionStats {
   stale: number;
 }
 
-export type OemModQueueMessage =
-  | {
-      type: "moderation";
-      submissionId: string;
-      snapshotId?: string;
-      source: ModerationQueueSource;
-      queuedAt: string;
-    }
-  | {
-      type: "discord_notification";
-      event: ModerationNotificationEvent;
-      queuedAt: string;
-    }
-  | {
-      type: "comment_translation_prewarm";
-      submissionId: string;
-      source: TransPrewarmSource;
-      queuedAt: string;
-    };
+export type OemModerationQueueMessage = {
+  type: "moderation";
+  submissionId: string;
+  snapshotId?: string;
+  source: ModerationQueueSource;
+  queuedAt: string;
+};
+
+export type OemWebhookQueueMessage = {
+  type: "discord_notification";
+  event: ModerationNotificationEvent;
+  queuedAt: string;
+};
+
+export type OemTranslationQueueMessage = {
+  type: "comment_translation_prewarm";
+  submissionId: string;
+  source: TransPrewarmSource;
+  queuedAt: string;
+};
+
+export type OemQueueMessage =
+  | OemModerationQueueMessage
+  | OemWebhookQueueMessage
+  | OemTranslationQueueMessage;

@@ -1,7 +1,6 @@
 import type { Hono } from "hono";
 import type { Context } from "hono";
 import { z } from "zod";
-import { createAuth } from "../../lib/auth/createAuth";
 import { ApiError } from "../../lib/errors";
 import { requireAuth } from "../../middleware/auth";
 import { rateLimit } from "../../middleware/rate-limit";
@@ -120,13 +119,5 @@ export function registerSessionAuthRoutes(app: Hono<AppEnv>) {
     } catch (error) {
       mapProfileUpdateError(error);
     }
-  });
-
-  app.post("/logout", async (c) => {
-    const auth = createAuth(c.env);
-    await auth.api.signOut({
-      headers: c.req.raw.headers
-    });
-    return c.json({ ok: true });
   });
 }

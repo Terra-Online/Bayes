@@ -39,7 +39,7 @@ This is a foundation implementation based on PRD and is intentionally incrementa
 	- Password reset: /auth/v1/forget-password (send magic link)
 	- Social login: /auth/v1/sign-in/social
 - Compatibility endpoints: /auth/v1/register (email+password+otp bridge)
-- Session endpoints: /auth/v1/session, /auth/v1/logout
+- Session endpoints: /auth/v1/session, /auth/v1/sign-out
 - GET /progress/v1/state
 - POST /progress/v1/sync
 - POST /uploads/v1/images

@@ -25,10 +25,6 @@ export function createAuthRoutes() {
     forwardToAuthRawRequest,
   });
 
-  app.get("/get-session", rateLimit("public"), async (c) => {
-    return forwardToAuthRawRequest(c);
-  });
-
   app.post("/session/exchange", rateLimit("public"), handleSessionExchange);
 
   app.post("/sign-out", rateLimit("public"), async (c) => {

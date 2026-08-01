@@ -91,10 +91,6 @@ export function registerPasswordResetRoutes(
     return handlePasswordResetRequest(c, deps.forwardToAuthJsonPath);
   });
 
-  app.post("/request-password-reset", rateLimit("reset-send"), async (c) => {
-    return handlePasswordResetRequest(c, deps.forwardToAuthJsonPath);
-  });
-
   app.post("/reset-password", rateLimit("public"), async (c) => {
     let body: unknown;
     try {
