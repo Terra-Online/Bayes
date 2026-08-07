@@ -56,6 +56,10 @@ name = "OEM_STATS_DO"
 class_name = "OEMStatsDO"
 
 [[durable_objects.bindings]]
+name = "OEM_NOTIFICATION_DO"
+class_name = "OEMNotificationDO"
+
+[[durable_objects.bindings]]
 name = "OEM_IMG_TRANS"
 class_name = "oem_imgTrans"
 
@@ -66,6 +70,10 @@ new_sqlite_classes = ["OEMUserDO", "OEMStatsDO"]
 [[migrations]]
 tag = "v2_image_transcoder_container"
 new_sqlite_classes = ["oem_imgTrans"]
+
+[[migrations]]
+tag = "v3_notification_live"
+new_sqlite_classes = ["OEMNotificationDO"]
 
 [[containers]]
 name = "oem-backend-oem_imgtrans"
@@ -119,6 +127,9 @@ max_batch_size = 10
 max_batch_timeout = 5
 dead_letter_queue = "oem-webhook-dlq"
 
+[[tail_consumers]]
+service = "oem-errogger"
+
 [triggers]
 crons = ["*/1 * * * *"]
 
@@ -145,6 +156,10 @@ class_name = "OEMUserDO"
 [[env.local.durable_objects.bindings]]
 name = "OEM_STATS_DO"
 class_name = "OEMStatsDO"
+
+[[env.local.durable_objects.bindings]]
+name = "OEM_NOTIFICATION_DO"
+class_name = "OEMNotificationDO"
 
 [[env.local.durable_objects.bindings]]
 name = "OEM_IMG_TRANS"

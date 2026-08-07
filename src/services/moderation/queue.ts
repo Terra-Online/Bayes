@@ -4,6 +4,7 @@ import { getPendingOpenAISubmissions } from "../../repositories/submission/creat
 import { getSubmissionById, markSubmissionModerationQueued } from "../../repositories/submission/statusSubmission";
 import type { Bindings } from "../../types/app";
 import { prewarmApprovedCommentTrans } from "../upload/commentTranslation";
+import { publishNotificationsCreated } from "../notify/live";
 import {
   createEmptyPendingOpenAICompletionStats,
   notifyCommentTransPrewarmDone,
@@ -42,7 +43,8 @@ function createModerationOptions(env: Bindings): ModerationOptions {
         previousStatus,
         nextStatus,
         source: "auto_moderation"
-      })
+      }),
+    publishNotifications: (notifications) => publishNotificationsCreated(env, notifications)
   };
 }
 

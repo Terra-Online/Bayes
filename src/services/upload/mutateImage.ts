@@ -15,8 +15,8 @@ import {
 } from "../../repositories/submission/flagSubmission";
 import {
   getSubmissionById,
+  transitionSubmissionStatusWithNotifications,
   updateSubmissionStatus,
-  updateSubmissionStatusForSnapshot
 } from "../../repositories/submission/statusSubmission";
 import type { AppEnv } from "../../types/app";
 import {
@@ -25,6 +25,7 @@ import {
   notifyRemoveRequestCancelled,
   notifyRemoveRequestCreated
 } from "../moderation/notifications";
+import { publishNotificationsCreated } from "../notify/live";
 
 function requireUserAndSubmissionId(c: import("hono").Context<AppEnv>) {
   const user = c.get("authUser");
@@ -66,12 +67,15 @@ export async function handleImageUpvote(c: import("hono").Context<AppEnv>) {
 
   const created = await createSubmissionUpvote(c.env.DB, {
     submissionId,
-    userId: user.uid
+    actor: user
   });
   const upvoteCount = await countSubmissionUpvotes(c.env.DB, submissionId);
   invalidateImageCache(c, submission.markerId);
+  if (created.notifications.length > 0) {
+    c.executionCtx.waitUntil(publishNotificationsCreated(c.env, created.notifications));
+  }
 
-  return c.json({ ok: true, created, upvoteCount });
+  return c.json({ ok: true, created: created.created, upvoteCount });
 }
 
 export async function handleImageUnvote(c: import("hono").Context<AppEnv>) {
@@ -274,15 +278,17 @@ export async function handleRecallImage(c: import("hono").Context<AppEnv>) {
     });
   }
 
-  const recalled = await updateSubmissionStatusForSnapshot(c.env.DB, {
-    id: submissionId,
-    snapshotId: submission.snapshotId,
-    fromStatus: submission.status,
+  const transition = await transitionSubmissionStatusWithNotifications(c.env.DB, {
+    submission,
     status: "stale",
-    moderationNote: `${RECALL_MODERATION_NOTE_PREFIX} image withdrawn by uploader.`
+    moderationNote: `${RECALL_MODERATION_NOTE_PREFIX} image withdrawn by uploader.`,
+    source: "user_action"
   });
-  if (!recalled) {
+  if (!transition.updated) {
     throw new ApiError(409, "RECALL_CONFLICT", "Image changed while it was being recalled.");
+  }
+  if (transition.notifications.length > 0) {
+    c.executionCtx.waitUntil(publishNotificationsCreated(c.env, transition.notifications));
   }
   invalidateImageCache(c, submission.markerId);
   return c.json({ ok: true, status: "stale" });

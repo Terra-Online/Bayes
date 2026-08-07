@@ -37,9 +37,14 @@ export async function getJsonFromKv<T>(
   }
 
   const request = (async (): Promise<unknown | null> => {
-    const raw = cacheTtl === undefined
-      ? await kv.get(key)
-      : await kv.get(key, { type: "text", cacheTtl });
+    let raw: string | null;
+    try {
+      raw = cacheTtl === undefined
+        ? await kv.get(key)
+        : await kv.get(key, { type: "text", cacheTtl });
+    } catch {
+      return null;
+    }
     if (!raw) return null;
 
     try {

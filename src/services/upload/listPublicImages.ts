@@ -131,7 +131,7 @@ export async function listCachedPublicImagesByMarker(
               missingMarkerId,
               dbGrouped.get(missingMarkerId) ?? []
             )
-          ))));
+          ))).catch(() => undefined));
         }
         return dbGrouped;
       })

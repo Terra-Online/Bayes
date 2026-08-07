@@ -199,12 +199,20 @@ export async function resolveAuthUser(env: AppEnv["Bindings"], headers: Headers)
   }
 }
 
+export async function resolveRequestAuthUser(
+  env: AppEnv["Bindings"],
+  request: Request
+): Promise<AuthUser> {
+  const url = new URL(request.url);
+  const headers = buildAuthHeaders(request.headers, url.searchParams.get("access_token"));
+  return resolveAuthUser(env, headers);
+}
+
 export async function resolveContextAuthUser(c: Context<AppEnv>): Promise<AuthUser> {
   const existing = c.get("authUser");
   if (existing) return existing;
 
-  const authHeaders = buildAuthHeaders(c.req.raw.headers, c.req.query("access_token"));
-  const authUser = await resolveAuthUser(c.env, authHeaders);
+  const authUser = await resolveRequestAuthUser(c.env, c.req.raw);
   c.set("authUser", authUser);
   return authUser;
 }

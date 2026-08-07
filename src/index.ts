@@ -2,6 +2,7 @@ import { createRedisClient } from './lib/redis';
 import { getRuntimeConfig } from './lib/config';
 import { evaluateKarmaIfDue } from './services/karma/evaluation';
 import { createApp } from './app';
+import { handleNotificationLiveUpgrade } from './routes/notify';
 import type { Bindings } from './types/app';
 import { initResend } from './lib/email/sender';
 import {
@@ -29,6 +30,9 @@ export {
 export {
   OEMStatsDO,
 } from './services/progress/statsDo';
+export {
+  OEMNotificationDO,
+} from './services/notify/live';
 export {
   PublicReadCache,
 } from './middleware/cache/publicReadCache';
@@ -95,7 +99,10 @@ async function runProgressRecovery(env: Bindings): Promise<void> {
 }
 
 export default {
-  fetch: app.fetch,
+  async fetch(request: Request, env: Bindings, ctx: ExecutionContext) {
+    const liveResponse = await handleNotificationLiveUpgrade(request, env);
+    return liveResponse ?? app.fetch(request, env, ctx);
+  },
   async scheduled(_event: ScheduledEvent, env: Bindings, ctx: ExecutionContext) {
     initResend(env);
     ctx.waitUntil(runProgressRecovery(env));

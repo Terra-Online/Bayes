@@ -15,9 +15,10 @@ import {
 import type { PendingOpenAICompletionStats } from "./messages";
 import {
   getSubmissionById,
-  updateSubmissionStatusForSnapshot
+  transitionSubmissionStatusWithNotifications
 } from "../../repositories/submission/statusSubmission";
 import type { SubmissionRecord, SubmissionStatus } from "../../repositories/submission/types";
+import type { NotificationRecord } from "../../repositories/notifications";
 import { applyUserPointsDelta } from "../../repositories/users";
 
 const OPENAI_MODERATION_TIMEOUT_MS = 8_000;
@@ -39,6 +40,7 @@ type SubmissionModerationNotice = (
   prevStatus: SubmissionStatus,
   nextStatus: "active" | "pending_audit"
 ) => Promise<void>;
+type NotificationPublisher = (notifications: NotificationRecord[]) => Promise<void>;
 
 interface ModOptions {
   openAiApiKey?: string;
@@ -53,6 +55,7 @@ interface ModOptions {
   prewarmAsset?: typeof prewarmPublicUgcAsset;
   enqueueApprovedCommentTransPrewarm?: TransPrewarm;
   enqueueSubmissionModerationNotice?: SubmissionModerationNotice;
+  publishNotifications?: NotificationPublisher;
 }
 
 interface ApplyStatusOptions extends Omit<ModOptions, "openAiApiKey" | "ugcBucket" | "skipAiModeration" | "localAutoApprove"> {
@@ -184,15 +187,22 @@ async function applyModerationStatus(
   status: SubmissionStatus,
   options: ApplyStatusOptions
 ): Promise<boolean> {
-  const updated = await updateSubmissionStatusForSnapshot(db, {
-    id: options.id,
-    snapshotId: submission.snapshotId,
-    fromStatus: submission.status,
+  const transition = await transitionSubmissionStatusWithNotifications(db, {
+    submission,
     status,
-    moderationNote: options.moderationNote
+    moderationNote: options.moderationNote,
+    source: "auto_moderation"
   });
-  if (!updated) {
+  if (!transition.updated) {
     return false;
+  }
+  if (transition.notifications.length > 0) {
+    await options.publishNotifications?.(transition.notifications).catch((error) => {
+      console.warn("submission notification fanout failed", {
+        submissionId: options.id,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    });
   }
 
   if (status === "active" || status === "pending_audit") {

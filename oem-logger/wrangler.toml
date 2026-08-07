@@ -1,0 +1,13 @@
+name = "oem-errogger"
+main = "src/index.ts"
+compatibility_date = "2026-07-22"
+workers_dev = false
+
+[triggers]
+crons = ["17 3 * * *"]
+
+[[d1_databases]]
+binding = "OEM_ERR"
+database_name = "OEM-ERR"
+database_id = "d77d9ff0-b015-49b9-bf73-73cc3bffadcf"
+migrations_dir = "migrations"

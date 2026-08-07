@@ -13,6 +13,7 @@ export interface Bindings {
   OEM_KV?: KVNamespace;
   OEM_USER_DO: DurableObjectNamespace;
   OEM_STATS_DO: DurableObjectNamespace;
+  OEM_NOTIFICATION_DO: DurableObjectNamespace;
   OEM_IMG_TRANS: DurableObjectNamespace<oem_imgTrans>;
   OEM_PUBLIC_RATE_LIMIT: RateLimit;
   OEM_AUTH_RATE_LIMIT: RateLimit;

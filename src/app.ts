@@ -9,6 +9,7 @@ import { createLocatorRoutes } from "./routes/binding/createLocatorRoutes";
 import { createSyncRoutes } from "./routes/binding/createSyncRoutes";
 import { createHealthRoutes } from "./routes/health";
 import { createModerationRoutes } from "./routes/moderation";
+import { createNotifyRoutes } from "./routes/notify";
 import { createProgressRoutes } from "./routes/progress/createProgressRoutes";
 import { createUploadRoutes } from "./routes/uploads";
 import type { AppEnv } from "./types/app";
@@ -103,6 +104,7 @@ export function createApp() {
   app.route("/sync/v1", createSyncRoutes());
   app.route("/uploads/v1", createUploadRoutes());
   app.route("/moderation/v1", createModerationRoutes());
+  app.route("/notify/v1", createNotifyRoutes());
 
   app.get("/", (c) => c.json({ status: "ok", message: "OEM backend is running." }));
 

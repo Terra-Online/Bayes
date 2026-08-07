@@ -15,9 +15,9 @@ import {
 import {
   getSubmissionById,
   revertCommentEdit,
+  transitionSubmissionStatusWithNotifications,
   updateCommentContentForModeration,
   updateSubmissionStatus,
-  updateSubmissionStatusForSnapshot
 } from "../../repositories/submission/statusSubmission";
 import {
   getSubmissionScore,
@@ -30,6 +30,7 @@ import {
   notifyFlagRemoved,
   notifyRemoveRequestCreated
 } from "../moderation/notifications";
+import { publishNotificationsCreated } from "../notify/live";
 import { commentEditSchema } from "./schemas";
 
 function requireUserAndSubmissionId(c: import("hono").Context<AppEnv>) {
@@ -66,13 +67,16 @@ export async function handleCommentVote(c: import("hono").Context<AppEnv>, value
 
   const vote = await setSubmissionVote(c.env.DB, {
     submissionId,
-    userId: user.uid,
+    actor: user,
     value
   });
   const score = await getSubmissionScore(c.env.DB, submissionId);
   invalidateCommentCache(c, submission.markerId);
+  if (vote.notifications.length > 0) {
+    c.executionCtx.waitUntil(publishNotificationsCreated(c.env, vote.notifications));
+  }
 
-  return c.json({ ok: true, vote, score });
+  return c.json({ ok: true, vote: vote.currentVote, previousVote: vote.previousVote, score });
 }
 
 export async function handleFlagComment(c: import("hono").Context<AppEnv>) {
@@ -308,15 +312,17 @@ export async function handleRecallComment(c: import("hono").Context<AppEnv>) {
     });
   }
 
-  const recalled = await updateSubmissionStatusForSnapshot(c.env.DB, {
-    id: submissionId,
-    snapshotId: submission.snapshotId,
-    fromStatus: submission.status,
+  const transition = await transitionSubmissionStatusWithNotifications(c.env.DB, {
+    submission,
     status: "stale",
-    moderationNote: `${RECALL_MODERATION_NOTE_PREFIX} comment withdrawn by author.`
+    moderationNote: `${RECALL_MODERATION_NOTE_PREFIX} comment withdrawn by author.`,
+    source: "user_action"
   });
-  if (!recalled) {
+  if (!transition.updated) {
     throw new ApiError(409, "RECALL_CONFLICT", "Comment changed while it was being recalled.");
+  }
+  if (transition.notifications.length > 0) {
+    c.executionCtx.waitUntil(publishNotificationsCreated(c.env, transition.notifications));
   }
   invalidateCommentCache(c, submission.markerId);
   return c.json({ ok: true, status: "stale" });

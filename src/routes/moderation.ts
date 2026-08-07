@@ -23,11 +23,9 @@ import {
   type SubmissionRecord,
   type SubmissionStatus
 } from "../repositories/submission/types";
-import { clearSubmissionFlags } from "../repositories/submission/flagSubmission";
 import {
   getSubmissionById,
-  updateSubmissionStatus,
-  updateSubmissionStatusForSnapshot
+  transitionSubmissionStatusWithNotifications
 } from "../repositories/submission/statusSubmission";
 import { applyUserPointsDelta } from "../repositories/users";
 import { prewarmPublicUgcAsset } from "../middleware/cache/publicUgcAssets";
@@ -36,7 +34,9 @@ import { evaluateKarmaBatch, markKarmaDirty } from "../services/karma/evaluation
 import { getModerationPointsDeltaWithDailyBackoff } from "../services/karma/moderationPoints";
 import { moderateSubmissionIds } from "../services/moderation/core";
 import { ensureModerationBackfill, enqueueApprovedCommentTransPrewarm } from "../services/moderation/queue";
-import { notifySubmissionApproved, notifySubmissionModerationResult } from "../services/moderation/notifications";
+import { notifySubmissionModerationResult } from "../services/moderation/notifications";
+import { publishNotificationsCreated } from "../services/notify/live";
+import type { NotificationRecord } from "../repositories/notifications";
 import { getImageCoverage } from "../services/moderation/imageCoverage";
 import { getOrphanImages } from "../services/moderation/orphanImages";
 import type { AppEnv } from "../types/app";
@@ -197,7 +197,9 @@ async function runModeration(
         previousStatus,
         nextStatus,
         source: "auto_moderation"
-      })
+      }),
+    publishNotifications: (notifications: NotificationRecord[]) =>
+      publishNotificationsCreated(c.env, notifications)
   };
 
   if (payload.ids && payload.ids.length > 0) {
@@ -393,18 +395,31 @@ export function createModerationRoutes() {
     }
     assertStatusTransition(current.status, parsed.data.status);
 
-    const updated = await updateSubmissionStatusForSnapshot(c.env.DB, {
-      id: submissionId,
-      snapshotId: current.snapshotId,
-      fromStatus: current.status,
+    const transition = await transitionSubmissionStatusWithNotifications(c.env.DB, {
+      submission: current,
       status: parsed.data.status,
-      moderationNote: parsed.data.moderationNote
+      moderationNote: parsed.data.moderationNote,
+      source: "manual_moderation",
+      clearFlags: current.status === "flagged" && parsed.data.status === "active"
     });
-    if (!updated) {
+    if (!transition.updated) {
       throw new ApiError(409, "MODERATION_CONFLICT", "Submission changed while it was being moderated.");
     }
-    if (current.status === "flagged" && parsed.data.status === "active") {
-      await clearSubmissionFlags(c.env.DB, submissionId);
+    if (transition.notifications.length > 0) {
+      c.executionCtx.waitUntil(publishNotificationsCreated(c.env, transition.notifications));
+    }
+    if (
+      current.status !== parsed.data.status &&
+      (parsed.data.status === "active" || parsed.data.status === "pending_audit")
+    ) {
+      c.executionCtx.waitUntil(
+        notifySubmissionModerationResult(c.env, {
+          submission: current,
+          previousStatus: current.status,
+          nextStatus: parsed.data.status,
+          source: "manual_moderation"
+        })
+      );
     }
     if (current.status !== "active" && parsed.data.status === "active" && current.kind === "image") {
       const config = getRuntimeConfig(c.env);
@@ -421,15 +436,6 @@ export function createModerationRoutes() {
           enqueueApprovedCommentTransPrewarm(c.env, submissionId, "manual_moderation")
         );
       }
-    }
-    if (current.status !== "active" && parsed.data.status === "active") {
-      c.executionCtx.waitUntil(
-        notifySubmissionApproved(c.env, {
-          submission: current,
-          previousStatus: current.status,
-          source: "manual_moderation"
-        })
-      );
     }
     const effectiveModerationNote = parsed.data.moderationNote ?? current.moderationNote;
     const isPreviouslyApprovedEdit = (

@@ -166,6 +166,8 @@ src/lib/emailBlacklist.json
 .dev.vars.local
 .env.local
 /.idea/
+*.spec.ts
+*.test.ts
 
 docs/
 src/data

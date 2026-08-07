@@ -178,7 +178,7 @@ export async function listCachedPublicCommentsByMarker(
               missingMarkerId,
               dbGrouped.get(missingMarkerId) ?? []
             )
-          ))));
+          ))).catch(() => undefined));
         }
         return dbGrouped;
       })
