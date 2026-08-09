@@ -9,6 +9,7 @@ import { resolveAuthIdentity } from "../../middleware/auth";
 import { ensureUserProfile } from "../../repositories/users";
 import { getDecryptedBinding, isAutoRefreshableEndfieldError, refreshBindingCredentials, withAutoRefreshedBinding } from "./credentials";
 import { POSITION_STREAM_RECONNECT_MS, serializeLocatorError, shouldIncludeBinding } from "./helpers";
+import { issueLocatorSocketTicket, verifyLocatorSocketTicket } from "./locatorTicket";
 import {
   getPositionCacheKey,
   POSITION_CACHE_FRESH_MS,
@@ -18,7 +19,17 @@ import {
 } from "./locatorCache";
 import type { AppContext, DecryptedBinding } from "./types";
 
-async function resolvePositionBinding(c: AppContext): Promise<{ uid: string; binding: DecryptedBinding }> {
+async function resolvePositionBinding(
+  c: AppContext,
+  ticketUid?: string
+): Promise<{ uid: string; binding: DecryptedBinding }> {
+  if (ticketUid) {
+    return {
+      uid: ticketUid,
+      binding: await getDecryptedBinding(c, ticketUid)
+    };
+  }
+
   const authHeaders = new Headers(c.req.raw.headers);
   const accessToken = c.req.query("access_token")?.trim();
   if (accessToken && !authHeaders.has("authorization")) {
@@ -45,6 +56,14 @@ function schedulePositionRefresh(c: AppContext, key: string, binding: DecryptedB
 export async function handleEndfieldPositionSocket(c: AppContext) {
   if (c.req.header("upgrade")?.toLowerCase() !== "websocket") {
     throw new ApiError(426, "WEBSOCKET_REQUIRED", "Use a WebSocket connection for this endpoint.");
+  }
+
+  const ticket = c.req.query("ticket")?.trim();
+  const ticketUid = ticket
+    ? await verifyLocatorSocketTicket(c.env, ticket)
+    : undefined;
+  if (ticket && !ticketUid) {
+    throw new ApiError(401, "LOCATOR_SOCKET_TICKET_INVALID", "Locator socket ticket is invalid or expired.");
   }
 
   const includeBinding = shouldIncludeBinding(c);
@@ -247,7 +266,7 @@ export async function handleEndfieldPositionSocket(c: AppContext) {
 
   const initializeStream = async () => {
     try {
-      const resolved = await resolvePositionBinding(c);
+      const resolved = await resolvePositionBinding(c, ticketUid ?? undefined);
       if (closed) return;
       userUid = resolved.uid;
       binding = resolved.binding;
@@ -291,6 +310,10 @@ export async function handleEndfieldPositionSocket(c: AppContext) {
 export async function handleEndfieldPosition(c: AppContext) {
   const resolved = await resolvePositionBinding(c);
   const includeBinding = shouldIncludeBinding(c);
+  const includeSocketTicket = c.req.query("socket_ticket") === "1";
+  const socketTicket = includeSocketTicket
+    ? await issueLocatorSocketTicket(c.env, resolved.uid)
+    : undefined;
   return withAutoRefreshedBinding(c, resolved.uid, async (binding) => {
     const cacheKey = getPositionCacheKey(resolved.uid, binding.binding);
     const cached = positionCache.get(cacheKey);
@@ -303,6 +326,7 @@ export async function handleEndfieldPosition(c: AppContext) {
 
       const response = c.json({
         data: cached.data,
+        ...(socketTicket ? { socketTicket } : {}),
         ...(includeBinding ? { binding: binding.publicBinding } : {})
       });
       response.headers.set("cache-control", "private, no-store");
@@ -315,6 +339,7 @@ export async function handleEndfieldPosition(c: AppContext) {
 
     const response = c.json({
       data: position.data,
+      ...(socketTicket ? { socketTicket } : {}),
       ...(includeBinding ? { binding: binding.publicBinding } : {})
     });
     response.headers.set("cache-control", "private, no-store");
