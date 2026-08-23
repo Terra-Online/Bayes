@@ -35,6 +35,16 @@ import {
 import { drainUserProgressStatsOutbox } from "./outbox";
 import { commitProgressSync, getProgressSyncMutation } from "./repository";
 import { errorResponse, jsonResponse } from "./responses";
+import {
+  loadArchiveProgressManifest,
+  type RegisteredArchiveManifest
+} from "./archiveManifest";
+import {
+  buildArchiveSyncRequestHash,
+  handleArchiveProgressState,
+  handleArchiveProgressSync,
+  normalizeArchiveSyncPatch
+} from "./archiveUserProgress";
 
 type NormalizedSyncPatch = {
   baseRevision: string;
@@ -99,6 +109,29 @@ async function requireProgressManifest(
   const manifest = await loadProgressManifest(env, markerIndexHash);
   if (!manifest) {
     throw new ApiError(409, "PROGRESS_MANIFEST_NOT_REGISTERED", "Progress manifest is not registered.");
+  }
+  return manifest;
+}
+
+function normalizeArchiveStateManifestHash(url: URL): string {
+  const archiveIndexHash = url.searchParams.get("archiveIndexHash")?.trim().toLowerCase() ?? "";
+  if (!isSha256Hex(archiveIndexHash)) {
+    throw new ApiError(422, "VALIDATION_ERROR", "archiveIndexHash must be a SHA-256 hash.");
+  }
+  return archiveIndexHash;
+}
+
+async function requireArchiveProgressManifest(
+  env: ProgressDoEnv,
+  archiveIndexHash: string
+): Promise<RegisteredArchiveManifest> {
+  const manifest = await loadArchiveProgressManifest(env, archiveIndexHash);
+  if (!manifest) {
+    throw new ApiError(
+      409,
+      "ARCHIVE_PROGRESS_MANIFEST_NOT_REGISTERED",
+      "Archive progress manifest is not registered."
+    );
   }
   return manifest;
 }
@@ -193,6 +226,30 @@ export class OEMUserDO {
           latencyMs: Date.now() - startedAt
         });
         return response;
+      }
+
+      if (request.method === "GET" && url.pathname === "/archive/state") {
+        stage = "archive_state_manifest";
+        const manifest = await requireArchiveProgressManifest(
+          this.env,
+          normalizeArchiveStateManifestHash(url)
+        );
+        stage = "archive_state_read";
+        return await this.runExclusive(() => handleArchiveProgressState(this.env, uid, manifest));
+      }
+
+      if (request.method === "POST" && url.pathname === "/archive/sync") {
+        stage = "archive_sync_parse";
+        const incoming = normalizeArchiveSyncPatch(await request.json().catch(() => null));
+        stage = "archive_sync_prepare";
+        const [manifest, requestHash] = await Promise.all([
+          requireArchiveProgressManifest(this.env, incoming.archiveIndexHash),
+          buildArchiveSyncRequestHash(incoming)
+        ]);
+        stage = "archive_sync_critical";
+        return await this.runExclusive(
+          () => handleArchiveProgressSync(this.env, uid, incoming, requestHash, manifest)
+        );
       }
 
       return jsonResponse({ code: "NOT_FOUND", message: "Progress DO route not found." }, { status: 404 });

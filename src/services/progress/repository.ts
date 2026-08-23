@@ -255,7 +255,16 @@ export async function cleanupProgressConsistencyRecords(
          ORDER BY processed_at ASC
          LIMIT 500
        )`
-    ).bind(now - PROCESSED_OUTBOX_RETENTION_MS)
+    ).bind(now - PROCESSED_OUTBOX_RETENTION_MS),
+    db.prepare(
+      `DELETE FROM archive_progress_sync_mutations
+       WHERE rowid IN (
+         SELECT rowid FROM archive_progress_sync_mutations
+         WHERE created_at < ?1
+         ORDER BY created_at ASC
+         LIMIT 500
+       )`
+    ).bind(now - MUTATION_RETENTION_MS)
   ]);
 }
 
