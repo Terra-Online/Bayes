@@ -3,12 +3,13 @@ import { cors } from "hono/cors";
 import { onAppError } from "./middleware/error-handler";
 import { requestIdMiddleware } from "./middleware/request-id";
 import { createAuthRoutes } from "./routes/auth/createAuthRoutes";
-import { createLegacySocialAuthRoutes } from "./routes/auth/legacySocialRoutes";
+import { createAdminReportRoutes } from "./routes/admin-reports";
 import { createBindingRoutes } from "./routes/binding/createBindingRoutes";
 import { createLocatorRoutes } from "./routes/binding/createLocatorRoutes";
 import { createSyncRoutes } from "./routes/binding/createSyncRoutes";
 import { createHealthRoutes } from "./routes/health";
 import { createModerationRoutes } from "./routes/moderation";
+import { createNotifyRoutes } from "./routes/notify";
 import { createProgressRoutes } from "./routes/progress/createProgressRoutes";
 import { createUploadRoutes } from "./routes/uploads";
 import type { AppEnv } from "./types/app";
@@ -80,16 +81,30 @@ export function createApp() {
 
   app.onError(onAppError);
 
+  app.put("/__demo/r2", async (c) => {
+    const requestUrl = new URL(c.req.url);
+    if (c.req.header("x-demo-local-sync") !== "1") {
+      return c.json({ error: "not_found" }, 404);
+    }
+    const objectKey = requestUrl.searchParams.get("key")?.trim();
+    if (!objectKey) return c.json({ error: "missing_key" }, 400);
+    const contentType = c.req.header("content-type") ?? "application/octet-stream";
+    await c.env.UGC_BUCKET.put(objectKey, await c.req.arrayBuffer(), {
+      httpMetadata: { contentType }
+    });
+    return c.json({ ok: true, key: objectKey });
+  });
+
   app.route("/health/v1", createHealthRoutes());
-  app.route("/auth", createLegacySocialAuthRoutes());
+  app.route("/admin/v1/reports", createAdminReportRoutes());
   app.route("/auth/v1", createAuthRoutes());
   app.route("/binding/v1", createBindingRoutes());
   app.route("/locator", createLocatorRoutes());
   app.route("/progress/v1", createProgressRoutes());
   app.route("/sync/v1", createSyncRoutes());
-  app.route("/sync/v1/progress", createProgressRoutes());
   app.route("/uploads/v1", createUploadRoutes());
   app.route("/moderation/v1", createModerationRoutes());
+  app.route("/notify/v1", createNotifyRoutes());
 
   app.get("/", (c) => c.json({ status: "ok", message: "OEM backend is running." }));
 

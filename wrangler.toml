@@ -1,17 +1,30 @@
 name = "oem-backend"
 main = "src/index.ts"
-compatibility_date = "2026-04-08"
+compatibility_date = "2026-07-22"
 compatibility_flags = ["nodejs_compat"]
 
 workers_dev = false
 preview_urls = false
 
+[cache]
+enabled = true
+cross_version_cache = true
+
+[exports.default]
+type = "worker"
+
+[exports.default.cache]
+enabled = false
+
+[exports.PublicReadCache]
+type = "worker"
+
+[exports.PublicReadCache.cache]
+enabled = true
+
 [[routes]]
 pattern = "api.opendfieldmap.org/*"
 zone_name = "opendfieldmap.org"
-
-[placement]
-mode = "smart"
 
 [observability]
 enabled = true
@@ -43,6 +56,10 @@ name = "OEM_STATS_DO"
 class_name = "OEMStatsDO"
 
 [[durable_objects.bindings]]
+name = "OEM_NOTIFICATION_DO"
+class_name = "OEMNotificationDO"
+
+[[durable_objects.bindings]]
 name = "OEM_IMG_TRANS"
 class_name = "oem_imgTrans"
 
@@ -54,6 +71,10 @@ new_sqlite_classes = ["OEMUserDO", "OEMStatsDO"]
 tag = "v2_image_transcoder_container"
 new_sqlite_classes = ["oem_imgTrans"]
 
+[[migrations]]
+tag = "v3_notification_live"
+new_sqlite_classes = ["OEMNotificationDO"]
+
 [[containers]]
 name = "oem-backend-oem_imgtrans"
 class_name = "oem_imgTrans"
@@ -61,15 +82,53 @@ image = "./containers/oem_imgTrans/Dockerfile"
 image_build_context = "./containers/oem_imgTrans"
 max_instances = 5
 
+[[ratelimits]]
+name = "OEM_PUBLIC_RATE_LIMIT"
+namespace_id = "26080101"
+simple = { limit = 80, period = 60 }
+
+[[ratelimits]]
+name = "OEM_AUTH_RATE_LIMIT"
+namespace_id = "26080102"
+simple = { limit = 120, period = 60 }
+
+[[ratelimits]]
+name = "OEM_BINDING_RATE_LIMIT"
+namespace_id = "26080103"
+simple = { limit = 80, period = 60 }
+
 [[queues.producers]]
-binding = "OEM_MODQ"
-queue = "oem-modq"
+binding = "OEM_MODERATION_Q"
+queue = "oem-moderation"
+
+[[queues.producers]]
+binding = "OEM_TRANSLATION_Q"
+queue = "oem-translation"
+
+[[queues.producers]]
+binding = "OEM_WEBHOOK_Q"
+queue = "oem-webhook"
 
 [[queues.consumers]]
-queue = "oem-modq"
+queue = "oem-moderation"
 max_batch_size = 10
 max_batch_timeout = 5
-dead_letter_queue = "oem-modq-dlq"
+dead_letter_queue = "oem-moderation-dlq"
+
+[[queues.consumers]]
+queue = "oem-translation"
+max_batch_size = 10
+max_batch_timeout = 5
+dead_letter_queue = "oem-translation-dlq"
+
+[[queues.consumers]]
+queue = "oem-webhook"
+max_batch_size = 10
+max_batch_timeout = 5
+dead_letter_queue = "oem-webhook-dlq"
+
+[[tail_consumers]]
+service = "oem-errogger"
 
 [triggers]
 crons = ["*/1 * * * *"]
@@ -99,6 +158,10 @@ name = "OEM_STATS_DO"
 class_name = "OEMStatsDO"
 
 [[env.local.durable_objects.bindings]]
+name = "OEM_NOTIFICATION_DO"
+class_name = "OEMNotificationDO"
+
+[[env.local.durable_objects.bindings]]
 name = "OEM_IMG_TRANS"
 class_name = "oem_imgTrans"
 
@@ -109,12 +172,47 @@ image = "./containers/oem_imgTrans/Dockerfile"
 image_build_context = "./containers/oem_imgTrans"
 max_instances = 3
 
+[[env.local.ratelimits]]
+name = "OEM_PUBLIC_RATE_LIMIT"
+namespace_id = "26080201"
+simple = { limit = 80, period = 60 }
+
+[[env.local.ratelimits]]
+name = "OEM_AUTH_RATE_LIMIT"
+namespace_id = "26080202"
+simple = { limit = 120, period = 60 }
+
+[[env.local.ratelimits]]
+name = "OEM_BINDING_RATE_LIMIT"
+namespace_id = "26080203"
+simple = { limit = 80, period = 60 }
+
 [[env.local.queues.producers]]
-binding = "OEM_MODQ"
-queue = "oem-modq"
+binding = "OEM_MODERATION_Q"
+queue = "oem-moderation"
+
+[[env.local.queues.producers]]
+binding = "OEM_TRANSLATION_Q"
+queue = "oem-translation"
+
+[[env.local.queues.producers]]
+binding = "OEM_WEBHOOK_Q"
+queue = "oem-webhook"
 
 [[env.local.queues.consumers]]
-queue = "oem-modq"
+queue = "oem-moderation"
 max_batch_size = 10
 max_batch_timeout = 5
-dead_letter_queue = "oem-modq-dlq"
+dead_letter_queue = "oem-moderation-dlq"
+
+[[env.local.queues.consumers]]
+queue = "oem-translation"
+max_batch_size = 10
+max_batch_timeout = 5
+dead_letter_queue = "oem-translation-dlq"
+
+[[env.local.queues.consumers]]
+queue = "oem-webhook"
+max_batch_size = 10
+max_batch_timeout = 5
+dead_letter_queue = "oem-webhook-dlq"

@@ -3,6 +3,7 @@ import { buildPointShareUrl } from "../../lib/pointShare";
 import type { SubmissionKind, SubmissionRecord, SubmissionStatus } from "../../repositories/submission/types";
 import type {
   ModerationNotificationEvent,
+  OemWebhookQueueMessage,
   PendingOpenAICompletionStats,
   TransPrewarmSource,
   TransPrewarmTarget
@@ -188,11 +189,30 @@ export async function notifyRemoveRequestCancelled(
 }
 
 async function enqueueModerationNotification(env: Bindings, event: ModerationNotificationEvent): Promise<void> {
-  await env.OEM_MODQ.send({
+  await env.OEM_WEBHOOK_Q.send({
     type: "discord_notification",
     event,
     queuedAt: new Date().toISOString()
   });
+}
+
+export async function processWebhookQueueBatch(
+  env: Bindings,
+  batch: MessageBatch<OemWebhookQueueMessage>
+): Promise<void> {
+  for (const message of batch.messages) {
+    try {
+      await sendModerationNotificationNow(env, message.body.event);
+      message.ack();
+    } catch (error) {
+      console.warn("OEM_WEBHOOK_Q message failed", {
+        type: message.body?.type,
+        eventType: message.body?.event?.type,
+        error: error instanceof Error ? error.message : String(error)
+      });
+      message.retry();
+    }
+  }
 }
 
 export async function sendModerationNotificationNow(env: Bindings, event: ModerationNotificationEvent): Promise<void> {

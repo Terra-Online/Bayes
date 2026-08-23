@@ -13,6 +13,7 @@ export interface RuntimeConfig {
   scheduledModerationEnabled: boolean;
   surgeModeEnabled: boolean;
   surgeBackoffMultiplier: number;
+  commentTranslationPrewarmEnabled: boolean;
   googleTranslate: {
     clientEmail?: string;
     privateKey?: string;
@@ -34,28 +35,27 @@ const DEFAULT_UGC_ASSET_BASE_URL = "https://assets.opendfieldmap.org";
 const DEFAULT_TEST_UPLOAD_PREFIX = "_test";
 const DEFAULT_SURGE_BACKOFF_MULTIPLIER = 3;
 const DEFAULT_GOOGLE_TRANSLATE_LOCATION = "global";
-const DEFAULT_GOOGLE_TRANSLATE_GLOSSARY_VERSION = "g2026-07-01";
+const DEFAULT_GOOGLE_TRANSLATE_GLOSSARY_VERSION = "g2026-07-19";
 const DEFAULT_GOOGLE_TRANSLATE_GLOSSARY_LANGUAGES = [
   "zh-CN",
-  "zh-HK",
+  "zh-TW",
   "en",
   "ja",
   "ko",
   "fr",
   "de",
+  "it",
   "es",
-  "pt-BR",
+  "pt",
   "ru",
   "th",
   "vi",
-  "id",
-  "ms"
+  "id"
 ];
 const DEFAULT_GOOGLE_TRANSLATE_ALLOWED_LANGUAGES = [
   ...DEFAULT_GOOGLE_TRANSLATE_GLOSSARY_LANGUAGES,
   "pl",
   "sv",
-  "it",
   "ar",
   "hi",
   "el"
@@ -174,6 +174,7 @@ export function getRuntimeConfig(env: Bindings): RuntimeConfig {
     scheduledModerationEnabled: parseBoolean(env.ENABLE_SCHEDULED_MODERATION, true),
     surgeModeEnabled: parseBoolean(env.SURGE_MODE_ENABLED, false),
     surgeBackoffMultiplier: parsePositiveInt(env.SURGE_BACKOFF_MULTIPLIER, DEFAULT_SURGE_BACKOFF_MULTIPLIER),
+    commentTranslationPrewarmEnabled: parseBoolean(env.ENABLE_COMMENT_TRANSLATION_PREWARM, false),
     googleTranslate: {
       clientEmail: env.GOOGLE_TRANSLATE_CLIENT_EMAIL?.trim() || undefined,
       privateKey: normalizePrivateKey(env.GOOGLE_TRANSLATE_PRIVATE_KEY),

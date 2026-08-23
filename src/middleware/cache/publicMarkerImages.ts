@@ -1,11 +1,17 @@
 import type { PublicSubmissionImage } from "../../repositories/submission/types";
-import { getJsonFromKv, putJsonToKv, sha256Hex } from "./kvJson";
+import {
+  DEFAULT_KV_READ_CACHE_TTL_SECONDS,
+  getJsonFromKv,
+  putJsonToKv,
+  sha256Hex
+} from "./kvJson";
+import { CACHE_KEY_VERSIONS } from "./versions";
 
 export const PUBLIC_MARKER_IMAGE_CACHE_LIMIT = 24;
+export const PUBLIC_MARKER_IMAGE_POSITIVE_TTL_SECONDS = 90 * 24 * 60 * 60;
+export const PUBLIC_MARKER_IMAGE_EMPTY_TTL_SECONDS = 60 * 60;
 
-const PUBLIC_MARKER_IMAGE_KV_KEY_PREFIX = "ugc:marker-images:v2:";
-const PUBLIC_MARKER_IMAGE_POSITIVE_TTL_SECONDS = 30 * 24 * 60 * 60;
-const PUBLIC_MARKER_IMAGE_EMPTY_TTL_SECONDS = 60 * 60;
+const PUBLIC_MARKER_IMAGE_KV_KEY_PREFIX = `ugc:marker-images:${CACHE_KEY_VERSIONS.publicMarkerImages}:`;
 const PUBLIC_IMAGE_CACHE_NAMESPACES = ["default", "test", "prod"] as const;
 
 export type PublicImageCacheNamespace = typeof PUBLIC_IMAGE_CACHE_NAMESPACES[number];
@@ -40,7 +46,8 @@ export async function readPublicMarkerImageCache(
 
   const entry = await getJsonFromKv<PublicMarkerImageCacheEntry>(
     kv,
-    await getPublicMarkerImageCacheKey(namespace, markerId)
+    await getPublicMarkerImageCacheKey(namespace, markerId),
+    { cacheTtl: DEFAULT_KV_READ_CACHE_TTL_SECONDS }
   );
   if (!entry || !Array.isArray(entry.items)) {
     return null;

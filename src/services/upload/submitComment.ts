@@ -59,7 +59,7 @@ export async function handleSubmitComment(c: import("hono").Context<AppEnv>) {
     parentId,
     commentDepth
   });
-  await enqueueModeration(c.env, submissionId);
+  await enqueueModeration(c.env, submissionId, snapshotId);
 
   return c.json({
     ok: true,

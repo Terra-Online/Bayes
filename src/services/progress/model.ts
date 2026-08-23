@@ -22,7 +22,8 @@ export interface ProgressSyncPayload {
   baseRevision?: string;
   setPointIds?: string[];
   clearPointIds?: string[];
-  clientMutationId?: string;
+  clientMutationId: string;
+  markerIndexHash: string;
   updatedAt: number;
 }
 
@@ -32,6 +33,7 @@ export interface ProgressManifestPayload {
 }
 
 export interface ProgressStatsDelta {
+  eventId: string;
   markerIndexHash: string;
   pointCount: number;
   increments: number[];

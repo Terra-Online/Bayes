@@ -2,7 +2,8 @@ import type { MiddlewareHandler } from "hono";
 import { ApiError } from "../lib/errors";
 import { getUploadRateLimitForKarma } from "../lib/karma/rules";
 import { createRedisClient } from "../lib/redis";
-import type { AppEnv } from "../types/app";
+import { hmacServiceIdentifier } from "../lib/serviceIdentity";
+import type { AppEnv, Bindings } from "../types/app";
 
 const OTP_SEND_IP_LIMIT_PER_MINUTE = 20;
 const OTP_SEND_EMAIL_LIMIT_PER_HOUR = 8;
@@ -13,7 +14,7 @@ const RESET_SEND_LIMIT_PER_MINUTE = 80;
 const EMAIL_COOLDOWN_SECONDS = 100;
 const ONE_MINUTE_MS = 60 * 1000;
 const ONE_HOUR_MS = 60 * ONE_MINUTE_MS;
-const PUBLIC_LOCAL_RATE_CACHE_MAX_ENTRIES = 5000;
+const LOCAL_READ_RATE_CACHE_MAX_ENTRIES = 5000;
 
 type RateLimitScope = "public" | "auth" | "binding" | "otp-send" | "reset-send" | "upload";
 
@@ -39,21 +40,10 @@ function buildRateLimitDetails(result: SlidingWindowResult, limit: number): Reco
   };
 }
 
-const publicLocalWindows = new Map<string, LocalWindowEntry>();
-
-function getWindowMs(scope: RateLimitScope): number {
-  if (scope === "otp-send") {
-    return ONE_MINUTE_MS;
-  }
-  return ONE_MINUTE_MS;
-}
+const localReadWindows = new Map<string, LocalWindowEntry>();
 
 function getScopeLimit(scope: RateLimitScope): number {
-  if (scope === "upload") {
-    return AUTH_LIMIT_PER_MINUTE;
-  }
-
-  if (scope === "auth") {
+  if (scope === "upload" || scope === "auth") {
     return AUTH_LIMIT_PER_MINUTE;
   }
 
@@ -81,16 +71,16 @@ function getLimitForRequest(scope: RateLimitScope, c: Parameters<MiddlewareHandl
   return getScopeLimit(scope);
 }
 
-function prunePublicLocalWindows(now: number): void {
-  if (publicLocalWindows.size <= PUBLIC_LOCAL_RATE_CACHE_MAX_ENTRIES) {
+function pruneLocalReadWindows(now: number): void {
+  if (localReadWindows.size <= LOCAL_READ_RATE_CACHE_MAX_ENTRIES) {
     return;
   }
 
-  for (const [key, entry] of publicLocalWindows) {
-    if (entry.resetAt <= now || publicLocalWindows.size > PUBLIC_LOCAL_RATE_CACHE_MAX_ENTRIES) {
-      publicLocalWindows.delete(key);
+  for (const [key, entry] of localReadWindows) {
+    if (entry.resetAt <= now || localReadWindows.size > LOCAL_READ_RATE_CACHE_MAX_ENTRIES) {
+      localReadWindows.delete(key);
     }
-    if (publicLocalWindows.size <= PUBLIC_LOCAL_RATE_CACHE_MAX_ENTRIES) {
+    if (localReadWindows.size <= LOCAL_READ_RATE_CACHE_MAX_ENTRIES) {
       return;
     }
   }
@@ -102,7 +92,7 @@ function applyLocalFixedWindowLimit(
   windowMs: number
 ): SlidingWindowResult {
   const now = Date.now();
-  const entry = publicLocalWindows.get(identity);
+  const entry = localReadWindows.get(identity);
   const active = entry && entry.resetAt > now
     ? entry
     : {
@@ -120,8 +110,8 @@ function applyLocalFixedWindowLimit(
   }
 
   active.count += 1;
-  prunePublicLocalWindows(now);
-  publicLocalWindows.set(identity, active);
+  pruneLocalReadWindows(now);
+  localReadWindows.set(identity, active);
 
   return {
     count: active.count,
@@ -131,9 +121,13 @@ function applyLocalFixedWindowLimit(
   };
 }
 
-function canUseLocalPublicLimit(c: Parameters<MiddlewareHandler<AppEnv>>[0]): boolean {
+function canUseLocalReadLimit(
+  scope: RateLimitScope,
+  c: Parameters<MiddlewareHandler<AppEnv>>[0]
+): boolean {
   const method = c.req.method.toUpperCase();
-  return method === "GET" || method === "HEAD" || method === "OPTIONS";
+  const readMethod = method === "GET" || method === "HEAD" || method === "OPTIONS";
+  return readMethod && (scope === "public" || scope === "auth");
 }
 
 function normalizeEmail(input: string): string {
@@ -162,6 +156,47 @@ async function tryExtractEmailFromJson(c: Parameters<MiddlewareHandler<AppEnv>>[
 
 function getRequestIp(c: Parameters<MiddlewareHandler<AppEnv>>[0]): string {
   return c.req.header("cf-connecting-ip") ?? "anonymous";
+}
+
+function getCloudflareRateLimitBinding(env: Bindings, scope: RateLimitScope): RateLimit {
+  if (scope === "auth") return env.OEM_AUTH_RATE_LIMIT;
+  if (scope === "binding") return env.OEM_BINDING_RATE_LIMIT;
+  return env.OEM_PUBLIC_RATE_LIMIT;
+}
+
+function getCloudflareRateLimitIdentity(
+  scope: RateLimitScope,
+  c: Parameters<MiddlewareHandler<AppEnv>>[0],
+  requestIp: string
+): string {
+  const user = c.get("authUser");
+  if ((scope === "auth" || scope === "binding") && user?.uid) {
+    return `user:${user.uid}`;
+  }
+  return `ip:${requestIp}`;
+}
+
+async function applyCloudflareRateLimit(
+  c: Parameters<MiddlewareHandler<AppEnv>>[0],
+  scope: RateLimitScope,
+  requestIp: string
+): Promise<void> {
+  const binding = getCloudflareRateLimitBinding(c.env, scope);
+  const key = await hmacServiceIdentifier(
+    c.env,
+    `cf-rate:${scope}`,
+    getCloudflareRateLimitIdentity(scope, c, requestIp)
+  );
+  const result = await binding.limit({ key });
+  c.header("x-ratelimit-backend", "cf-rate-limit");
+  c.header("x-ratelimit-scope", scope);
+  if (!result.success) {
+    throw new ApiError(429, "RATE_LIMITED", "Too many requests.", {
+      backend: "cf-rate-limit",
+      scope,
+      limit: getScopeLimit(scope)
+    });
+  }
 }
 
 async function applySlidingWindowLimit(
@@ -205,6 +240,14 @@ async function applySlidingWindowLimit(
   };
 }
 
+async function buildRedisRateKey(
+  env: Bindings,
+  namespace: string,
+  identity: string
+): Promise<string> {
+  return hmacServiceIdentifier(env, namespace, identity);
+}
+
 export function rateLimit(scope: RateLimitScope): MiddlewareHandler<AppEnv> {
   return async (c, next) => {
     const requestIp = getRequestIp(c);
@@ -215,11 +258,10 @@ export function rateLimit(scope: RateLimitScope): MiddlewareHandler<AppEnv> {
     }
     const identity = scope === "upload" && user ? `user:${user.uid}` : `ip:${requestIp}`;
     const limit = getLimitForRequest(scope, c);
-    const windowMs = getWindowMs(scope);
 
     try {
-      if (scope === "public" && canUseLocalPublicLimit(c)) {
-        const result = applyLocalFixedWindowLimit(identity, limit, windowMs);
+      if (canUseLocalReadLimit(scope, c)) {
+        const result = applyLocalFixedWindowLimit(`${scope}:${identity}`, limit, ONE_MINUTE_MS);
         c.header("x-ratelimit-limit", String(limit));
         c.header("x-ratelimit-remaining", String(result.remaining));
         c.header("x-ratelimit-reset", String(Math.floor(result.resetAt / 1000)));
@@ -234,23 +276,32 @@ export function rateLimit(scope: RateLimitScope): MiddlewareHandler<AppEnv> {
         return;
       }
 
+      if (scope === "public" || scope === "auth" || scope === "binding") {
+        await applyCloudflareRateLimit(c, scope, requestIp);
+        await next();
+        return;
+      }
+
       const redis = createRedisClient(c.env);
-      const redisKey = `rate:${scope}:${identity}`;
-      const result = await applySlidingWindowLimit(c, redisKey, limit, windowMs);
+      const redisIdentity = await buildRedisRateKey(c.env, `redis-rate:${scope}`, identity);
+      const redisKey = `rate:${scope}:${redisIdentity}`;
+      const result = await applySlidingWindowLimit(c, redisKey, limit, ONE_MINUTE_MS);
 
       c.header("x-ratelimit-limit", String(limit));
       c.header("x-ratelimit-remaining", String(result.remaining));
       c.header("x-ratelimit-reset", String(Math.floor(result.resetAt / 1000)));
+      c.header("x-ratelimit-backend", "redis");
 
       if (result.exceeded) {
         c.header("retry-after", String(buildRateLimitDetails(result, limit).retryAfterSeconds));
         throw new ApiError(429, "RATE_LIMITED", "Too many requests.", buildRateLimitDetails(result, limit));
       }
 
-      if (scope === "otp-send") {
+      if (scope === "otp-send" || scope === "reset-send") {
         const email = await tryExtractEmailFromJson(c);
         if (email) {
-          const cooldownKey = `rate:${scope}:email-cooldown:${email}`;
+          const emailIdentity = await buildRedisRateKey(c.env, `redis-rate:${scope}:email`, email);
+          const cooldownKey = `rate:${scope}:email-cooldown:${emailIdentity}`;
           const cooldownPlaced = await redis.set(cooldownKey, String(Date.now()), {
             nx: true,
             ex: EMAIL_COOLDOWN_SECONDS,
@@ -274,55 +325,28 @@ export function rateLimit(scope: RateLimitScope): MiddlewareHandler<AppEnv> {
             );
           }
 
-          const emailKey = `rate:otp-send:email:${email}`;
-          const emailResult = await applySlidingWindowLimit(
-            c,
-            emailKey,
-            OTP_SEND_EMAIL_LIMIT_PER_HOUR,
-            ONE_HOUR_MS
-          );
-
-          if (emailResult.exceeded) {
-            throw new ApiError(429, "RATE_LIMITED", "Too many OTP requests.");
-          }
-        }
-      }
-
-      if (scope === "reset-send") {
-        const email = await tryExtractEmailFromJson(c);
-        if (email) {
-          const cooldownKey = `rate:${scope}:email-cooldown:${email}`;
-          const cooldownPlaced = await redis.set(cooldownKey, String(Date.now()), {
-            nx: true,
-            ex: EMAIL_COOLDOWN_SECONDS,
-          });
-
-          if (!cooldownPlaced) {
-            const retryAfterRaw = await redis.ttl(cooldownKey);
-            const retryAfter = Number(retryAfterRaw ?? EMAIL_COOLDOWN_SECONDS);
-            if (Number.isFinite(retryAfter) && retryAfter > 0) {
-              c.header("retry-after", String(Math.ceil(retryAfter)));
-            }
-            throw new ApiError(
-              429,
-              "RATE_LIMITED",
-              "Please wait before requesting another email.",
-              {
-                retryAfterSeconds: Number.isFinite(retryAfter) && retryAfter > 0
-                  ? Math.ceil(retryAfter)
-                  : EMAIL_COOLDOWN_SECONDS,
-              }
+          if (scope === "otp-send") {
+            const emailKey = `rate:otp-send:email:${emailIdentity}`;
+            const emailResult = await applySlidingWindowLimit(
+              c,
+              emailKey,
+              OTP_SEND_EMAIL_LIMIT_PER_HOUR,
+              ONE_HOUR_MS
             );
+
+            if (emailResult.exceeded) {
+              throw new ApiError(429, "RATE_LIMITED", "Too many OTP requests.");
+            }
           }
         }
       }
+
     } catch (error) {
       if (error instanceof ApiError) {
         throw error;
       }
       console.error("[rate-limit] backend failure", {
         scope,
-        requestIp,
         error,
       });
       throw new ApiError(503, "RATE_LIMIT_BACKEND_UNAVAILABLE", "Rate limit service unavailable.");

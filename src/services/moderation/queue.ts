@@ -1,20 +1,20 @@
-import type { Redis } from "@upstash/redis";
 import { getRuntimeConfig } from "../../lib/config";
 import { createRedisClient } from "../../lib/redis";
 import { getPendingOpenAISubmissions } from "../../repositories/submission/createSubmission";
 import { getSubmissionById, markSubmissionModerationQueued } from "../../repositories/submission/statusSubmission";
 import type { Bindings } from "../../types/app";
 import { prewarmApprovedCommentTrans } from "../upload/commentTranslation";
+import { publishNotificationsCreated } from "../notify/live";
 import {
   createEmptyPendingOpenAICompletionStats,
   notifyCommentTransPrewarmDone,
   notifySubmissionModerationResult,
-  recordPendingOpenAICompletionStatus,
-  sendModerationNotificationNow
+  recordPendingOpenAICompletionStatus
 } from "./notifications";
 import { moderateSubmissionById } from "./core";
 import type {
-  OemModQueueMessage,
+  OemModerationQueueMessage,
+  OemTranslationQueueMessage,
   PendingOpenAICompletionStats
 } from "./messages";
 
@@ -22,8 +22,9 @@ const MODERATION_BACKFILL_STALE_MS = 5 * 60 * 1000;
 
 type ModerationOptions = Parameters<typeof moderateSubmissionById>[2];
 
-function createModerationOptions(env: Bindings, redis: Redis): ModerationOptions {
+function createModerationOptions(env: Bindings): ModerationOptions {
   const config = getRuntimeConfig(env);
+  const redis = createRedisClient(env);
   return {
     openAiApiKey: env.OPENAI_API_KEY,
     assetBaseUrl: config.ugcAssetBaseUrl,
@@ -42,20 +43,27 @@ function createModerationOptions(env: Bindings, redis: Redis): ModerationOptions
         previousStatus,
         nextStatus,
         source: "auto_moderation"
-      })
+      }),
+    publishNotifications: (notifications) => publishNotificationsCreated(env, notifications)
   };
 }
 
-export async function enqueueModeration(env: Bindings, submissionId: string): Promise<void> {
+export async function enqueueModeration(
+  env: Bindings,
+  submissionId: string,
+  snapshotId: string
+): Promise<void> {
   const queuedAt = new Date().toISOString();
-  await env.OEM_MODQ.send({
+  await env.OEM_MODERATION_Q.send({
     type: "moderation",
     submissionId,
+    snapshotId,
     source: "upload",
     queuedAt
   });
   await markSubmissionModerationQueued(env.DB, {
     id: submissionId,
+    snapshotId,
     queuedAt
   }).catch((error) => {
     console.warn("moderation queued marker update failed", {
@@ -70,7 +78,11 @@ export async function enqueueApprovedCommentTransPrewarm(
   submissionId: string,
   source: "auto_moderation" | "manual_moderation"
 ): Promise<void> {
-  await env.OEM_MODQ.send({
+  if (!getRuntimeConfig(env).commentTranslationPrewarmEnabled) {
+    return;
+  }
+
+  await env.OEM_TRANSLATION_Q.send({
     type: "comment_translation_prewarm",
     submissionId,
     source,
@@ -88,14 +100,16 @@ export async function ensureModerationBackfill(
 
   for (const item of pending) {
     const queuedAt = new Date().toISOString();
-    await env.OEM_MODQ.send({
+    await env.OEM_MODERATION_Q.send({
       type: "moderation",
       submissionId: item.id,
+      snapshotId: item.snapshotId,
       source: "scheduled_backfill",
       queuedAt
     });
     await markSubmissionModerationQueued(env.DB, {
       id: item.id,
+      snapshotId: item.snapshotId,
       queuedAt
     }).catch((error) => {
       console.warn("moderation backfill marker update failed", {
@@ -111,10 +125,9 @@ export async function ensureModerationBackfill(
 
 export async function processModerationQueueBatch(
   env: Bindings,
-  batch: MessageBatch<OemModQueueMessage>
+  batch: MessageBatch<OemModerationQueueMessage>
 ): Promise<PendingOpenAICompletionStats> {
-  const redis = createRedisClient(env);
-  const options = createModerationOptions(env, redis);
+  const options = createModerationOptions(env);
   const stats = createEmptyPendingOpenAICompletionStats();
 
   for (const message of batch.messages) {
@@ -122,7 +135,7 @@ export async function processModerationQueueBatch(
       await processModerationQueueMessage(env, message.body, options, stats);
       message.ack();
     } catch (error) {
-      console.warn("OEM_ModQ message failed", {
+      console.warn("OEM_MODERATION_Q message failed", {
         type: message.body?.type,
         error: error instanceof Error ? error.message : String(error)
       });
@@ -135,44 +148,62 @@ export async function processModerationQueueBatch(
 
 async function processModerationQueueMessage(
   env: Bindings,
-  message: OemModQueueMessage,
+  message: OemModerationQueueMessage,
   options: ModerationOptions,
   stats: PendingOpenAICompletionStats
 ): Promise<void> {
-  if (message.type === "moderation") {
-    const status = await moderateSubmissionById(env.DB, message.submissionId, options);
-    if (status) {
-      recordPendingOpenAICompletionStatus(stats, status);
-    }
-    return;
+  const status = await moderateSubmissionById(
+    env.DB,
+    message.submissionId,
+    options,
+    message.snapshotId
+  );
+  if (status) {
+    recordPendingOpenAICompletionStatus(stats, status);
   }
+}
 
-  if (message.type === "discord_notification") {
-    await sendModerationNotificationNow(env, message.event);
-    return;
-  }
-
-  if (message.type === "comment_translation_prewarm") {
-    const result = await prewarmApprovedCommentTrans(env, message.submissionId).catch((error) => {
-      console.warn("comment translation prewarm failed", {
-        submissionId: message.submissionId,
+export async function processTranslationQueueBatch(
+  env: Bindings,
+  batch: MessageBatch<OemTranslationQueueMessage>
+): Promise<void> {
+  for (const message of batch.messages) {
+    try {
+      await processTranslationQueueMessage(env, message.body);
+      message.ack();
+    } catch (error) {
+      console.warn("OEM_TRANSLATION_Q message failed", {
+        type: message.body?.type,
         error: error instanceof Error ? error.message : String(error)
       });
-      return null;
-    });
-    if (result && !result.skipped) {
-      const submission = await getSubmissionById(env.DB, message.submissionId);
-      if (submission) {
-        await notifyCommentTransPrewarmDone(env, {
-          submission,
-          source: message.source,
-          targets: result.targets
-        });
-      }
+      message.retry();
     }
+  }
+}
+
+async function processTranslationQueueMessage(
+  env: Bindings,
+  message: OemTranslationQueueMessage
+): Promise<void> {
+  if (!getRuntimeConfig(env).commentTranslationPrewarmEnabled) {
     return;
   }
 
-  const exhaustive: never = message;
-  throw new Error(`Unsupported OEM_ModQ message: ${JSON.stringify(exhaustive)}`);
+  const result = await prewarmApprovedCommentTrans(env, message.submissionId).catch((error) => {
+    console.warn("comment translation prewarm failed", {
+      submissionId: message.submissionId,
+      error: error instanceof Error ? error.message : String(error)
+    });
+    return null;
+  });
+  if (result && !result.skipped) {
+    const submission = await getSubmissionById(env.DB, message.submissionId);
+    if (submission) {
+      await notifyCommentTransPrewarmDone(env, {
+        submission,
+        source: message.source,
+        targets: result.targets
+      });
+    }
+  }
 }

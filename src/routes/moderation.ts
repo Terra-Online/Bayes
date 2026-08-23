@@ -2,7 +2,10 @@ import { Hono, type Context } from "hono";
 import { z } from "zod";
 import { getRuntimeConfig } from "../lib/config";
 import { ApiError } from "../lib/errors";
-import { RECALL_MODERATION_NOTE_PREFIX } from "../lib/moderation";
+import {
+  isCommentEditModerationNote,
+  RECALL_MODERATION_NOTE_PREFIX
+} from "../lib/moderation";
 import { createRedisClient } from "../lib/redis";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { rateLimit } from "../middleware/rate-limit";
@@ -11,28 +14,31 @@ import {
   listDuplicateMarkerImages
 } from "../repositories/submission-duplicates";
 import {
-  deleteSubmissionsByStatus,
-  deleteSubmissionsByFilePathPrefix,
-  getSubmissionFilePathsByStatus,
   getReviewSubmissionStats,
-  getReviewSubmissions
+  getReviewSubmissions,
+  markImageSubmissionsStaleByFilePathPrefix
 } from "../repositories/submission-review";
 import {
   ALL_STATUSES,
   type SubmissionRecord,
   type SubmissionStatus
 } from "../repositories/submission/types";
-import { clearSubmissionFlags } from "../repositories/submission/flagSubmission";
-import { getSubmissionById, updateSubmissionStatus } from "../repositories/submission/statusSubmission";
+import {
+  getSubmissionById,
+  transitionSubmissionStatusWithNotifications
+} from "../repositories/submission/statusSubmission";
 import { applyUserPointsDelta } from "../repositories/users";
-import { deletePublicMarkerCommentCache } from "../middleware/cache/publicMarkerComments";
-import { deletePublicMarkerImageCache } from "../middleware/cache/publicMarkerImages";
 import { prewarmPublicUgcAsset } from "../middleware/cache/publicUgcAssets";
+import { invalidateUploadCaches } from "../middleware/cache/uploadCaches";
 import { evaluateKarmaBatch, markKarmaDirty } from "../services/karma/evaluation";
 import { getModerationPointsDeltaWithDailyBackoff } from "../services/karma/moderationPoints";
 import { moderateSubmissionIds } from "../services/moderation/core";
 import { ensureModerationBackfill, enqueueApprovedCommentTransPrewarm } from "../services/moderation/queue";
-import { notifySubmissionApproved, notifySubmissionModerationResult } from "../services/moderation/notifications";
+import { notifySubmissionModerationResult } from "../services/moderation/notifications";
+import { publishNotificationsCreated } from "../services/notify/live";
+import type { NotificationRecord } from "../repositories/notifications";
+import { getImageCoverage } from "../services/moderation/imageCoverage";
+import { getOrphanImages } from "../services/moderation/orphanImages";
 import type { AppEnv } from "../types/app";
 
 const updateSchema = z.object({
@@ -53,14 +59,14 @@ const duplicateImagesQuerySchema = z.object({
   offset: z.coerce.number().int().min(0).max(100000).optional()
 });
 
+const imageCoverageQuerySchema = z.object({
+  scope: z.enum(["test", "prod"]).optional()
+});
+
 const duplicateMarkerImagesQuerySchema = z.object({
   scope: z.enum(["test", "prod"]).optional(),
   limit: z.coerce.number().int().min(1).max(200).optional(),
   offset: z.coerce.number().int().min(0).max(100000).optional()
-});
-
-const runSelectedSchema = z.object({
-  ids: z.array(z.string().min(1).max(64)).min(1).max(500)
 });
 
 const runSchema = z.object({
@@ -191,7 +197,9 @@ async function runModeration(
         previousStatus,
         nextStatus,
         source: "auto_moderation"
-      })
+      }),
+    publishNotifications: (notifications: NotificationRecord[]) =>
+      publishNotificationsCreated(c.env, notifications)
   };
 
   if (payload.ids && payload.ids.length > 0) {
@@ -226,38 +234,6 @@ async function runModeration(
     pendingAudit: 0,
     stale: 0
   };
-}
-
-async function deleteR2Prefix(bucket: R2Bucket, prefix: string): Promise<number> {
-  let cursor: string | undefined;
-  let deleted = 0;
-
-  do {
-    const listed = await bucket.list({
-      prefix: `${prefix}/`,
-      cursor,
-      limit: 1000
-    });
-    const keys = listed.objects.map((object) => object.key);
-    if (keys.length > 0) {
-      await Promise.all(keys.map((key) => bucket.delete(key)));
-      deleted += keys.length;
-    }
-    cursor = listed.truncated ? listed.cursor : undefined;
-  } while (cursor);
-
-  return deleted;
-}
-
-async function deleteR2Objects(bucket: R2Bucket, keys: string[]): Promise<number> {
-  const uniqueKeys = [...new Set(keys.map((key) => key.trim()).filter(Boolean))];
-  let deleted = 0;
-  for (let index = 0; index < uniqueKeys.length; index += 100) {
-    const batch = uniqueKeys.slice(index, index + 100);
-    await Promise.all(batch.map((key) => bucket.delete(key)));
-    deleted += batch.length;
-  }
-  return deleted;
 }
 
 export function createModerationRoutes() {
@@ -313,11 +289,28 @@ export function createModerationRoutes() {
     });
   });
 
-  app.get("/statuses", requireAuth, requireRole(["p", "a"]), rateLimit("auth"), async (c) => {
-    return c.json({
-      statuses: ALL_STATUSES,
-      transitions: STATUS_TRANSITIONS
+  app.get("/images/coverage", requireAuth, requireRole(["a"]), rateLimit("auth"), async (c) => {
+    const parsed = imageCoverageQuerySchema.safeParse({
+      scope: c.req.query("scope")
     });
+    if (!parsed.success) {
+      throw new ApiError(422, "VALIDATION_ERROR", "Invalid image coverage query.", parsed.error.flatten());
+    }
+
+    const requestedScope = parsed.data.scope ?? "prod";
+    return c.json(await getImageCoverage(c.env.DB, {
+      scope: requestedScope,
+      imageScope: resolveImageScope("", requestedScope)
+    }));
+  });
+
+  app.get("/images/orphans", requireAuth, requireRole(["a"]), rateLimit("auth"), async (c) => {
+    const config = getRuntimeConfig(c.env);
+    return c.json(await getOrphanImages({
+      db: c.env.DB,
+      bucket: c.env.UGC_BUCKET,
+      assetBaseUrl: config.ugcAssetBaseUrl
+    }));
   });
 
   app.get("/images/duplicates", requireAuth, requireRole(["p", "a"]), rateLimit("auth"), async (c) => {
@@ -402,39 +395,58 @@ export function createModerationRoutes() {
     }
     assertStatusTransition(current.status, parsed.data.status);
 
-    await updateSubmissionStatus(c.env.DB, {
-      id: submissionId,
+    const transition = await transitionSubmissionStatusWithNotifications(c.env.DB, {
+      submission: current,
       status: parsed.data.status,
-      moderationNote: parsed.data.moderationNote
+      moderationNote: parsed.data.moderationNote,
+      source: "manual_moderation",
+      clearFlags: current.status === "flagged" && parsed.data.status === "active"
     });
-    if (current.status === "flagged" && parsed.data.status === "active") {
-      await clearSubmissionFlags(c.env.DB, submissionId);
+    if (!transition.updated) {
+      throw new ApiError(409, "MODERATION_CONFLICT", "Submission changed while it was being moderated.");
+    }
+    if (transition.notifications.length > 0) {
+      c.executionCtx.waitUntil(publishNotificationsCreated(c.env, transition.notifications));
+    }
+    if (
+      current.status !== parsed.data.status &&
+      (parsed.data.status === "active" || parsed.data.status === "pending_audit")
+    ) {
+      c.executionCtx.waitUntil(
+        notifySubmissionModerationResult(c.env, {
+          submission: current,
+          previousStatus: current.status,
+          nextStatus: parsed.data.status,
+          source: "manual_moderation"
+        })
+      );
     }
     if (current.status !== "active" && parsed.data.status === "active" && current.kind === "image") {
       const config = getRuntimeConfig(c.env);
       c.executionCtx.waitUntil(prewarmPublicUgcAsset(config.ugcAssetBaseUrl, current.filePath));
     }
-    if (current.kind === "image") {
-      c.executionCtx.waitUntil(deletePublicMarkerImageCache(c.env.OEM_KV, current.markerId));
-    } else {
-      c.executionCtx.waitUntil(deletePublicMarkerCommentCache(c.env.OEM_KV, current.markerId));
+    c.executionCtx.waitUntil(invalidateUploadCaches({
+      kv: c.env.OEM_KV,
+      kind: current.kind,
+      markerId: current.markerId
+    }));
+    if (current.kind === "comment") {
       if (current.status !== "active" && parsed.data.status === "active") {
         c.executionCtx.waitUntil(
           enqueueApprovedCommentTransPrewarm(c.env, submissionId, "manual_moderation")
         );
       }
     }
-    if (current.status !== "active" && parsed.data.status === "active") {
-      c.executionCtx.waitUntil(
-        notifySubmissionApproved(c.env, {
-          submission: current,
-          previousStatus: current.status,
-          source: "manual_moderation"
-        })
-      );
-    }
     const effectiveModerationNote = parsed.data.moderationNote ?? current.moderationNote;
-    if (shouldApplyModerationPoints(current.status, parsed.data.status, effectiveModerationNote)) {
+    const isPreviouslyApprovedEdit = (
+      isCommentEditModerationNote(current.moderationNote) &&
+      current.editOriginalStatus !== "pending_openai" &&
+      current.editOriginalStatus !== "pending_audit"
+    );
+    if (
+      !isPreviouslyApprovedEdit &&
+      shouldApplyModerationPoints(current.status, parsed.data.status, effectiveModerationNote)
+    ) {
       const reviewStatus = parsed.data.status === "active" ? "active" : "stale";
       const redis = createRedisClient(c.env);
       const config = getRuntimeConfig(c.env);
@@ -469,15 +481,6 @@ export function createModerationRoutes() {
     return c.json(await runModeration(c, { limit: 5 }));
   });
 
-  app.post("/run-selected", requireAuth, requireRole(["a"]), rateLimit("auth"), async (c) => {
-    const parsed = runSelectedSchema.safeParse(await c.req.json());
-    if (!parsed.success) {
-      throw new ApiError(422, "VALIDATION_ERROR", "Invalid moderation selection.", parsed.error.flatten());
-    }
-
-    return c.json(await runModeration(c, { ids: parsed.data.ids }));
-  });
-
   app.post("/karma/run-once", requireAuth, requireRole(["a"]), rateLimit("auth"), async (c) => {
     const redis = createRedisClient(c.env);
     let result;
@@ -503,41 +506,33 @@ export function createModerationRoutes() {
       throw new ApiError(409, "TEST_PREFIX_DISABLED", "Test image cleanup is only available for the _test prefix.");
     }
 
-    const deletedObjects = await deleteR2Prefix(c.env.UGC_BUCKET, prefix);
-    const deletedRows = await deleteSubmissionsByFilePathPrefix(c.env.DB, prefix);
+    const archived = await markImageSubmissionsStaleByFilePathPrefix(
+      c.env.DB,
+      prefix,
+      "Archived from the test namespace; object retained by append-only policy."
+    );
+    c.executionCtx.waitUntil(Promise.all(archived.markerIds.map((markerId) => invalidateUploadCaches({
+      kv: c.env.OEM_KV,
+      kind: "image",
+      markerId
+    }))));
 
     return c.json({
       ok: true,
       prefix,
-      deletedObjects,
-      deletedRows
+      archivedRows: archived.changedRows,
+      retainedObjects: true,
+      deletedObjects: 0,
+      deletedRows: 0
     });
   });
 
-  app.delete("/stale", requireAuth, requireRole(["a"]), rateLimit("auth"), async (c) => {
-    const filePaths: string[] = [];
-    let offset = 0;
-    for (;;) {
-      const batch = await getSubmissionFilePathsByStatus(c.env.DB, "stale", 1000, offset);
-      if (batch.length === 0) {
-        break;
-      }
-      filePaths.push(...batch);
-      if (batch.length < 1000) {
-        break;
-      }
-      offset += batch.length;
-    }
-
-    const deletedObjects = await deleteR2Objects(c.env.UGC_BUCKET, filePaths);
-    const deletedRows = await deleteSubmissionsByStatus(c.env.DB, "stale");
-
-    return c.json({
-      ok: true,
-      status: "stale",
-      deletedObjects,
-      deletedRows
-    });
+  app.delete("/stale", requireAuth, requireRole(["a"]), rateLimit("auth"), async () => {
+    throw new ApiError(
+      409,
+      "APPEND_ONLY_RETENTION",
+      "Stale submissions and their R2 objects are retained. Update status instead of deleting records."
+    );
   });
 
   return app;

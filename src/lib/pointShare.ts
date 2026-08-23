@@ -32,13 +32,17 @@ function encodePointIdToken(pointId: string): string | null {
 }
 
 export function buildPointShareUrl(submission: SubmissionRecord): string {
-  const token = encodePointIdToken(submission.markerId);
+  return buildPointShareUrlForMarker(submission.markerId, submission.poiType);
+}
+
+export function buildPointShareUrlForMarker(markerId: string, poiType?: string): string {
+  const token = encodePointIdToken(markerId);
   if (token) {
     return `${POINT_SHARE_SHORT_ORIGIN}/${encodeURIComponent(token)}`;
   }
 
   const params = new URLSearchParams();
-  params.set("p", submission.markerId);
-  params.set("type", submission.poiType);
+  params.set("p", markerId);
+  if (poiType) params.set("type", poiType);
   return `${POINT_SHARE_SHORT_ORIGIN}/?${params.toString()}`;
 }

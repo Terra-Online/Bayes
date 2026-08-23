@@ -1,12 +1,18 @@
 import type { PublicSubmissionComment } from "../../repositories/submission/types";
-import { getJsonFromKv, putJsonToKv, sha256Hex } from "./kvJson";
+import {
+  DEFAULT_KV_READ_CACHE_TTL_SECONDS,
+  getJsonFromKv,
+  putJsonToKv,
+  sha256Hex
+} from "./kvJson";
+import { CACHE_KEY_VERSIONS } from "./versions";
 
 export const PUBLIC_MARKER_COMMENT_CACHE_LIMIT = 50;
 export const PUBLIC_MARKER_COMMENT_REPLY_CACHE_LIMIT = 5;
+export const PUBLIC_MARKER_COMMENT_POSITIVE_TTL_SECONDS = 90 * 24 * 60 * 60;
+export const PUBLIC_MARKER_COMMENT_EMPTY_TTL_SECONDS = 10 * 60;
 
-const PUBLIC_MARKER_COMMENT_KV_KEY_PREFIX = "ugc:marker-comments:v2:";
-const PUBLIC_MARKER_COMMENT_POSITIVE_TTL_SECONDS = 7 * 24 * 60 * 60;
-const PUBLIC_MARKER_COMMENT_EMPTY_TTL_SECONDS = 10 * 60;
+const PUBLIC_MARKER_COMMENT_KV_KEY_PREFIX = `ugc:marker-comments:${CACHE_KEY_VERSIONS.publicMarkerComments}:`;
 const PUBLIC_COMMENT_CACHE_NAMESPACES = ["default", "test", "prod"] as const;
 
 export type PublicCommentCacheNamespace = typeof PUBLIC_COMMENT_CACHE_NAMESPACES[number];
@@ -41,7 +47,8 @@ export async function readPublicMarkerCommentCache(
 
   const entry = await getJsonFromKv<PublicMarkerCommentCacheEntry>(
     kv,
-    await getPublicMarkerCommentCacheKey(namespace, markerId)
+    await getPublicMarkerCommentCacheKey(namespace, markerId),
+    { cacheTtl: DEFAULT_KV_READ_CACHE_TTL_SECONDS }
   );
   if (!entry || !Array.isArray(entry.items)) {
     return null;

@@ -1,4 +1,6 @@
 import { ApiError } from "../../lib/errors";
+import { resolveAuthIdentity, type AuthIdentity } from "../../middleware/auth";
+import type { AppEnv } from "../../types/app";
 
 export function pickString(value: FormDataEntryValue | FormDataEntryValue[] | undefined): string | undefined {
   const item = Array.isArray(value) ? value[0] : value;
@@ -61,6 +63,22 @@ export function hasAuthHeaders(headers: Headers): boolean {
     headers.get("authorization")?.trim() ||
     headers.get("cookie")?.trim()
   );
+}
+
+export async function getOptionalAuthIdentity(
+  env: AppEnv["Bindings"],
+  headers: Headers
+): Promise<AuthIdentity | null> {
+  if (!hasAuthHeaders(headers)) return null;
+
+  try {
+    return await resolveAuthIdentity(env, headers);
+  } catch (error) {
+    console.warn("[uploads] optional identity lookup failed; serving anonymous response", {
+      error: error instanceof Error ? error.message : String(error)
+    });
+    return null;
+  }
 }
 
 function parseObjectKey(raw: string | undefined): string {

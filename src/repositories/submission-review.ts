@@ -1,5 +1,6 @@
 import {
   ALL_STATUSES,
+  type SubmissionKind,
   type SubmissionRecord,
   type SubmissionStatus
 } from "./submission/types";
@@ -11,6 +12,7 @@ import {
 
 export interface ReviewSubmissionStats {
   total: number;
+  byKind: { kind: SubmissionKind; count: number }[];
   byType: { type: string; count: number }[];
   byStatus: { status: SubmissionStatus; count: number }[];
 }
@@ -37,6 +39,7 @@ export async function getReviewSubmissions(
     .prepare(
       `SELECT
          s.*,
+         COALESCE(f.flag_count, 0) AS flag_count,
          u.uid AS submitter_uid,
          u.uid_number AS user_uid_number,
          u.uid_suffix AS user_uid_suffix,
@@ -44,6 +47,12 @@ export async function getReviewSubmissions(
          u.karma AS user_karma,
          u.nickname AS user_nickname
        FROM ugc_submissions s
+       LEFT JOIN (
+         SELECT submission_id, COUNT(*) AS flag_count
+         FROM ugc_submission_flags
+         WHERE active = 1
+         GROUP BY submission_id
+       ) f ON f.submission_id = s.id
        LEFT JOIN users u ON u.uid = s.user_id
        WHERE ${filters.whereSql}
        ORDER BY
@@ -69,7 +78,7 @@ export async function getReviewSubmissionStats(
   payload: ReviewSubmissionFilters = {}
 ): Promise<ReviewSubmissionStats> {
   const filters = buildReviewSubmissionWhere(payload);
-  const [totalRow, typeRows, statusRows] = await Promise.all([
+  const [totalRow, kindRows, typeRows, statusRows] = await Promise.all([
     db
       .prepare(
         `SELECT COUNT(*) AS count
@@ -78,6 +87,16 @@ export async function getReviewSubmissionStats(
       )
       .bind(...filters.bindings)
       .first<{ count: number | string }>(),
+    db
+      .prepare(
+        `SELECT kind, COUNT(*) AS count
+         FROM ugc_submissions s
+         WHERE ${filters.whereSql}
+         GROUP BY kind
+         ORDER BY kind ASC`
+      )
+      .bind(...filters.bindings)
+      .all<{ kind: string; count: number | string }>(),
     db
       .prepare(
         `SELECT COALESCE(NULLIF(poi_type, ''), 'unknown') AS type, COUNT(*) AS count
@@ -101,6 +120,14 @@ export async function getReviewSubmissionStats(
 
   return {
     total: toCount(totalRow?.count),
+    byKind: (kindRows.results ?? [])
+      .filter((row): row is { kind: SubmissionKind; count: number | string } => (
+        row.kind === "image" || row.kind === "comment"
+      ))
+      .map((row) => ({
+        kind: row.kind,
+        count: toCount(row.count)
+      })),
     byType: (typeRows.results ?? []).map((row) => ({
       type: String(row.type),
       count: toCount(row.count)
@@ -114,95 +141,66 @@ export async function getReviewSubmissionStats(
   };
 }
 
-export async function deleteSubmissionsByFilePathPrefix(db: D1Database, prefix: string): Promise<number> {
-  const escapedPrefix = `${prefix.replace(/%/g, "\\%")}/%`;
-  await db
-    .prepare(
-      `DELETE FROM ugc_submission_upvotes
-       WHERE submission_id IN (
-         SELECT id
+export async function listAllImageFilePaths(db: D1Database): Promise<string[]> {
+  const filePaths: string[] = [];
+  let cursor = "";
+
+  for (;;) {
+    const result = await db
+      .prepare(
+        `SELECT DISTINCT file_path
          FROM ugc_submissions
          WHERE kind = 'image'
-           AND file_path LIKE ?1
-       )`
-    )
-    .bind(escapedPrefix)
-    .run();
-  await db
-    .prepare(
-      `DELETE FROM ugc_submission_flags
-       WHERE submission_id IN (
-         SELECT id
-         FROM ugc_submissions
-         WHERE kind = 'image'
-           AND file_path LIKE ?1
-       )`
-    )
-    .bind(escapedPrefix)
-    .run();
+           AND file_path IS NOT NULL
+           AND file_path > ?1
+         ORDER BY file_path ASC
+         LIMIT 1000`
+      )
+      .bind(cursor)
+      .all<{ file_path: string }>();
+    const batch = (result.results ?? []).map((row) => row.file_path).filter(Boolean);
+    filePaths.push(...batch);
+    if (batch.length < 1000) {
+      break;
+    }
+    cursor = batch[batch.length - 1];
+  }
 
-  const result = await db
-    .prepare("DELETE FROM ugc_submissions WHERE kind = 'image' AND file_path LIKE ?1")
-    .bind(escapedPrefix)
-    .run();
-
-  return result.meta.changes ?? 0;
+  return filePaths;
 }
 
-export async function getSubmissionFilePathsByStatus(
+export async function markImageSubmissionsStaleByFilePathPrefix(
   db: D1Database,
-  status: SubmissionStatus,
-  limit = 1000,
-  offset = 0
-): Promise<string[]> {
+  prefix: string,
+  moderationNote: string
+): Promise<{ changedRows: number; markerIds: string[] }> {
+  const escapedPrefix = `${escapeLikePattern(prefix)}/%`;
   const result = await db
     .prepare(
-      `SELECT file_path
-       FROM ugc_submissions
+      `UPDATE ugc_submissions
+       SET status = 'stale',
+           moderation_note = CASE
+             WHEN moderation_note IS NULL OR TRIM(moderation_note) = '' THEN ?2
+             ELSE moderation_note || ' ' || ?2
+           END,
+           updated_at = CURRENT_TIMESTAMP
        WHERE kind = 'image'
-         AND file_path IS NOT NULL
-         AND status = ?1
-       ORDER BY created_at ASC
-       LIMIT ?2 OFFSET ?3`
+         AND file_path LIKE ?1 ESCAPE '\\'
+         AND status <> 'stale'
+       RETURNING poi_id`
     )
-    .bind(status, Math.min(Math.max(limit, 1), 1000), Math.max(offset, 0))
-    .all<{ file_path: string }>();
+    .bind(escapedPrefix, moderationNote)
+    .all<{ poi_id: string }>();
+  const rows = result.results ?? [];
 
-  return (result.results ?? [])
-    .map((row) => row.file_path)
-    .filter(Boolean);
+  return {
+    changedRows: rows.length,
+    markerIds: [...new Set(rows.map((row) => row.poi_id).filter(Boolean))]
+  };
 }
 
-export async function deleteSubmissionsByStatus(db: D1Database, status: SubmissionStatus): Promise<number> {
-  await db
-    .prepare(
-      `DELETE FROM ugc_submission_upvotes
-       WHERE submission_id IN (
-         SELECT id
-         FROM ugc_submissions
-         WHERE status = ?1
-       )`
-    )
-    .bind(status)
-    .run();
-  await db
-    .prepare(
-      `DELETE FROM ugc_submission_flags
-       WHERE submission_id IN (
-         SELECT id
-         FROM ugc_submissions
-         WHERE status = ?1
-       )`
-    )
-    .bind(status)
-    .run();
-
-  const result = await db
-    .prepare("DELETE FROM ugc_submissions WHERE status = ?1")
-    .bind(status)
-    .run();
-
-  return result.meta.changes ?? 0;
+function escapeLikePattern(value: string): string {
+  return value.replace(/[\\%_]/g, (character) => `\\${character}`);
 }
 
 function buildReviewSubmissionWhere(payload: ReviewSubmissionFilters): { whereSql: string; bindings: string[] } {

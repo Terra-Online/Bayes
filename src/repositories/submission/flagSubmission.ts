@@ -9,8 +9,11 @@ export async function createSubmissionFlag(
 ): Promise<boolean> {
   const result = await db
     .prepare(
-      `INSERT OR IGNORE INTO ugc_submission_flags (submission_id, user_id)
-       VALUES (?1, ?2)`
+      `INSERT INTO ugc_submission_flags (submission_id, user_id, active)
+       VALUES (?1, ?2, 1)
+       ON CONFLICT(submission_id, user_id)
+       DO UPDATE SET active = 1
+       WHERE ugc_submission_flags.active = 0`
     )
     .bind(payload.submissionId, payload.userId)
     .run();
@@ -27,9 +30,11 @@ export async function deleteSubmissionFlag(
 ): Promise<boolean> {
   const result = await db
     .prepare(
-      `DELETE FROM ugc_submission_flags
+      `UPDATE ugc_submission_flags
+       SET active = 0
        WHERE submission_id = ?1
-         AND user_id = ?2`
+         AND user_id = ?2
+         AND active = 1`
     )
     .bind(payload.submissionId, payload.userId)
     .run();
@@ -42,7 +47,8 @@ export async function countSubmissionFlags(db: D1Database, submissionId: string)
     .prepare(
       `SELECT COUNT(*) AS count
        FROM ugc_submission_flags
-       WHERE submission_id = ?1`
+       WHERE submission_id = ?1
+         AND active = 1`
     )
     .bind(submissionId)
     .first<{ count: number | string }>();
@@ -53,8 +59,10 @@ export async function countSubmissionFlags(db: D1Database, submissionId: string)
 export async function clearSubmissionFlags(db: D1Database, submissionId: string): Promise<number> {
   const result = await db
     .prepare(
-      `DELETE FROM ugc_submission_flags
-       WHERE submission_id = ?1`
+      `UPDATE ugc_submission_flags
+       SET active = 0
+       WHERE submission_id = ?1
+         AND active = 1`
     )
     .bind(submissionId)
     .run();

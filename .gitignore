@@ -140,13 +140,13 @@ vite.config.ts.timestamp-*
 .DS_Store
 Thumbs.db
 desktop.ini
+*.test.ts
 .history/
 PRD.md
 PROGRESS.md
 UGC.md
 ENDPOINTS.md
 REFRESH.md
-migrations/*
 src/lib/endfield-client-ua.json
 src/lib/endfieldClient/deviceProfilePool.json
 src/lib/karma/karmaConfig.json
@@ -165,5 +165,8 @@ src/lib/emailBlacklist.json
 .dev.vars.local
 .env.local
 /.idea/
+*.spec.ts
+*.test.ts
 
 docs/
+src/data

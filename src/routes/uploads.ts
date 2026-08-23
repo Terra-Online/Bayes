@@ -1,11 +1,10 @@
 import { Hono } from "hono";
-import { createAuth } from "../lib/auth/createAuth";
 import { ApiError } from "../lib/errors";
-import { requireAuth } from "../middleware/auth";
+import { requireAuth, resolveContextAuthUser } from "../middleware/auth";
 import { rateLimit } from "../middleware/rate-limit";
-import { getUserByUid } from "../repositories/users";
 import { translateVisibleComments } from "../services/upload/commentTranslation";
 import {
+  handleEditComment,
   handleCommentRemoveRequest,
   handleCommentVote,
   handleFlagComment,
@@ -49,27 +48,37 @@ function isReadOrPublicTranslation(method: string, path: string): boolean {
   return isImageRead || isPublicTranslation;
 }
 
+function isPublicReadOrTranslation(method: string, path: string): boolean {
+  return (
+    method === "GET" && (
+      path.endsWith("/uploads/v1/images") ||
+      path.endsWith("/uploads/v1/comments") ||
+      path.includes("/uploads/v1/public-file/") ||
+      path.includes("/public-file/")
+    )
+  ) || (
+    method === "POST" && path.endsWith("/uploads/v1/comments/translations")
+  );
+}
+
 export function createUploadRoutes() {
   const app = new Hono<AppEnv>();
 
   app.use("*", async (c, next) => {
-    const hasAuthHeaders = Boolean(
+    const isPublicRequest = isPublicReadOrTranslation(c.req.method, c.req.path);
+    const hasAuthCredentials = Boolean(
       c.req.header("authorization")?.trim() ||
-      c.req.header("cookie")?.trim()
+      c.req.header("cookie")?.trim() ||
+      c.req.query("access_token")?.trim()
     );
-    if (hasAuthHeaders) {
-      const session = await createAuth(c.env).api.getSession({
-        headers: c.req.raw.headers
-      });
-      if (session) {
-        const user = await getUserByUid(c.env.DB, session.user.id);
-        if (user?.role === "s") {
-          throw new ApiError(
-            403,
-            "ACCESS_DENIED",
-            "Suspended users cannot access upload endpoints."
-          );
-        }
+    if (hasAuthCredentials && !isPublicRequest) {
+      const user = await resolveContextAuthUser(c);
+      if (user.role === "s") {
+        throw new ApiError(
+          403,
+          "ACCESS_DENIED",
+          "Suspended users cannot access upload endpoints."
+        );
       }
     }
 
@@ -91,6 +100,17 @@ export function createUploadRoutes() {
       throw new ApiError(422, "VALIDATION_ERROR", "Invalid translation payload.", parsed.error.flatten());
     }
 
+    if (parsed.data.cachedOnly !== true) {
+      const user = await resolveContextAuthUser(c);
+      if (user.role === "s") {
+        throw new ApiError(
+          403,
+          "ACCESS_DENIED",
+          "Suspended users cannot request live translations."
+        );
+      }
+    }
+
     return c.json(await translateVisibleComments(c.env, parsed.data));
   });
 
@@ -100,6 +120,7 @@ export function createUploadRoutes() {
   app.post("/comments/:id/downvote", requireAuth, rateLimit("auth"), (c) => handleCommentVote(c, -1));
   app.post("/comments/:id/flag", requireAuth, rateLimit("auth"), handleFlagComment);
   app.post("/comments/:id/unflag", requireAuth, rateLimit("auth"), handleUnflagComment);
+  app.post("/comments/:id/edit", requireAuth, rateLimit("upload"), handleEditComment);
   app.post("/comments/:id/remove-request", requireAuth, rateLimit("auth"), handleCommentRemoveRequest);
   app.post("/comments/:id/recall", requireAuth, rateLimit("auth"), handleRecallComment);
 

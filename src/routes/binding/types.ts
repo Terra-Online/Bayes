@@ -27,6 +27,10 @@ export type EndfieldRoleDeviceProfileRow = {
   device_profile: string;
 };
 
+export type EndfieldBindingWithDeviceProfileRow = EndfieldBindingRow & {
+  role_device_profile: string | null;
+};
+
 export type PendingEndfieldSession = {
   provider: EndfieldProvider;
   cred: string;

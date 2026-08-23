@@ -1,9 +1,15 @@
 import { connectEndfieldPositionSocket } from "../../lib/endfieldClient/positionSocket";
-import { parseEndfieldPositionSocketError, parseEndfieldPositionSocketMessage } from "../../lib/endfieldClient/positionParser";
+import {
+  isEndfieldCredentialErrorCode,
+  parseEndfieldPositionSocketError,
+  parseEndfieldPositionSocketMessage
+} from "../../lib/endfieldClient/positionParser";
 import { ApiError } from "../../lib/errors";
-import { resolveAuthUser } from "../../middleware/auth";
+import { resolveAuthIdentity } from "../../middleware/auth";
+import { ensureUserProfile } from "../../repositories/users";
 import { getDecryptedBinding, isAutoRefreshableEndfieldError, refreshBindingCredentials, withAutoRefreshedBinding } from "./credentials";
-import { POSITION_STREAM_RECONNECT_MS, requireUser, serializeLocatorError, shouldIncludeBinding } from "./helpers";
+import { POSITION_STREAM_RECONNECT_MS, serializeLocatorError, shouldIncludeBinding } from "./helpers";
+import { issueLocatorSocketTicket, verifyLocatorSocketTicket } from "./locatorTicket";
 import {
   getPositionCacheKey,
   POSITION_CACHE_FRESH_MS,
@@ -13,6 +19,35 @@ import {
 } from "./locatorCache";
 import type { AppContext, DecryptedBinding } from "./types";
 
+async function resolvePositionBinding(
+  c: AppContext,
+  ticketUid?: string
+): Promise<{ uid: string; binding: DecryptedBinding }> {
+  if (ticketUid) {
+    return {
+      uid: ticketUid,
+      binding: await getDecryptedBinding(c, ticketUid)
+    };
+  }
+
+  const authHeaders = new Headers(c.req.raw.headers);
+  const accessToken = c.req.query("access_token")?.trim();
+  if (accessToken && !authHeaders.has("authorization")) {
+    authHeaders.set("authorization", `Bearer ${accessToken}`);
+  }
+
+  const identity = await resolveAuthIdentity(c.env, authHeaders);
+  const [binding] = await Promise.all([
+    getDecryptedBinding(c, identity.uid),
+    ensureUserProfile(c.env.DB, {
+      uid: identity.uid,
+      email: identity.email,
+      displayName: identity.displayName
+    })
+  ]);
+  return { uid: identity.uid, binding };
+}
+
 function schedulePositionRefresh(c: AppContext, key: string, binding: DecryptedBinding): void {
   const refresh = refreshPositionCache(key, binding).catch(() => undefined);
   c.executionCtx.waitUntil(refresh);
@@ -21,6 +56,14 @@ function schedulePositionRefresh(c: AppContext, key: string, binding: DecryptedB
 export async function handleEndfieldPositionSocket(c: AppContext) {
   if (c.req.header("upgrade")?.toLowerCase() !== "websocket") {
     throw new ApiError(426, "WEBSOCKET_REQUIRED", "Use a WebSocket connection for this endpoint.");
+  }
+
+  const ticket = c.req.query("ticket")?.trim();
+  const ticketUid = ticket
+    ? await verifyLocatorSocketTicket(c.env, ticket)
+    : undefined;
+  if (ticket && !ticketUid) {
+    throw new ApiError(401, "LOCATOR_SOCKET_TICKET_INVALID", "Locator socket ticket is invalid or expired.");
   }
 
   const includeBinding = shouldIncludeBinding(c);
@@ -68,18 +111,20 @@ export async function handleEndfieldPositionSocket(c: AppContext) {
     }
   };
 
-  const bridgeUpstream = async () => {
+  const bridgeUpstream = async (announceConnecting = true) => {
     const currentBinding = binding;
     const currentUserUid = userUid;
     if (!currentBinding || !currentUserUid) return;
     const generation = upstreamGeneration + 1;
     upstreamGeneration = generation;
     try {
-      sendJson({
-        type: "status",
-        status: "connecting"
-      });
-      upstream = await connectEndfieldPositionSocket({
+      if (announceConnecting) {
+        sendJson({
+          type: "status",
+          status: "connecting"
+        });
+      }
+      const connectedSocket = await connectEndfieldPositionSocket({
         provider: currentBinding.binding.provider,
         roleId: currentBinding.binding.role_id,
         serverId: Number(currentBinding.binding.server_id),
@@ -87,71 +132,127 @@ export async function handleEndfieldPositionSocket(c: AppContext) {
         token: currentBinding.token,
         wsBaseUrl: c.env.ENDFIELD_WS_BASE_URL,
         deviceProfile: currentBinding.deviceProfile
-      });
-      sendJson({
-        type: "status",
-        status: "connected"
-      });
-
-      upstream.addEventListener("message", (event) => {
-        if (generation !== upstreamGeneration) return;
-        const error = parseEndfieldPositionSocketError(event.data as string | ArrayBuffer);
-        if (error?.code === 10000) {
+      }, {
+        onSubscribed: () => {
+          if (closed || generation !== upstreamGeneration) return;
           sendJson({
-            type: "error",
-            error: {
-              status: 401,
-              code: "ENDFIELD_CREDENTIAL_REJECTED",
-              message: error.message ?? "Endfield credential was rejected.",
-              details: {
-                upstreamCode: error.code,
-                upstreamMessage: error.message
+            type: "status",
+            status: "connected"
+          });
+        },
+        onMessage: (data) => {
+          if (generation !== upstreamGeneration) return;
+          const error = parseEndfieldPositionSocketError(data);
+          if (error) {
+            const credentialRejected = isEndfieldCredentialErrorCode(error.code);
+            const errorPayload = {
+              type: "error",
+              error: {
+                status: 401,
+                code: credentialRejected ? "ENDFIELD_CREDENTIAL_REJECTED" : "ENDFIELD_POSITION_UNAVAILABLE",
+                message: credentialRejected
+                  ? (error.message ?? "Endfield credential was rejected.")
+                  : "Player is not currently logged into the game or position is unavailable.",
+                details: {
+                  upstreamCode: error.code,
+                  upstreamMessage: error.message
+                }
               }
+            };
+            if (credentialRejected) {
+              upstreamGeneration += 1;
+              sendJson({
+                type: "status",
+                status: "reconnecting",
+                reason: "refreshing credentials"
+              });
+              try {
+                upstream?.close(1000, "refreshing credentials");
+              } catch {
+                // upstream is already closed
+              }
+              const recovery = refreshBindingCredentials(c, currentUserUid, currentBinding)
+                .then((refreshed) => {
+                  if (closed || !refreshed) return;
+                  binding = refreshed;
+                  scheduleReconnect();
+                })
+                .catch(() => {
+                  if (!closed) sendJson(errorPayload);
+                });
+              c.executionCtx.waitUntil(recovery);
+              return;
             }
-          });
-          return;
-        }
+            sendJson(errorPayload);
+            return;
+          }
 
-        const position = parseEndfieldPositionSocketMessage(event.data as string | ArrayBuffer);
-        if (!position) return;
-        positionCache.set(getPositionCacheKey(currentUserUid, currentBinding.binding), {
-          data: position,
-          refreshedAt: Date.now()
-        });
-        sendJson({
-          type: "position",
-          data: position,
-          ...(includeBinding ? { binding: currentBinding.publicBinding } : {})
-        });
-      });
-      upstream.addEventListener("close", () => {
-        if (!closed && generation === upstreamGeneration) {
-          upstreamGeneration += 1;
-          sendJson({
-            type: "status",
-            status: "reconnecting",
-            reason: "upstream closed"
+          const position = parseEndfieldPositionSocketMessage(data);
+          if (!position) return;
+          positionCache.set(getPositionCacheKey(currentUserUid, currentBinding.binding), {
+            data: position,
+            refreshedAt: Date.now()
           });
-          scheduleReconnect();
+          sendJson({
+            type: "position",
+            data: position,
+            ...(includeBinding ? { binding: currentBinding.publicBinding } : {})
+          });
+        },
+        onClose: () => {
+          if (!closed && generation === upstreamGeneration) {
+            upstreamGeneration += 1;
+            sendJson({
+              type: "status",
+              status: "reconnecting",
+              reason: "upstream closed"
+            });
+            scheduleReconnect();
+          }
+        },
+        onError: () => {
+          if (!closed && generation === upstreamGeneration) {
+            upstreamGeneration += 1;
+            sendJson({
+              type: "status",
+              status: "reconnecting",
+              reason: "upstream error"
+            });
+            scheduleReconnect();
+          }
         }
       });
-      upstream.addEventListener("error", () => {
-        if (!closed && generation === upstreamGeneration) {
-          upstreamGeneration += 1;
-          sendJson({
-            type: "status",
-            status: "reconnecting",
-            reason: "upstream error"
-          });
-          scheduleReconnect();
-        }
-      });
+      if (closed || generation !== upstreamGeneration) {
+        connectedSocket.close(1000, "connection superseded");
+        return;
+      }
+      upstream = connectedSocket;
     } catch (error) {
       if (isAutoRefreshableEndfieldError(error)) {
         const refreshed = await refreshBindingCredentials(c, currentUserUid, currentBinding).catch(() => null);
         if (refreshed && !closed) {
           binding = refreshed;
           scheduleReconnect();
+          return;
+        }
+        const details = error instanceof ApiError
+          ? error.details as { upstreamCode?: unknown; upstreamStatus?: unknown } | undefined
+          : undefined;
+        if (
+          error instanceof ApiError
+          && (
+            error.code === "ENDFIELD_CREDENTIAL_REJECTED"
+            || isEndfieldCredentialErrorCode(details?.upstreamCode)
+            || (
+              error.code === "ENDFIELD_POSITION_SOCKET_UNAVAILABLE"
+              && (details?.upstreamStatus === 401 || details?.upstreamStatus === 403)
+            )
+          )
+        ) {
+          sendJson({
+            type: "error",
+            error: serializeLocatorError(error)
+          });
           return;
         }
       }
@@ -165,18 +266,11 @@ export async function handleEndfieldPositionSocket(c: AppContext) {
 
   const initializeStream = async () => {
     try {
-      const authHeaders = new Headers(c.req.raw.headers);
-      const accessToken = c.req.query("access_token")?.trim();
-      if (accessToken && !authHeaders.has("authorization")) {
-        authHeaders.set("authorization", `Bearer ${accessToken}`);
-      }
-      const user = await resolveAuthUser(c.env, authHeaders);
+      const resolved = await resolvePositionBinding(c, ticketUid ?? undefined);
       if (closed) return;
-      const decrypted = await getDecryptedBinding(c, user.uid);
-      if (closed) return;
-      userUid = user.uid;
-      binding = decrypted;
-      void bridgeUpstream();
+      userUid = resolved.uid;
+      binding = resolved.binding;
+      void bridgeUpstream(false);
     } catch (error) {
       sendJson({
         type: "error",
@@ -192,6 +286,10 @@ export async function handleEndfieldPositionSocket(c: AppContext) {
   };
 
   server.accept();
+  sendJson({
+    type: "status",
+    status: "connecting"
+  });
   server.addEventListener("close", close);
   server.addEventListener("error", close);
   server.addEventListener("message", (event) => {
@@ -210,10 +308,14 @@ export async function handleEndfieldPositionSocket(c: AppContext) {
 }
 
 export async function handleEndfieldPosition(c: AppContext) {
-  const user = requireUser(c);
+  const resolved = await resolvePositionBinding(c);
   const includeBinding = shouldIncludeBinding(c);
-  return withAutoRefreshedBinding(c, user.uid, async (binding) => {
-    const cacheKey = getPositionCacheKey(user.uid, binding.binding);
+  const includeSocketTicket = c.req.query("socket_ticket") === "1";
+  const socketTicket = includeSocketTicket
+    ? await issueLocatorSocketTicket(c.env, resolved.uid)
+    : undefined;
+  return withAutoRefreshedBinding(c, resolved.uid, async (binding) => {
+    const cacheKey = getPositionCacheKey(resolved.uid, binding.binding);
     const cached = positionCache.get(cacheKey);
     const now = Date.now();
 
@@ -224,6 +326,7 @@ export async function handleEndfieldPosition(c: AppContext) {
 
       const response = c.json({
         data: cached.data,
+        ...(socketTicket ? { socketTicket } : {}),
         ...(includeBinding ? { binding: binding.publicBinding } : {})
       });
       response.headers.set("cache-control", "private, no-store");
@@ -236,11 +339,12 @@ export async function handleEndfieldPosition(c: AppContext) {
 
     const response = c.json({
       data: position.data,
+      ...(socketTicket ? { socketTicket } : {}),
       ...(includeBinding ? { binding: binding.publicBinding } : {})
     });
     response.headers.set("cache-control", "private, no-store");
     response.headers.set("x-locator-cache", "miss");
     response.headers.set("x-locator-age-ms", "0");
     return response;
-  });
+  }, resolved.binding);
 }

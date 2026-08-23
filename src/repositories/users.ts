@@ -250,16 +250,17 @@ function normalizeNickname(raw: string | undefined, uid: string, email?: string)
 }
 
 export async function ensureUserProfile(db: D1Database, payload: EnsureUserProfilePayload): Promise<UserRecord> {
-  const existing = await getUserByUid(db, payload.uid);
+  const existing = await db
+    .prepare(
+      `UPDATE users
+       SET email = ?2, last_active = CURRENT_TIMESTAMP
+       WHERE uid = ?1
+       RETURNING *`
+    )
+    .bind(payload.uid, payload.email.toLowerCase())
+    .first<Record<string, unknown>>();
   if (existing) {
-    await db
-      .prepare("UPDATE users SET email = ?2, last_active = CURRENT_TIMESTAMP WHERE uid = ?1")
-      .bind(payload.uid, payload.email.toLowerCase())
-      .run();
-    return {
-      ...existing,
-      email: payload.email.toLowerCase()
-    };
+    return mapUser(existing);
   }
 
   const existingByEmail = await getUserByEmail(db, payload.email.toLowerCase());
@@ -424,47 +425,6 @@ export interface UserProgressWrite {
   clientMutationId: string | null;
   cloudSynced: boolean;
   syncedAt: number | null;
-}
-
-export async function updateProgressInD1(
-  db: D1Database,
-  uid: string,
-  progress: UserProgressWrite
-): Promise<void> {
-  await db
-    .prepare(
-      `UPDATE users
-       SET progress_version = ?2,
-           progress_marker = ?3,
-           progress_checksum = ?4,
-           progress_marker_index_hash = ?5,
-           progress_format_version = ?6,
-           progress_bits_per_point = ?7,
-           progress_point_count = ?8,
-           progress_retained_point_ids = ?9,
-           progress_updated_at = ?10,
-           progress_last_mutation_id = ?11,
-           progress_cloud_synced = ?12,
-           progress_synced_at = COALESCE(?13, progress_synced_at),
-           last_active = CURRENT_TIMESTAMP
-       WHERE uid = ?1`
-    )
-    .bind(
-      uid,
-      progress.version,
-      progress.marker,
-      progress.checksum,
-      progress.markerIndexHash,
-      progress.formatVersion,
-      progress.bitsPerPoint,
-      progress.pointCount,
-      JSON.stringify(progress.retainedPointIds),
-      progress.updatedAt,
-      progress.clientMutationId,
-      progress.cloudSynced ? 1 : 0,
-      progress.syncedAt
-    )
-    .run();
 }
 
 export async function applyUserPointsDelta(

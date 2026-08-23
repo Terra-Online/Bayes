@@ -1,5 +1,6 @@
 import { ApiError } from "../../lib/errors";
-import { getUserByUid, updateProgressInD1 } from "../../repositories/users";
+import { getUserByUid } from "../../repositories/users";
+import { sha256Hex } from "../../middleware/cache/kvJson";
 import {
   buildProgressRevision,
   isEmptyProgress,
@@ -24,24 +25,33 @@ import {
   setBitmapBit
 } from "./bitmap";
 import {
-  getActiveProgressManifestHash,
   isSha256Hex,
-  loadActiveProgressManifest,
   loadProgressManifest,
-  normalizeManifestPayload,
   normalizePointIds,
   pointIdsFromBitmap,
-  saveProgressManifest,
   type ProgressDoEnv,
   type RegisteredManifest
 } from "./manifest";
+import { drainUserProgressStatsOutbox } from "./outbox";
+import { commitProgressSync, getProgressSyncMutation } from "./repository";
 import { errorResponse, jsonResponse } from "./responses";
+import {
+  loadArchiveProgressManifest,
+  type RegisteredArchiveManifest
+} from "./archiveManifest";
+import {
+  buildArchiveSyncRequestHash,
+  handleArchiveProgressState,
+  handleArchiveProgressSync,
+  normalizeArchiveSyncPatch
+} from "./archiveUserProgress";
 
 type NormalizedSyncPatch = {
   baseRevision: string;
   setPointIds: string[];
   clearPointIds: string[];
-  clientMutationId: string | null;
+  clientMutationId: string;
+  markerIndexHash: string;
   updatedAt: number;
 };
 
@@ -52,14 +62,6 @@ type PreparedProgress = {
   migrated: boolean;
 };
 
-function parseUid(url: URL): string {
-  const uid = url.searchParams.get("uid")?.trim();
-  if (!uid) {
-    throw new ApiError(400, "PROGRESS_UID_REQUIRED", "Progress user id is required.");
-  }
-  return uid;
-}
-
 function normalizeSyncPatch(raw: unknown): NormalizedSyncPatch {
   if (!raw || typeof raw !== "object") {
     throw new ApiError(422, "VALIDATION_ERROR", "Invalid progress sync payload.");
@@ -67,12 +69,19 @@ function normalizeSyncPatch(raw: unknown): NormalizedSyncPatch {
 
   const payload = raw as ProgressSyncPayload;
   const baseRevision = typeof payload.baseRevision === "string" ? payload.baseRevision.trim().toLowerCase() : "";
-  const clientMutationId = typeof payload.clientMutationId === "string" && payload.clientMutationId.trim()
-    ? payload.clientMutationId.trim().slice(0, 128)
-    : null;
+  const clientMutationId = typeof payload.clientMutationId === "string" ? payload.clientMutationId.trim() : "";
+  const markerIndexHash = typeof payload.markerIndexHash === "string"
+    ? payload.markerIndexHash.trim().toLowerCase()
+    : "";
 
   if (baseRevision && !isSha256Hex(baseRevision)) {
     throw new ApiError(422, "VALIDATION_ERROR", "baseRevision must be an opaque progress revision.");
+  }
+  if (!clientMutationId || clientMutationId.length > 128) {
+    throw new ApiError(422, "VALIDATION_ERROR", "clientMutationId must contain between 1 and 128 characters.");
+  }
+  if (!isSha256Hex(markerIndexHash)) {
+    throw new ApiError(422, "VALIDATION_ERROR", "markerIndexHash must be a SHA-256 hash.");
   }
 
   return {
@@ -80,8 +89,61 @@ function normalizeSyncPatch(raw: unknown): NormalizedSyncPatch {
     setPointIds: normalizePointIds(payload.setPointIds ?? [], "setPointIds"),
     clearPointIds: normalizePointIds(payload.clearPointIds ?? [], "clearPointIds"),
     clientMutationId,
+    markerIndexHash,
     updatedAt: requireTimestampMs(payload.updatedAt, "updatedAt")
   };
+}
+
+function normalizeStateManifestHash(url: URL): string {
+  const markerIndexHash = url.searchParams.get("markerIndexHash")?.trim().toLowerCase() ?? "";
+  if (!isSha256Hex(markerIndexHash)) {
+    throw new ApiError(422, "VALIDATION_ERROR", "markerIndexHash must be a SHA-256 hash.");
+  }
+  return markerIndexHash;
+}
+
+async function requireProgressManifest(
+  env: ProgressDoEnv,
+  markerIndexHash: string
+): Promise<RegisteredManifest> {
+  const manifest = await loadProgressManifest(env, markerIndexHash);
+  if (!manifest) {
+    throw new ApiError(409, "PROGRESS_MANIFEST_NOT_REGISTERED", "Progress manifest is not registered.");
+  }
+  return manifest;
+}
+
+function normalizeArchiveStateManifestHash(url: URL): string {
+  const archiveIndexHash = url.searchParams.get("archiveIndexHash")?.trim().toLowerCase() ?? "";
+  if (!isSha256Hex(archiveIndexHash)) {
+    throw new ApiError(422, "VALIDATION_ERROR", "archiveIndexHash must be a SHA-256 hash.");
+  }
+  return archiveIndexHash;
+}
+
+async function requireArchiveProgressManifest(
+  env: ProgressDoEnv,
+  archiveIndexHash: string
+): Promise<RegisteredArchiveManifest> {
+  const manifest = await loadArchiveProgressManifest(env, archiveIndexHash);
+  if (!manifest) {
+    throw new ApiError(
+      409,
+      "ARCHIVE_PROGRESS_MANIFEST_NOT_REGISTERED",
+      "Archive progress manifest is not registered."
+    );
+  }
+  return manifest;
+}
+
+async function buildSyncRequestHash(incoming: NormalizedSyncPatch): Promise<string> {
+  return sha256Hex(JSON.stringify({
+    baseRevision: incoming.baseRevision,
+    markerIndexHash: incoming.markerIndexHash,
+    setPointIds: [...incoming.setPointIds].sort(),
+    clearPointIds: [...incoming.clearPointIds].sort(),
+    updatedAt: incoming.updatedAt
+  }));
 }
 
 function normalizeRetainedPointIds(pointIds: string[]): string[] {
@@ -109,23 +171,6 @@ function emptyPublicProgress(markerIndexHash = ""): PublicProgressState {
   }, []);
 }
 
-async function applyStatsDelta(env: ProgressDoEnv, delta: ProgressStatsDelta): Promise<void> {
-  if (!delta.firstSync && delta.increments.length === 0 && delta.decrements.length === 0) {
-    return;
-  }
-
-  const stub = env.OEM_STATS_DO.get(env.OEM_STATS_DO.idFromName(delta.markerIndexHash));
-  const response = await stub.fetch("https://progress-stats/apply", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(delta)
-  });
-  if (!response.ok) {
-    const message = await response.text().catch(() => "");
-    throw new Error(`Progress stats update failed: ${response.status} ${message}`);
-  }
-}
-
 export class OEMUserDO {
   private queue: Promise<void> = Promise.resolve();
 
@@ -136,22 +181,85 @@ export class OEMUserDO {
 
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
+    const startedAt = Date.now();
+    let stage = "identity";
 
     try {
-      if (request.method === "GET" && url.pathname === "/state") {
-        return await this.runExclusive(() => this.handleState(url));
+      const uid = this.state.id.name?.trim();
+      if (!uid) {
+        throw new ApiError(
+          500,
+          "PROGRESS_DO_IDENTITY_MISSING",
+          "Progress Durable Object must be addressed by a named user id."
+        );
       }
 
-      if (request.method === "POST" && url.pathname === "/manifest") {
-        return await this.runExclusive(() => this.handleManifest(request));
+      if (request.method === "GET" && url.pathname === "/state") {
+        stage = "state_manifest";
+        const manifest = await requireProgressManifest(this.env, normalizeStateManifestHash(url));
+        stage = "state_read";
+        const response = await this.handleState(uid, manifest);
+        console.warn("[progress][sync] request completed", {
+          operation: "state",
+          status: response.status,
+          latencyMs: Date.now() - startedAt
+        });
+        return response;
       }
 
       if (request.method === "POST" && url.pathname === "/sync") {
-        return await this.runExclusive(() => this.handleSync(request, url));
+        stage = "sync_parse";
+        const incoming = normalizeSyncPatch(await request.json().catch(() => null));
+        stage = "sync_prepare";
+        const [manifest, requestHash, eventId] = await Promise.all([
+          requireProgressManifest(this.env, incoming.markerIndexHash),
+          buildSyncRequestHash(incoming),
+          sha256Hex(`${uid}${incoming.clientMutationId}`)
+        ]);
+        stage = "sync_critical";
+        const response = await this.runExclusive(
+          () => this.handleSync(uid, incoming, requestHash, eventId, manifest)
+        );
+        console.warn("[progress][sync] request completed", {
+          operation: "sync",
+          status: response.status,
+          latencyMs: Date.now() - startedAt
+        });
+        return response;
+      }
+
+      if (request.method === "GET" && url.pathname === "/archive/state") {
+        stage = "archive_state_manifest";
+        const manifest = await requireArchiveProgressManifest(
+          this.env,
+          normalizeArchiveStateManifestHash(url)
+        );
+        stage = "archive_state_read";
+        return await this.runExclusive(() => handleArchiveProgressState(this.env, uid, manifest));
+      }
+
+      if (request.method === "POST" && url.pathname === "/archive/sync") {
+        stage = "archive_sync_parse";
+        const incoming = normalizeArchiveSyncPatch(await request.json().catch(() => null));
+        stage = "archive_sync_prepare";
+        const [manifest, requestHash] = await Promise.all([
+          requireArchiveProgressManifest(this.env, incoming.archiveIndexHash),
+          buildArchiveSyncRequestHash(incoming)
+        ]);
+        stage = "archive_sync_critical";
+        return await this.runExclusive(
+          () => handleArchiveProgressSync(this.env, uid, incoming, requestHash, manifest)
+        );
       }
 
       return jsonResponse({ code: "NOT_FOUND", message: "Progress DO route not found." }, { status: 404 });
     } catch (error) {
+      console.error("[progress][sync] request failed", {
+        path: url.pathname,
+        stage,
+        latencyMs: Date.now() - startedAt,
+        error: error instanceof Error ? error.message : String(error)
+      });
       return errorResponse(error);
     }
   }
@@ -197,27 +305,13 @@ export class OEMUserDO {
     );
   }
 
-  private async handleManifest(request: Request): Promise<Response> {
-    const manifest = await normalizeManifestPayload(await request.json().catch(() => null));
-    await saveProgressManifest(this.env, this.state, manifest);
-    return jsonResponse({
-      ok: true,
-      manifest: {
-        markerIndexHash: manifest.markerIndexHash
-      }
-    });
-  }
-
-  private async handleState(url: URL): Promise<Response> {
-    const uid = parseUid(url);
-    const user = await getUserByUid(this.env.DB, uid);
+  private async handleState(uid: string, manifest: RegisteredManifest): Promise<Response> {
+    const user = await this.runExclusive(() => getUserByUid(this.env.DB, uid));
     const progress = progressStateFromUser(user);
     if (isEmptyProgress(progress)) {
-      const activeManifestHash = await getActiveProgressManifestHash(this.state);
-      return jsonResponse({ progress: emptyPublicProgress(activeManifestHash ?? progress.markerIndexHash) });
+      return jsonResponse({ progress: emptyPublicProgress(manifest.markerIndexHash) });
     }
-    const activeManifest = await loadActiveProgressManifest(this.env, this.state).catch(() => null);
-    return jsonResponse({ progress: await this.publicProgress(progress, activeManifest ?? undefined) });
+    return jsonResponse({ progress: await this.publicProgress(progress, manifest) });
   }
 
   private async prepareProgressForManifest(
@@ -294,10 +388,38 @@ export class OEMUserDO {
     };
   }
 
-  private async handleSync(request: Request, url: URL): Promise<Response> {
-    const uid = parseUid(url);
-    const incoming = normalizeSyncPatch(await request.json().catch(() => null));
-    const manifest = await loadActiveProgressManifest(this.env, this.state);
+  private async handleSync(
+    uid: string,
+    incoming: NormalizedSyncPatch,
+    requestHash: string,
+    eventId: string,
+    manifest: RegisteredManifest
+  ): Promise<Response> {
+    const existingMutation = await getProgressSyncMutation(
+      this.env.DB,
+      uid,
+      incoming.clientMutationId
+    );
+    if (existingMutation) {
+      if (existingMutation.requestHash !== requestHash) {
+        throw new ApiError(
+          409,
+          "IDEMPOTENCY_KEY_REUSED",
+          "clientMutationId was already used for a different progress payload."
+        );
+      }
+      console.warn("[progress][sync] idempotent replay", {
+        uid,
+        clientMutationId: incoming.clientMutationId,
+        resultVersion: existingMutation.resultVersion
+      });
+      return new Response(existingMutation.responseJson, {
+        headers: {
+          "content-type": "application/json; charset=utf-8",
+          "x-progress-idempotent": "true"
+        }
+      });
+    }
 
     const user = await getUserByUid(this.env.DB, uid);
     if (!user) {
@@ -305,14 +427,6 @@ export class OEMUserDO {
     }
 
     const current = progressStateFromUser(user);
-    if (
-      incoming.clientMutationId
-      && user.progressLastMutationId
-      && incoming.clientMutationId === user.progressLastMutationId
-    ) {
-      return jsonResponse({ ok: true, progress: await this.publicProgress(current, manifest), idempotent: true });
-    }
-
     const prepared = await this.prepareProgressForManifest(
       current,
       user.progressRetainedPointIds,
@@ -364,7 +478,24 @@ export class OEMUserDO {
     const progressChanged = prepared.migrated || prepared.progress.checksum !== computedChecksum;
 
     if (!progressChanged && !retainedChanged) {
-      return jsonResponse({ ok: true, progress: await this.publicProgress(prepared.progress, manifest), unchanged: true });
+      const responseJson = JSON.stringify({
+        ok: true,
+        progress: await this.publicProgress(prepared.progress, manifest),
+        unchanged: true
+      });
+      const now = nowTimestampMs();
+      await commitProgressSync(this.env.DB, {
+        uid,
+        mutationId: incoming.clientMutationId,
+        requestHash,
+        responseJson,
+        resultVersion: current.version,
+        createdAt: now
+      });
+      this.state.waitUntil(drainUserProgressStatsOutbox(this.env, uid));
+      return new Response(responseJson, {
+        headers: { "content-type": "application/json; charset=utf-8" }
+      });
     }
 
     const diff = prepared.migrated
@@ -389,44 +520,60 @@ export class OEMUserDO {
     };
     const firstSync = !user.progressCloudSynced;
 
-    await updateProgressInD1(this.env.DB, uid, {
-      version: nextProgress.version,
-      marker: nextProgress.marker,
-      checksum: nextProgress.checksum,
-      markerIndexHash: nextProgress.markerIndexHash,
-      formatVersion: nextProgress.formatVersion,
-      bitsPerPoint: nextProgress.bitsPerPoint,
-      pointCount: nextProgress.pointCount,
-      retainedPointIds: nextRetainedPointIds,
-      updatedAt: nextProgress.updatedAt ?? now,
-      clientMutationId: incoming.clientMutationId,
-      cloudSynced: true,
-      syncedAt: firstSync ? now : null
-    });
-
-    try {
-      await applyStatsDelta(this.env, {
-        markerIndexHash: manifest.markerIndexHash,
-        pointCount: manifest.pointCount,
-        increments: diff.increments,
-        decrements: diff.decrements,
-        firstSync: firstSync || prepared.migrated
-      });
-    } catch (error) {
-      console.warn("[progress][stats] failed to apply delta", {
-        uid,
-        markerIndexHash: manifest.markerIndexHash,
-        error: error instanceof Error ? error.message : String(error)
-      });
-    }
-
-    return jsonResponse({
+    const responseJson = JSON.stringify({
       ok: true,
       progress: {
         revision: nextProgress.revision,
         markerIndexHash: nextProgress.markerIndexHash,
         updatedAt: nextProgress.updatedAt
       }
+    });
+    const statsEvent: ProgressStatsDelta | undefined = firstSync
+      || prepared.migrated
+      || diff.increments.length > 0
+      || diff.decrements.length > 0
+      ? {
+        eventId,
+        markerIndexHash: manifest.markerIndexHash,
+        pointCount: manifest.pointCount,
+        increments: diff.increments,
+        decrements: diff.decrements,
+        firstSync: firstSync || prepared.migrated
+      }
+      : undefined;
+
+    await commitProgressSync(this.env.DB, {
+      uid,
+      mutationId: incoming.clientMutationId,
+      requestHash,
+      responseJson,
+      resultVersion: nextProgress.version,
+      createdAt: now,
+      progress: {
+        version: nextProgress.version,
+        marker: nextProgress.marker,
+        checksum: nextProgress.checksum,
+        markerIndexHash: nextProgress.markerIndexHash,
+        formatVersion: nextProgress.formatVersion,
+        bitsPerPoint: nextProgress.bitsPerPoint,
+        pointCount: nextProgress.pointCount,
+        retainedPointIds: nextRetainedPointIds,
+        updatedAt: nextProgress.updatedAt ?? now,
+        clientMutationId: incoming.clientMutationId,
+        cloudSynced: true,
+        syncedAt: firstSync ? now : null
+      },
+      statsEvent
+    });
+    this.state.waitUntil(drainUserProgressStatsOutbox(this.env, uid));
+    console.warn("[progress][sync] committed", {
+      uid,
+      mutationId: incoming.clientMutationId,
+      version: nextProgress.version,
+      statsEventId: statsEvent?.eventId ?? null
+    });
+    return new Response(responseJson, {
+      headers: { "content-type": "application/json; charset=utf-8" }
     });
   }
 }

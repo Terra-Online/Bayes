@@ -39,16 +39,21 @@ This is a foundation implementation based on PRD and is intentionally incrementa
 	- Password reset: /auth/v1/forget-password (send magic link)
 	- Social login: /auth/v1/sign-in/social
 - Compatibility endpoints: /auth/v1/register (email+password+otp bridge)
-- Session endpoints: /auth/v1/session, /auth/v1/logout
+- Session endpoints: /auth/v1/session, /auth/v1/sign-out
 - GET /progress/v1/state
 - POST /progress/v1/sync
 - POST /uploads/v1/images
 - GET /uploads/v1/images
 - GET /moderation/v1/pending (pioneer/admin)
+- GET /moderation/v1/images/orphans (admin)
+- GET /admin/v1/reports/registrations (admin; daily registrations and source distribution from `users`)
+- GET /admin/v1/reports/translations (admin; persisted translation trends, language shares, and flows)
+- GET /admin/v1/reports/ugc-likes (admin; image likes and comment vote activity)
 - PATCH /moderation/v1/:id/status (pioneer/admin)
 - POST /moderation/v1/run (admin)
 - POST /moderation/v1/run-once (admin)
-- DELETE /moderation/v1/stale (admin)
+- DELETE /moderation/v1/test-images (admin; marks matching submissions stale and retains objects)
+- DELETE /moderation/v1/stale (admin; rejected by append-only retention policy)
 
 ## Local Development
 

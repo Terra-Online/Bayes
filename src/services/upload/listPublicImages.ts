@@ -1,22 +1,56 @@
-import { createAuth } from "../../lib/auth/createAuth";
 import { getRuntimeConfig } from "../../lib/config";
 import { ApiError } from "../../lib/errors";
+import { InFlightBatchLoader } from "../../middleware/cache/inFlightBatchLoader";
 import {
   PUBLIC_MARKER_IMAGE_CACHE_LIMIT,
   readPublicMarkerImageCache,
   resolvePublicImageCacheNamespace,
   writePublicMarkerImageCache
 } from "../../middleware/cache/publicMarkerImages";
+import { fetchPublicImagesFromWorkersCache } from "../../middleware/cache/publicReadClient";
 import {
-  UGC_PUBLIC_EMPTY_LIST_CACHE_CONTROL,
-  UGC_PUBLIC_LIST_CACHE_CONTROL
-} from "../../middleware/cache/publicUgcAssets";
-import { listActiveImagesByMarker, listUserImagesByMarker } from "../../repositories/submission/listImages";
+  listActiveImagesByMarker,
+  listImageViewerReactionsByMarker,
+  listUserImagesByMarker
+} from "../../repositories/submission/listImages";
 import type { PublicSubmissionImage } from "../../repositories/submission/types";
 import type { AppEnv } from "../../types/app";
-import { hasAuthHeaders, requireMarkerIds } from "./helpers";
+import { getOptionalAuthIdentity, hasAuthHeaders, requireMarkerIds } from "./helpers";
 import { imagesQuerySchema } from "./schemas";
 import { resolveImageScope, resolvePrivateAssetBaseUrl, resolvePublicAssetBaseUrl } from "./scope";
+import { applyImageViewerReactions } from "./viewerOverlay";
+
+const imageLoadersByDb = new WeakMap<
+  D1Database,
+  Map<string, InFlightBatchLoader<PublicSubmissionImage[]>>
+>();
+
+function getPublicImageLoader(payload: {
+  db: D1Database;
+  assetBaseUrl: string;
+  pathPrefix?: string;
+  excludePathPrefix?: string;
+  cacheNamespace: ReturnType<typeof resolvePublicImageCacheNamespace>;
+}): InFlightBatchLoader<PublicSubmissionImage[]> {
+  let loaders = imageLoadersByDb.get(payload.db);
+  if (!loaders) {
+    loaders = new Map();
+    imageLoadersByDb.set(payload.db, loaders);
+  }
+
+  const loaderKey = JSON.stringify([
+    payload.cacheNamespace,
+    payload.assetBaseUrl,
+    payload.pathPrefix ?? null,
+    payload.excludePathPrefix ?? null
+  ]);
+  let loader = loaders.get(loaderKey);
+  if (!loader) {
+    loader = new InFlightBatchLoader<PublicSubmissionImage[]>();
+    loaders.set(loaderKey, loader);
+  }
+  return loader;
+}
 
 function groupPublicImagesByMarker(
   markerIds: string[],
@@ -77,26 +111,34 @@ export async function listCachedPublicImagesByMarker(
   }
 
   if (missingIds.length > 0) {
-    const dbImages = await listActiveImagesByMarker(payload.db, {
-      markerIds: missingIds,
-      assetBaseUrl: payload.assetBaseUrl,
-      pathPrefix: payload.pathPrefix,
-      excludePathPrefix: payload.excludePathPrefix,
-      limit: PUBLIC_MARKER_IMAGE_CACHE_LIMIT
-    });
-    const dbGrouped = groupPublicImagesByMarker(missingIds, dbImages);
+    const loader = getPublicImageLoader(payload);
+    const loaded = await Promise.all(missingIds.map(async (markerId) => ({
+      markerId,
+      images: await loader.load(markerId, async (markerIds) => {
+        const dbImages = await listActiveImagesByMarker(payload.db, {
+          markerIds,
+          assetBaseUrl: payload.assetBaseUrl,
+          pathPrefix: payload.pathPrefix,
+          excludePathPrefix: payload.excludePathPrefix,
+          limit: PUBLIC_MARKER_IMAGE_CACHE_LIMIT
+        });
+        const dbGrouped = groupPublicImagesByMarker(markerIds, dbImages);
+        if (payload.kv) {
+          payload.waitUntil(Promise.all(markerIds.map((missingMarkerId) => (
+            writePublicMarkerImageCache(
+              payload.kv,
+              payload.cacheNamespace,
+              missingMarkerId,
+              dbGrouped.get(missingMarkerId) ?? []
+            )
+          ))).catch(() => undefined));
+        }
+        return dbGrouped;
+      })
+    })));
 
-    missingIds.forEach((markerId) => {
-      const images = dbGrouped.get(markerId) ?? [];
+    loaded.forEach(({ markerId, images }) => {
       grouped.set(markerId, images);
-      if (payload.kv) {
-        payload.waitUntil(writePublicMarkerImageCache(
-          payload.kv,
-          payload.cacheNamespace,
-          markerId,
-          images
-        ));
-      }
     });
   }
 
@@ -154,62 +196,35 @@ export async function handleListPublicImages(c: import("hono").Context<AppEnv>) 
   const config = getRuntimeConfig(c.env);
   const scope = resolveImageScope(c.req.raw, config.ugcUploadPathPrefix, parsed.data.scope);
   const limit = parsed.data.limit ?? 6;
-  const shouldReadSession = parsed.data.publicOnly !== "1" && hasAuthHeaders(c.req.raw.headers);
-  const session = shouldReadSession
-    ? await createAuth(c.env).api.getSession({
-      headers: c.req.raw.headers
-    })
-    : null;
-  const useSharedCache = parsed.data.publicOnly === "1" || !session;
-  let cache: Cache | null = null;
-  let cacheKey: Request | null = null;
-  if (useSharedCache) {
-    cache = await caches.open("ugc-images");
-    const cacheNamespace = resolvePublicImageCacheNamespace(scope);
-    const cacheUrl = new URL(c.req.url);
-    cacheUrl.searchParams.delete("markerId");
-    cacheUrl.searchParams.set("markerIds", [...ids].sort().join(","));
-    cacheUrl.searchParams.set("limit", String(limit));
-    cacheUrl.searchParams.set("_cache_ns", cacheNamespace);
-    cacheKey = new Request(cacheUrl.toString(), { method: "GET" });
-    const cached = await cache.match(cacheKey);
-    if (cached) {
-      return cached;
-    }
+  const assetBaseUrl = resolvePublicAssetBaseUrl(c.req.url, config.ugcAssetBaseUrl);
+  const publicResponsePromise = fetchPublicImagesFromWorkersCache({
+    markerIds: ids,
+    limit,
+    cacheNamespace: resolvePublicImageCacheNamespace(scope),
+    assetBaseUrl
+  });
+
+  if (parsed.data.publicOnly === "1" || !hasAuthHeaders(c.req.raw.headers)) {
+    return publicResponsePromise;
   }
 
-  const assetBaseUrl = resolvePublicAssetBaseUrl(c.req.url, config.ugcAssetBaseUrl);
-  const images = useSharedCache
-    ? await listCachedPublicImagesByMarker({
-      db: c.env.DB,
-      kv: c.env.OEM_KV,
-      markerIds: ids,
-      assetBaseUrl,
-      pathPrefix: scope.pathPrefix,
-      excludePathPrefix: scope.excludePathPrefix,
-      limit,
-      cacheNamespace: resolvePublicImageCacheNamespace(scope),
-      waitUntil: (promise) => c.executionCtx.waitUntil(promise)
-    })
-    : await listActiveImagesByMarker(c.env.DB, {
-      markerIds: ids,
-      assetBaseUrl,
-      pathPrefix: scope.pathPrefix,
-      excludePathPrefix: scope.excludePathPrefix,
-      limit,
-      viewerUserId: session?.user.id
-    });
+  const [publicResponse, identity] = await Promise.all([
+    publicResponsePromise,
+    getOptionalAuthIdentity(c.env, c.req.raw.headers)
+  ]);
+  if (!identity || !publicResponse.ok) return publicResponse;
+
+  const payload = await publicResponse.json() as { items: PublicSubmissionImage[] };
+  const reactions = await listImageViewerReactionsByMarker(c.env.DB, {
+    userId: identity.uid,
+    markerIds: ids,
+    pathPrefix: scope.pathPrefix,
+    excludePathPrefix: scope.excludePathPrefix
+  });
+  const images = applyImageViewerReactions(payload.items, reactions);
 
   const response = c.json({ items: images });
-  if (cache && cacheKey) {
-    response.headers.set(
-      "Cache-Control",
-      images.length > 0 ? UGC_PUBLIC_LIST_CACHE_CONTROL : UGC_PUBLIC_EMPTY_LIST_CACHE_CONTROL
-    );
-    response.headers.set("x-oem-marker-kv-cache", "enabled");
-    c.executionCtx.waitUntil(cache.put(cacheKey, response.clone()));
-  } else {
-    response.headers.set("Cache-Control", "private, no-store");
-  }
+  response.headers.set("Cache-Control", "private, no-store");
+  response.headers.set("x-oem-viewer-overlay", "image");
   return response;
 }

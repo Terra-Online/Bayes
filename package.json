@@ -9,11 +9,24 @@
     "dev:local": "node scripts/dev-with-google-proxy.mjs --env local",
     "deploy": "bash scripts/deploy-with-dev-vars.sh",
     "deploy:raw": "wrangler deploy",
+    "test": "vitest run",
     "typecheck": "tsc --noEmit",
+    "typecheck:logger": "tsc --noEmit -p oem-logger/tsconfig.json",
     "lint": "eslint .",
+    "logger:check": "pnpm run typecheck:logger && eslint oem-logger && vitest run oem-logger/src/index.spec.ts && wrangler deploy --dry-run --config oem-logger/wrangler.toml",
+    "check": "pnpm run typecheck && pnpm run typecheck:logger && pnpm run lint && pnpm test && wrangler deploy --dry-run --config oem-logger/wrangler.toml",
     "db:migrate:local": "wrangler d1 migrations apply DB --local",
     "db:migrate:remote": "wrangler d1 migrations apply DB --remote",
-    "glossary:update": "node scripts/update-google-glossary.mjs"
+    "logger:dev": "wrangler dev --config oem-logger/wrangler.toml",
+    "logger:db:migrate:local": "wrangler d1 migrations apply OEM_ERR --local --config oem-logger/wrangler.toml",
+    "logger:db:migrate:remote": "wrangler d1 migrations apply OEM_ERR --remote --config oem-logger/wrangler.toml",
+    "deploy:logger": "bash scripts/deploy-with-dev-vars.sh --logger-only",
+    "logger:deploy": "pnpm run deploy:logger",
+    "logger:deploy:raw": "wrangler deploy --config oem-logger/wrangler.toml",
+    "glossary:update": "node scripts/update-google-glossary.mjs",
+    "coverage-manifest:update": "node scripts/update-image-coverage-manifest.mjs",
+    "progress:stats:rebuild": "node scripts/rebuild-progress-stats.mjs",
+    "demo:ugc:sync": "node scripts/sync-demo-ugc.mjs"
   },
   "dependencies": {
     "@cloudflare/containers": "^0.3.7",
@@ -25,15 +38,16 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20260404.0",
+    "@cloudflare/workers-types": "^5.20260722.1",
     "@eslint/js": "^9.24.0",
     "@types/node": "^22.15.3",
     "@typescript-eslint/parser": "^8.46.1",
     "eslint": "^9.24.0",
     "typescript": "^5.8.3",
-    "wrangler": "^4.10.0"
+    "vitest": "^3.2.4",
+    "wrangler": "^4.113.0"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   }
 }

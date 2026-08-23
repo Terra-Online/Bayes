@@ -7,8 +7,12 @@ export interface SubmissionRecord {
   snapshotId: string;
   userId: string;
   content: string | null;
+  editOriginalContent: string | null;
+  editOriginalStatus: SubmissionStatus | null;
+  editOriginalSnapshotId: string | null;
   filePath: string | null;
   status: SubmissionStatus;
+  flagCount: number;
   moderationNote: string | null;
   moderationQueuedAt: string | null;
   mimeType: string | null;
@@ -54,6 +58,7 @@ export interface PublicSubmissionImage {
   } | null;
   status: SubmissionStatus;
   upvoteCount: number;
+  flagCount: number;
   upvoted?: boolean;
   flagged?: boolean;
   createdAt: string;
@@ -67,6 +72,7 @@ export interface PublicSubmissionComment {
   parentId: string | null;
   depth: number;
   content: string;
+  editUndoAvailable: boolean;
   author: {
     nickname: string;
     publicUid: string;

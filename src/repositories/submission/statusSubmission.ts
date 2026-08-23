@@ -1,5 +1,11 @@
 import { mapSubmission } from "./mapper";
 import type { SubmissionRecord, SubmissionStatus } from "./types";
+import {
+  notificationsFromResult,
+  prepareApprovedReplyNotificationWrite,
+  prepareSubmissionStatusNotificationWrite,
+  type NotificationRecord
+} from "../notifications";
 
 export async function getSubmissionById(db: D1Database, id: string): Promise<SubmissionRecord | null> {
   const row = await db
@@ -73,22 +79,219 @@ export async function updateSubmissionStatus(
     .run();
 }
 
+export async function updateSubmissionStatusForSnapshot(
+  db: D1Database,
+  payload: {
+    id: string;
+    snapshotId: string;
+    fromStatus: SubmissionStatus;
+    status: SubmissionStatus;
+    moderationNote?: string;
+  }
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      `UPDATE ugc_submissions
+       SET status = ?3,
+           moderation_note = COALESCE(?4, moderation_note),
+           edit_original_content = CASE WHEN ?3 = 'active' THEN NULL ELSE edit_original_content END,
+           edit_original_status = CASE WHEN ?3 = 'active' THEN NULL ELSE edit_original_status END,
+           edit_original_snapshot_id = CASE WHEN ?3 = 'active' THEN NULL ELSE edit_original_snapshot_id END,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?1
+         AND snapshot_id = ?2
+         AND status = ?5`
+    )
+    .bind(
+      payload.id,
+      payload.snapshotId,
+      payload.status,
+      payload.moderationNote ?? null,
+      payload.fromStatus
+    )
+    .run();
+  return (result.meta.changes ?? 0) > 0;
+}
+
+export async function transitionSubmissionStatusWithNotifications(
+  db: D1Database,
+  payload: {
+    submission: SubmissionRecord;
+    status: SubmissionStatus;
+    moderationNote?: string | null;
+    source: "auto_moderation" | "manual_moderation" | "user_action";
+    clearFlags?: boolean;
+  }
+): Promise<{ updated: boolean; notifications: NotificationRecord[] }> {
+  const transitionedAt = new Date().toISOString();
+  const transition = {
+    submission: payload.submission,
+    previousStatus: payload.submission.status,
+    nextStatus: payload.status,
+    moderationNote: payload.moderationNote ?? payload.submission.moderationNote,
+    source: payload.source,
+    transitionedAt
+  };
+  const statements: D1PreparedStatement[] = [
+    db
+      .prepare(
+        `UPDATE ugc_submissions
+         SET status = ?3,
+             moderation_note = COALESCE(?4, moderation_note),
+             edit_original_content = CASE WHEN ?3 = 'active' THEN NULL ELSE edit_original_content END,
+             edit_original_status = CASE WHEN ?3 = 'active' THEN NULL ELSE edit_original_status END,
+             edit_original_snapshot_id = CASE WHEN ?3 = 'active' THEN NULL ELSE edit_original_snapshot_id END,
+             updated_at = ?6
+         WHERE id = ?1
+           AND snapshot_id = ?2
+           AND status = ?5
+         RETURNING id`
+      )
+      .bind(
+        payload.submission.id,
+        payload.submission.snapshotId,
+        payload.status,
+        payload.moderationNote ?? null,
+        payload.submission.status,
+        transitionedAt
+      )
+  ];
+
+  if (payload.clearFlags) {
+    statements.push(
+      db
+        .prepare(
+          `UPDATE ugc_submission_flags
+           SET active = 0
+           WHERE submission_id = ?1
+             AND active = 1
+             AND EXISTS (
+               SELECT 1
+               FROM ugc_submissions
+               WHERE id = ?1
+                 AND snapshot_id = ?2
+                 AND status = ?3
+                 AND updated_at = ?4
+             )`
+        )
+        .bind(payload.submission.id, payload.submission.snapshotId, payload.status, transitionedAt)
+    );
+  }
+
+  const notificationResultIndexes: number[] = [];
+  const appendNotificationWrite = (writeStatements: D1PreparedStatement[]) => {
+    if (writeStatements.length === 0) return;
+    notificationResultIndexes.push(statements.length + writeStatements.length - 1);
+    statements.push(...writeStatements);
+  };
+
+  appendNotificationWrite(prepareSubmissionStatusNotificationWrite(db, transition));
+  if (
+    payload.submission.kind === "comment" &&
+    payload.submission.status !== "active" &&
+    payload.status === "active" &&
+    payload.submission.parentId
+  ) {
+    appendNotificationWrite(prepareApprovedReplyNotificationWrite(db, transition));
+  }
+
+  const results = await db.batch<Record<string, unknown>>(statements);
+  const updated = (results[0]?.results ?? []).length > 0;
+  return {
+    updated,
+    notifications: updated
+      ? notificationResultIndexes.flatMap((index) => notificationsFromResult(results[index]))
+      : []
+  };
+}
+
+export async function updateCommentContentForModeration(
+  db: D1Database,
+  payload: {
+    id: string;
+    content: string;
+    expectedSnapshotId: string;
+    snapshotId: string;
+    moderationNote: string;
+  }
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      `UPDATE ugc_submissions
+       SET content = ?2,
+           edit_original_content = content,
+           edit_original_status = status,
+           edit_original_snapshot_id = snapshot_id,
+           snapshot_id = ?3,
+           status = 'pending_openai',
+           moderation_note = ?4,
+           moderation_queued_at = NULL,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?1
+         AND kind = 'comment'
+         AND snapshot_id = ?5
+         AND status IN ('pending_openai', 'pending_audit', 'active', 'flagged', 'remove_request')`
+    )
+    .bind(
+      payload.id,
+      payload.content,
+      payload.snapshotId,
+      payload.moderationNote,
+      payload.expectedSnapshotId
+    )
+    .run();
+  return (result.meta.changes ?? 0) > 0;
+}
+
+export async function revertCommentEdit(
+  db: D1Database,
+  payload: {
+    id: string;
+    expectedSnapshotId: string;
+    status: SubmissionStatus;
+    moderationNote: string;
+  }
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      `UPDATE ugc_submissions
+       SET content = edit_original_content,
+           edit_original_content = NULL,
+           status = ?2,
+           snapshot_id = edit_original_snapshot_id,
+           edit_original_status = NULL,
+           edit_original_snapshot_id = NULL,
+           moderation_note = ?3,
+           moderation_queued_at = NULL,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?1
+         AND kind = 'comment'
+         AND snapshot_id = ?4
+         AND edit_original_content IS NOT NULL`
+    )
+    .bind(payload.id, payload.status, payload.moderationNote, payload.expectedSnapshotId)
+    .run();
+  return (result.meta.changes ?? 0) > 0;
+}
+
 export async function markSubmissionModerationQueued(
   db: D1Database,
   payload: {
     id: string;
+    snapshotId: string;
     queuedAt: string;
   }
 ): Promise<void> {
   await db
     .prepare(
       `UPDATE ugc_submissions
-       SET moderation_queued_at = ?2,
+       SET moderation_queued_at = ?3,
            updated_at = CURRENT_TIMESTAMP
        WHERE id = ?1
+         AND snapshot_id = ?2
          AND status = 'pending_openai'`
     )
-    .bind(payload.id, payload.queuedAt)
+    .bind(payload.id, payload.snapshotId, payload.queuedAt)
     .run();
 }
 

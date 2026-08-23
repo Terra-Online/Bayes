@@ -1,5 +1,9 @@
 import type { oem_imgTrans } from "../services/upload/imageTranscoderContainer";
-import type { OemModQueueMessage } from "../services/moderation/messages";
+import type {
+  OemModerationQueueMessage,
+  OemTranslationQueueMessage,
+  OemWebhookQueueMessage
+} from "../services/moderation/messages";
 
 export type Role = "n" | "p" | "a" | "s" | "r";
 
@@ -9,11 +13,18 @@ export interface Bindings {
   OEM_KV?: KVNamespace;
   OEM_USER_DO: DurableObjectNamespace;
   OEM_STATS_DO: DurableObjectNamespace;
+  OEM_NOTIFICATION_DO: DurableObjectNamespace;
   OEM_IMG_TRANS: DurableObjectNamespace<oem_imgTrans>;
-  OEM_MODQ: Queue<OemModQueueMessage>;
+  OEM_PUBLIC_RATE_LIMIT: RateLimit;
+  OEM_AUTH_RATE_LIMIT: RateLimit;
+  OEM_BINDING_RATE_LIMIT: RateLimit;
+  OEM_MODERATION_Q: Queue<OemModerationQueueMessage>;
+  OEM_TRANSLATION_Q: Queue<OemTranslationQueueMessage>;
+  OEM_WEBHOOK_Q: Queue<OemWebhookQueueMessage>;
   UPSTASH_REDIS_REST_URL: string;
   UPSTASH_REDIS_REST_TOKEN: string;
   BETTER_AUTH_SECRET?: string;
+  SERVICE_ID_HMAC_SECRET?: string;
   BETTER_AUTH_URL?: string;
   CORS_ORIGINS?: string;
   TRUSTED_ORIGINS?: string;
@@ -28,6 +39,7 @@ export interface Bindings {
   GOOGLE_TRANSLATE_GLOSSARY_LANGUAGES?: string;
   GOOGLE_TRANSLATE_ALLOWED_LANGUAGES?: string;
   GOOGLE_TRANSLATE_FETCH_PROXY_URL?: string;
+  ENABLE_COMMENT_TRANSLATION_PREWARM?: string;
   GITHUB_CLIENT_ID?: string;
   GITHUB_CLIENT_SECRET?: string;
   DISCORD_CLIENT_ID?: string;

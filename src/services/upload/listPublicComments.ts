@@ -1,6 +1,6 @@
-import { createAuth } from "../../lib/auth/createAuth";
 import { getRuntimeConfig } from "../../lib/config";
 import { ApiError } from "../../lib/errors";
+import { InFlightBatchLoader } from "../../middleware/cache/inFlightBatchLoader";
 import {
   PUBLIC_MARKER_COMMENT_CACHE_LIMIT,
   PUBLIC_MARKER_COMMENT_REPLY_CACHE_LIMIT,
@@ -8,12 +8,44 @@ import {
   resolvePublicCommentCacheNamespace,
   writePublicMarkerCommentCache
 } from "../../middleware/cache/publicMarkerComments";
-import { listActiveCommentsByMarker, listUserCommentsByMarker } from "../../repositories/submission/listComments";
-import type { PublicSubmissionComment } from "../../repositories/submission/types";
+import { fetchPublicCommentsFromWorkersCache } from "../../middleware/cache/publicReadClient";
+import {
+  listActiveCommentsByMarker,
+  listCommentViewerStateByMarker,
+  listUserCommentsByMarker
+} from "../../repositories/submission/listComments";
+import type {
+  PublicSubmissionComment,
+  UserSubmissionComment
+} from "../../repositories/submission/types";
 import type { AppEnv } from "../../types/app";
-import { hasAuthHeaders, requireMarkerIds } from "./helpers";
+import { getOptionalAuthIdentity, hasAuthHeaders, requireMarkerIds } from "./helpers";
 import { commentsQuerySchema } from "./schemas";
 import { resolveImageScope } from "./scope";
+import { applyCommentViewerReactions } from "./viewerOverlay";
+
+const commentLoadersByDb = new WeakMap<
+  D1Database,
+  Map<string, InFlightBatchLoader<PublicSubmissionComment[]>>
+>();
+
+function getPublicCommentLoader(payload: {
+  db: D1Database;
+  cacheNamespace: ReturnType<typeof resolvePublicCommentCacheNamespace>;
+}): InFlightBatchLoader<PublicSubmissionComment[]> {
+  let loaders = commentLoadersByDb.get(payload.db);
+  if (!loaders) {
+    loaders = new Map();
+    commentLoadersByDb.set(payload.db, loaders);
+  }
+
+  let loader = loaders.get(payload.cacheNamespace);
+  if (!loader) {
+    loader = new InFlightBatchLoader<PublicSubmissionComment[]>();
+    loaders.set(payload.cacheNamespace, loader);
+  }
+  return loader;
+}
 
 function groupPublicCommentsByMarker(
   markerIds: string[],
@@ -51,6 +83,49 @@ function flattenPublicCommentsByMarker(
     .map((comment) => sliceCommentTree(comment, replyLimit)));
 }
 
+function mergeViewerPendingComments(
+  publicComments: PublicSubmissionComment[],
+  viewerComments: UserSubmissionComment[]
+): PublicSubmissionComment[] {
+  const commentById = new Map<string, PublicSubmissionComment>();
+  const indexTree = (comments: PublicSubmissionComment[]): void => {
+    comments.forEach((comment) => {
+      commentById.set(comment.id, comment);
+      indexTree(comment.replies);
+    });
+  };
+  indexTree(publicComments);
+
+  const pendingRoots: PublicSubmissionComment[] = [];
+  const pending = viewerComments
+    .filter((comment) => comment.status === "pending_openai" || comment.status === "pending_audit")
+    .sort((left, right) => (
+      left.depth - right.depth ||
+      right.createdAt.localeCompare(left.createdAt) ||
+      right.id.localeCompare(left.id)
+    ));
+
+  pending.forEach((comment) => {
+    if (commentById.has(comment.id)) return;
+
+    const normalized: PublicSubmissionComment = {
+      ...comment,
+      replyCount: comment.replyCount ?? 0,
+      replies: comment.replies ?? []
+    };
+    const parent = normalized.parentId ? commentById.get(normalized.parentId) : undefined;
+    if (parent) {
+      parent.replies.push(normalized);
+      parent.replyCount += 1;
+    } else {
+      pendingRoots.push(normalized);
+    }
+    commentById.set(normalized.id, normalized);
+  });
+
+  return pendingRoots.length > 0 ? [...pendingRoots, ...publicComments] : publicComments;
+}
+
 export async function listCachedPublicCommentsByMarker(
   payload: {
     db: D1Database;
@@ -85,24 +160,32 @@ export async function listCachedPublicCommentsByMarker(
   }
 
   if (missingIds.length > 0) {
-    const dbComments = await listActiveCommentsByMarker(payload.db, {
-      markerIds: missingIds,
-      limit: PUBLIC_MARKER_COMMENT_CACHE_LIMIT,
-      replyLimit: PUBLIC_MARKER_COMMENT_REPLY_CACHE_LIMIT
-    });
-    const dbGrouped = groupPublicCommentsByMarker(missingIds, dbComments);
+    const loader = getPublicCommentLoader(payload);
+    const loaded = await Promise.all(missingIds.map(async (markerId) => ({
+      markerId,
+      comments: await loader.load(markerId, async (markerIds) => {
+        const dbComments = await listActiveCommentsByMarker(payload.db, {
+          markerIds,
+          limit: PUBLIC_MARKER_COMMENT_CACHE_LIMIT,
+          replyLimit: PUBLIC_MARKER_COMMENT_REPLY_CACHE_LIMIT
+        });
+        const dbGrouped = groupPublicCommentsByMarker(markerIds, dbComments);
+        if (payload.kv) {
+          payload.waitUntil(Promise.all(markerIds.map((missingMarkerId) => (
+            writePublicMarkerCommentCache(
+              payload.kv,
+              payload.cacheNamespace,
+              missingMarkerId,
+              dbGrouped.get(missingMarkerId) ?? []
+            )
+          ))).catch(() => undefined));
+        }
+        return dbGrouped;
+      })
+    })));
 
-    missingIds.forEach((markerId) => {
-      const comments = dbGrouped.get(markerId) ?? [];
+    loaded.forEach(({ markerId, comments }) => {
       grouped.set(markerId, comments);
-      if (payload.kv) {
-        payload.waitUntil(writePublicMarkerCommentCache(
-          payload.kv,
-          payload.cacheNamespace,
-          markerId,
-          comments
-        ));
-      }
     });
   }
 
@@ -155,41 +238,39 @@ export async function handleListPublicComments(c: import("hono").Context<AppEnv>
   const ids = requireMarkerIds(parsed.data);
   const limit = parsed.data.limit ?? 20;
   const replyLimit = parsed.data.replyLimit ?? 3;
-  const shouldReadSession = parsed.data.publicOnly !== "1" && hasAuthHeaders(c.req.raw.headers);
-  const session = shouldReadSession
-    ? await createAuth(c.env).api.getSession({
-      headers: c.req.raw.headers
-    })
-    : null;
-  const useSharedCache = parsed.data.publicOnly === "1" || !session;
+  const cacheNamespace = resolvePublicCommentCacheNamespace(resolveImageScope(
+    c.req.raw,
+    getRuntimeConfig(c.env).ugcUploadPathPrefix,
+    parsed.data.scope
+  ));
+  const publicResponsePromise = fetchPublicCommentsFromWorkersCache({
+    markerIds: ids,
+    limit,
+    replyLimit,
+    cacheNamespace
+  });
 
-  const items = useSharedCache
-    ? await listCachedPublicCommentsByMarker({
-      db: c.env.DB,
-      kv: c.env.OEM_KV,
-      markerIds: ids,
-      limit,
-      replyLimit,
-      cacheNamespace: resolvePublicCommentCacheNamespace(resolveImageScope(
-        c.req.raw,
-        getRuntimeConfig(c.env).ugcUploadPathPrefix,
-        parsed.data.scope
-      )),
-      waitUntil: (promise) => c.executionCtx.waitUntil(promise)
-    })
-    : await listActiveCommentsByMarker(c.env.DB, {
-      markerIds: ids,
-      limit,
-      replyLimit,
-      viewerUserId: session?.user.id
-    });
+  if (parsed.data.publicOnly === "1" || !hasAuthHeaders(c.req.raw.headers)) {
+    return publicResponsePromise;
+  }
+
+  const [publicResponse, identity] = await Promise.all([
+    publicResponsePromise,
+    getOptionalAuthIdentity(c.env, c.req.raw.headers)
+  ]);
+  if (!identity || !publicResponse.ok) return publicResponse;
+
+  const payload = await publicResponse.json() as { items: PublicSubmissionComment[] };
+  const viewerState = await listCommentViewerStateByMarker(c.env.DB, {
+    userId: identity.uid,
+    markerIds: ids,
+    pendingLimit: 200
+  });
+  const publicComments = applyCommentViewerReactions(payload.items, viewerState.reactions);
+  const items = mergeViewerPendingComments(publicComments, viewerState.pendingComments);
 
   const response = c.json({ items });
-  if (useSharedCache) {
-    response.headers.set("Cache-Control", items.length > 0 ? "public, max-age=15" : "public, max-age=5");
-    response.headers.set("x-oem-marker-comment-kv-cache", "enabled");
-  } else {
-    response.headers.set("Cache-Control", "private, no-store");
-  }
+  response.headers.set("Cache-Control", "private, no-store");
+  response.headers.set("x-oem-viewer-overlay", "comment");
   return response;
 }

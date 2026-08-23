@@ -32,6 +32,10 @@ export const commentSubmissionSchema = z.object({
   parentId: z.string().min(1).max(64).optional()
 });
 
+export const commentEditSchema = z.object({
+  content: z.string().trim().min(1).max(199)
+});
+
 export const commentTranslationSchema = z.object({
   commentIds: z.array(z.string().min(1).max(64)).min(1).max(100),
   targetLanguage: z.string().min(2).max(16),

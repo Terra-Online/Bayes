@@ -1,14 +1,20 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { ApiError } from "../../lib/errors";
-import { getJsonFromKv, MIN_KV_EXPIRATION_TTL_SECONDS, putJsonToKv } from "../../middleware/cache/kvJson";
+import { fetchProgressStatsFromWorkersCache } from "../../middleware/cache/publicReadClient";
 import { requireAuth } from "../../middleware/auth";
 import { rateLimit } from "../../middleware/rate-limit";
+import {
+  isSha256Hex,
+  normalizeManifestPayload,
+  saveProgressManifest
+} from "../../services/progress/manifest";
+import {
+  normalizeArchiveManifestPayload,
+  saveArchiveProgressManifest
+} from "../../services/progress/archiveManifest";
+import { jsonResponse } from "../../services/progress/responses";
 import type { AppEnv } from "../../types/app";
-
-const PROGRESS_STATS_HTTP_MAX_AGE_SECONDS = 10;
-const PROGRESS_STATS_KV_TTL_SECONDS = MIN_KV_EXPIRATION_TTL_SECONDS;
-const PROGRESS_STATS_KV_KEY_PREFIX = "progress:stats:v1:";
 
 function isProgressLocked(flag: string | undefined): boolean {
   const normalized = (flag ?? "true").trim().toLowerCase();
@@ -17,17 +23,19 @@ function isProgressLocked(flag: string | undefined): boolean {
 
 async function proxyUserProgress(
   c: Context<AppEnv>,
-  path: "state" | "sync" | "manifest"
+  path: "state" | "sync"
 ): Promise<Response> {
   const user = c.get("authUser");
   if (!user) {
     throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
   }
 
-  const id = c.env.OEM_USER_DO.idFromName(user.uid);
-  const stub = c.env.OEM_USER_DO.get(id);
+  const stub = c.env.OEM_USER_DO.getByName(user.uid);
   const url = new URL(`https://progress-user/${path}`);
-  url.searchParams.set("uid", user.uid);
+  if (path === "state") {
+    const markerIndexHash = c.req.query("markerIndexHash")?.trim().toLowerCase() ?? "";
+    url.searchParams.set("markerIndexHash", markerIndexHash);
+  }
 
   const request = path === "state"
     ? new Request(url, { method: "GET" })
@@ -40,41 +48,54 @@ async function proxyUserProgress(
   return stub.fetch(request);
 }
 
+async function proxyUserArchiveProgress(
+  c: Context<AppEnv>,
+  path: "state" | "sync"
+): Promise<Response> {
+  const user = c.get("authUser");
+  if (!user) {
+    throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
+  }
+
+  const stub = c.env.OEM_USER_DO.getByName(user.uid);
+  const url = new URL(`https://progress-user/archive/${path}`);
+  if (path === "state") {
+    const archiveIndexHash = c.req.query("archiveIndexHash")?.trim().toLowerCase() ?? "";
+    url.searchParams.set("archiveIndexHash", archiveIndexHash);
+  }
+  return stub.fetch(path === "state"
+    ? new Request(url, { method: "GET" })
+    : new Request(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: await c.req.text()
+    }));
+}
+
+async function registerManifest(c: Context<AppEnv>): Promise<Response> {
+  const manifest = await normalizeManifestPayload(await c.req.json().catch(() => null));
+  await saveProgressManifest(c.env, manifest);
+  return jsonResponse({
+    ok: true,
+    manifest: { markerIndexHash: manifest.markerIndexHash }
+  });
+}
+
+async function registerArchiveManifest(c: Context<AppEnv>): Promise<Response> {
+  const manifest = await normalizeArchiveManifestPayload(await c.req.json().catch(() => null));
+  await saveArchiveProgressManifest(c.env, manifest);
+  return jsonResponse({
+    ok: true,
+    manifest: { archiveIndexHash: manifest.archiveIndexHash }
+  });
+}
+
 async function proxyStats(c: Context<AppEnv>): Promise<Response> {
   const markerIndexHash = c.req.query("markerIndexHash")?.trim().toLowerCase();
-  if (!markerIndexHash) {
-    throw new ApiError(422, "VALIDATION_ERROR", "markerIndexHash is required.");
+  if (!markerIndexHash || !isSha256Hex(markerIndexHash)) {
+    throw new ApiError(422, "VALIDATION_ERROR", "markerIndexHash must be a SHA-256 hash.");
   }
-
-  const kvKey = `${PROGRESS_STATS_KV_KEY_PREFIX}${markerIndexHash}`;
-  const cached = await getJsonFromKv<unknown>(c.env.OEM_KV, kvKey);
-  if (cached) {
-    const response = c.json(cached);
-    response.headers.set("Cache-Control", `public, max-age=${PROGRESS_STATS_HTTP_MAX_AGE_SECONDS}`);
-    response.headers.set("x-oem-kv-cache", "hit");
-    return response;
-  }
-
-  const id = c.env.OEM_STATS_DO.idFromName(markerIndexHash);
-  const stub = c.env.OEM_STATS_DO.get(id);
-  const url = new URL("https://progress-stats/state");
-  url.searchParams.set("markerIndexHash", markerIndexHash);
-  const response = await stub.fetch(new Request(url, { method: "GET" }));
-  if (!response.ok) {
-    return response;
-  }
-
-  const payload = await response.clone().json().catch(() => null);
-  if (payload) {
-    await putJsonToKv(c.env.OEM_KV, kvKey, payload, {
-      expirationTtl: PROGRESS_STATS_KV_TTL_SECONDS
-    }).catch(() => undefined);
-  }
-
-  const nextResponse = c.json(payload);
-  nextResponse.headers.set("Cache-Control", `public, max-age=${PROGRESS_STATS_HTTP_MAX_AGE_SECONDS}`);
-  nextResponse.headers.set("x-oem-kv-cache", "miss");
-  return nextResponse;
+  return fetchProgressStatsFromWorkersCache(markerIndexHash);
 }
 
 export function createProgressRoutes() {
@@ -92,9 +113,12 @@ export function createProgressRoutes() {
   });
 
   app.get("/state", requireAuth, async (c) => proxyUserProgress(c, "state"));
-  app.post("/manifest", requireAuth, async (c) => proxyUserProgress(c, "manifest"));
+  app.post("/manifest", requireAuth, registerManifest);
   app.post("/sync", requireAuth, async (c) => proxyUserProgress(c, "sync"));
   app.get("/stats", rateLimit("public"), async (c) => proxyStats(c));
+  app.get("/archive/state", requireAuth, async (c) => proxyUserArchiveProgress(c, "state"));
+  app.post("/archive/manifest", requireAuth, registerArchiveManifest);
+  app.post("/archive/sync", requireAuth, async (c) => proxyUserArchiveProgress(c, "sync"));
 
   return app;
 }
