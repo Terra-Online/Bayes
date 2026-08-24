@@ -1,4 +1,10 @@
-import { createEndfieldDeviceProfile, parseEndfieldDeviceProfile, serializeEndfieldDeviceProfile } from "../../lib/endfieldClient/deviceProfile";
+import {
+  createEndfieldDeviceId,
+  createEndfieldDeviceProfile,
+  parseEndfieldDeviceProfile,
+  serializeEndfieldDeviceProfile,
+  SKLAND_DEVICE_PROFILE_USER_AGENT
+} from "../../lib/endfieldClient/deviceProfile";
 import type { EndfieldDeviceProfile, EndfieldProvider, EndfieldRoleOption } from "../../lib/endfieldClient/types";
 import type {
   EndfieldBindingRow,
@@ -96,17 +102,47 @@ export async function getOrCreateRoleDeviceProfile(
   const existing = await getRoleDeviceProfile(db, roleId);
   if (existing) return existing;
 
-  const profile = fallback ?? createEndfieldDeviceProfile();
+  let profile = fallback;
+  if (!profile) {
+    try {
+      profile = createEndfieldDeviceProfile(
+        await createEndfieldDeviceId(),
+        SKLAND_DEVICE_PROFILE_USER_AGENT
+      );
+    } catch {
+      // Keep existing bindings usable if the fingerprint service is temporarily unavailable.
+      profile = createEndfieldDeviceProfile();
+    }
+  }
   await db
     .prepare(
       `INSERT INTO endfield_role_device_profiles (role_id, device_profile, updated_at)
       VALUES (?1, ?2, CURRENT_TIMESTAMP)
-      ON CONFLICT(role_id) DO NOTHING`
+      ON CONFLICT(role_id) DO UPDATE SET
+        device_profile = excluded.device_profile,
+        updated_at = CURRENT_TIMESTAMP`
     )
     .bind(roleId, serializeEndfieldDeviceProfile(profile))
     .run();
 
   return await getRoleDeviceProfile(db, roleId) ?? profile;
+}
+
+export async function saveRoleDeviceProfile(
+  db: D1Database,
+  roleId: string,
+  profile: EndfieldDeviceProfile
+): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO endfield_role_device_profiles (role_id, device_profile, updated_at)
+      VALUES (?1, ?2, CURRENT_TIMESTAMP)
+      ON CONFLICT(role_id) DO UPDATE SET
+        device_profile = excluded.device_profile,
+        updated_at = CURRENT_TIMESTAMP`
+    )
+    .bind(roleId, serializeEndfieldDeviceProfile(profile))
+    .run();
 }
 
 export async function getBindingDeviceProfile(

@@ -33,6 +33,7 @@ export type EndfieldBindingWithDeviceProfileRow = EndfieldBindingRow & {
 
 export type PendingEndfieldSession = {
   provider: EndfieldProvider;
+  deviceProfile?: EndfieldDeviceProfile;
   cred: string;
   token: string;
   accountToken?: string;

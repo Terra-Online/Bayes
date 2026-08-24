@@ -41,6 +41,7 @@ export function buildDeviceHeaders(profile?: EndfieldDeviceProfile, deviceId = p
     ...(profile.secChUaMobile ? { "sec-ch-ua-mobile": profile.secChUaMobile } : {}),
     ...(profile.secChUaPlatform ? { "sec-ch-ua-platform": profile.secChUaPlatform } : {}),
     ...(deviceId ? { "x-deviceid": deviceId } : {}),
+    ...(deviceId ? { dId: `B${deviceId}` } : {}),
     "x-devicemodel": profile.deviceModel,
     "x-devicetype": profile.deviceType,
     "x-osver": profile.osVersion

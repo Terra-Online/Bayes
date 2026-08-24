@@ -7,7 +7,12 @@ import {
 import { ApiError } from "../../lib/errors";
 import { resolveAuthIdentity } from "../../middleware/auth";
 import { ensureUserProfile } from "../../repositories/users";
-import { getDecryptedBinding, isAutoRefreshableEndfieldError, refreshBindingCredentials, withAutoRefreshedBinding } from "./credentials";
+import {
+  getDecryptedBinding,
+  isAutoRefreshableEndfieldError,
+  refreshBindingCredentials,
+  withAutoRefreshedBinding
+} from "./credentials";
 import { POSITION_STREAM_RECONNECT_MS, serializeLocatorError, shouldIncludeBinding } from "./helpers";
 import { issueLocatorSocketTicket, verifyLocatorSocketTicket } from "./locatorTicket";
 import {
@@ -145,12 +150,17 @@ export async function handleEndfieldPositionSocket(c: AppContext) {
           const error = parseEndfieldPositionSocketError(data);
           if (error) {
             const credentialRejected = isEndfieldCredentialErrorCode(error.code);
+            const deviceRejected = error.code === 10001;
             const errorPayload = {
               type: "error",
               error: {
-                status: 401,
-                code: credentialRejected ? "ENDFIELD_CREDENTIAL_REJECTED" : "ENDFIELD_POSITION_UNAVAILABLE",
-                message: credentialRejected
+                status: deviceRejected ? 502 : 401,
+                code: deviceRejected
+                  ? "ENDFIELD_DEVICE_REJECTED"
+                  : (credentialRejected ? "ENDFIELD_CREDENTIAL_REJECTED" : "ENDFIELD_POSITION_UNAVAILABLE"),
+                message: deviceRejected
+                  ? (error.message ?? "Endfield device information was rejected.")
+                  : credentialRejected
                   ? (error.message ?? "Endfield credential was rejected.")
                   : "Player is not currently logged into the game or position is unavailable.",
                 details: {
@@ -159,12 +169,12 @@ export async function handleEndfieldPositionSocket(c: AppContext) {
                 }
               }
             };
-            if (credentialRejected) {
+            if (credentialRejected || deviceRejected) {
               upstreamGeneration += 1;
               sendJson({
                 type: "status",
                 status: "reconnecting",
-                reason: "refreshing credentials"
+                reason: deviceRejected ? "refreshing device profile" : "refreshing credentials"
               });
               try {
                 upstream?.close(1000, "refreshing credentials");

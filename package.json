@@ -35,6 +35,7 @@
     "hono": "^4.7.7",
     "nanoid": "^5.1.5",
     "resend": "^6.10.0",
+    "skland-kit": "^0.3.5",
     "zod": "^4.3.6"
   },
   "devDependencies": {
@@ -44,6 +45,7 @@
     "@typescript-eslint/parser": "^8.46.1",
     "eslint": "^9.24.0",
     "typescript": "^5.8.3",
+    "user-agents": "^2.1.161",
     "vitest": "^3.2.4",
     "wrangler": "^4.113.0"
   },

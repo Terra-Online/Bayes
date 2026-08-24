@@ -1,6 +1,6 @@
 import { parseApiEnvelope, parseRawApiEnvelope } from "./envelope";
 import { buildDeviceHeaders, buildUrl, getEndfieldHosts } from "./hosts";
-import { getSignature } from "./signature";
+import { getEndfieldTimestamp, getSignature } from "./signature";
 import type {
   EndfieldDeviceProfile,
   EndfieldMapId,
@@ -20,8 +20,8 @@ export async function getEndfieldMapMarkList(args: {
   const hosts = getEndfieldHosts(args.provider);
   const path = "/web/v1/game/endfield/map/mark/list";
   const signPath = `${path}mapId=${args.mapId}&roleId=${args.roleId}&serverId=${args.serverId}`;
-  const timestamp = String(Math.floor(Date.now() / 1000));
-  const sign = await getSignature(signPath, timestamp, args.token);
+  const timestamp = getEndfieldTimestamp();
+  const sign = await getSignature(signPath, timestamp, args.token, "", args.deviceProfile?.deviceId ?? "");
   const query = new URLSearchParams({
     mapId: args.mapId,
     roleId: args.roleId,
@@ -65,8 +65,8 @@ export async function agreePolicy(args: {
     roleId: args.roleId,
     serverId: String(args.serverId)
   });
-  const timestamp = String(Math.floor(Date.now() / 1000));
-  const sign = await getSignature(path, timestamp, args.token, body);
+  const timestamp = getEndfieldTimestamp();
+  const sign = await getSignature(path, timestamp, args.token, body, args.deviceProfile?.deviceId ?? "");
   const origin = args.provider === "skland"
     ? "https://game.skland.com"
     : "https://game.skport.com";

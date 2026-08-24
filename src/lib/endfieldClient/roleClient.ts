@@ -1,7 +1,7 @@
 import { ApiError } from "../errors";
 import { parseApiEnvelope } from "./envelope";
 import { buildDeviceHeaders, buildUrl, getEndfieldHosts } from "./hosts";
-import { getSignature } from "./signature";
+import { getEndfieldTimestamp, getSignature } from "./signature";
 import type { EndfieldDeviceProfile, EndfieldProvider, EndfieldRoleOption, PlayerBindingData } from "./types";
 
 export async function getEndfieldRoles(
@@ -12,8 +12,8 @@ export async function getEndfieldRoles(
 ): Promise<EndfieldRoleOption[]> {
   const hosts = getEndfieldHosts(provider);
   const path = "/api/v1/game/player/binding";
-  const timestamp = String(Math.floor(Date.now() / 1000));
-  const sign = await getSignature(path, timestamp, token, "");
+  const timestamp = getEndfieldTimestamp();
+  const sign = await getSignature(path, timestamp, token, "", deviceProfile?.deviceId ?? "");
 
   const response = await fetch(buildUrl(hosts.baseUrl, path), {
     method: "GET",

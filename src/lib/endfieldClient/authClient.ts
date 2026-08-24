@@ -1,7 +1,7 @@
 import { ApiError, isApiError } from "../errors";
 import { parseApiEnvelope, parseAuthEnvelope } from "./envelope";
 import { buildDeviceHeaders, buildUrl, getEndfieldHosts } from "./hosts";
-import { getSignature } from "./signature";
+import { getEndfieldTimestamp, getSignature } from "./signature";
 import type {
   EmailPasswordTokenData,
   EndfieldCaptchaSolution,
@@ -171,6 +171,9 @@ export async function grantEndfieldOAuthCode(
     headers: {
       accept: "*/*",
       "content-type": "application/json;charset=UTF-8",
+      origin: provider === "skland" ? "https://www.skland.com" : "https://www.skport.com",
+      referer: provider === "skland" ? "https://www.skland.com/" : "https://www.skport.com/",
+      ...(provider === "skland" ? { "x-requested-with": "com.hypergryph.skland" } : {}),
       ...buildDeviceHeaders(deviceProfile)
     },
     body: JSON.stringify({
@@ -209,11 +212,17 @@ export async function generateEndfieldCredByCode(
   deviceProfile?: EndfieldDeviceProfile
 ): Promise<GenerateCredData> {
   const hosts = getEndfieldHosts(provider);
+  const timestamp = getEndfieldTimestamp();
   const response = await fetch(buildUrl(hosts.baseUrl, "/web/v1/user/auth/generate_cred_by_code"), {
     method: "POST",
     headers: {
       "content-type": "application/json",
       "accept-language": "en-US",
+      origin: provider === "skland" ? "https://www.skland.com" : "https://www.skport.com",
+      referer: provider === "skland" ? "https://www.skland.com/" : "https://www.skport.com/",
+      platform: "3",
+      timestamp,
+      vname: "1.0.0",
       ...buildDeviceHeaders(deviceProfile)
     },
     body: JSON.stringify({ kind: 1, code })
@@ -233,8 +242,8 @@ export async function refreshEndfieldAuth(args: {
 }): Promise<RefreshAuthData> {
   const hosts = getEndfieldHosts(args.provider);
   const path = "/web/v1/auth/refresh";
-  const timestamp = String(Math.floor(Date.now() / 1000));
-  const sign = await getSignature(path, timestamp, args.cred ?? "");
+  const timestamp = getEndfieldTimestamp();
+  const sign = await getSignature(path, timestamp, args.cred ?? "", "", args.deviceProfile?.deviceId ?? "");
 
   const response = await fetch(buildUrl(hosts.baseUrl, path), {
     method: "GET",

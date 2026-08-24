@@ -2,6 +2,10 @@ import { createHash } from "node:crypto";
 
 const textEncoder = new TextEncoder();
 
+export function getEndfieldTimestamp(): string {
+  return String(Math.floor((Date.now() - 2_000) / 1000));
+}
+
 export function toHex(bytes: Uint8Array): string {
   return Array.from(bytes)
     .map((byte) => byte.toString(16).padStart(2, "0"))
@@ -24,11 +28,12 @@ export async function hmacSha256Hex(message: string, secret: string): Promise<st
   return toHex(new Uint8Array(signature));
 }
 
-export async function getSignature(path: string, timestamp: string, token: string, body = ""): Promise<string> {
+export async function getSignature(path: string, timestamp: string, token: string, body = "", deviceId = ""): Promise<string> {
+  const dId = deviceId ? `B${deviceId}` : "";
   const headerJson = JSON.stringify({
     platform: "3",
     timestamp,
-    dId: "",
+    dId,
     vName: "1.0.0"
   });
 

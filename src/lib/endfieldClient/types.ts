@@ -22,7 +22,7 @@ export interface EndfieldPositionData {
 }
 
 export interface EndfieldDeviceProfile {
-  version: 1;
+  version: 3;
   userAgent: string;
   secChUa?: string;
   secChUaMobile?: string;

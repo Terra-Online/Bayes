@@ -3,12 +3,13 @@ import { parseApiEnvelope } from "./envelope";
 import { buildDeviceHeaders, buildUrl, buildWebSocketHttpUrl, getEndfieldHosts } from "./hosts";
 import {
   isEndfieldCredentialErrorCode,
+  isEndfieldDeviceErrorCode,
   normalizeEndfieldPositionData,
   parseEndfieldPositionSocketError,
   parseEndfieldPositionSocketMessage,
   parseEndfieldSocketEnvelope
 } from "./positionParser";
-import { createMessageId, getSignature } from "./signature";
+import { createMessageId, getEndfieldTimestamp, getSignature } from "./signature";
 import type { EndfieldDeviceProfile, EndfieldPositionData, EndfieldProvider, WebSocketTokenData } from "./types";
 
 const ENDFIELD_POSITION_SOCKET_HEARTBEAT_MS = 10_000;
@@ -35,7 +36,10 @@ export async function getEndfieldPosition(args: {
   try {
     return await getEndfieldPositionHttpFallback(args);
   } catch (httpError) {
-    if (httpError instanceof ApiError && httpError.status < 500) {
+    if (
+      httpError instanceof ApiError
+      && (httpError.status < 500 || httpError.code === "ENDFIELD_DEVICE_REJECTED")
+    ) {
       throw httpError;
     }
     try {
@@ -67,8 +71,8 @@ export async function getEndfieldPositionHttpFallback(args: {
   const hosts = getEndfieldHosts(args.provider);
   const path = "/web/v1/game/endfield/map/me/position";
   const signPath = `${path}roleId=${args.roleId}&serverId=${args.serverId}`;
-  const timestamp = String(Math.floor(Date.now() / 1000));
-  const sign = await getSignature(signPath, timestamp, args.token);
+  const timestamp = getEndfieldTimestamp();
+  const sign = await getSignature(signPath, timestamp, args.token, "", args.deviceProfile?.deviceId ?? "");
   const query = new URLSearchParams({
     roleId: args.roleId,
     serverId: String(args.serverId)
@@ -110,8 +114,8 @@ export async function getEndfieldWebSocketToken(args: {
 }): Promise<string> {
   const hosts = getEndfieldHosts(args.provider);
   const path = "/api/v1/websocket/token";
-  const timestamp = String(Math.floor(Date.now() / 1000));
-  const sign = await getSignature(path, timestamp, args.token, "");
+  const timestamp = getEndfieldTimestamp();
+  const sign = await getSignature(path, timestamp, args.token, "", args.deviceProfile?.deviceId ?? "");
 
   const response = await fetch(buildUrl(hosts.baseUrl, path), {
     method: "GET",
@@ -171,8 +175,8 @@ export async function connectEndfieldPositionSocket(args: {
   });
   const path = "/ws/v1/game/endfield/map";
   const signPath = `${path}roleId=${args.roleId}&serverId=${args.serverId}`;
-  const timestamp = String(Math.floor(Date.now() / 1000));
-  const sign = await getSignature(signPath, timestamp, args.token);
+  const timestamp = getEndfieldTimestamp();
+  const sign = await getSignature(signPath, timestamp, args.token, "", args.deviceProfile?.deviceId ?? "");
   const query = new URLSearchParams({
     roleId: args.roleId,
     serverId: String(args.serverId)
@@ -392,11 +396,16 @@ export async function getEndfieldPositionFromSocket(
         if (error) {
           seenCodes.add(error.code);
           const credentialRejected = isEndfieldCredentialErrorCode(error.code);
+          const deviceRejected = isEndfieldDeviceErrorCode(error.code);
           settle("position unavailable", () => {
             reject(new ApiError(
-              401,
-              credentialRejected ? "ENDFIELD_CREDENTIAL_REJECTED" : "ENDFIELD_POSITION_UNAVAILABLE",
-              credentialRejected
+              deviceRejected ? 502 : 401,
+              deviceRejected
+                ? "ENDFIELD_DEVICE_REJECTED"
+                : (credentialRejected ? "ENDFIELD_CREDENTIAL_REJECTED" : "ENDFIELD_POSITION_UNAVAILABLE"),
+              deviceRejected
+                ? (error.message ?? "Endfield device information was rejected.")
+                : credentialRejected
                 ? "Endfield credential was rejected."
                 : "Player is not currently logged into the game or position is unavailable.",
               {
