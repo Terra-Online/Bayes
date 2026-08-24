@@ -10,6 +10,28 @@ Cloudflare Workers + Hono backend for:
 
 This is a foundation implementation based on PRD and is intentionally incremental.
 
+## WAF allowlist
+
+The production deploy can synchronize a Cloudflare custom WAF rule from the
+top-level `app.route(...)` mounts in `src/app.ts`. The generated
+`config/waf-allowlist.json` is checked into the repository so CI can detect
+route/config drift.
+
+```bash
+pnpm run waf:sync       # regenerate the JSON and print the expression
+pnpm run waf:check      # fail when the generated JSON is stale
+pnpm run waf:sync:apply # update the Cloudflare ruleset
+```
+
+`waf:sync:apply` reads `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ZONE_ID`, and (for
+an account-scoped token) `CLOUDFLARE_ACCOUNT_ID` from
+`.waf.vars` (copy `.waf.vars.example`). Use a dedicated token scoped to the
+`opendfieldmap.org` zone with `Zone Read` and `Zone WAF Edit`. Do not put this
+token in `.dev.vars`: the deploy script passes `.dev.vars` to Wrangler as a
+Worker secrets file. The normal deploy script only applies WAF when
+`WAF_SYNC=1` is explicitly set; use `WAF_ENV_FILE=/path/to/waf.vars` to select
+another file.
+
 ## Tech Stack
 
 - Cloudflare Workers

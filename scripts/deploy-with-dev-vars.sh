@@ -102,6 +102,19 @@ if [[ "$betterAuthUrl" == *"localhost"* || "$betterAuthUrl" == *"127.0.0.1"* ]];
   exit 1
 fi
 
+if [[ "${WAF_SYNC:-0}" == "1" ]]; then
+  echo "[deploy-with-dev-vars] Synchronizing WAF allowlist from src/app.ts"
+  WAF_ENV_FILE="${WAF_ENV_FILE:-.waf.vars}"
+  if [[ ! -f "$WAF_ENV_FILE" ]]; then
+    echo "[deploy-with-dev-vars] Missing WAF env file: $WAF_ENV_FILE" >&2
+    echo "[deploy-with-dev-vars] Create it from .waf.vars.example or set WAF_ENV_FILE." >&2
+    exit 1
+  fi
+  pnpm exec node scripts/sync-waf-allowlist.mjs --apply --vars-file "$WAF_ENV_FILE"
+else
+  echo "[deploy-with-dev-vars] WAF sync skipped (set WAF_SYNC=1 to apply)"
+fi
+
 echo "[deploy-with-dev-vars] Uploading secrets from $ENV_FILE and deploying with --keep-vars"
 deploy_logger
 

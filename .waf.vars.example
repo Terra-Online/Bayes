@@ -1,0 +1,8 @@
+# Cloudflare API token used only by scripts/sync-waf-allowlist.mjs.
+# Do not put this token in .dev.vars: deploy passes .dev.vars to Wrangler.
+CLOUDFLARE_API_TOKEN=""
+# Set this for an account-scoped API Token. Leave empty for a user-scoped token.
+CLOUDFLARE_ACCOUNT_ID=""
+CLOUDFLARE_ZONE_ID=""
+# Optional; defaults to api.opendfieldmap.org
+WAF_HOST="api.opendfieldmap.org"

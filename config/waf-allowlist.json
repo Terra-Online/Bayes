@@ -1,0 +1,16 @@
+{
+  "host": "api.opendfieldmap.org",
+  "paths": [
+    "/",
+    "/admin/v1/reports",
+    "/auth/v1",
+    "/binding/v1",
+    "/health/v1",
+    "/locator",
+    "/moderation/v1",
+    "/notify/v1",
+    "/progress/v1",
+    "/sync/v1",
+    "/uploads/v1"
+  ]
+}
