@@ -46,6 +46,13 @@ function getAuthCacheKey(headers: Headers): string | null {
   return cookie ? `cookie:${cookie}` : null;
 }
 
+export function invalidateAuthUserCache(headers: Headers): void {
+  const cacheKey = getAuthCacheKey(headers);
+  if (cacheKey) {
+    authUserCache.delete(cacheKey);
+  }
+}
+
 function pruneAuthUserCache(now: number): void {
   if (authUserCache.size <= AUTH_USER_CACHE_MAX_ENTRIES) return;
 

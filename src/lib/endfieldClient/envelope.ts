@@ -96,7 +96,14 @@ export async function parseRawApiEnvelope(response: Response): Promise<EndfieldM
   }
 
   if (!response.ok || json.code !== 0) {
-    if (response.status === 401 || response.status === 403 || json.code === 401 || json.code === 403 || json.code === 10000) {
+    if (
+      response.status === 401
+      || response.status === 403
+      || json.code === 401
+      || json.code === 403
+      || json.code === 10000
+      || json.code === 10002
+    ) {
       throw new ApiError(
         401,
         "ENDFIELD_CREDENTIAL_REJECTED",

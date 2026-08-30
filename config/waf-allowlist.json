@@ -7,6 +7,7 @@
     "/binding/v1",
     "/health/v1",
     "/locator",
+    "/me/v1",
     "/moderation/v1",
     "/notify/v1",
     "/progress/v1",

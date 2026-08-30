@@ -16,19 +16,21 @@ export function requireUser(c: AppContext) {
   return user;
 }
 
-export function serializeLocatorError(error: unknown) {
+export function serializeLocatorError(error: unknown, requestId?: string) {
   if (error instanceof ApiError) {
     return {
       status: error.status,
       code: error.code,
       message: error.message,
-      details: error.details
+      details: error.details,
+      ...(requestId ? { requestId } : {})
     };
   }
 
   return {
     status: 500,
     code: "LOCATOR_STREAM_ERROR",
-    message: error instanceof Error ? error.message : "Locator stream failed."
+    message: error instanceof Error ? error.message : "Locator stream failed.",
+    ...(requestId ? { requestId } : {})
   };
 }

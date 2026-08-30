@@ -62,6 +62,9 @@ another file.
 	- Social login: /auth/v1/sign-in/social
 - Compatibility endpoints: /auth/v1/register (email+password+otp bridge)
 - Session endpoints: /auth/v1/session, /auth/v1/sign-out
+- Account endpoints: /auth/v1/list-accounts, /auth/v1/link-social, /auth/v1/unlink-account
+- Profile endpoint: PATCH /auth/v1/profile
+- User center: GET /me/v1/overview, GET /me/v1/contributions
 - GET /progress/v1/state
 - POST /progress/v1/sync
 - POST /uploads/v1/images

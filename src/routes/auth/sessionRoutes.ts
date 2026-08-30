@@ -2,7 +2,7 @@ import type { Hono } from "hono";
 import type { Context } from "hono";
 import { z } from "zod";
 import { ApiError } from "../../lib/errors";
-import { requireAuth } from "../../middleware/auth";
+import { invalidateAuthUserCache, requireAuth } from "../../middleware/auth";
 import { rateLimit } from "../../middleware/rate-limit";
 import { formatPublicUid, getErrorMessage, updateUserNickname } from "../../repositories/users";
 import type { AppEnv } from "../../types/app";
@@ -82,7 +82,9 @@ export function registerSessionAuthRoutes(app: Hono<AppEnv>) {
       throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
     }
 
-    return c.json({ user: toSessionUser(user) });
+    const response = c.json({ user: toSessionUser(user) });
+    response.headers.set("Cache-Control", "private, no-store");
+    return response;
   });
 
   app.patch("/profile", requireAuth, rateLimit("auth"), async (c) => {
@@ -105,6 +107,8 @@ export function registerSessionAuthRoutes(app: Hono<AppEnv>) {
         avatar: parsed.data.avatar
       });
 
+      invalidateAuthUserCache(c.req.raw.headers);
+
       return c.json({
         user: {
           uid: formatPublicUid(updated.uidNumber, updated.uidSuffix),
@@ -113,6 +117,7 @@ export function registerSessionAuthRoutes(app: Hono<AppEnv>) {
           avatar: updated.avt,
           email: updated.email,
           nickname: updated.nickname,
+          registeredAt: updated.createdAt,
           needsProfileSetup: !updated.nicknameCustomized
         }
       });

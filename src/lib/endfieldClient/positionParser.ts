@@ -9,6 +9,14 @@ export function isEndfieldCredentialErrorCode(value: unknown): boolean {
   return code === 10000 || code === 10002;
 }
 
+/** 10002 means the game login session is no longer valid and must be rebound. */
+export function isEndfieldCredentialExpiredErrorCode(value: unknown): boolean {
+  const code = typeof value === "number"
+    ? value
+    : (typeof value === "string" && value.trim() !== "" ? Number(value) : Number.NaN);
+  return code === 10002;
+}
+
 export function isEndfieldDeviceErrorCode(value: unknown): boolean {
   const code = typeof value === "number"
     ? value

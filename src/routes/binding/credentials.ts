@@ -7,6 +7,7 @@ import {
 } from "../../lib/endfieldClient/deviceProfile";
 import {
   isEndfieldCredentialErrorCode,
+  isEndfieldCredentialExpiredErrorCode,
   isEndfieldDeviceErrorCode
 } from "../../lib/endfieldClient/positionParser";
 import { ApiError } from "../../lib/errors";
@@ -68,6 +69,7 @@ export async function getDecryptedBinding(
 export function isAutoRefreshableEndfieldError(error: unknown): boolean {
   if (!(error instanceof ApiError)) return false;
   const details = error.details as { upstreamCode?: unknown; upstreamStatus?: unknown } | undefined;
+  if (isEndfieldCredentialExpiredErrorCode(details?.upstreamCode)) return false;
   return error.code === "ENDFIELD_CREDENTIAL_REJECTED"
     || error.code === "ENDFIELD_DEVICE_REJECTED"
     || details?.upstreamStatus === 401

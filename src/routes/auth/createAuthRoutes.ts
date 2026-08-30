@@ -8,6 +8,7 @@ import { registerPasswordResetRoutes } from "./passwordResetRoutes";
 import { registerSocialAuthRoutes } from "./socialRoutes";
 import { handleSessionExchange } from "./sessionExchange";
 import { registerSessionAuthRoutes } from "./sessionRoutes";
+import { registerAccountAuthRoutes } from "./accountRoutes";
 
 export function createAuthRoutes() {
   const app = new Hono<AppEnv>();
@@ -32,6 +33,7 @@ export function createAuthRoutes() {
   });
 
   registerSessionAuthRoutes(app);
+  registerAccountAuthRoutes(app, { forwardToAuthJsonPath });
 
   app.on(["GET", "POST", "OPTIONS"], "/*", async () => {
     throw new ApiError(404, "NOT_FOUND", "Not found.");

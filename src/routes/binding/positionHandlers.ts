@@ -1,6 +1,7 @@
 import { connectEndfieldPositionSocket } from "../../lib/endfieldClient/positionSocket";
 import {
   isEndfieldCredentialErrorCode,
+  isEndfieldCredentialExpiredErrorCode,
   parseEndfieldPositionSocketError,
   parseEndfieldPositionSocketMessage
 } from "../../lib/endfieldClient/positionParser";
@@ -150,9 +151,11 @@ export async function handleEndfieldPositionSocket(c: AppContext) {
           const error = parseEndfieldPositionSocketError(data);
           if (error) {
             const credentialRejected = isEndfieldCredentialErrorCode(error.code);
+            const credentialExpired = isEndfieldCredentialExpiredErrorCode(error.code);
             const deviceRejected = error.code === 10001;
             const errorPayload = {
               type: "error",
+              requestId: c.get("requestId"),
               error: {
                 status: deviceRejected ? 502 : 401,
                 code: deviceRejected
@@ -166,10 +169,11 @@ export async function handleEndfieldPositionSocket(c: AppContext) {
                 details: {
                   upstreamCode: error.code,
                   upstreamMessage: error.message
-                }
+                },
+                requestId: c.get("requestId")
               }
             };
-            if (credentialRejected || deviceRejected) {
+            if ((credentialRejected && !credentialExpired) || deviceRejected) {
               upstreamGeneration += 1;
               sendJson({
                 type: "status",
@@ -238,6 +242,17 @@ export async function handleEndfieldPositionSocket(c: AppContext) {
       }
       upstream = connectedSocket;
     } catch (error) {
+      const details = error instanceof ApiError
+        ? error.details as { upstreamCode?: unknown; upstreamStatus?: unknown } | undefined
+        : undefined;
+      if (error instanceof ApiError && isEndfieldCredentialExpiredErrorCode(details?.upstreamCode)) {
+        sendJson({
+          type: "error",
+          error: serializeLocatorError(error, c.get("requestId")),
+          requestId: c.get("requestId")
+        });
+        return;
+      }
       if (isAutoRefreshableEndfieldError(error)) {
         const refreshed = await refreshBindingCredentials(c, currentUserUid, currentBinding).catch(() => null);
         if (refreshed && !closed) {
@@ -245,9 +260,6 @@ export async function handleEndfieldPositionSocket(c: AppContext) {
           scheduleReconnect();
           return;
         }
-        const details = error instanceof ApiError
-          ? error.details as { upstreamCode?: unknown; upstreamStatus?: unknown } | undefined
-          : undefined;
         if (
           error instanceof ApiError
           && (
@@ -261,14 +273,16 @@ export async function handleEndfieldPositionSocket(c: AppContext) {
         ) {
           sendJson({
             type: "error",
-            error: serializeLocatorError(error)
+            error: serializeLocatorError(error, c.get("requestId")),
+            requestId: c.get("requestId")
           });
           return;
         }
       }
       sendJson({
         type: "error",
-        error: serializeLocatorError(error)
+        error: serializeLocatorError(error, c.get("requestId")),
+        requestId: c.get("requestId")
       });
       scheduleReconnect();
     }
@@ -284,7 +298,8 @@ export async function handleEndfieldPositionSocket(c: AppContext) {
     } catch (error) {
       sendJson({
         type: "error",
-        error: serializeLocatorError(error)
+        error: serializeLocatorError(error, c.get("requestId")),
+        requestId: c.get("requestId")
       });
       close();
       try {

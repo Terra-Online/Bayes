@@ -12,6 +12,7 @@ import { createModerationRoutes } from "./routes/moderation";
 import { createNotifyRoutes } from "./routes/notify";
 import { createProgressRoutes } from "./routes/progress/createProgressRoutes";
 import { createUploadRoutes } from "./routes/uploads";
+import { createMeRoutes } from "./routes/me";
 import type { AppEnv } from "./types/app";
 
 const DEFAULT_CORS_ORIGINS = [
@@ -106,6 +107,7 @@ export function createApp() {
   app.route("/uploads/v1", createUploadRoutes());
   app.route("/moderation/v1", createModerationRoutes());
   app.route("/notify/v1", createNotifyRoutes());
+  app.route("/me/v1", createMeRoutes());
 
   app.get("/", (c) => c.json({ status: "ok", message: "OEM backend is running." }));
 
