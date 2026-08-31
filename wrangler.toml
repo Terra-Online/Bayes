@@ -109,6 +109,9 @@ queue = "oem-translation"
 binding = "OEM_WEBHOOK_Q"
 queue = "oem-webhook"
 
+[[send_email]]
+name = "OEM_ID_MAILS"
+
 [[queues.consumers]]
 queue = "oem-moderation"
 max_batch_size = 10
@@ -198,6 +201,9 @@ queue = "oem-translation"
 [[env.local.queues.producers]]
 binding = "OEM_WEBHOOK_Q"
 queue = "oem-webhook"
+
+[[env.local.send_email]]
+name = "OEM_ID_MAILS"
 
 [[env.local.queues.consumers]]
 queue = "oem-moderation"

@@ -167,6 +167,7 @@ src/lib/emailBlacklist.json
 .env.local
 /.idea/
 *.spec.ts
+!src/lib/email/sender.spec.ts
 *.test.ts
 
 docs/

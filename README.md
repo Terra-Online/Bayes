@@ -111,6 +111,19 @@ Then fill values in .dev.vars:
 - OPENAI_API_KEY (optional in local mode)
 - ENABLE_SCHEDULED_MODERATION (optional, default: false)
 - RESEND_AUTH_KEY
-- RESEND_FROM_EMAI
+- EMAIL_PROVIDER_MODE (resend_only / resend_then_cloudflare / cloudflare_only)
+- EMAIL_PRIMARY_PROVIDER (resend / cloudflare, optional compatibility setting)
+- EMAIL_FALLBACK_ENABLED (optional, default: true)
+- EMAIL_RESEND_DAILY_LIMIT (optional, default: 100)
+- EMAIL_FROM_EMAIL / EMAIL_FROM_NAME
 - EMAIL_TEMPLATE_DEFAULT_LOCALE (optional: zh-CN / zh-HK / en / ja / ko, default: en)
 - Optional overrides for TTL and upload constraints
+
+Email sending uses Resend first and the Cloudflare `OEM_ID_MAILS` binding as the optional
+fallback. Resend's daily reservation and provider state are tracked in the existing
+Upstash Redis instance with short-lived UTC-date keys. Configure the Cloudflare Email
+Sending domain and binding before enabling `resend_then_cloudflare` in production.
+
+`EMAIL_FROM_EMAIL` and `EMAIL_FROM_NAME` are the canonical sender settings. The legacy
+`RESEND_FROM_EMAIL` and `RESEND_FROM_NAME` variables remain supported as a compatibility
+fallback, but should not be added to new deployments.

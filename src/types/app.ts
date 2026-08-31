@@ -21,6 +21,7 @@ export interface Bindings {
   OEM_MODERATION_Q: Queue<OemModerationQueueMessage>;
   OEM_TRANSLATION_Q: Queue<OemTranslationQueueMessage>;
   OEM_WEBHOOK_Q: Queue<OemWebhookQueueMessage>;
+  OEM_ID_MAILS: SendEmail;
   UPSTASH_REDIS_REST_URL: string;
   UPSTASH_REDIS_REST_TOKEN: string;
   BETTER_AUTH_SECRET?: string;
@@ -61,6 +62,12 @@ export interface Bindings {
   RESEND_AUTH_KEY?: string;
   RESEND_FROM_EMAIL?: string;
   RESEND_FROM_NAME?: string;
+  EMAIL_PROVIDER_MODE?: string;
+  EMAIL_PRIMARY_PROVIDER?: string;
+  EMAIL_FALLBACK_ENABLED?: string;
+  EMAIL_RESEND_DAILY_LIMIT?: string;
+  EMAIL_FROM_EMAIL?: string;
+  EMAIL_FROM_NAME?: string;
   EMAIL_TEMPLATE_DEFAULT_LOCALE?: string;
   LOCK_PROGRESS_ENDPOINTS?: string;
   LOCK_MODERATION_ENDPOINTS?: string;

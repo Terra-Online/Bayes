@@ -57,10 +57,32 @@ REQUIRED_KEYS=(
   GITHUB_CLIENT_SECRET
   DISCORD_CLIENT_ID
   DISCORD_CLIENT_SECRET
-  RESEND_AUTH_KEY
-  RESEND_FROM_EMAIL
-  RESEND_FROM_NAME
 )
+
+emailProviderModeLine="$(rg -m1 '^EMAIL_PROVIDER_MODE=' "$ENV_FILE" || true)"
+emailProviderMode="${emailProviderModeLine#*=}"
+emailProviderMode="${emailProviderMode%\"}"
+emailProviderMode="${emailProviderMode#\"}"
+emailPrimaryLine="$(rg -m1 '^EMAIL_PRIMARY_PROVIDER=' "$ENV_FILE" || true)"
+emailPrimary="${emailPrimaryLine#*=}"
+emailPrimary="${emailPrimary%\"}"
+emailPrimary="${emailPrimary#\"}"
+
+if [[ "$emailProviderMode" != "cloudflare_only" && "$emailPrimary" != "cloudflare" ]]; then
+  REQUIRED_KEYS+=(RESEND_AUTH_KEY)
+fi
+
+has_non_empty_key() {
+  local key="$1"
+  local line="$(rg -m1 "^${key}=" "$ENV_FILE" || true)"
+  if [[ -z "$line" ]]; then
+    return 1
+  fi
+  local value="${line#*=}"
+  value="${value%\"}"
+  value="${value#\"}"
+  [[ -n "$value" ]]
+}
 
 MISSING_KEYS=()
 for key in "${REQUIRED_KEYS[@]}"; do
@@ -79,6 +101,10 @@ for key in "${REQUIRED_KEYS[@]}"; do
   fi
 
 done
+
+if ! has_non_empty_key EMAIL_FROM_EMAIL && ! has_non_empty_key RESEND_FROM_EMAIL; then
+  MISSING_KEYS+=("EMAIL_FROM_EMAIL or RESEND_FROM_EMAIL")
+fi
 
 if [[ ${#MISSING_KEYS[@]} -gt 0 ]]; then
   echo "[deploy-with-dev-vars] Missing or empty required keys in $ENV_FILE:" >&2
