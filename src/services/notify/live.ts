@@ -80,6 +80,13 @@ export async function publishNotificationsCreated(
 }
 
 export class OEMNotificationDO extends DurableObject<Bindings> {
+  constructor(ctx: DurableObjectState, env: Bindings) {
+    super(ctx, env);
+    ctx.setWebSocketAutoResponse(
+      new WebSocketRequestResponsePair("ping", "pong")
+    );
+  }
+
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/connect") {
