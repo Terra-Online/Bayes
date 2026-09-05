@@ -27,7 +27,7 @@ export interface RuntimeConfig {
   };
 }
 
-const DEFAULT_SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
+const DEFAULT_SESSION_TTL_SECONDS = 180 * 24 * 60 * 60;
 const DEFAULT_PROGRESS_TTL_SECONDS = 7 * 24 * 60 * 60;
 const DEFAULT_UPLOAD_URL_TTL_SECONDS = 15 * 60;
 const DEFAULT_MAX_UPLOAD_BYTES = 15 * 1024 * 1024;

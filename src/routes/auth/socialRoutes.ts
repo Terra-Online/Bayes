@@ -1,4 +1,6 @@
 import type { Hono } from "hono";
+import { createAuth } from "../../lib/auth/createAuth";
+import { AUTH_EXCHANGE_CHALLENGE_PARAM, createOAuthExchangeProof } from "../../lib/auth/browserSession";
 import { ApiError } from "../../lib/errors";
 import { rateLimit } from "../../middleware/rate-limit";
 import type { AppEnv } from "../../types/app";
@@ -8,7 +10,7 @@ import {
   getProviderFromCallbackPath,
   toSafeTrustedUrlLog,
 } from "./callbacks";
-import { resolveTrustedRequestOrigin } from "./frontendOrigins";
+import { parseTrustedFrontendOrigins, resolveTrustedRequestOrigin } from "./frontendOrigins";
 import type { ForwardToAuthJsonPath, ForwardToAuthRawRequest } from "./types";
 
 export function registerSocialAuthRoutes(
@@ -31,6 +33,17 @@ export function registerSocialAuthRoutes(
     }
 
     const nextBody = applyDefaultSocialCallbackUrls(c, body as Record<string, unknown>);
+    const requestOrigin = c.req.header("origin");
+    if (!requestOrigin || !parseTrustedFrontendOrigins(c).includes(requestOrigin)) {
+      throw new ApiError(403, "ORIGIN_NOT_ALLOWED", "A trusted frontend origin is required.");
+    }
+    const proof = await createOAuthExchangeProof(createAuth(c.env));
+    for (const key of ["callbackURL", "newUserCallbackURL"]) {
+      if (typeof nextBody[key] !== "string") continue;
+      const callback = new URL(nextBody[key]);
+      callback.searchParams.set(AUTH_EXCHANGE_CHALLENGE_PARAM, proof.challenge);
+      nextBody[key] = callback.toString();
+    }
     const provider = typeof nextBody.provider === "string" ? nextBody.provider : "unknown";
     console.warn("[auth][social-sign-in] forwarding", {
       provider,
@@ -51,11 +64,14 @@ export function registerSocialAuthRoutes(
       ),
     });
 
-    return deps.forwardToAuthJsonPath(
+    const response = await deps.forwardToAuthJsonPath(
       c,
       "/sign-in/social",
       nextBody,
     );
+    if (response.ok) response.headers.append("Set-Cookie", proof.cookie);
+    response.headers.set("Cache-Control", "private, no-store");
+    return response;
   });
 
   app.get("/reset-password/*", rateLimit("public"), async (c) => {

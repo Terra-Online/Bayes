@@ -18,6 +18,7 @@ const LOCAL_TRUSTED_ORIGINS = [
 ];
 
 export const DEFAULT_AUTH_BASE_URL = "https://api.opendfieldmap.org";
+export const PARTITIONED_AUTH_COOKIE_PREFIX = "oem-chips";
 
 export function isLocalBaseUrl(raw: string | undefined): boolean {
   const normalized = readEnv(raw);
@@ -48,7 +49,7 @@ export function parseAuthTrustedOrigins(env: Bindings): string[] {
 }
 
 export function resolveCookieAttributes(baseUrl: string | undefined):
-  | { sameSite: "none"; secure: true }
+  | { sameSite: "none"; secure: true; httpOnly: true; partitioned: true }
   | undefined {
   if (isLocalBaseUrl(baseUrl)) {
     return undefined;
@@ -57,5 +58,7 @@ export function resolveCookieAttributes(baseUrl: string | undefined):
   return {
     sameSite: "none",
     secure: true,
+    httpOnly: true,
+    partitioned: true,
   };
 }

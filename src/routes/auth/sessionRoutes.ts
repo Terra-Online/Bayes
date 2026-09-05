@@ -1,8 +1,10 @@
 import type { Hono } from "hono";
 import type { Context } from "hono";
 import { z } from "zod";
+import { createAuth } from "../../lib/auth/createAuth";
+import { getLegacyCookieExpirations, resolveBrowserSessionHeaders, serializeBrowserSessionCookie } from "../../lib/auth/browserSession";
 import { ApiError } from "../../lib/errors";
-import { invalidateAuthUserCache, requireAuth } from "../../middleware/auth";
+import { getRequestAuthHeaders, invalidateAuthUserCache, requireAuth } from "../../middleware/auth";
 import { rateLimit } from "../../middleware/rate-limit";
 import { formatPublicUid, getErrorMessage, updateUserNickname } from "../../repositories/users";
 import type { AppEnv } from "../../types/app";
@@ -76,13 +78,39 @@ function mapProfileUpdateError(error: unknown): never {
 }
 
 export function registerSessionAuthRoutes(app: Hono<AppEnv>) {
-  app.get("/session", requireAuth, rateLimit("auth"), async (c) => {
+  app.get("/session", async (c, next) => {
+    await next();
+    c.header("Cache-Control", "private, no-store");
+  }, requireAuth, rateLimit("auth"), async (c) => {
+    const auth = createAuth(c.env);
+    const browserSession = resolveBrowserSessionHeaders(auth, getRequestAuthHeaders(c.req.raw));
+    const { response: session, headers } = await auth.api.getSession({
+      headers: browserSession.headers,
+      returnHeaders: true,
+    });
+    for (const cookie of headers.getSetCookie()) {
+      c.header("Set-Cookie", cookie, { append: true });
+    }
+    if (!session) {
+      invalidateAuthUserCache(c.req.raw.headers);
+      throw new ApiError(401, "SESSION_REQUIRED", "Session is required.");
+    }
+
     const user = c.get("authUser");
     if (!user) {
       throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
     }
 
-    const response = c.json({ user: toSessionUser(user) });
+    if (browserSession.migrating) {
+      c.header("Set-Cookie", await serializeBrowserSessionCookie(auth, session.session), { append: true });
+    } else if (c.req.header("cookie")?.includes("better-auth.")) {
+      for (const cookie of getLegacyCookieExpirations(auth)) c.header("Set-Cookie", cookie, { append: true });
+    }
+
+    const response = c.json({
+      user: toSessionUser(user),
+      ...(browserSession.migrating ? { requiresCookieConfirmation: true } : {}),
+    });
     response.headers.set("Cache-Control", "private, no-store");
     return response;
   });

@@ -1,3 +1,6 @@
+import { getCookies } from "better-auth/cookies";
+import { createAuth } from "../../lib/auth/createAuth";
+import { AUTH_EXCHANGE_CHALLENGE_PARAM } from "../../lib/auth/browserSession";
 import { createSessionExchangeCode } from "./sessionExchange";
 import {
   isTrustedCallbackUrlForResponse,
@@ -48,7 +51,7 @@ function splitSetCookieHeader(setCookie: string): string[] {
   return result;
 }
 
-function readSessionTokenFromSetCookie(setCookie: string | null): string | null {
+function readSessionTokenFromSetCookie(setCookie: string | null, cookieName: string): string | null {
   if (!setCookie) {
     return null;
   }
@@ -61,7 +64,7 @@ function readSessionTokenFromSetCookie(setCookie: string | null): string | null 
     }
 
     const name = nameValue.slice(0, separatorIndex).trim();
-    if (name !== "__Secure-better-auth.session_token" && name !== "better-auth.session_token") {
+    if (name !== cookieName) {
       continue;
     }
 
@@ -80,13 +83,14 @@ function readSessionTokenFromSetCookie(setCookie: string | null): string | null 
   return null;
 }
 
-function readSessionTokenFromResponse(response: Response): string | null {
+function readSessionTokenFromResponse(c: AuthRouteContext, response: Response): string | null {
   const authToken = response.headers.get("set-auth-token")?.trim();
   if (authToken) {
     return authToken;
   }
 
-  return readSessionTokenFromSetCookie(response.headers.get("set-cookie"));
+  const cookieName = getCookies(createAuth(c.env).options).sessionToken.name;
+  return readSessionTokenFromSetCookie(response.headers.get("set-cookie"), cookieName);
 }
 
 function appendQueryParam(rawUrl: string, name: string, value: string): string {
@@ -183,7 +187,7 @@ export async function attachSessionExchangeCode(c: AuthRouteContext, response: R
     return response;
   }
 
-  const sessionToken = readSessionTokenFromResponse(response);
+  const sessionToken = readSessionTokenFromResponse(c, response);
   if (!sessionToken) {
     console.warn("[auth][oauth-callback] missing session token for exchange code", {
       provider: getProviderFromCallbackPath(c.req.path),
@@ -196,9 +200,15 @@ export async function attachSessionExchangeCode(c: AuthRouteContext, response: R
     return response;
   }
 
-  const code = await createSessionExchangeCode(c, sessionToken);
+  const frontendUrl = new URL(location);
+  const challenge = frontendUrl.searchParams.get(AUTH_EXCHANGE_CHALLENGE_PARAM);
+  if (!challenge || !/^[a-f0-9]{64}$/.test(challenge)) return response;
+  frontendUrl.searchParams.delete(AUTH_EXCHANGE_CHALLENGE_PARAM);
+  const code = await createSessionExchangeCode(c, sessionToken, frontendUrl.origin, challenge);
   const headers = new Headers(response.headers);
-  headers.set("location", appendQueryParam(location, "auth_code", code));
+  headers.set("location", appendQueryParam(frontendUrl.toString(), "auth_code", code));
+  headers.set("Cache-Control", "private, no-store");
+  headers.set("Referrer-Policy", "no-referrer");
   console.warn("[auth][oauth-callback] attached session exchange code", {
     provider: getProviderFromCallbackPath(c.req.path),
     status: response.status,

@@ -1,4 +1,7 @@
 import { Hono } from "hono";
+import { createAuth } from "../../lib/auth/createAuth";
+import { getLegacyCookieExpirations } from "../../lib/auth/browserSession";
+import { invalidateAuthUserCache } from "../../middleware/auth";
 import { ApiError } from "../../lib/errors";
 import { rateLimit } from "../../middleware/rate-limit";
 import type { AppEnv } from "../../types/app";
@@ -26,10 +29,19 @@ export function createAuthRoutes() {
     forwardToAuthRawRequest,
   });
 
-  app.post("/session/exchange", rateLimit("public"), handleSessionExchange);
+  app.post("/session/exchange", async (c, next) => {
+    await next();
+    c.header("Cache-Control", "private, no-store");
+  }, rateLimit("public"), handleSessionExchange);
 
   app.post("/sign-out", rateLimit("public"), async (c) => {
-    return forwardToAuthRawRequest(c);
+    const response = await forwardToAuthRawRequest(c);
+    if (response.ok) {
+      invalidateAuthUserCache(c.req.raw.headers);
+      for (const cookie of getLegacyCookieExpirations(createAuth(c.env))) response.headers.append("Set-Cookie", cookie);
+    }
+    response.headers.set("Cache-Control", "private, no-store");
+    return response;
   });
 
   registerSessionAuthRoutes(app);

@@ -1,5 +1,6 @@
 import type { Context, MiddlewareHandler } from "hono";
 import { createAuth } from "../lib/auth/createAuth";
+import { resolveBrowserSessionHeaders } from "../lib/auth/browserSession";
 import { ApiError } from "../lib/errors";
 import { ensureUserProfile, formatPublicUid } from "../repositories/users";
 import type { AppEnv, AuthUser, Role } from "../types/app";
@@ -50,6 +51,7 @@ export function invalidateAuthUserCache(headers: Headers): void {
   const cacheKey = getAuthCacheKey(headers);
   if (cacheKey) {
     authUserCache.delete(cacheKey);
+    authIdentityCache.delete(cacheKey);
   }
 }
 
@@ -90,7 +92,8 @@ async function fetchAuthIdentity(
   now: number
 ): Promise<AuthIdentity> {
   const auth = createAuth(env);
-  const session = await auth.api.getSession({ headers });
+  const browserSession = resolveBrowserSessionHeaders(auth, headers);
+  const session = await auth.api.getSession({ headers: browserSession.headers, query: { disableRefresh: true } });
   if (!session) {
     const authorization = headers.get("authorization")?.trim() ?? "";
     const hasBearerToken = authorization.toLowerCase().startsWith("bearer ");
@@ -210,9 +213,12 @@ export async function resolveRequestAuthUser(
   env: AppEnv["Bindings"],
   request: Request
 ): Promise<AuthUser> {
+  return resolveAuthUser(env, getRequestAuthHeaders(request));
+}
+
+export function getRequestAuthHeaders(request: Request): Headers {
   const url = new URL(request.url);
-  const headers = buildAuthHeaders(request.headers, url.searchParams.get("access_token"));
-  return resolveAuthUser(env, headers);
+  return buildAuthHeaders(request.headers, url.searchParams.get("access_token"));
 }
 
 export async function resolveContextAuthUser(c: Context<AppEnv>): Promise<AuthUser> {

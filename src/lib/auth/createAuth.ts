@@ -1,6 +1,7 @@
 import { betterAuth } from "better-auth";
 import { bearer, emailOTP } from "better-auth/plugins";
 import type { Bindings } from "../../types/app";
+import { getRuntimeConfig } from "../config";
 import { initResend, sendEmail } from "../email/sender";
 import {
   createOtpEmailTemplate,
@@ -9,7 +10,13 @@ import {
 import { envOrThrow, readEnv } from "../utils";
 import { toSerializableError } from "./errors";
 import { pickRequestFromCtx, resolvePreferredEmailLocale } from "./locale";
-import { DEFAULT_AUTH_BASE_URL, parseAuthTrustedOrigins, resolveCookieAttributes } from "./origins";
+import {
+  DEFAULT_AUTH_BASE_URL,
+  PARTITIONED_AUTH_COOKIE_PREFIX,
+  isLocalBaseUrl,
+  parseAuthTrustedOrigins,
+  resolveCookieAttributes,
+} from "./origins";
 import { createAuthSocialProviders } from "./providers";
 
 function generateNumericOtp(length: number): string {
@@ -26,6 +33,7 @@ function generateNumericOtp(length: number): string {
 
 export function createAuth(env: Bindings) {
   initResend(env);
+  const { sessionTtlSeconds } = getRuntimeConfig(env);
 
   return betterAuth({
     database: env.DB,
@@ -57,6 +65,8 @@ export function createAuth(env: Bindings) {
     },
     session: {
       modelName: "auth_sessions",
+      expiresIn: sessionTtlSeconds,
+      updateAge: Math.min(24 * 60 * 60, Math.floor(sessionTtlSeconds / 2)),
     },
     account: {
       modelName: "auth_accounts",
@@ -115,6 +125,7 @@ export function createAuth(env: Bindings) {
       }),
     ],
     advanced: {
+      cookiePrefix: isLocalBaseUrl(env.BETTER_AUTH_URL) ? undefined : PARTITIONED_AUTH_COOKIE_PREFIX,
       defaultCookieAttributes: resolveCookieAttributes(env.BETTER_AUTH_URL),
       ipAddress: {
         ipAddressHeaders: ["cf-connecting-ip"],

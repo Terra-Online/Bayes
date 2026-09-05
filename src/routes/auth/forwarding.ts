@@ -1,4 +1,5 @@
 import { createAuth } from "../../lib/auth/createAuth";
+import { resolveBrowserSessionHeaders } from "../../lib/auth/browserSession";
 import type { AuthRouteContext } from "./types";
 
 const HOP_BY_HOP_HEADERS = [
@@ -76,7 +77,7 @@ export function forwardToAuthJsonPath(
 
   const request = new Request(targetUrl.toString(), {
     method: "POST",
-    headers: forwardedHeaders,
+    headers: resolveBrowserSessionHeaders(auth, forwardedHeaders).headers,
     body: JSON.stringify(body),
   });
 
@@ -93,7 +94,7 @@ export function forwardToAuthRawRequest(c: AuthRouteContext) {
 
   const request = new Request(targetUrl.toString(), {
     method,
-    headers: forwardedHeaders,
+    headers: resolveBrowserSessionHeaders(auth, forwardedHeaders).headers,
     body: hasRequestBody ? c.req.raw.body : undefined,
   });
 
