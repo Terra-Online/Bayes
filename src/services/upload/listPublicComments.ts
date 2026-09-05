@@ -260,16 +260,29 @@ export async function handleListPublicComments(c: import("hono").Context<AppEnv>
   ]);
   if (!identity || !publicResponse.ok) return publicResponse;
 
-  const payload = await publicResponse.json() as { items: PublicSubmissionComment[] };
+  const payload = await publicResponse.json() as { items: PublicSubmissionComment[]; partial?: boolean };
+  const submissionIds: string[] = [];
+  const collectIds = (comments: PublicSubmissionComment[]): void => {
+    for (const comment of comments) {
+      submissionIds.push(comment.id);
+      collectIds(comment.replies);
+    }
+  };
+  collectIds(payload.items);
   const viewerState = await listCommentViewerStateByMarker(c.env.DB, {
     userId: identity.uid,
     markerIds: ids,
+    submissionIds,
     pendingLimit: 200
   });
   const publicComments = applyCommentViewerReactions(payload.items, viewerState.reactions);
   const items = mergeViewerPendingComments(publicComments, viewerState.pendingComments);
 
-  const response = c.json({ items });
+  const response = c.json({ ...payload, items });
+  for (const header of ["x-oem-partial-response", "x-oem-failed-marker-count"]) {
+    const value = publicResponse.headers.get(header);
+    if (value !== null) response.headers.set(header, value);
+  }
   response.headers.set("Cache-Control", "private, no-store");
   response.headers.set("x-oem-viewer-overlay", "comment");
   return response;

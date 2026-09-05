@@ -36,16 +36,15 @@ export async function listActiveImagesByMarker(
     return [];
   }
 
-  const placeholders = markerIds.map((_, index) => `?${index + 1}`).join(", ");
   const limit = Math.min(Math.max(payload.limit ?? 6, 1), 24);
   const filters: string[] = [
-    `poi_id IN (${placeholders})`,
+    "poi_id IN (SELECT value FROM json_each(?1))",
     "kind = 'image'",
     "status IN ('active', 'flagged', 'remove_request')"
   ];
-  const scope = buildImageScopeFilters(payload, markerIds.length);
+  const scope = buildImageScopeFilters(payload, 1);
   filters.push(...scope.clauses);
-  const limitBindingOffset = markerIds.length + scope.bindings.length;
+  const limitBindingOffset = 1 + scope.bindings.length;
   const viewerBindingOffset = limitBindingOffset + 1;
   const viewerSelect = payload.viewerUserId
     ? `,
@@ -64,7 +63,7 @@ export async function listActiveImagesByMarker(
          SELECT
            *,
            ROW_NUMBER() OVER (PARTITION BY poi_id ORDER BY created_at DESC, id DESC) AS poi_rank
-         FROM ugc_submissions
+         FROM ugc_submissions INDEXED BY idx_ugc_kind_status_poi_created
          WHERE ${filters.join(" AND ")}
        ),
        selected_images AS (
@@ -74,7 +73,7 @@ export async function listActiveImagesByMarker(
        ),
        upvote_counts AS (
          SELECT submission_id, COUNT(*) AS upvote_count
-         FROM ugc_submission_upvotes
+         FROM ugc_submission_upvotes INDEXED BY sqlite_autoindex_ugc_submission_upvotes_1
          WHERE active = 1
            AND submission_id IN (SELECT id FROM selected_images)
          GROUP BY submission_id
@@ -104,7 +103,7 @@ export async function listActiveImagesByMarker(
        LEFT JOIN users u ON u.uid = s.user_id
        ORDER BY s.poi_id ASC, s.created_at DESC, s.id DESC`
     )
-    .bind(...markerIds, ...scope.bindings, limit, ...viewerBindings)
+    .bind(JSON.stringify(markerIds), ...scope.bindings, limit, ...viewerBindings)
     .all<Record<string, unknown>>();
 
   return (result.results ?? []).map((row) => publicImageFromRow(row, payload.assetBaseUrl, payload.viewerUserId));
@@ -129,24 +128,23 @@ export async function listUserImagesByMarker(
     return [];
   }
 
-  const placeholders = markerIds.map((_, index) => `?${index + 2}`).join(", ");
   const limit = Math.min(Math.max(payload.limit ?? 6, 1), 24);
   const filters: string[] = [
     "user_id = ?1",
-    `poi_id IN (${placeholders})`,
+    "poi_id IN (SELECT value FROM json_each(?2))",
     "kind = 'image'",
     "status IN ('pending_openai', 'pending_audit', 'active', 'flagged', 'remove_request')"
   ];
   const extraBindings: Array<string | number> = [];
   if (payload.pathPrefix) {
-    filters.push(`file_path LIKE ?${markerIds.length + extraBindings.length + 2}`);
+    filters.push(`file_path LIKE ?${extraBindings.length + 3}`);
     extraBindings.push(`${payload.pathPrefix}/%`);
   }
   if (payload.excludePathPrefix) {
-    filters.push(`file_path NOT LIKE ?${markerIds.length + extraBindings.length + 2}`);
+    filters.push(`file_path NOT LIKE ?${extraBindings.length + 3}`);
     extraBindings.push(`${payload.excludePathPrefix}/%`);
   }
-  const limitBindingOffset = markerIds.length + extraBindings.length + 1;
+  const limitBindingOffset = extraBindings.length + 2;
 
   const result = await db
     .prepare(
@@ -154,7 +152,7 @@ export async function listUserImagesByMarker(
          SELECT
            *,
            ROW_NUMBER() OVER (PARTITION BY poi_id ORDER BY created_at DESC, id DESC) AS poi_rank
-         FROM ugc_submissions
+         FROM ugc_submissions INDEXED BY idx_ugc_user_kind_poi_created
          WHERE ${filters.join(" AND ")}
        ),
        selected_images AS (
@@ -164,7 +162,7 @@ export async function listUserImagesByMarker(
        ),
        upvote_counts AS (
          SELECT submission_id, COUNT(*) AS upvote_count
-         FROM ugc_submission_upvotes
+         FROM ugc_submission_upvotes INDEXED BY sqlite_autoindex_ugc_submission_upvotes_1
          WHERE active = 1
            AND submission_id IN (SELECT id FROM selected_images)
          GROUP BY submission_id
@@ -192,7 +190,7 @@ export async function listUserImagesByMarker(
        LEFT JOIN users u ON u.uid = s.user_id
        ORDER BY s.poi_id ASC, s.created_at DESC, s.id DESC`
     )
-    .bind(payload.userId, ...markerIds, ...extraBindings, limit)
+    .bind(payload.userId, JSON.stringify(markerIds), ...extraBindings, limit)
     .all<Record<string, unknown>>();
 
   return (result.results ?? []).map((row) => {
@@ -234,17 +232,19 @@ export async function listImageViewerReactionsByMarker(
   payload: {
     userId: string;
     markerIds: string[];
+    submissionIds: string[];
     pathPrefix?: string;
     excludePathPrefix?: string;
   }
 ): Promise<Map<string, ImageViewerReaction>> {
   const markerIds = [...new Set(payload.markerIds.map((item) => item.trim()).filter(Boolean))].slice(0, 100);
-  if (markerIds.length === 0) return new Map();
+  const submissionIds = [...new Set(payload.submissionIds)];
+  if (markerIds.length === 0 || submissionIds.length === 0) return new Map();
 
-  const markerPlaceholders = markerIds.map((_, index) => `?${index + 2}`).join(", ");
-  const scope = buildImageScopeFilters(payload, markerIds.length + 1);
+  const scope = buildImageScopeFilters(payload, 3);
   const filters = [
-    `s.poi_id IN (${markerPlaceholders})`,
+    "s.id IN (SELECT value FROM json_each(?3))",
+    "s.poi_id IN (SELECT value FROM json_each(?2))",
     "s.kind = 'image'",
     "s.status IN ('active', 'flagged', 'remove_request')",
     ...scope.clauses.map((clause) => `s.${clause}`)
@@ -254,12 +254,12 @@ export async function listImageViewerReactionsByMarker(
        s.id,
        CASE WHEN u.user_id IS NULL THEN 0 ELSE 1 END AS viewer_upvoted,
        CASE WHEN f.user_id IS NULL THEN 0 ELSE 1 END AS viewer_flagged
-     FROM ugc_submissions s
+     FROM ugc_submissions s INDEXED BY sqlite_autoindex_ugc_submissions_1
      LEFT JOIN ugc_submission_upvotes u ON u.submission_id = s.id AND u.user_id = ?1 AND u.active = 1
      LEFT JOIN ugc_submission_flags f ON f.submission_id = s.id AND f.user_id = ?1 AND f.active = 1
      WHERE ${filters.join(" AND ")}
        AND (u.user_id IS NOT NULL OR f.user_id IS NOT NULL)`
-  ).bind(payload.userId, ...markerIds, ...scope.bindings).all<Record<string, unknown>>();
+  ).bind(payload.userId, JSON.stringify(markerIds), JSON.stringify(submissionIds), ...scope.bindings).all<Record<string, unknown>>();
 
   return new Map((result.results ?? []).map((row) => [
     String(row.id),

@@ -214,16 +214,21 @@ export async function handleListPublicImages(c: import("hono").Context<AppEnv>) 
   ]);
   if (!identity || !publicResponse.ok) return publicResponse;
 
-  const payload = await publicResponse.json() as { items: PublicSubmissionImage[] };
+  const payload = await publicResponse.json() as { items: PublicSubmissionImage[]; partial?: boolean };
   const reactions = await listImageViewerReactionsByMarker(c.env.DB, {
     userId: identity.uid,
     markerIds: ids,
+    submissionIds: payload.items.map((image) => image.id),
     pathPrefix: scope.pathPrefix,
     excludePathPrefix: scope.excludePathPrefix
   });
   const images = applyImageViewerReactions(payload.items, reactions);
 
-  const response = c.json({ items: images });
+  const response = c.json({ ...payload, items: images });
+  for (const header of ["x-oem-partial-response", "x-oem-failed-marker-count"]) {
+    const value = publicResponse.headers.get(header);
+    if (value !== null) response.headers.set(header, value);
+  }
   response.headers.set("Cache-Control", "private, no-store");
   response.headers.set("x-oem-viewer-overlay", "image");
   return response;

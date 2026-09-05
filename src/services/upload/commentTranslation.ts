@@ -748,8 +748,8 @@ async function getCachedOrStoredAutoTextTranslation(
   const detectedSource = await getDetectedSourceFromKv(env.OEM_KV, targetDescriptor);
   if (detectedSource) {
     const descriptor = getTextTranslationCacheDescriptorFromTarget(detectedSource.sourceLanguage, targetDescriptor);
-    const record = await getCachedOrStoredTextTranslationByDescriptor(env, descriptor);
-    if (record) {
+    const record = await getCachedTextTranslation(env.OEM_KV, descriptor);
+    if (record?.translatedText) {
       return record;
     }
   }
@@ -1060,7 +1060,8 @@ export async function translateVisibleComments(
   });
 
   const items = new Map<string, CommentTranslationItem>();
-  const misses: SubmissionRecord[] = [];
+  const misses: typeof comments = [];
+  const cachedByText = new Map<string, TextTranslationCacheRecord | null>();
 
   for (const commentId of commentIds) {
     const comment = commentById.get(commentId);
@@ -1077,29 +1078,32 @@ export async function translateVisibleComments(
     }
 
     const normalizedText = normalizedTextById.get(comment.id) ?? "";
-    let cachedRecord: TextTranslationCacheRecord | null = null;
-    for (const lookupGlossaryKey of lookupGlossaryKeys) {
-      if (sourceLanguage === "auto") {
-        const targetDescriptor = await getTextTranslationTargetDescriptor({
-          targetLanguage,
-          glossaryKey: lookupGlossaryKey,
-          glossaryVersion: config.glossaryVersion,
-          normalizedText
-        });
-        cachedRecord = await getCachedOrStoredAutoTextTranslation(env, targetDescriptor);
-      } else {
-        const descriptor = await getTextTranslationCacheDescriptor({
-          sourceLanguage,
-          targetLanguage,
-          glossaryKey: lookupGlossaryKey,
-          glossaryVersion: config.glossaryVersion,
-          normalizedText
-        });
-        cachedRecord = await getCachedOrStoredTextTranslationByDescriptor(env, descriptor);
+    let cachedRecord = cachedByText.get(normalizedText) ?? null;
+    if (!cachedByText.has(normalizedText)) {
+      for (const lookupGlossaryKey of lookupGlossaryKeys) {
+        if (sourceLanguage === "auto") {
+          const targetDescriptor = await getTextTranslationTargetDescriptor({
+            targetLanguage,
+            glossaryKey: lookupGlossaryKey,
+            glossaryVersion: config.glossaryVersion,
+            normalizedText
+          });
+          cachedRecord = await getCachedOrStoredAutoTextTranslation(env, targetDescriptor);
+        } else {
+          const descriptor = await getTextTranslationCacheDescriptor({
+            sourceLanguage,
+            targetLanguage,
+            glossaryKey: lookupGlossaryKey,
+            glossaryVersion: config.glossaryVersion,
+            normalizedText
+          });
+          cachedRecord = await getCachedOrStoredTextTranslationByDescriptor(env, descriptor);
+        }
+        if (cachedRecord) {
+          break;
+        }
       }
-      if (cachedRecord) {
-        break;
-      }
+      cachedByText.set(normalizedText, cachedRecord);
     }
     if (cachedRecord) {
       items.set(commentId, itemFromCachedTextTranslation(commentId, targetLanguage, cachedRecord));
@@ -1121,7 +1125,7 @@ export async function translateVisibleComments(
       });
     });
   } else if (misses.length > 0) {
-    const uniqueMissByText = new Map<string, SubmissionRecord>();
+    const uniqueMissByText = new Map<string, typeof comments[number]>();
     misses.forEach((comment) => {
       const normalizedText = normalizedTextById.get(comment.id) ?? "";
       if (!uniqueMissByText.has(normalizedText)) {
