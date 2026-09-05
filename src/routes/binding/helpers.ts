@@ -3,6 +3,11 @@ import type { AppContext } from "./types";
 
 export const POSITION_STREAM_RECONNECT_MS = 1_000;
 
+export function positionReconnectDelay(attempt: number, random = Math.random()): number {
+  const ceiling = Math.min(30_000, POSITION_STREAM_RECONNECT_MS * 2 ** Math.min(attempt, 5));
+  return Math.round(ceiling * (0.5 + random * 0.5));
+}
+
 export function shouldIncludeBinding(c: AppContext): boolean {
   const value = c.req.query("binding") ?? c.req.query("includeBinding");
   return value === "1" || value === "true";

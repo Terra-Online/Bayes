@@ -14,7 +14,7 @@ import {
   refreshBindingCredentials,
   withAutoRefreshedBinding
 } from "./credentials";
-import { POSITION_STREAM_RECONNECT_MS, serializeLocatorError, shouldIncludeBinding } from "./helpers";
+import { positionReconnectDelay, serializeLocatorError, shouldIncludeBinding } from "./helpers";
 import { issueLocatorSocketTicket, verifyLocatorSocketTicket } from "./locatorTicket";
 import {
   getPositionCacheKey,
@@ -79,11 +79,14 @@ export async function handleEndfieldPositionSocket(c: AppContext) {
   let upstream: WebSocket | undefined;
   let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
   let upstreamGeneration = 0;
+  let reconnectAttempt = 0;
+  let upstreamSubscribedAt: number | undefined;
   let userUid: string | undefined;
   let binding: DecryptedBinding | undefined;
 
   const close = () => {
     closed = true;
+    upstreamGeneration += 1;
     if (reconnectTimer !== undefined) {
       clearTimeout(reconnectTimer);
       reconnectTimer = undefined;
@@ -97,15 +100,20 @@ export async function handleEndfieldPositionSocket(c: AppContext) {
 
   const scheduleReconnect = () => {
     if (closed || reconnectTimer !== undefined || !binding || !userUid) return;
+    if (upstreamSubscribedAt !== undefined && Date.now() - upstreamSubscribedAt >= 60_000) {
+      reconnectAttempt = 0;
+    }
+    upstreamSubscribedAt = undefined;
+    const delay = positionReconnectDelay(reconnectAttempt++);
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = undefined;
+      void bridgeUpstream();
+    }, delay);
     try {
       upstream?.close(1000, "reconnecting");
     } catch {
       // upstream is already closed
     }
-    reconnectTimer = setTimeout(() => {
-      reconnectTimer = undefined;
-      void bridgeUpstream();
-    }, POSITION_STREAM_RECONNECT_MS);
   };
 
   const sendJson = (payload: unknown) => {
@@ -120,7 +128,7 @@ export async function handleEndfieldPositionSocket(c: AppContext) {
   const bridgeUpstream = async (announceConnecting = true) => {
     const currentBinding = binding;
     const currentUserUid = userUid;
-    if (!currentBinding || !currentUserUid) return;
+    if (closed || !currentBinding || !currentUserUid) return;
     const generation = upstreamGeneration + 1;
     upstreamGeneration = generation;
     try {
@@ -141,13 +149,14 @@ export async function handleEndfieldPositionSocket(c: AppContext) {
       }, {
         onSubscribed: () => {
           if (closed || generation !== upstreamGeneration) return;
+          upstreamSubscribedAt ??= Date.now();
           sendJson({
             type: "status",
             status: "connected"
           });
         },
         onMessage: (data) => {
-          if (generation !== upstreamGeneration) return;
+          if (closed || generation !== upstreamGeneration) return;
           const error = parseEndfieldPositionSocketError(data);
           if (error) {
             const credentialRejected = isEndfieldCredentialErrorCode(error.code);
@@ -237,11 +246,14 @@ export async function handleEndfieldPositionSocket(c: AppContext) {
         }
       });
       if (closed || generation !== upstreamGeneration) {
-        connectedSocket.close(1000, "connection superseded");
+        try {
+          connectedSocket.close(1000, "connection superseded");
+        } catch {}
         return;
       }
       upstream = connectedSocket;
     } catch (error) {
+      if (closed || generation !== upstreamGeneration) return;
       const details = error instanceof ApiError
         ? error.details as { upstreamCode?: unknown; upstreamStatus?: unknown } | undefined
         : undefined;
