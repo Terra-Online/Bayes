@@ -38,9 +38,8 @@ export function pointsToKarma(points: number): number {
   return Math.min(5, Math.max(0, current));
 }
 
-export function getKarmaEvaluationIntervalSeconds(backoffMultiplier = 1): number {
-  const normalizedBackoffMultiplier = Math.max(1, Math.floor(backoffMultiplier));
-  return Math.max(3600, Math.floor(karmaConfig.evaluation.intervalSeconds / normalizedBackoffMultiplier));
+export function getKarmaEvaluationIntervalSeconds(): number {
+  return 12 * 60 * 60;
 }
 
 export function getKarmaEvaluationBatchSize(): number {

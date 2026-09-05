@@ -30,7 +30,7 @@ import {
 import { applyUserPointsDelta } from "../repositories/users";
 import { prewarmPublicUgcAsset } from "../middleware/cache/publicUgcAssets";
 import { invalidateUploadCaches } from "../middleware/cache/uploadCaches";
-import { evaluateKarmaBatch, markKarmaDirty } from "../services/karma/evaluation";
+import { evaluateKarmaBatch } from "../services/karma/evaluation";
 import { getModerationPointsDeltaWithDailyBackoff } from "../services/karma/moderationPoints";
 import { moderateSubmissionIds } from "../services/moderation/core";
 import { ensureModerationBackfill, enqueueApprovedCommentTransPrewarm } from "../services/moderation/queue";
@@ -462,7 +462,6 @@ export function createModerationRoutes() {
           surgeBackoffMultiplier: config.surgeBackoffMultiplier
         })
       );
-      await markKarmaDirty(redis, current.userId);
     }
 
     return c.json({ ok: true });

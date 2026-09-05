@@ -5,6 +5,7 @@ const UID_START = 100000;
 const NICKNAME_PATTERN = /^[A-Za-z0-9_-]{2,26}$/;
 const DEFAULT_UID_SUFFIX = "AA";
 const UID_SUFFIX_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+const USER_ACTIVITY_UPDATE_INTERVAL_MS = 60 * 60 * 1000;
 
 export interface UserRecord {
   uid: string;
@@ -250,26 +251,14 @@ function normalizeNickname(raw: string | undefined, uid: string, email?: string)
 }
 
 export async function ensureUserProfile(db: D1Database, payload: EnsureUserProfilePayload): Promise<UserRecord> {
-  const existing = await db
-    .prepare(
-      `UPDATE users
-       SET email = ?2, last_active = CURRENT_TIMESTAMP
-       WHERE uid = ?1
-       RETURNING *`
-    )
-    .bind(payload.uid, payload.email.toLowerCase())
-    .first<Record<string, unknown>>();
+  const existing = await getUserByUid(db, payload.uid);
   if (existing) {
-    return mapUser(existing);
+    return refreshUserActivity(db, existing, payload.email.toLowerCase());
   }
 
   const existingByEmail = await getUserByEmail(db, payload.email.toLowerCase());
   if (existingByEmail) {
-    await db
-      .prepare("UPDATE users SET last_active = CURRENT_TIMESTAMP WHERE uid = ?1")
-      .bind(existingByEmail.uid)
-      .run();
-    return existingByEmail;
+    return refreshUserActivity(db, existingByEmail, existingByEmail.email);
   }
 
   const email = payload.email.toLowerCase();
@@ -354,6 +343,24 @@ export async function ensureUserProfile(db: D1Database, payload: EnsureUserProfi
   }
 
   throw new Error("Unable to create profile for authenticated user.");
+}
+
+async function refreshUserActivity(db: D1Database, user: UserRecord, email: string): Promise<UserRecord> {
+  const lastActive = Date.parse(user.lastActive.includes("T")
+    ? user.lastActive
+    : `${user.lastActive.replace(" ", "T")}Z`);
+  if (user.email === email && Number.isFinite(lastActive) && Date.now() - lastActive < USER_ACTIVITY_UPDATE_INTERVAL_MS) {
+    return user;
+  }
+
+  const row = await db.prepare(
+    `UPDATE users
+     SET email = ?2, last_active = CURRENT_TIMESTAMP
+     WHERE uid = ?1
+       AND (email <> ?2 OR datetime(last_active) IS NULL OR datetime(last_active) <= datetime('now', '-1 hour'))
+     RETURNING *`
+  ).bind(user.uid, email).first<Record<string, unknown>>();
+  return row ? mapUser(row) : user;
 }
 
 export async function updateUserNickname(

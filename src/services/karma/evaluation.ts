@@ -7,10 +7,31 @@ import {
   pointsToKarma
 } from "../../lib/karma/rules";
 
-const KARMA_EVALUATION_LOCK_KEY = "karma:evaluation:last-run";
-const KARMA_DIRTY_SET_KEY = "karma:evaluation:dirty-users";
-const KARMA_SWEEP_CURSOR_KEY = "karma:evaluation:sweep-cursor";
+const KARMA_EVALUATION_LEASE_KEY = "karma:evaluation:v2:lease";
+const KARMA_EVALUATION_CYCLE_KEY = "karma:evaluation:v2:cycle";
+const KARMA_EVALUATION_LEASE_SECONDS = 180;
+const KARMA_EVALUATION_BUDGET_MS = 45_000;
 const KARMA_EVALUATION_QUERY_CHUNK_SIZE = 90;
+
+const SAVE_CYCLE_SCRIPT = `
+  if redis.call('GET', KEYS[1]) ~= ARGV[1] then return 0 end
+  redis.call('SET', KEYS[2], ARGV[2])
+  return 1
+`;
+const RENEW_LEASE_SCRIPT = `
+  if redis.call('GET', KEYS[1]) ~= ARGV[1] then return 0 end
+  return redis.call('EXPIRE', KEYS[1], ARGV[2])
+`;
+const RELEASE_LEASE_SCRIPT = `
+  if redis.call('GET', KEYS[1]) ~= ARGV[1] then return 0 end
+  return redis.call('DEL', KEYS[1])
+`;
+
+type KarmaEvaluationCycle = {
+  cursor: string | null;
+  startedAt: number;
+  nextRunAt: number;
+};
 
 export type KarmaEvaluationResult = {
   evaluated: boolean;
@@ -18,10 +39,13 @@ export type KarmaEvaluationResult = {
   dirtySelected: number;
   sweepSelected: number;
   updated: number;
+  cycleComplete: boolean;
+  nextRunAt: number | null;
 };
 
 type KarmaEvaluationRow = {
   uid: string;
+  role: string;
   karma: number | string;
   points: number | string;
   created_at: string;
@@ -30,87 +54,97 @@ type KarmaEvaluationRow = {
   rejected_images: number | string | null;
 };
 
-export async function markKarmaDirty(redis: Redis, uid: string): Promise<void> {
-  const normalizedUid = uid.trim();
-  if (!normalizedUid) {
-    return;
-  }
-
-  await redis.sadd(KARMA_DIRTY_SET_KEY, normalizedUid);
+function idleResult(cycle: KarmaEvaluationCycle | null): KarmaEvaluationResult {
+  return {
+    evaluated: false,
+    selected: 0,
+    dirtySelected: 0,
+    sweepSelected: 0,
+    updated: 0,
+    cycleComplete: cycle?.cursor === null,
+    nextRunAt: cycle?.nextRunAt ?? null
+  };
 }
 
 export async function evaluateKarmaIfDue(
   db: D1Database,
-  redis: Redis,
-  options: {
-    surgeModeEnabled?: boolean;
-    surgeBackoffMultiplier?: number;
-  } = {}
+  redis: Redis
 ): Promise<KarmaEvaluationResult> {
-  const intervalSeconds = getKarmaEvaluationIntervalSeconds(
-    options.surgeModeEnabled ? options.surgeBackoffMultiplier ?? 3 : 1
-  );
-  const lockPlaced = await redis.set(KARMA_EVALUATION_LOCK_KEY, String(Date.now()), {
-    nx: true,
-    ex: intervalSeconds
-  });
-
-  if (!lockPlaced) {
-    return {
-      evaluated: false,
-      selected: 0,
-      dirtySelected: 0,
-      sweepSelected: 0,
-      updated: 0
-    };
-  }
-
-  try {
-    return await evaluateKarmaBatch(db, redis);
-  } catch (error) {
-    await redis.del(KARMA_EVALUATION_LOCK_KEY).catch(() => undefined);
-    throw error;
-  }
+  return runKarmaEvaluation(db, redis, false);
 }
 
 export async function evaluateKarmaBatch(
   db: D1Database,
   redis: Redis
 ): Promise<KarmaEvaluationResult> {
-  const limit = getKarmaEvaluationBatchSize();
-  const sweepLimit = Math.max(1, Math.floor(limit * 0.25));
-  const dirtyLimit = Math.max(0, limit - sweepLimit);
-  const dirtyUids = await listDirtyKarmaUids(redis, dirtyLimit);
-  const sweepUids = await listKarmaSweepUids(db, redis, limit - dirtyUids.length);
-  const selectedUids = [...new Set([...dirtyUids, ...sweepUids])].slice(0, limit);
-  const updated = await evaluateKarmaUsers(db, selectedUids);
-
-  if (dirtyUids.length > 0) {
-    await redis.srem(KARMA_DIRTY_SET_KEY, ...dirtyUids);
-  }
-
-  return {
-    evaluated: true,
-    selected: selectedUids.length,
-    dirtySelected: dirtyUids.length,
-    sweepSelected: sweepUids.length,
-    updated
-  };
+  return runKarmaEvaluation(db, redis, true);
 }
 
-async function evaluateKarmaUsers(db: D1Database, uids: string[]): Promise<number> {
-  if (uids.length === 0) {
-    return 0;
-  }
+async function runKarmaEvaluation(db: D1Database, redis: Redis, force: boolean): Promise<KarmaEvaluationResult> {
+  let cycle = await redis.get<KarmaEvaluationCycle>(KARMA_EVALUATION_CYCLE_KEY);
+  if (!force && cycle?.cursor === null && Date.now() < cycle.nextRunAt) return idleResult(cycle);
 
-  let updated = 0;
-  for (let index = 0; index < uids.length; index += KARMA_EVALUATION_QUERY_CHUNK_SIZE) {
-    updated += await evaluateKarmaUserChunk(db, uids.slice(index, index + KARMA_EVALUATION_QUERY_CHUNK_SIZE));
+  const token = crypto.randomUUID();
+  const acquired = await redis.set(KARMA_EVALUATION_LEASE_KEY, token, {
+    nx: true,
+    ex: KARMA_EVALUATION_LEASE_SECONDS
+  });
+  if (!acquired) return idleResult(cycle);
+
+  try {
+    cycle = await redis.get<KarmaEvaluationCycle>(KARMA_EVALUATION_CYCLE_KEY);
+    const now = Date.now();
+    if (!force && cycle?.cursor === null && now < cycle.nextRunAt) return idleResult(cycle);
+    if (!cycle || cycle.cursor === null) {
+      cycle = { cursor: "", startedAt: now, nextRunAt: now + getKarmaEvaluationIntervalSeconds() * 1000 };
+      await saveCycle(redis, token, cycle);
+    }
+
+    const limit = Math.min(1000, getKarmaEvaluationBatchSize());
+    const uids = await selectSweepUidsAfter(db, cycle.cursor ?? "", limit);
+    const deadline = now + KARMA_EVALUATION_BUDGET_MS;
+    let selected = 0;
+    let updated = 0;
+    for (let index = 0; index < uids.length; index += KARMA_EVALUATION_QUERY_CHUNK_SIZE) {
+      if (selected > 0 && Date.now() >= deadline) break;
+      const renewed = await redis.eval(RENEW_LEASE_SCRIPT, [KARMA_EVALUATION_LEASE_KEY], [token, KARMA_EVALUATION_LEASE_SECONDS]);
+      if (Number(renewed) !== 1) throw new Error("KARMA_EVALUATION_LEASE_LOST");
+      const chunk = uids.slice(index, index + KARMA_EVALUATION_QUERY_CHUNK_SIZE);
+      updated += await evaluateKarmaUserChunk(db, chunk, new Date(cycle.startedAt));
+      selected += chunk.length;
+    }
+
+    const cycleComplete = selected === uids.length && uids.length < limit;
+    const nextCycle = {
+      ...cycle,
+      cursor: cycleComplete ? null : uids[selected - 1] ?? cycle.cursor
+    };
+    await saveCycle(redis, token, nextCycle);
+    return {
+      evaluated: true,
+      selected,
+      dirtySelected: 0,
+      sweepSelected: selected,
+      updated,
+      cycleComplete,
+      nextRunAt: nextCycle.nextRunAt
+    };
+  } finally {
+    await redis.eval(RELEASE_LEASE_SCRIPT, [KARMA_EVALUATION_LEASE_KEY], [token]).catch((error) => {
+      console.warn("[karma] failed to release evaluation lease", {
+        error: error instanceof Error ? error.message : String(error)
+      });
+    });
   }
-  return updated;
 }
 
-async function evaluateKarmaUserChunk(db: D1Database, uids: string[]): Promise<number> {
+async function saveCycle(redis: Redis, token: string, cycle: KarmaEvaluationCycle): Promise<void> {
+  const saved = await redis.eval(SAVE_CYCLE_SCRIPT,
+    [KARMA_EVALUATION_LEASE_KEY, KARMA_EVALUATION_CYCLE_KEY], [token, JSON.stringify(cycle)]);
+  if (Number(saved) !== 1) throw new Error("KARMA_EVALUATION_LEASE_LOST");
+}
+
+async function evaluateKarmaUserChunk(db: D1Database, uids: string[], evaluatedAt: Date): Promise<number> {
   const selectedUserValues = uids.map((_, index) => `(?${index + 1})`).join(", ");
   const aiStaleNotePlaceholder = `?${uids.length + 1}`;
   const recallNotePlaceholder = `?${uids.length + 2}`;
@@ -133,13 +167,14 @@ async function evaluateKarmaUserChunk(db: D1Database, uids: string[]): Promise<n
                ELSE 0
              END
            ) AS rejected_images
-         FROM ugc_submissions s
-         INNER JOIN selected_users selected ON selected.uid = s.user_id
+         FROM selected_users selected
+         CROSS JOIN ugc_submissions s INDEXED BY idx_ugc_user_kind_poi_created ON selected.uid = s.user_id
          WHERE s.kind = 'image'
          GROUP BY s.user_id
        )
        SELECT
          u.uid,
+         u.role,
          u.karma,
          u.points,
          u.created_at,
@@ -149,12 +184,12 @@ async function evaluateKarmaUserChunk(db: D1Database, uids: string[]): Promise<n
        FROM users u
        INNER JOIN selected_users selected ON selected.uid = u.uid
        LEFT JOIN image_stats s ON s.user_id = u.uid
-       WHERE u.role != 'r'`
+       WHERE u.role <> 'r' AND u.karma < 5`
     )
     .bind(...uids, `${AI_STALE_MODERATION_NOTE_PREFIX}%`, `${RECALL_MODERATION_NOTE_PREFIX}%`)
     .all<KarmaEvaluationRow>();
 
-  let updated = 0;
+  const updates: D1PreparedStatement[] = [];
   for (const row of rows.results ?? []) {
     const currentKarma = toFiniteNumber(row.karma);
     const score = calculateKarmaEvaluationScore({
@@ -163,20 +198,21 @@ async function evaluateKarmaUserChunk(db: D1Database, uids: string[]): Promise<n
       lastActive: row.last_active,
       approvedImages: toFiniteNumber(row.approved_images),
       rejectedImages: toFiniteNumber(row.rejected_images)
-    });
+    }, evaluatedAt);
     const nextKarma = currentKarma >= 5 ? 5 : pointsToKarma(score);
     if (nextKarma === currentKarma) {
       continue;
     }
 
-    const result = await db
-      .prepare("UPDATE users SET karma = ?2 WHERE uid = ?1")
-      .bind(row.uid, nextKarma)
-      .run();
-    updated += result.meta.changes ?? 0;
+    updates.push(db.prepare(
+      `UPDATE users SET karma = ?2
+       WHERE uid = ?1 AND karma = ?3 AND points = ?4 AND last_active = ?5 AND role = ?6`
+    ).bind(row.uid, nextKarma, currentKarma, toFiniteNumber(row.points), row.last_active, row.role));
   }
 
-  return updated;
+  if (updates.length === 0) return 0;
+  const results = await db.batch(updates);
+  return results.reduce((total, result) => total + (result.meta.changes ?? 0), 0);
 }
 
 function toFiniteNumber(value: number | string | null): number {
@@ -184,53 +220,13 @@ function toFiniteNumber(value: number | string | null): number {
   return Number.isFinite(normalized) ? normalized : 0;
 }
 
-async function listDirtyKarmaUids(redis: Redis, limit: number): Promise<string[]> {
-  if (limit <= 0) {
-    return [];
-  }
-
-  const dirtyUsers = await redis.smembers<string[]>(KARMA_DIRTY_SET_KEY);
-  if (!dirtyUsers || dirtyUsers.length === 0) {
-    return [];
-  }
-
-  return dirtyUsers
-    .map((uid) => String(uid).trim())
-    .filter(Boolean)
-    .slice(0, limit);
-}
-
-async function listKarmaSweepUids(db: D1Database, redis: Redis, limit: number): Promise<string[]> {
-  if (limit <= 0) {
-    return [];
-  }
-
-  const cursor = String((await redis.get<string>(KARMA_SWEEP_CURSOR_KEY)) ?? "");
-  const firstBatch = await selectSweepUidsAfter(db, cursor, limit);
-  let uids = firstBatch;
-
-  if (cursor && firstBatch.length < limit) {
-    const wrappedBatch = await selectSweepUidsAfter(db, "", limit - firstBatch.length);
-    uids = [...firstBatch, ...wrappedBatch];
-  }
-
-  const uniqueUids = [...new Set(uids)].slice(0, limit);
-  const nextCursor = uniqueUids.at(-1);
-  if (nextCursor) {
-    await redis.set(KARMA_SWEEP_CURSOR_KEY, nextCursor);
-  } else {
-    await redis.del(KARMA_SWEEP_CURSOR_KEY);
-  }
-
-  return uniqueUids;
-}
-
 async function selectSweepUidsAfter(db: D1Database, cursor: string, limit: number): Promise<string[]> {
   const result = await db
     .prepare(
       `SELECT uid
        FROM users
-       WHERE role != 'r'
+       WHERE role <> 'r'
+         AND karma < 5
          AND uid > ?1
        ORDER BY uid ASC
        LIMIT ?2`

@@ -6,7 +6,6 @@ import {
 } from "../../lib/moderation";
 import { prewarmPublicUgcAsset } from "../../middleware/cache/publicUgcAssets";
 import { invalidateUploadCaches } from "../../middleware/cache/uploadCaches";
-import { markKarmaDirty } from "../karma/evaluation";
 import { getModerationPointsDeltaWithDailyBackoff } from "../karma/moderationPoints";
 import {
   createEmptyPendingOpenAICompletionStats,
@@ -250,9 +249,6 @@ async function applyModerationStatus(
       surgeBackoffMultiplier: options.surgeBackoffMultiplier
     });
   await applyUserPointsDelta(db, submission.userId, pointsDelta);
-  if (options.redis) {
-    await markKarmaDirty(options.redis, submission.userId);
-  }
   return true;
 }
 

@@ -60,10 +60,7 @@ async function runScheduledJobs(env: Bindings): Promise<void> {
   const redis = createRedisClient(env);
   const config = getRuntimeConfig(env);
 
-  const karmaEvaluation = await evaluateKarmaIfDue(env.DB, redis, {
-    surgeModeEnabled: config.surgeModeEnabled,
-    surgeBackoffMultiplier: config.surgeBackoffMultiplier,
-  });
+  const karmaEvaluation = await evaluateKarmaIfDue(env.DB, redis);
   let enqueued = 0;
 
   if (config.scheduledModerationEnabled) {
@@ -85,10 +82,12 @@ async function runProgressRecovery(env: Bindings): Promise<void> {
     if (new Date(now).getUTCMinutes() === 0) {
       await cleanupProgressConsistencyRecords(env.DB, now);
     }
-    const health = await getProgressStatsOutboxHealth(env.DB, now);
-    const unhealthy = health.blocked > 0 || health.oldestAgeMs > 5 * 60 * 1_000;
-    const log = unhealthy ? console.error : console.warn;
-    log('[progress][outbox] health', health);
+    if (new Date(now).getUTCMinutes() % 5 === 0) {
+      const health = await getProgressStatsOutboxHealth(env.DB, now);
+      const unhealthy = health.blocked > 0 || health.oldestAgeMs > 5 * 60 * 1_000;
+      const log = unhealthy ? console.error : console.warn;
+      log('[progress][outbox] health', health);
+    }
   } catch (error) {
     console.error('[progress][outbox] recovery failed', {
       error: error instanceof Error ? error.message : String(error),

@@ -281,7 +281,8 @@ export async function getProgressStatsOutboxHealth(
        SUM(CASE WHEN status IN ('pending', 'retry') THEN 1 ELSE 0 END) AS pending,
        SUM(CASE WHEN status = 'blocked' THEN 1 ELSE 0 END) AS blocked,
        MIN(CASE WHEN status IN ('pending', 'retry') THEN created_at ELSE NULL END) AS oldest_created_at
-     FROM progress_stats_outbox`
+     FROM progress_stats_outbox
+     WHERE status IN ('pending', 'retry', 'blocked')`
   ).first<{
     pending: number | null;
     blocked: number | null;
