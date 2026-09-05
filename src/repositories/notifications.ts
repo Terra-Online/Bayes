@@ -828,16 +828,15 @@ export async function markNotificationsRead(
 ): Promise<number> {
   const ids = [...new Set(payload.ids.map((id) => id.trim()).filter(Boolean))].slice(0, 100);
   if (ids.length === 0) return 0;
-  const placeholders = ids.map((_, index) => `?${index + 4}`).join(", ");
   const result = await db
     .prepare(
       `UPDATE notifications
        SET read_at = COALESCE(read_at, ?3)
        WHERE recipient_user_id = ?1
          AND category = ?2
-         AND id IN (${placeholders})`
+         AND id IN (SELECT value FROM json_each(?4))`
     )
-    .bind(payload.userId, payload.category, new Date().toISOString(), ...ids)
+    .bind(payload.userId, payload.category, new Date().toISOString(), JSON.stringify(ids))
     .run();
   return result.meta.changes ?? 0;
 }

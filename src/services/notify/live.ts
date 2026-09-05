@@ -76,7 +76,16 @@ export async function publishNotificationsCreated(
   env: Bindings,
   notifications: NotificationRecord[]
 ): Promise<void> {
-  await Promise.all(notifications.map((notification) => publishNotificationCreated(env, notification)));
+  for (const notification of notifications) {
+    try {
+      await publishNotificationCreated(env, notification);
+    } catch (error) {
+      console.error("[notify] live delivery failed; notification remains persisted", {
+        notificationId: notification.id,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
 }
 
 export class OEMNotificationDO extends DurableObject<Bindings> {
@@ -96,16 +105,26 @@ export class OEMNotificationDO extends DurableObject<Bindings> {
       return;
     }
     if (NOTIFICATION_HEARTBEAT_PATTERN.test(message)) {
-      ws.send(message);
+      try {
+        ws.send(message);
+      } catch (error) {
+        await this.webSocketError(ws, error);
+      }
       return;
     }
     if (message === "close") {
-      ws.close(1000, "client requested close");
+      try {
+        ws.close(1000, "client requested close");
+      } catch {}
       return;
     }
   }
 
   async webSocketClose(ws: WebSocket, code: number, reason: string, wasClean: boolean): Promise<void> {
+    try {
+      ws.close(1000, "peer closed");
+    } catch {}
+    if (wasClean && (code === 1000 || code === 1001)) return;
     const attachment = ws.deserializeAttachment() as WebSocketAttachment | null;
     console.warn("[notify] websocket closed", {
       clientId: attachment?.clientId ?? null,
@@ -149,11 +168,21 @@ export class OEMNotificationDO extends DurableObject<Bindings> {
       );
     }
 
+    const clientId = request.headers.get("x-oem-notify-client-id")?.trim() || crypto.randomUUID();
+    const unread = await getNotificationUnreadCounts(this.env.DB, uid);
+    for (const socket of this.ctx.getWebSockets()) {
+      const previous = socket.deserializeAttachment() as WebSocketAttachment | null;
+      if (previous?.clientId === clientId) {
+        try {
+          socket.close(1000, "connection replaced");
+        } catch {}
+      }
+    }
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair);
     const attachment: WebSocketAttachment = {
       uid,
-      clientId: request.headers.get("x-oem-notify-client-id")?.trim() || crypto.randomUUID(),
+      clientId,
       connectedAt: new Date().toISOString()
     };
     server.serializeAttachment(attachment);
@@ -162,7 +191,6 @@ export class OEMNotificationDO extends DurableObject<Bindings> {
     // Send a post-upgrade snapshot so reconnects do not require a second REST
     // request just to recover the badge state.
     try {
-      const unread = await getNotificationUnreadCounts(this.env.DB, uid);
       server.send(JSON.stringify({ event: "notification.ready", unread } satisfies NotificationLiveReadyEnvelope));
     } catch (error) {
       console.error("[notify] failed to send ready snapshot", {
@@ -170,6 +198,10 @@ export class OEMNotificationDO extends DurableObject<Bindings> {
         clientId: attachment.clientId,
         error
       });
+      try {
+        server.close(1011, "ready snapshot failed");
+      } catch {}
+      throw error;
     }
 
     return new Response(null, {

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { ApiError } from "../lib/errors";
 import { hmacServiceIdentifier } from "../lib/serviceIdentity";
 import { requireAuth, resolveRequestAuthUser } from "../middleware/auth";
+import { toApiError } from "../middleware/error-handler";
 import { rateLimit } from "../middleware/rate-limit";
 import {
   decodeNotificationCursor,
@@ -60,9 +61,7 @@ async function proxyNotificationLive(
 }
 
 function liveUpgradeError(error: unknown, requestId: string): Response {
-  const apiError = error instanceof ApiError
-    ? error
-    : new ApiError(500, "INTERNAL_ERROR", "Internal server error.");
+  const apiError = toApiError(error);
   if (apiError.status >= 500) {
     console.error("notification live upgrade failed", {
       requestId,
@@ -79,7 +78,9 @@ function liveUpgradeError(error: unknown, requestId: string): Response {
     status: apiError.status,
     headers: {
       "content-type": "application/json; charset=utf-8",
-      "x-request-id": requestId
+      "x-request-id": requestId,
+      "cache-control": "private, no-store",
+      ...(apiError.status === 503 ? { "retry-after": "5" } : {})
     }
   });
 }
@@ -114,7 +115,7 @@ export async function handleNotificationLiveUpgrade(
       }
     }
 
-    return proxyNotificationLive(
+    return await proxyNotificationLive(
       env,
       request,
       user.uid,
