@@ -1,4 +1,5 @@
 import { ApiError } from "../../lib/errors";
+import { toApiError } from "../../middleware/error-handler";
 
 export function jsonResponse(payload: unknown, init?: ResponseInit): Response {
   return new Response(JSON.stringify(payload), {
@@ -11,23 +12,29 @@ export function jsonResponse(payload: unknown, init?: ResponseInit): Response {
 }
 
 export function errorResponse(error: unknown): Response {
-  if (error instanceof ApiError) {
+  const apiError = toApiError(error);
+  if (error instanceof ApiError || apiError.status !== 500) {
     return jsonResponse(
       {
-        code: error.code,
-        message: error.message,
-        details: error.details
+        code: apiError.code,
+        message: apiError.message,
+        details: apiError.details
       },
-      { status: error.status }
+      {
+        status: apiError.status,
+        headers: {
+          "cache-control": "private, no-store",
+          ...(apiError.status === 503 ? { "retry-after": "5" } : {})
+        }
+      }
     );
   }
 
-  const message = error instanceof Error ? error.message : "Internal progress error.";
   return jsonResponse(
     {
       code: "PROGRESS_INTERNAL_ERROR",
-      message
+      message: "Internal progress error."
     },
-    { status: 500 }
+    { status: 500, headers: { "cache-control": "private, no-store" } }
   );
 }

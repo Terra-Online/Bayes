@@ -1,4 +1,5 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
+import { toApiError } from "../error-handler";
 import { isSha256Hex } from "../../services/progress/manifest";
 import { buildPublicProgressStatsResponse } from "../../services/progress/publicStats";
 import { listCachedPublicCommentsByMarker } from "../../services/upload/listPublicComments";
@@ -54,14 +55,30 @@ export class PublicReadCache extends WorkerEntrypoint<Bindings> {
     }
 
     const url = new URL(request.url);
-    if (url.pathname === PUBLIC_READ_IMAGES_PATH) {
-      return this.fetchImages(url);
-    }
-    if (url.pathname === PUBLIC_READ_COMMENTS_PATH) {
-      return this.fetchComments(url);
-    }
-    if (url.pathname === PUBLIC_READ_PROGRESS_STATS_PATH) {
-      return this.fetchProgressStats(url);
+    try {
+      if (url.pathname === PUBLIC_READ_IMAGES_PATH) {
+        return await this.fetchImages(url);
+      }
+      if (url.pathname === PUBLIC_READ_COMMENTS_PATH) {
+        return await this.fetchComments(url);
+      }
+      if (url.pathname === PUBLIC_READ_PROGRESS_STATS_PATH) {
+        return await this.fetchProgressStats(url);
+      }
+    } catch (error) {
+      const apiError = toApiError(error);
+      console.error("[public-read] cache origin read failed", {
+        path: url.pathname,
+        code: apiError.code,
+        error: error instanceof Error ? error.message : String(error)
+      });
+      return Response.json({ code: apiError.code, message: apiError.message }, {
+        status: apiError.status,
+        headers: {
+          "cache-control": "private, no-store",
+          ...(apiError.status === 503 ? { "retry-after": "5" } : {})
+        }
+      });
     }
     return noStoreError(404, "Unknown public cache resource.");
   }

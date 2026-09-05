@@ -1,4 +1,5 @@
 import { exports as workerExports } from "cloudflare:workers";
+import { transientDependencyError } from "../../lib/errors";
 import type {
   PublicSubmissionComment,
   PublicSubmissionImage
@@ -58,7 +59,8 @@ function noStoreError(status: number, message: string): Response {
     status,
     headers: {
       "content-type": "application/json; charset=utf-8",
-      "Cache-Control": "private, no-store"
+      "Cache-Control": "private, no-store",
+      ...(status === 503 ? { "retry-after": "5" } : {})
     }
   });
 }
@@ -68,11 +70,33 @@ type MarkerItemsResult<T> = {
   items: T[][];
 };
 
-async function readItems<T>(requests: Promise<Response>[]): Promise<MarkerItemsResult<T> | Response> {
-  const results = await Promise.allSettled(requests);
+async function readItems<T>(requests: Array<() => Promise<Response>>): Promise<MarkerItemsResult<T> | Response> {
+  let nextIndex = 0;
+  const results: Array<PromiseSettledResult<{ items?: T[] }>> = new Array(requests.length);
+  let failureStatus: number | undefined;
+  await Promise.all(Array.from({ length: Math.min(8, requests.length) }, async () => {
+    while (nextIndex < requests.length) {
+      const index = nextIndex++;
+      try {
+        const response = await requests[index]!();
+        if (!response.ok) {
+          failureStatus ??= response.status;
+          await response.body?.cancel().catch(() => undefined);
+          throw new Error(`Public cache read failed: ${response.status}`);
+        }
+        const payload = await response.json() as { items?: T[] };
+        if (!Array.isArray(payload.items)) {
+          throw new Error("Public cache response did not contain an items array.");
+        }
+        results[index] = { status: "fulfilled", value: payload };
+      } catch (reason) {
+        if (transientDependencyError(reason)) failureStatus = 503;
+        results[index] = { status: "rejected", reason };
+      }
+    }
+  }));
   const items: T[][] = [];
   let failedCount = 0;
-  let failureStatus: number | undefined;
 
   for (const result of results) {
     if (result.status === "rejected") {
@@ -80,23 +104,7 @@ async function readItems<T>(requests: Promise<Response>[]): Promise<MarkerItemsR
       continue;
     }
 
-    const response = result.value;
-    if (!response.ok) {
-      failedCount += 1;
-      failureStatus ??= response.status;
-      await response.body?.cancel().catch(() => undefined);
-      continue;
-    }
-
-    try {
-      const payload = await response.json() as { items?: T[] };
-      if (!Array.isArray(payload.items)) {
-        throw new Error("Public cache response did not contain an items array.");
-      }
-      items.push(payload.items);
-    } catch {
-      failedCount += 1;
-    }
+    items.push(result.value.items!);
   }
 
   if (items.length === 0 && failedCount > 0) {
@@ -142,7 +150,7 @@ export async function fetchPublicImagesFromWorkersCache(payload: {
   assetBaseUrl: string;
 }): Promise<Response> {
   const markerIds = normalizePublicReadMarkerIds(payload.markerIds);
-  const markerItems = await readItems<PublicSubmissionImage>(markerIds.map((markerId) => fetchSingleMarker(
+  const markerItems = await readItems<PublicSubmissionImage>(markerIds.map((markerId) => () => fetchSingleMarker(
     PUBLIC_READ_IMAGES_PATH,
     buildPublicImagesSearchParams({
       markerIds: [markerId],
@@ -170,7 +178,7 @@ export async function fetchPublicCommentsFromWorkersCache(payload: {
   cacheNamespace: PublicReadCacheNamespace;
 }): Promise<Response> {
   const markerIds = normalizePublicReadMarkerIds(payload.markerIds);
-  const markerItems = await readItems<PublicSubmissionComment>(markerIds.map((markerId) => fetchSingleMarker(
+  const markerItems = await readItems<PublicSubmissionComment>(markerIds.map((markerId) => () => fetchSingleMarker(
     PUBLIC_READ_COMMENTS_PATH,
     buildPublicCommentsSearchParams({
       markerIds: [markerId],

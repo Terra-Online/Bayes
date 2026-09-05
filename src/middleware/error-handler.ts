@@ -1,5 +1,5 @@
 import type { Context } from "hono";
-import { ApiError, isApiError } from "../lib/errors";
+import { ApiError, isApiError, transientDependencyError } from "../lib/errors";
 import type { AppEnv } from "../types/app";
 
 function errorJson(c: Context<AppEnv>, status: number, code: string, message: string, details?: unknown) {
@@ -19,7 +19,9 @@ function errorJson(c: Context<AppEnv>, status: number, code: string, message: st
     {
       status,
       headers: {
-        "content-type": "application/json; charset=utf-8"
+        "content-type": "application/json; charset=utf-8",
+        "cache-control": "private, no-store",
+        ...(status === 503 ? { "retry-after": "5" } : {})
       }
     }
   );
@@ -29,7 +31,7 @@ export function toApiError(error: unknown): ApiError {
   if (isApiError(error)) {
     return error;
   }
-  return new ApiError(500, "INTERNAL_ERROR", "Internal server error.");
+  return transientDependencyError(error) ?? new ApiError(500, "INTERNAL_ERROR", "Internal server error.");
 }
 
 export function onAppError(error: unknown, c: Context<AppEnv>) {

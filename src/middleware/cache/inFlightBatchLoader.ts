@@ -43,23 +43,19 @@ export class InFlightBatchLoader<Value> {
   }
 
   private async flush(): Promise<void> {
-    this.flushScheduled = false;
-    const entries = [...this.pending.entries()];
-    this.pending.clear();
-    if (entries.length === 0) return;
-
     try {
-      const batches: Array<typeof entries> = [];
-      for (let index = 0; index < entries.length; index += this.maxBatchSize) {
-        batches.push(entries.slice(index, index + this.maxBatchSize));
+      while (this.pending.size > 0) {
+        const entries = [...this.pending.entries()].slice(0, this.maxBatchSize);
+        entries.forEach(([key]) => this.pending.delete(key));
+        await this.resolveBatch(entries);
+        entries.forEach(([key, load]) => {
+          if (this.inFlight.get(key) === load) {
+            this.inFlight.delete(key);
+          }
+        });
       }
-      await Promise.all(batches.map((batch) => this.resolveBatch(batch)));
     } finally {
-      entries.forEach(([key, load]) => {
-        if (this.inFlight.get(key) === load) {
-          this.inFlight.delete(key);
-        }
-      });
+      this.flushScheduled = false;
     }
   }
 
