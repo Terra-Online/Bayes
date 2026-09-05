@@ -9,8 +9,6 @@ import type {
   TransPrewarmTarget
 } from "./messages";
 
-const DEFAULT_DISCORD_MODERATION_WEBHOOK_URL =
-  "https://discord.com/api/webhooks/1503720535593451663/a6HnfmXj5UfV_5Mpcbkt13e6YvTt5jR9RM9w-82Sps30dWwdiGcaRcAc-Jxrb-4Weo_X";
 const DISCORD_WEBHOOK_TIMEOUT_MS = 5_000;
 
 export function createEmptyPendingOpenAICompletionStats(): PendingOpenAICompletionStats {
@@ -257,7 +255,7 @@ export async function sendModerationNotificationNow(env: Bindings, event: Modera
 }
 
 function resolveModerationWebhookUrl(env: Bindings): string {
-  return (env.DISCORD_MODERATION_WEBHOOK_URL ?? DEFAULT_DISCORD_MODERATION_WEBHOOK_URL).trim();
+  return (env.DISCORD_MODERATION_WEBHOOK_URL ?? "").trim();
 }
 
 function formatDiscordWebhookPayload(event: ModerationNotificationEvent): Record<string, unknown> {

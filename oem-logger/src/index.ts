@@ -33,6 +33,7 @@ function getEventType(item: TraceItem): string {
 }
 
 export function isErrorTrace(item: TraceItem): boolean {
+  if (item.outcome === "canceled") return false;
   const fetchEvent = getFetchEvent(item);
   const status = fetchEvent?.response?.status;
   return Boolean(

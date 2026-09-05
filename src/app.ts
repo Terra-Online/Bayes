@@ -85,7 +85,11 @@ export function createApp() {
   // @waf-ignore: local/demo-only helper; keep this path out of the production allowlist.
   app.put("/__demo/r2", async (c) => {
     const requestUrl = new URL(c.req.url);
-    if (c.req.header("x-demo-local-sync") !== "1") {
+    if (
+      !isLocalBackendUrl(c.env.BETTER_AUTH_URL)
+      || !isLocalBackendUrl(c.req.url)
+      || c.req.header("x-demo-local-sync") !== "1"
+    ) {
       return c.json({ error: "not_found" }, 404);
     }
     const objectKey = requestUrl.searchParams.get("key")?.trim();
