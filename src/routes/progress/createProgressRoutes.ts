@@ -38,10 +38,10 @@ async function proxyUserProgress(
   }
 
   const request = path === "state"
-    ? new Request(url, { method: "GET" })
+    ? new Request(url, { method: "GET", headers: { "x-request-id": c.get("requestId") ?? "" } })
     : new Request(url, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", "x-request-id": c.get("requestId") ?? "" },
       body: await c.req.text()
     });
 
@@ -64,10 +64,10 @@ async function proxyUserArchiveProgress(
     url.searchParams.set("archiveIndexHash", archiveIndexHash);
   }
   return stub.fetch(path === "state"
-    ? new Request(url, { method: "GET" })
+    ? new Request(url, { method: "GET", headers: { "x-request-id": c.get("requestId") ?? "" } })
     : new Request(url, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", "x-request-id": c.get("requestId") ?? "" },
       body: await c.req.text()
     }));
 }

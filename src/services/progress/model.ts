@@ -54,6 +54,7 @@ export interface PublicProgressState {
   markerIndexHash: string;
   updatedAt: number | null;
   pointIds: string[];
+  retainedPointIds: string[];
 }
 
 export function progressStateFromUser(user: UserRecord | null): ProgressState {
@@ -98,12 +99,17 @@ export function buildProgressRevision(checksum: string): string {
   return checksum || "";
 }
 
-export function publicProgressState(progress: ProgressState, pointIds: string[] = []): PublicProgressState {
+export function publicProgressState(
+  progress: ProgressState,
+  pointIds: string[] = [],
+  retainedPointIds: string[] = []
+): PublicProgressState {
   return {
     revision: progress.revision,
     markerIndexHash: progress.markerIndexHash,
     updatedAt: progress.updatedAt,
-    pointIds
+    pointIds,
+    retainedPointIds
   };
 }
 

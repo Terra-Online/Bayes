@@ -1,4 +1,5 @@
 import { ApiError } from "../../lib/errors";
+import { toApiError } from "../../middleware/error-handler";
 import { getUserByUid } from "../../repositories/users";
 import { sha256Hex } from "../../middleware/cache/kvJson";
 import {
@@ -183,6 +184,7 @@ export class OEMUserDO {
     const url = new URL(request.url);
     const startedAt = Date.now();
     let stage = "identity";
+    let mutationContext: Record<string, unknown> | undefined;
 
     try {
       const uid = this.state.id.name?.trim();
@@ -210,6 +212,11 @@ export class OEMUserDO {
       if (request.method === "POST" && url.pathname === "/sync") {
         stage = "sync_parse";
         const incoming = normalizeSyncPatch(await request.json().catch(() => null));
+        mutationContext = {
+          clientMutationId: incoming.clientMutationId,
+          baseRevision: incoming.baseRevision,
+          manifestHash: incoming.markerIndexHash
+        };
         stage = "sync_prepare";
         const [manifest, requestHash, eventId] = await Promise.all([
           requireProgressManifest(this.env, incoming.markerIndexHash),
@@ -241,6 +248,11 @@ export class OEMUserDO {
       if (request.method === "POST" && url.pathname === "/archive/sync") {
         stage = "archive_sync_parse";
         const incoming = normalizeArchiveSyncPatch(await request.json().catch(() => null));
+        mutationContext = {
+          clientMutationId: incoming.clientMutationId,
+          baseRevision: incoming.baseRevision,
+          manifestHash: incoming.archiveIndexHash
+        };
         stage = "archive_sync_prepare";
         const [manifest, requestHash] = await Promise.all([
           requireArchiveProgressManifest(this.env, incoming.archiveIndexHash),
@@ -254,9 +266,15 @@ export class OEMUserDO {
 
       return jsonResponse({ code: "NOT_FOUND", message: "Progress DO route not found." }, { status: 404 });
     } catch (error) {
-      console.error("[progress][sync] request failed", {
+      const apiError = toApiError(error);
+      const log = apiError.status >= 500 ? console.error : console.warn;
+      log(apiError.status >= 500 ? "[progress][sync] request failed" : "[progress][sync] request rejected", {
         path: url.pathname,
         stage,
+        status: apiError.status,
+        code: apiError.code,
+        requestId: request.headers.get("x-request-id"),
+        ...mutationContext,
         latencyMs: Date.now() - startedAt,
         error: error instanceof Error ? error.message : String(error)
       });
@@ -280,10 +298,16 @@ export class OEMUserDO {
 
   private async publicProgress(
     progress: ProgressState,
-    activeManifest?: RegisteredManifest
+    activeManifest?: RegisteredManifest,
+    retainedPointIds: string[] = []
   ): Promise<PublicProgressState> {
+    const retained = new Set(normalizeRetainedPointIds(retainedPointIds)
+      .filter((pointId) => !activeManifest?.indexById.has(pointId)));
     if (isEmptyProgress(progress)) {
-      return emptyPublicProgress(progress.markerIndexHash);
+      return {
+        ...emptyPublicProgress(activeManifest?.markerIndexHash ?? progress.markerIndexHash),
+        retainedPointIds: [...retained]
+      };
     }
 
     const manifest = activeManifest?.markerIndexHash === progress.markerIndexHash
@@ -296,22 +320,26 @@ export class OEMUserDO {
     const bytes = normalizeBitmapBytes(progress.marker, manifest.pointCount, manifest.bitsPerPoint);
     const pointIds = pointIdsFromBitmap(bytes, manifest);
     if (!activeManifest) {
-      return publicProgressState(progress, pointIds);
+      return publicProgressState(progress, pointIds, [...retained]);
+    }
+
+    for (const pointId of pointIds) {
+      if (!activeManifest.indexById.has(pointId)) retained.add(pointId);
     }
 
     return publicProgressState(
       progress,
-      pointIds.filter((pointId) => activeManifest.indexById.has(pointId))
+      pointIds.filter((pointId) => activeManifest.indexById.has(pointId)),
+      [...retained]
     );
   }
 
   private async handleState(uid: string, manifest: RegisteredManifest): Promise<Response> {
     const user = await this.runExclusive(() => getUserByUid(this.env.DB, uid));
     const progress = progressStateFromUser(user);
-    if (isEmptyProgress(progress)) {
-      return jsonResponse({ progress: emptyPublicProgress(manifest.markerIndexHash) });
-    }
-    return jsonResponse({ progress: await this.publicProgress(progress, manifest) });
+    return jsonResponse({
+      progress: await this.publicProgress(progress, manifest, user?.progressRetainedPointIds)
+    });
   }
 
   private async prepareProgressForManifest(
@@ -441,7 +469,7 @@ export class OEMUserDO {
         409,
         "PROGRESS_REVISION_CONFLICT",
         "Incoming patch is based on an older cloud revision.",
-        { current: await this.publicProgress(prepared.progress, manifest) }
+        { current: await this.publicProgress(prepared.progress, manifest, prepared.retainedPointIds) }
       );
     }
 
@@ -480,7 +508,7 @@ export class OEMUserDO {
     if (!progressChanged && !retainedChanged) {
       const responseJson = JSON.stringify({
         ok: true,
-        progress: await this.publicProgress(prepared.progress, manifest),
+        progress: await this.publicProgress(prepared.progress, manifest, nextRetainedPointIds),
         unchanged: true
       });
       const now = nowTimestampMs();
@@ -525,7 +553,8 @@ export class OEMUserDO {
       progress: {
         revision: nextProgress.revision,
         markerIndexHash: nextProgress.markerIndexHash,
-        updatedAt: nextProgress.updatedAt
+        updatedAt: nextProgress.updatedAt,
+        retainedPointIds: nextRetainedPointIds.filter((pointId) => !manifest.indexById.has(pointId))
       }
     });
     const statsEvent: ProgressStatsDelta | undefined = firstSync
