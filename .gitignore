@@ -166,9 +166,7 @@ src/lib/emailBlacklist.json
 .dev.vars.local
 .env.local
 /.idea/
-*.spec.ts
-!src/lib/email/sender.spec.ts
-*.test.ts
 
 docs/
+!src/services/progress/progressConsistency.test.ts
 src/data
