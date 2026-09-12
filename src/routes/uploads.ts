@@ -22,6 +22,7 @@ import {
 } from "../services/upload/mutateImage";
 import { handleListMyComments, handleListPublicComments } from "../services/upload/listPublicComments";
 import { handleListMyImages, handleListPublicImages } from "../services/upload/listPublicImages";
+import { handleGetPublicComment } from "../services/upload/getPublicComment";
 import { handleGetPublicImage } from "../services/upload/getPublicImage";
 import { handleServePrivateImageFile, handleServePublicImageFile } from "../services/upload/serveImageFile";
 import { commentTranslationSchema } from "../services/upload/schemas";
@@ -81,6 +82,8 @@ export function createUploadRoutes() {
 
   app.get("/comments/mine", requireActiveUser, rateLimit("auth"), handleListMyComments);
   app.get("/comments", rateLimit("public"), handleListPublicComments);
+  // Keep after /comments/mine so "mine" is not treated as a comment ID.
+  app.get("/comments/:id", rateLimit("public"), handleGetPublicComment);
   app.post("/comments/:id/upvote", requireActiveUser, requireUploadsEnabled, rateLimit("auth"), (c) => handleCommentVote(c, 1));
   app.post("/comments/:id/downvote", requireActiveUser, requireUploadsEnabled, rateLimit("auth"), (c) => handleCommentVote(c, -1));
   app.post("/comments/:id/flag", requireActiveUser, requireUploadsEnabled, rateLimit("auth"), handleFlagComment);

@@ -151,6 +151,14 @@ describe("upload route policies", () => {
     expect((await request("/images/photo?markerId=42", { user: suspendedUser })).status).toBe(200);
   });
 
+  it("registers direct comment context as a public no-store read", async () => {
+    const response = await request("/comments/target", { productionErrors: true });
+
+    expect(response.status).toBe(422);
+    expect(response.headers.get("Cache-Control")).toBe("private, no-store");
+    expect(await response.json()).toMatchObject({ code: "VALIDATION_ERROR" });
+  });
+
   it.each(["/images/mine", "/comments/mine", "/file/private.webp"])(
     "protects private read %s",
     async (path) => {
