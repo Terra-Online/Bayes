@@ -6,11 +6,15 @@ import type { PublicSubmissionComment } from "../../repositories/submission/type
 import type { AppEnv } from "../../types/app";
 
 const mocks = vi.hoisted(() => ({
-  getPublicCommentContextById: vi.fn()
+  getPublicCommentContextById: vi.fn(),
+  getOptionalAuthIdentity: vi.fn()
 }));
 
 vi.mock("../../repositories/submission/getPublicComment", () => ({
   getPublicCommentContextById: mocks.getPublicCommentContextById
+}));
+vi.mock("./helpers", () => ({
+  getOptionalAuthIdentity: mocks.getOptionalAuthIdentity
 }));
 
 import { handleGetPublicComment } from "./getPublicComment";
@@ -41,9 +45,10 @@ const context: PublicCommentContext = {
 
 beforeEach(() => {
   vi.resetAllMocks();
+  mocks.getOptionalAuthIdentity.mockResolvedValue(null);
 });
 
-function request(path: string) {
+function request(path: string, headers?: HeadersInit) {
   const app = new Hono<AppEnv>();
   app.onError((error) => {
     if (error instanceof ApiError) {
@@ -54,7 +59,7 @@ function request(path: string) {
   app.get("/comments/:id", handleGetPublicComment);
   return app.request(
     "https://api.example.com" + path,
-    undefined,
+    { headers },
     { DB: {} as D1Database } as AppEnv["Bindings"]
   );
 }
@@ -71,6 +76,21 @@ describe("handleGetPublicComment", () => {
     expect(mocks.getPublicCommentContextById).toHaveBeenCalledWith(
       expect.anything(),
       { id: "target", markerId: "42" }
+    );
+  });
+
+  it("passes the optional viewer identity to the context query", async () => {
+    mocks.getOptionalAuthIdentity.mockResolvedValue({ uid: "viewer" });
+    mocks.getPublicCommentContextById.mockResolvedValue(context);
+
+    const response = await request("/comments/target?markerId=42", {
+      cookie: "session=test"
+    });
+
+    expect(response.status).toBe(200);
+    expect(mocks.getPublicCommentContextById).toHaveBeenCalledWith(
+      expect.anything(),
+      { id: "target", markerId: "42", viewerUserId: "viewer" }
     );
   });
 
@@ -92,6 +112,7 @@ describe("handleGetPublicComment", () => {
 
     expect(response.status).toBe(422);
     expect(await response.json()).toEqual({ code: "VALIDATION_ERROR" });
+    expect(mocks.getOptionalAuthIdentity).not.toHaveBeenCalled();
     expect(mocks.getPublicCommentContextById).not.toHaveBeenCalled();
   });
 });

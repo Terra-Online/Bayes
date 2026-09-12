@@ -145,6 +145,44 @@ describe("getPublicCommentContextById", () => {
       status: "remove_request",
       score: 1
     });
+    expect(context?.path[2]?.viewerVote).toBeUndefined();
+    expect(context?.path[2]?.flagged).toBeUndefined();
+  });
+
+  it("includes viewer vote and flag state for linked context", async () => {
+    insertComment({ id: "root", userId: "root-author" });
+    insertComment({ id: "target", parentId: "root", depth: 1 });
+    insertComment({ id: "reply", parentId: "target", depth: 2 });
+    database.sqlite.exec(`
+      INSERT INTO ugc_submission_votes VALUES
+        ('target', 'viewer', 1, 1),
+        ('reply', 'viewer', -1, 1);
+      INSERT INTO ugc_submission_flags VALUES
+        ('root', 'viewer', 1),
+        ('reply', 'viewer', 1);
+    `);
+
+    const context = await getPublicCommentContextById(db, {
+      id: "target",
+      markerId: "marker-1",
+      viewerUserId: "viewer"
+    });
+
+    expect(context?.path[0]).toMatchObject({
+      id: "root",
+      viewerVote: 0,
+      flagged: true
+    });
+    expect(context?.path[1]).toMatchObject({
+      id: "target",
+      viewerVote: 1,
+      flagged: false
+    });
+    expect(context?.replies[0]).toMatchObject({
+      id: "reply",
+      viewerVote: -1,
+      flagged: true
+    });
   });
 
   it("omits a non-public ancestor without exposing its content", async () => {

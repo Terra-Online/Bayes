@@ -2,6 +2,7 @@ import type { Context } from "hono";
 import { ApiError } from "../../lib/errors";
 import { getPublicCommentContextById } from "../../repositories/submission/getPublicComment";
 import type { AppEnv } from "../../types/app";
+import { getOptionalAuthIdentity } from "./helpers";
 import { commentsQuerySchema } from "./schemas";
 
 const commentQuerySchema = commentsQuerySchema.pick({
@@ -18,9 +19,11 @@ export async function handleGetPublicComment(
     throw new ApiError(422, "VALIDATION_ERROR", "Invalid comment query.", parsed.error.flatten());
   }
 
+  const identity = await getOptionalAuthIdentity(c.env, c.req.raw.headers);
   const item = await getPublicCommentContextById(c.env.DB, {
     id: c.req.param("id"),
-    markerId: parsed.data.markerId
+    markerId: parsed.data.markerId,
+    ...(identity ? { viewerUserId: identity.uid } : {})
   });
   if (!item) {
     throw new ApiError(404, "COMMENT_NOT_FOUND", "Comment not found.");

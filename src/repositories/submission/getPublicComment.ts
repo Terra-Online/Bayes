@@ -14,8 +14,15 @@ const REPLY_TRAVERSAL_LIMIT = 256;
 
 export async function getPublicCommentContextById(
   db: D1Database,
-  payload: { id: string; markerId: string }
+  payload: { id: string; markerId: string; viewerUserId?: string }
 ): Promise<PublicCommentContext | null> {
+  const pathViewerSelect = payload.viewerUserId
+    ? `,
+         COALESCE((SELECT value FROM ugc_submission_votes
+           WHERE submission_id = path.id AND user_id = ?4 AND active = 1), 0) AS viewer_vote,
+         EXISTS(SELECT 1 FROM ugc_submission_flags
+           WHERE submission_id = path.id AND user_id = ?4 AND active = 1) AS viewer_flagged`
+    : "";
   const result = await db
     .prepare(
       `WITH RECURSIVE comment_path AS (
@@ -60,17 +67,30 @@ export async function getPublicCommentContextById(
          u.karma AS user_karma,
          u.nickname AS user_nickname,
          u.avt AS user_avt
+         ${pathViewerSelect}
        FROM comment_path path
        LEFT JOIN users u ON u.uid = path.user_id
        WHERE path.status IN ('active', 'flagged', 'remove_request')
        ORDER BY path.ancestor_distance DESC`
     )
-    .bind(payload.id, payload.markerId, ANCESTOR_CONTEXT_LIMIT)
+    .bind(
+      payload.id,
+      payload.markerId,
+      ANCESTOR_CONTEXT_LIMIT,
+      ...(payload.viewerUserId ? [payload.viewerUserId] : [])
+    )
     .all<Record<string, unknown>>();
 
-  const path = (result.results ?? []).map((row) => publicCommentFromRow(row));
+  const path = (result.results ?? []).map((row) => publicCommentFromRow(row, payload.viewerUserId));
   if (path.length === 0) return null;
 
+  const replyViewerSelect = payload.viewerUserId
+    ? `,
+         COALESCE((SELECT value FROM ugc_submission_votes
+           WHERE submission_id = reply.id AND user_id = ?6 AND active = 1), 0) AS viewer_vote,
+         EXISTS(SELECT 1 FROM ugc_submission_flags
+           WHERE submission_id = reply.id AND user_id = ?6 AND active = 1) AS viewer_flagged`
+    : "";
   const replyResult = await db
     .prepare(
       `WITH RECURSIVE reply_context AS (
@@ -145,6 +165,7 @@ export async function getPublicCommentContextById(
          u.karma AS user_karma,
          u.nickname AS user_nickname,
          u.avt AS user_avt
+         ${replyViewerSelect}
        FROM traversal_meta meta
        LEFT JOIN selected_replies reply ON TRUE
        LEFT JOIN users u ON u.uid = reply.user_id
@@ -155,7 +176,8 @@ export async function getPublicCommentContextById(
       payload.markerId,
       ANCESTOR_CONTEXT_LIMIT,
       REPLY_TRAVERSAL_LIMIT + 1,
-      REPLY_CONTEXT_LIMIT + 1
+      REPLY_CONTEXT_LIMIT + 1,
+      ...(payload.viewerUserId ? [payload.viewerUserId] : [])
     )
     .all<Record<string, unknown>>();
 
@@ -164,7 +186,7 @@ export async function getPublicCommentContextById(
   const depthTruncated = Number(replyResult.results?.[0]?.depth_truncated ?? 0) === 1;
   const replyCandidates = (replyResult.results ?? [])
     .filter((row) => row.id !== null && row.id !== undefined)
-    .map((row) => publicCommentFromRow(row));
+    .map((row) => publicCommentFromRow(row, payload.viewerUserId));
   const traversalExhausted = traversedCount >= REPLY_TRAVERSAL_LIMIT + 1;
   return {
     targetId: payload.id,
