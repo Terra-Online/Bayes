@@ -121,9 +121,9 @@ async function cloudflare(path, options = {}) {
   return payload.result;
 }
 
-async function applyRule(host, expression) {
-  const zoneId = process.env.CLOUDFLARE_ZONE_ID;
-  if (!zoneId) throw new Error("CLOUDFLARE_ZONE_ID is required for --apply");
+async function applyRule(host, expression, zoneId) {
+  if (!zoneId) throw new Error("A Cloudflare zone ID is required for --apply");
+  if (!/^[a-f0-9]{32}$/i.test(zoneId)) throw new Error(`invalid Cloudflare zone ID for ${host}`);
   const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
   if (accountId && !/^[a-f0-9]{32}$/i.test(accountId)) {
     throw new Error("CLOUDFLARE_ACCOUNT_ID must be a 32-character hexadecimal account ID");
@@ -212,8 +212,19 @@ try {
   console.log(`[waf] generated ${paths.length} prefixes in ${outputPath}`);
   console.log(`[waf] expression: ${expression}`);
   if (apply) {
-    await applyRule(host, expression);
-    console.log(`[waf] applied rule: ${ruleDescription}`);
+    const targets = [{ host, zoneId: process.env.CLOUDFLARE_ZONE_ID }];
+    const cnZoneId = process.env.CLOUDFLARE_CN_ZONE_ID;
+    if (cnZoneId) {
+      targets.push({
+        host: process.env.WAF_CN_HOST || "api.opendfieldmap.cn",
+        zoneId: cnZoneId,
+      });
+    }
+    for (const target of targets) {
+      if (!/^[a-z0-9.-]+$/i.test(target.host)) throw new Error(`invalid WAF host: ${target.host}`);
+      await applyRule(target.host, buildExpression(target.host, paths), target.zoneId);
+      console.log(`[waf] applied rule for ${target.host}: ${ruleDescription}`);
+    }
   }
 } catch (error) {
   fail(error instanceof Error ? error.message : String(error));

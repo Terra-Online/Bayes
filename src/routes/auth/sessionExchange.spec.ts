@@ -31,6 +31,7 @@ vi.mock("../../repositories/users", () => ({
 
 const realCreateAuth = (await vi.importActual<typeof import("../../lib/auth/createAuth")>("../../lib/auth/createAuth")).createAuth;
 const API_ORIGIN = "https://api.opendfieldmap.org";
+const CN_API_ORIGIN = "https://api.opendfieldmap.cn";
 const CN_ORIGIN = "https://opendfieldmap.cn";
 
 describe("CHIPS OAuth exchange", () => {
@@ -52,6 +53,7 @@ describe("CHIPS OAuth exchange", () => {
       }
     });
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-09-05T00:00:00.000Z"));
     sqlite = new DatabaseSync(":memory:");
@@ -110,8 +112,8 @@ describe("CHIPS OAuth exchange", () => {
     vi.restoreAllMocks();
   });
 
-  async function issueCode(origin = CN_ORIGIN) {
-    const initiated = await app.request(`${API_ORIGIN}/sign-in/social`, {
+  async function issueCode(origin = CN_ORIGIN, apiOrigin = API_ORIGIN) {
+    const initiated = await app.request(`${apiOrigin}/sign-in/social`, {
       method: "POST",
       headers: { origin, "content-type": "application/json" },
       body: JSON.stringify({ provider: "github", callbackURL: `${origin}/?test=1`, disableRedirect: true }),
@@ -138,11 +140,11 @@ describe("CHIPS OAuth exchange", () => {
     return { code, cookie, token: result.response.token };
   }
 
-  function exchange(code: string, origin: string | null = CN_ORIGIN) {
+  function exchange(code: string, origin: string | null = CN_ORIGIN, apiOrigin = API_ORIGIN) {
     const headers = new Headers({ "content-type": "application/json" });
     if (proofCookie) headers.set("cookie", proofCookie);
     if (origin) headers.set("origin", origin);
-    return app.request(`${API_ORIGIN}/session/exchange`, {
+    return app.request(`${apiOrigin}/session/exchange`, {
       method: "POST", headers, body: JSON.stringify({ code }),
     }, env);
   }
@@ -169,6 +171,22 @@ describe("CHIPS OAuth exchange", () => {
       expect(session.status).toBe(200);
     },
   );
+
+  it("establishes the CN session through api.opendfieldmap.cn after the frontend callback", async () => {
+    const { code } = await issueCode(CN_ORIGIN, CN_API_ORIGIN);
+    const established = await exchange(code, CN_ORIGIN, CN_API_ORIGIN);
+    expect(established.status).toBe(200);
+    const cookie = established.headers.getSetCookie().find(
+      (value) => value.startsWith("__Secure-oem-chips.session_token="),
+    )!;
+    expect(cookie).toBeTruthy();
+    expect(callbackUrl.startsWith(CN_ORIGIN + "/")).toBe(true);
+
+    const session = await app.request(CN_API_ORIGIN + "/session", {
+      headers: { origin: CN_ORIGIN, cookie: cookie.split(";")[0]! },
+    }, env);
+    expect(session.status).toBe(200);
+  });
 
   it("consumes a code once, including concurrent attempts", async () => {
     const { code } = await issueCode();
@@ -232,6 +250,16 @@ describe("CHIPS OAuth exchange", () => {
     const response = await exchange(code);
     expect(response.status).toBe(401);
     expect(response.headers.getSetCookie()).toEqual([]);
+  });
+
+  it("does not consume the exchange code when its session is temporarily unavailable", async () => {
+    const { code } = await issueCode();
+    const storedSession = authDatabase.auth_sessions!.shift()!;
+    expect((await exchange(code)).status).toBe(401);
+
+    authDatabase.auth_sessions!.push(storedSession);
+    expect((await exchange(code)).status).toBe(200);
+    expect((await exchange(code)).status).toBe(400);
   });
 
   it("does not give the exchanged cookie a longer lifetime than the stored session", async () => {

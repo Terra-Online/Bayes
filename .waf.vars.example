@@ -6,3 +6,6 @@ CLOUDFLARE_ACCOUNT_ID=""
 CLOUDFLARE_ZONE_ID=""
 # Optional; defaults to api.opendfieldmap.org
 WAF_HOST="api.opendfieldmap.org"
+# Optional second zone target for the CN Worker custom domain.
+CLOUDFLARE_CN_ZONE_ID=""
+WAF_CN_HOST="api.opendfieldmap.cn"

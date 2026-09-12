@@ -6,6 +6,7 @@ import type { createAuth } from "./createAuth";
 
 type Auth = ReturnType<typeof createAuth>;
 export const AUTH_EXCHANGE_CHALLENGE_PARAM = "auth_exchange_challenge";
+export type OAuthExchangeProofResult = "valid" | "missing" | "too_long" | "mismatch";
 
 function getExchangeProofCookie(auth: Auth) {
   return createCookieGetter(auth.options)("oauth_exchange_proof", { maxAge: 600 });
@@ -22,11 +23,17 @@ export async function createOAuthExchangeProof(auth: Auth): Promise<{ challenge:
   return { challenge: await hashProof(proof), cookie: generateCookie(cookie.name, proof, cookie.attributes) };
 }
 
-export async function verifyOAuthExchangeProof(auth: Auth, headers: Headers, challenge: string): Promise<boolean> {
+export async function inspectOAuthExchangeProof(
+  auth: Auth,
+  headers: Headers,
+  challenge: string,
+): Promise<OAuthExchangeProofResult> {
   const cookie = getExchangeProofCookie(auth);
   const cookies = parseCookies((headers.get("cookie") ?? "").split(";").map((value) => value.trim()).join("; "));
   const proof = cookies.get(cookie.name);
-  return Boolean(proof && proof.length <= 128 && await hashProof(proof) === challenge);
+  if (!proof) return "missing";
+  if (proof.length > 128) return "too_long";
+  return await hashProof(proof) === challenge ? "valid" : "mismatch";
 }
 
 export function expireOAuthExchangeProof(auth: Auth): string {

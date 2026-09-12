@@ -23,8 +23,12 @@ type = "worker"
 enabled = true
 
 [[routes]]
-pattern = "api.opendfieldmap.org/*"
-zone_name = "opendfieldmap.org"
+pattern = "api.opendfieldmap.org"
+custom_domain = true
+
+[[routes]]
+pattern = "api.opendfieldmap.cn"
+custom_domain = true
 
 [observability]
 enabled = true

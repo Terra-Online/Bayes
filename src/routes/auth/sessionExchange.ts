@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { createAuth } from "../../lib/auth/createAuth";
-import { expireOAuthExchangeProof, serializeBrowserSessionCookie, verifyOAuthExchangeProof } from "../../lib/auth/browserSession";
+import { expireOAuthExchangeProof, inspectOAuthExchangeProof, serializeBrowserSessionCookie } from "../../lib/auth/browserSession";
 import { ApiError } from "../../lib/errors";
 import { ensureUserProfile, formatPublicUid } from "../../repositories/users";
 import { toSessionUser } from "./sessionUser";
@@ -18,6 +18,27 @@ const exchangeValueSchema = z.object({
 export const sessionExchangeSchema = z.object({
   code: z.string().trim().min(16, "Code is required."),
 });
+
+function classifyBrowser(userAgent: string | undefined): "firefox" | "chromium" | "safari" | "other" {
+  if (!userAgent) return "other";
+  if (/firefox\//i.test(userAgent)) return "firefox";
+  if (/(?:chrome|chromium|crios)\//i.test(userAgent)) return "chromium";
+  if (/safari\//i.test(userAgent)) return "safari";
+  return "other";
+}
+
+function logExchangeFailure(
+  c: AuthRouteContext,
+  phase: "code_lookup" | "proof_missing" | "proof_mismatch" | "session_lookup" | "consume_conflict",
+) {
+  console.error("[auth][session-exchange] rejected", {
+    requestId: c.get("requestId"),
+    phase,
+    origin: c.req.header("origin") ?? null,
+    browser: classifyBrowser(c.req.header("user-agent")),
+    hasCookieHeader: Boolean(c.req.header("cookie")),
+  });
+}
 
 export async function createSessionExchangeCode(
   c: AuthRouteContext,
@@ -68,6 +89,7 @@ export async function handleSessionExchange(c: AuthRouteContext) {
 
   const expiresAt = verification ? Date.parse(verification.expiresAt) : Number.NaN;
   if (!verification || !Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+    logExchangeFailure(c, "code_lookup");
     throw new ApiError(400, "INVALID_AUTH_CODE", "Auth code is invalid or expired.");
   }
 
@@ -83,16 +105,10 @@ export async function handleSessionExchange(c: AuthRouteContext) {
   }
 
   const auth = createAuth(c.env);
-  if (!await verifyOAuthExchangeProof(auth, c.req.raw.headers, exchange.data.challenge)) {
+  const proofResult = await inspectOAuthExchangeProof(auth, c.req.raw.headers, exchange.data.challenge);
+  if (proofResult !== "valid") {
+    logExchangeFailure(c, proofResult === "missing" ? "proof_missing" : "proof_mismatch");
     throw new ApiError(400, "INVALID_AUTH_CODE", "Auth code does not belong to this browser login attempt.");
-  }
-
-  const consumed = await c.env.DB
-    .prepare("DELETE FROM auth_verifications WHERE identifier = ?1 AND value = ?2 RETURNING id")
-    .bind(identifier, verification.value)
-    .first<{ id: string }>();
-  if (!consumed || expiresAt <= Date.now()) {
-    throw new ApiError(400, "INVALID_AUTH_CODE", "Auth code is invalid or expired.");
   }
 
   const session = await auth.api.getSession({
@@ -103,7 +119,17 @@ export async function handleSessionExchange(c: AuthRouteContext) {
   });
 
   if (!session) {
+    logExchangeFailure(c, "session_lookup");
     throw new ApiError(401, "SESSION_REQUIRED", "Session is required.");
+  }
+
+  const consumed = await c.env.DB
+    .prepare("DELETE FROM auth_verifications WHERE identifier = ?1 AND value = ?2 RETURNING id")
+    .bind(identifier, verification.value)
+    .first<{ id: string }>();
+  if (!consumed || expiresAt <= Date.now()) {
+    logExchangeFailure(c, "consume_conflict");
+    throw new ApiError(400, "INVALID_AUTH_CODE", "Auth code is invalid or expired.");
   }
 
   const profile = await ensureUserProfile(c.env.DB, {

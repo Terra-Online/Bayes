@@ -7,7 +7,9 @@ const DEFAULT_TRUSTED_ORIGINS = [
   "https://beta.opendfieldmap.org",
   "https://opendfieldmap.cn",
   "https://www.opendfieldmap.cn",
+  "https://beta.opendfieldmap.cn",
   "https://api.opendfieldmap.org",
+  "https://api.opendfieldmap.cn",
 ];
 
 const LOCAL_TRUSTED_ORIGINS = [

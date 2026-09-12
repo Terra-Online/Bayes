@@ -6,6 +6,7 @@ const DEFAULT_TRUSTED_FRONTEND_ORIGINS = [
   "https://beta.opendfieldmap.org",
   "https://opendfieldmap.cn",
   "https://www.opendfieldmap.cn",
+  "https://beta.opendfieldmap.cn",
 ];
 
 const LOCAL_TRUSTED_FRONTEND_ORIGINS = [
@@ -16,6 +17,7 @@ const LOCAL_TRUSTED_FRONTEND_ORIGINS = [
 ];
 
 const DEFAULT_AUTH_ORIGIN = "https://api.opendfieldmap.org";
+const CN_AUTH_ORIGIN = "https://api.opendfieldmap.cn";
 
 function isLocalBackendUrl(raw: string | undefined): boolean {
   if (!raw || raw.trim().length === 0) {
@@ -46,7 +48,7 @@ export function readOriginFromUrl(raw: string | null): string | null {
 export function parseTrustedFrontendOrigins(c: AuthRouteContext): string[] {
   const raw = c.env.TRUSTED_ORIGINS ?? c.env.CORS_ORIGINS;
   const backendOrigins = new Set(
-    [DEFAULT_AUTH_ORIGIN, readOriginFromUrl(c.env.BETTER_AUTH_URL ?? null)].filter(
+    [DEFAULT_AUTH_ORIGIN, CN_AUTH_ORIGIN, readOriginFromUrl(c.env.BETTER_AUTH_URL ?? null)].filter(
       (origin): origin is string => origin !== null,
     ),
   );
