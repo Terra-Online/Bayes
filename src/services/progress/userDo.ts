@@ -172,15 +172,17 @@ function emptyPublicProgress(markerIndexHash = ""): PublicProgressState {
   }, []);
 }
 
-function logSlowProgressRequest(
+function logProgressRequest(
   startedAt: number,
   operation: string,
   stage: string,
   response: Response
 ): void {
   const latencyMs = Date.now() - startedAt;
-  if (latencyMs < 1_000) return;
-  console.warn("[progress][sync] slow request", {
+  // Keep one low-cardinality completion event per operation. Invocation
+  // metrics remain the billing/request source, while this event preserves the
+  // operation/status denominator for existing progress dashboards.
+  console.warn("[progress][sync] request completed", {
     operation,
     status: response.status,
     stage,
@@ -216,7 +218,7 @@ export class OEMUserDO {
         const manifest = await requireProgressManifest(this.env, normalizeStateManifestHash(url));
         stage = "state_read";
         const response = await this.handleState(uid, manifest);
-        logSlowProgressRequest(startedAt, "state", stage, response);
+        logProgressRequest(startedAt, "state", stage, response);
         return response;
       }
 
@@ -233,7 +235,7 @@ export class OEMUserDO {
         const response = await this.runExclusive(
           () => this.handleSync(uid, incoming, requestHash, eventId, manifest)
         );
-        logSlowProgressRequest(startedAt, "sync", stage, response);
+        logProgressRequest(startedAt, "sync", stage, response);
         return response;
       }
 
@@ -245,7 +247,7 @@ export class OEMUserDO {
         );
         stage = "archive_state_read";
         const response = await this.runExclusive(() => handleArchiveProgressState(this.env, uid, manifest));
-        logSlowProgressRequest(startedAt, "archive-state", stage, response);
+        logProgressRequest(startedAt, "archive-state", stage, response);
         return response;
       }
 
@@ -261,7 +263,7 @@ export class OEMUserDO {
         const response = await this.runExclusive(
           () => handleArchiveProgressSync(this.env, uid, incoming, requestHash, manifest)
         );
-        logSlowProgressRequest(startedAt, "archive-sync", stage, response);
+        logProgressRequest(startedAt, "archive-sync", stage, response);
         return response;
       }
 

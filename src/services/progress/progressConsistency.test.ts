@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { buildStatsCountsBase64, parseStatsCountsBase64 } from "./bitmap";
 import type { ProgressDoEnv } from "./manifest";
 import { OEMStatsDO } from "./statsDo";
@@ -367,6 +367,27 @@ function archiveSyncRequest(archiveIndexHash: string, options: {
 }
 
 describe("OEMUserDO progress consistency", () => {
+  it("keeps a low-cardinality completion event for successful requests", async () => {
+    const warningLog = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const database = new FakeD1();
+    database.users.set("A", userRow("A"));
+    const { object, markerIndexHash } = createUserDo(database);
+
+    const response = await object.fetch(new Request(
+      `https://progress-user/state?markerIndexHash=${markerIndexHash}`
+    ));
+
+    expect(response.status).toBe(200);
+    expect(warningLog).toHaveBeenCalledWith("[progress][sync] request completed", expect.objectContaining({
+      operation: "state",
+      status: 200,
+      stage: "state_read"
+    }));
+    const completion = warningLog.mock.calls.find(([label]) => label === "[progress][sync] request completed")?.[1];
+    expect(completion).not.toHaveProperty("uid");
+    expect(completion).not.toHaveProperty("clientMutationId");
+  });
+
   it("acknowledges retained points in sync, state, unchanged responses, and idempotent replays", async () => {
     const database = new FakeD1();
     database.users.set("A", userRow("A"));

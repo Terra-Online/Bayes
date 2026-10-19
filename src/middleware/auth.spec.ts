@@ -99,6 +99,7 @@ describe("request-owned auth lookups", () => {
     const next = {
       ...env,
       OEM_KV: {} as KVNamespace,
+      OEM_ID_MAILS: {} as Bindings["OEM_ID_MAILS"],
       UPSTASH_REDIS_REST_URL: "https://unrelated.example",
       UPSTASH_REDIS_REST_TOKEN: "unrelated-token"
     };

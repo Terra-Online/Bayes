@@ -4,7 +4,7 @@ import type { Bindings } from "../../types/app";
 // email/social provider callbacks. Do not compare the whole Worker env: an
 // unrelated binding wrapper may be recreated for every request and would throw
 // away completed authentication values for no behavioral reason.
-const AUTH_ENVIRONMENT_KEYS = [
+const AUTH_CACHE_ENVIRONMENT_KEYS = [
   "BETTER_AUTH_URL",
   "BETTER_AUTH_SECRET",
   "TRUSTED_ORIGINS",
@@ -26,13 +26,30 @@ const AUTH_ENVIRONMENT_KEYS = [
   "RESEND_AUTH_KEY",
   "RESEND_FROM_EMAIL",
   "RESEND_FROM_NAME",
-  "OEM_ID_MAILS"
 ] as const satisfies readonly (keyof Bindings)[];
+
+const AUTH_ENVIRONMENT_KEYS = [...AUTH_CACHE_ENVIRONMENT_KEYS, "OEM_ID_MAILS"] as const;
+
+// OEM_ID_MAILS is excluded from the completed identity cache scope. It is an
+// object binding whose wrapper may change between invocations, and it is only
+// used when sending email; it does not change session validation or identity.
 
 // Compare the database and auth-dependent bindings by identity/value. Keep the
 // snapshot private: it includes secrets and must never be logged or used as a
 // cache key.
-export function sameAuthEnvironment(snapshot: Bindings, env: Bindings): boolean {
+function sameEnvironment(
+  snapshot: Bindings,
+  env: Bindings,
+  keys: readonly (keyof Bindings)[]
+): boolean {
   if (snapshot.DB !== env.DB) return false;
-  return AUTH_ENVIRONMENT_KEYS.every((key) => snapshot[key] === env[key]);
+  return keys.every((key) => snapshot[key] === env[key]);
+}
+
+export function sameAuthEnvironment(snapshot: Bindings, env: Bindings): boolean {
+  return sameEnvironment(snapshot, env, AUTH_ENVIRONMENT_KEYS);
+}
+
+export function sameAuthCacheEnvironment(snapshot: Bindings, env: Bindings): boolean {
+  return sameEnvironment(snapshot, env, AUTH_CACHE_ENVIRONMENT_KEYS);
 }

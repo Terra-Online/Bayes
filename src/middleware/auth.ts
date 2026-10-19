@@ -2,7 +2,7 @@ import type { Context, MiddlewareHandler } from "hono";
 import { createAuth } from "../lib/auth/createAuth";
 import { resolveBrowserSessionHeaders } from "../lib/auth/browserSession";
 import { hasSessionCredentials } from "../lib/auth/sessionCredentials";
-import { sameAuthEnvironment } from "../lib/auth/environment";
+import { sameAuthCacheEnvironment } from "../lib/auth/environment";
 import { ApiError } from "../lib/errors";
 import { ensureUserProfile, formatPublicUid } from "../repositories/users";
 import type { AppEnv, AuthUser, Role } from "../types/app";
@@ -36,7 +36,7 @@ const authCaches = new WeakMap<D1Database, AuthCache>();
 
 function getAuthCache(env: AppEnv["Bindings"]): AuthCache {
   let cache = authCaches.get(env.DB);
-  if (!cache || !sameAuthEnvironment(cache.env, env)) {
+  if (!cache || !sameAuthCacheEnvironment(cache.env, env)) {
     cache = { env: { ...env }, revision: 0, users: new Map(), identities: new Map() };
     authCaches.set(env.DB, cache);
   }
@@ -117,7 +117,7 @@ async function fetchAuthIdentity(
     email: session.user.email,
     displayName: session.user.name
   };
-  if (cacheKey && authCaches.get(env.DB) === cache && cache.revision === revision && sameAuthEnvironment(cache.env, env)) {
+  if (cacheKey && authCaches.get(env.DB) === cache && cache.revision === revision && sameAuthCacheEnvironment(cache.env, env)) {
     pruneAuthCache(cache.identities, now);
     cache.identities.set(cacheKey, {
       identity,
@@ -171,7 +171,7 @@ async function fetchAuthUser(
     needsProfileSetup: !profile.nicknameCustomized
   };
 
-  if (cacheKey && authCaches.get(env.DB) === cache && cache.revision === revision && sameAuthEnvironment(cache.env, env)) {
+  if (cacheKey && authCaches.get(env.DB) === cache && cache.revision === revision && sameAuthCacheEnvironment(cache.env, env)) {
     pruneAuthCache(cache.users, now);
     cache.users.set(cacheKey, {
       user: authUser,
