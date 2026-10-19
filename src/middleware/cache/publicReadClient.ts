@@ -169,15 +169,16 @@ async function readSingleItem<T>(
     }
     return { failedCount: 0, failedMarkerIds: [], items: [selectItems(payload.items)] };
   } catch (reason) {
+    const transient = Boolean(transientDependencyError(reason));
     console.error("[public-read] single marker read failed", {
       kind,
       stage,
       upstreamStatus,
       elapsedMs: Date.now() - startedAt,
-      transient: transientDependencyError(reason),
+      transient,
       message: (reason instanceof Error ? reason.message : String(reason)).slice(0, 300)
     });
-    return noStoreError(transientDependencyError(reason) ? 503 : (upstreamStatus ?? 502), "Public cache reads failed.");
+    return noStoreError(transient ? 503 : (upstreamStatus ?? 502), "Public cache reads failed.");
   }
 }
 
