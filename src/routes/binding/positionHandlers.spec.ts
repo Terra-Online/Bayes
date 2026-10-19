@@ -15,6 +15,7 @@ vi.mock("./locatorCache", () => ({ readPositionCache: vi.fn(), writePositionCach
 import { handleEndfieldPositionSocket } from "./positionHandlers";
 import { positionReconnectDelay } from "./helpers";
 import { ApiError } from "../../lib/errors";
+import type { EndfieldPositionTermination } from "../../lib/endfieldClient/positionSocket";
 
 class TestSocket extends EventTarget {
   accept = vi.fn();
@@ -26,7 +27,11 @@ describe("locator reconnection lifecycle", () => {
   let server: TestSocket;
   let context: AppContext;
   let waits: Promise<unknown>[];
-  const callbacks: Array<{ onClose: () => void; onSubscribed: () => void; onError: () => void }> = [];
+  const callbacks: Array<{
+    onClose: (termination?: EndfieldPositionTermination) => void;
+    onSubscribed: () => void;
+    onError: (termination?: EndfieldPositionTermination) => void;
+  }> = [];
 
   beforeEach(() => {
     vi.useFakeTimers();
@@ -96,6 +101,24 @@ describe("locator reconnection lifecycle", () => {
     callbacks[1]!.onClose();
     await vi.advanceTimersByTimeAsync(1000);
     expect(mocks.connect).toHaveBeenCalledTimes(3);
+  });
+
+  it("records fixed upstream termination metadata without changing reconnect behavior", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    await connect();
+    callbacks[0]!.onClose({
+      kind: "remote-close",
+      phase: "subscribed",
+      code: 1006,
+      lifetimeMs: 12_345
+    });
+    expect(warn).toHaveBeenCalledWith("[locator][position-stream] reconnect scheduled", expect.objectContaining({
+      reason: "upstream-closed",
+      upstreamTermination: "remote-close",
+      upstreamPhase: "subscribed",
+      upstreamCode: 1006,
+      upstreamConnectionLifetimeMs: 12_345
+    }));
   });
 
   it("ignores a failed in-flight upstream connection after the client has closed", async () => {

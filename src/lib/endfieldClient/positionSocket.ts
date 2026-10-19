@@ -34,10 +34,17 @@ export type EndfieldPositionConnection = {
   close(code?: number, reason?: string): void;
 };
 
+export type EndfieldPositionTermination = {
+  kind: "remote-close" | "socket-error" | "send-failed" | "authentication-timeout";
+  phase: "authenticating" | "subscribed";
+  code?: number;
+  lifetimeMs: number;
+};
+
 type EndfieldPositionSocketHandlers = {
   onMessage?: (data: string | ArrayBuffer) => void;
-  onClose?: () => void;
-  onError?: () => void;
+  onClose?: (termination: EndfieldPositionTermination) => void;
+  onError?: (termination: EndfieldPositionTermination) => void;
   onAuthenticated?: () => void;
   onSubscribed?: () => void;
 };
@@ -186,7 +193,9 @@ export async function connectEndfieldPositionSocket(
 
   const socket = response.webSocket;
   socket.accept();
+  const connectedAt = Date.now();
   let closed = false;
+  let phase: EndfieldPositionTermination["phase"] = "authenticating";
   let heartbeat: ReturnType<typeof setInterval> | undefined;
   let authenticationTimer: ReturnType<typeof setTimeout> | undefined;
   let resubscribeTimer: ReturnType<typeof setInterval> | undefined;
@@ -208,22 +217,38 @@ export async function connectEndfieldPositionSocket(
     cleanup();
     closeEndfieldSocket(socket, reason, code);
   };
-  const onClose = () => {
+  const termination = (
+    kind: EndfieldPositionTermination["kind"],
+    code?: number
+  ): EndfieldPositionTermination => ({
+    kind,
+    phase,
+    ...(code === undefined ? {} : { code }),
+    lifetimeMs: Date.now() - connectedAt
+  });
+  const onClose = (event: Event) => {
     if (closed) return;
     closed = true;
     cleanup();
-    handlers.onClose?.();
+    const code = Number((event as CloseEvent).code);
+    handlers.onClose?.(termination("remote-close", Number.isFinite(code) && code > 0 ? code : undefined));
   };
-  const onError = () => {
+  const fail = (
+    kind: Extract<EndfieldPositionTermination["kind"], "socket-error" | "send-failed" | "authentication-timeout">,
+    reason: string
+  ) => {
     if (closed) return;
-    close(1011, "upstream error");
-    handlers.onError?.();
+    closed = true;
+    cleanup();
+    closeEndfieldSocket(socket, reason, 1011);
+    handlers.onError?.(termination(kind, 1011));
   };
+  const onError = () => fail("socket-error", "upstream error");
   const onAbort = () => close(1000, "request canceled");
   const send = (payload: unknown): boolean => {
     if (closed) return false;
     try { socket.send(JSON.stringify(payload)); return true; }
-    catch { onError(); return false; }
+    catch { fail("send-failed", "upstream error"); return false; }
   };
   const sendSubscription = () => {
     const sent = send({ type: 1011, data: { roleId: args.roleId, serverId: String(args.serverId) }, msgId: createMessageId() });
@@ -240,6 +265,7 @@ export async function connectEndfieldPositionSocket(
       handlers.onAuthenticated?.();
       if (!sendSubscription()) return;
       subscriptionSent = true;
+      phase = "subscribed";
       handlers.onSubscribed?.();
       if (!sendHeartbeat()) return;
       heartbeat = setInterval(sendHeartbeat, ENDFIELD_POSITION_SOCKET_HEARTBEAT_MS);
@@ -258,8 +284,7 @@ export async function connectEndfieldPositionSocket(
     args.signal.throwIfAborted();
   }
   authenticationTimer = setTimeout(() => {
-    close(1011, "authentication timeout");
-    handlers.onError?.();
+    fail("authentication-timeout", "authentication timeout");
   }, ENDFIELD_POSITION_SOCKET_AUTH_TIMEOUT_MS);
   if (!send({ type: 1, data: { token: socketToken }, msgId: createMessageId() })) {
     throw new ApiError(502, "ENDFIELD_POSITION_SOCKET_SEND_FAILED", "Endfield realtime position socket closed during authentication.");

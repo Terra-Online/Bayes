@@ -52,10 +52,18 @@ describe("managed upstream position socket lifecycle", () => {
     const handlers = { onClose: vi.fn(), onError: vi.fn(), onMessage: vi.fn() };
     await connectEndfieldPositionSocket(args, handlers);
     socket.message({ type: 2 });
-    socket.dispatchEvent(new Event(type));
+    const event = new Event(type);
+    if (type === "close") Object.defineProperty(event, "code", { value: 1006 });
+    socket.dispatchEvent(event);
     socket.dispatchEvent(new Event(type));
     socket.message({ type: 1012, data: position });
     expect(type === "close" ? handlers.onClose : handlers.onError).toHaveBeenCalledOnce();
+    expect(type === "close" ? handlers.onClose : handlers.onError).toHaveBeenCalledWith(expect.objectContaining({
+      kind: type === "close" ? "remote-close" : "socket-error",
+      phase: "subscribed",
+      code: type === "close" ? 1006 : 1011,
+      lifetimeMs: expect.any(Number)
+    }));
     expect(handlers.onMessage).toHaveBeenCalledTimes(1); // Authentication acknowledgement only.
     expect(vi.getTimerCount()).toBe(0);
   });
@@ -69,6 +77,7 @@ describe("managed upstream position socket lifecycle", () => {
     });
     await vi.advanceTimersByTimeAsync(10_000);
     expect(onError).toHaveBeenCalledOnce();
+    expect(onError).toHaveBeenCalledWith(expect.objectContaining({ kind: "send-failed", phase: "subscribed" }));
     expect(socket.close).toHaveBeenCalledWith(1011, "upstream error");
     expect(vi.getTimerCount()).toBe(0);
   });
@@ -78,6 +87,7 @@ describe("managed upstream position socket lifecycle", () => {
     await connectEndfieldPositionSocket(args, { onError });
     await vi.advanceTimersByTimeAsync(8000);
     expect(onError).toHaveBeenCalledOnce();
+    expect(onError).toHaveBeenCalledWith(expect.objectContaining({ kind: "authentication-timeout", phase: "authenticating" }));
     expect(socket.close).toHaveBeenCalledWith(1011, "authentication timeout");
     expect(vi.getTimerCount()).toBe(0);
   });

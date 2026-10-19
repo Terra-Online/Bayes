@@ -1,4 +1,8 @@
-import { connectEndfieldPositionSocket, type EndfieldPositionConnection } from "../../lib/endfieldClient/positionSocket";
+import {
+  connectEndfieldPositionSocket,
+  type EndfieldPositionConnection,
+  type EndfieldPositionTermination
+} from "../../lib/endfieldClient/positionSocket";
 import {
   isEndfieldCredentialErrorCode,
   isEndfieldCredentialExpiredErrorCode,
@@ -25,6 +29,34 @@ import {
   refreshPositionCache
 } from "./locatorCache";
 import type { AppContext, DecryptedBinding } from "./types";
+
+type PositionStreamCloseReason =
+  | "client-closed"
+  | "client-stopped"
+  | "page-lifecycle"
+  | "client-recovery"
+  | "client-command"
+  | "client-error"
+  | "send-failed"
+  | "stream-unavailable";
+
+const positionStreamCloseText: Record<PositionStreamCloseReason, string> = {
+  "client-closed": "client closed",
+  "client-stopped": "locator stopped",
+  "page-lifecycle": "locator disposed",
+  "client-recovery": "locator upstream state changed",
+  "client-command": "closed",
+  "client-error": "client socket error",
+  "send-failed": "send failed",
+  "stream-unavailable": "locator stream unavailable"
+};
+
+function classifyClientClose(event: CloseEvent): PositionStreamCloseReason {
+  if (event.reason === "locator stopped") return "client-stopped";
+  if (event.reason === "locator disposed" || event.reason === "page hidden") return "page-lifecycle";
+  if (event.reason === "locator upstream state changed") return "client-recovery";
+  return "client-closed";
+}
 
 async function resolvePositionBinding(
   c: AppContext,
@@ -85,31 +117,57 @@ export async function handleEndfieldPositionSocket(c: AppContext) {
   let upstreamSubscribedAt: number | undefined;
   let userUid: string | undefined;
   let binding: DecryptedBinding | undefined;
+  const streamStartedAt = Date.now();
 
-  const close = (code = 1000, reason = "client closed") => {
+  const close = (code = 1000, reason: PositionStreamCloseReason = "client-closed") => {
     if (closed) return;
     closed = true;
+    console.warn("[locator][position-stream] closed", {
+      code,
+      reason,
+      lifetimeMs: Date.now() - streamStartedAt,
+      upstreamLifetimeMs: upstreamSubscribedAt === undefined ? 0 : Date.now() - upstreamSubscribedAt,
+      reconnectAttempts: reconnectAttempt
+    });
     upstreamGeneration += 1;
     if (reconnectTimer !== undefined) {
       clearTimeout(reconnectTimer);
       reconnectTimer = undefined;
     }
     lifetime.abort();
-    upstream?.close(1000, reason);
+    const closeText = positionStreamCloseText[reason];
+    upstream?.close(1000, closeText);
     upstream = undefined;
     server.removeEventListener("close", onClientClose);
     server.removeEventListener("error", onClientError);
     server.removeEventListener("message", onClientMessage);
-    try { server.close(code, reason); } catch { /* Peer may already be closed. */ }
+    try { server.close(code, closeText); } catch { /* Peer may already be closed. */ }
   };
 
-  const scheduleReconnect = () => {
+  const scheduleReconnect = (
+    reason: "upstream-closed" | "upstream-error" | "credentials-refresh" | "bridge-failed",
+    termination?: EndfieldPositionTermination
+  ) => {
     if (closed || reconnectTimer !== undefined || !binding || !userUid) return;
+    const upstreamLifetimeMs = upstreamSubscribedAt === undefined ? 0 : Date.now() - upstreamSubscribedAt;
     if (upstreamSubscribedAt !== undefined && Date.now() - upstreamSubscribedAt >= 60_000) {
       reconnectAttempt = 0;
     }
     upstreamSubscribedAt = undefined;
     const delay = positionReconnectDelay(reconnectAttempt++);
+    console.warn("[locator][position-stream] reconnect scheduled", {
+      reason,
+      delayMs: delay,
+      upstreamLifetimeMs,
+      lifetimeMs: Date.now() - streamStartedAt,
+      reconnectAttempt,
+      ...(termination ? {
+        upstreamTermination: termination.kind,
+        upstreamPhase: termination.phase,
+        upstreamCode: termination.code,
+        upstreamConnectionLifetimeMs: termination.lifetimeMs
+      } : {})
+    });
     reconnectTimer = setTimeout(() => {
       reconnectTimer = undefined;
       void bridgeUpstream();
@@ -123,7 +181,7 @@ export async function handleEndfieldPositionSocket(c: AppContext) {
     try {
       server.send(JSON.stringify(payload));
     } catch {
-      close(1011, "send failed");
+      close(1011, "send-failed");
     }
   };
 
@@ -200,7 +258,7 @@ export async function handleEndfieldPositionSocket(c: AppContext) {
                 .then((refreshed) => {
                   if (closed || recoveryGeneration !== upstreamGeneration) return;
                   binding = refreshed;
-                  scheduleReconnect();
+                  scheduleReconnect("credentials-refresh");
                 })
                 .catch(() => {
                   if (!closed && recoveryGeneration === upstreamGeneration) sendJson(errorPayload);
@@ -224,7 +282,7 @@ export async function handleEndfieldPositionSocket(c: AppContext) {
             ...(includeBinding ? { binding: currentBinding.publicBinding } : {})
           });
         },
-        onClose: () => {
+        onClose: (termination) => {
           if (!closed && generation === upstreamGeneration) {
             upstreamGeneration += 1;
             sendJson({
@@ -232,10 +290,10 @@ export async function handleEndfieldPositionSocket(c: AppContext) {
               status: "reconnecting",
               reason: "upstream closed"
             });
-            scheduleReconnect();
+            scheduleReconnect("upstream-closed", termination);
           }
         },
-        onError: () => {
+        onError: (termination) => {
           if (!closed && generation === upstreamGeneration) {
             upstreamGeneration += 1;
             sendJson({
@@ -243,7 +301,7 @@ export async function handleEndfieldPositionSocket(c: AppContext) {
               status: "reconnecting",
               reason: "upstream error"
             });
-            scheduleReconnect();
+            scheduleReconnect("upstream-error", termination);
           }
         }
       });
@@ -270,7 +328,7 @@ export async function handleEndfieldPositionSocket(c: AppContext) {
         if (closed || generation !== upstreamGeneration) return;
         if (refreshed) {
           binding = refreshed;
-          scheduleReconnect();
+          scheduleReconnect("credentials-refresh");
           return;
         }
         if (
@@ -297,7 +355,7 @@ export async function handleEndfieldPositionSocket(c: AppContext) {
         error: serializeLocatorError(error, c.get("requestId")),
         requestId: c.get("requestId")
       });
-      scheduleReconnect();
+      scheduleReconnect("bridge-failed");
     }
   };
 
@@ -315,16 +373,16 @@ export async function handleEndfieldPositionSocket(c: AppContext) {
         error: serializeLocatorError(error, c.get("requestId")),
         requestId: c.get("requestId")
       });
-      close(error instanceof ApiError && error.status === 401 ? 1008 : 1011, "locator stream unavailable");
+      close(error instanceof ApiError && error.status === 401 ? 1008 : 1011, "stream-unavailable");
     }
   };
 
   server.accept();
-  function onClientClose() { close(); }
-  function onClientError() { close(1011, "client socket error"); }
+  function onClientClose(event: CloseEvent) { close(event.code || 1000, classifyClientClose(event)); }
+  function onClientError() { close(1011, "client-error"); }
   function onClientMessage(event: MessageEvent) {
     if (event.data === "close") {
-      close();
+      close(1000, "client-command");
     }
   }
   server.addEventListener("close", onClientClose);
