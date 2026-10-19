@@ -173,6 +173,7 @@ describe("completed authentication context reuse", () => {
     const first = await runWithAuthRequest(async () => {
       const a = createAuth(env);
       const b = createAuth(env);
+      expect(b).toBe(a);
       expect(await b.$context).toBe(await a.$context);
       return a.$context;
     });

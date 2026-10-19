@@ -213,7 +213,8 @@ export async function resolveContextAuthUser(c: Context<AppEnv>): Promise<AuthUs
   if (existing) return existing;
   const pending = c.get("authUserPromise");
   if (pending) return pending;
-  const request = resolveRequestAuthUser(c.env, c.req.raw);
+  const headers = getRequestAuthHeaders(c.req.raw);
+  const request = resolveAuthUser(c.env, headers);
   c.set("authUserPromise", request);
   try {
     const authUser = await request;

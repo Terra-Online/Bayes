@@ -93,6 +93,20 @@ describe("request-owned auth lookups", () => {
     await expect(resolveAuthIdentity(other, headers())).rejects.toMatchObject({ code: "TOKEN_EXPIRED" });
   });
 
+  it("keeps completed auth values when an unrelated binding wrapper changes", async () => {
+    const env = environment();
+    await resolveAuthIdentity(env, headers());
+    const next = {
+      ...env,
+      OEM_KV: {} as KVNamespace,
+      UPSTASH_REDIS_REST_URL: "https://unrelated.example",
+      UPSTASH_REDIS_REST_TOKEN: "unrelated-token"
+    };
+    getSession.mockResolvedValue(null);
+    await expect(resolveAuthIdentity(next, headers())).resolves.toMatchObject(identity);
+    expect(getSession).toHaveBeenCalledTimes(1);
+  });
+
   it("never substitutes a warm cached account for a freshly verified different user", async () => {
     const env = environment();
     await resolveAuthUser(env, headers(), identity);

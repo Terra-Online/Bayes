@@ -62,7 +62,8 @@ describe("backend safety boundaries", () => {
     expect(response.status).toBe(409);
     expect(errorLog).not.toHaveBeenCalled();
     expect(warningLog).toHaveBeenCalledWith("[progress][sync] request rejected", expect.objectContaining({
-      status: 409, code: "PROGRESS_MANIFEST_NOT_REGISTERED", requestId: "trace-1", clientMutationId: "mutation-1"
+      status: 409, code: "PROGRESS_MANIFEST_NOT_REGISTERED", requestId: "trace-1"
     }));
+    expect(warningLog.mock.calls[0]?.[1]).not.toHaveProperty("clientMutationId");
   });
 });

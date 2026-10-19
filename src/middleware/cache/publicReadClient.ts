@@ -147,6 +147,40 @@ async function readItems<T>(
   return { failedCount, failedMarkerIds, items };
 }
 
+async function readSingleItem<T>(
+  request: () => Promise<Response>,
+  kind: PublicReadMarkerKind,
+  selectItems: (items: T[]) => T[]
+): Promise<MarkerItemsResult<T> | Response> {
+  const startedAt = Date.now();
+  let stage: "fetch" | "body" = "fetch";
+  let upstreamStatus: number | undefined;
+  try {
+    const response = await request();
+    upstreamStatus = response.status;
+    if (!response.ok) {
+      await response.body?.cancel().catch(() => undefined);
+      throw new Error(`Public cache read failed: ${response.status}`);
+    }
+    stage = "body";
+    const payload = await response.json() as { items?: T[] };
+    if (!Array.isArray(payload.items)) {
+      throw new Error("Public cache response did not contain an items array.");
+    }
+    return { failedCount: 0, failedMarkerIds: [], items: [selectItems(payload.items)] };
+  } catch (reason) {
+    console.error("[public-read] single marker read failed", {
+      kind,
+      stage,
+      upstreamStatus,
+      elapsedMs: Date.now() - startedAt,
+      transient: transientDependencyError(reason),
+      message: (reason instanceof Error ? reason.message : String(reason)).slice(0, 300)
+    });
+    return noStoreError(transientDependencyError(reason) ? 503 : (upstreamStatus ?? 502), "Public cache reads failed.");
+  }
+}
+
 export type PublicReadResult<T> = {
   payload: { items: T[]; partial?: boolean; failedMarkerIds?: string[] };
   headers: Record<string, string>;
@@ -186,7 +220,7 @@ export async function readPublicImagesFromWorkersCache(payload: {
   assetBaseUrl: string;
 }): Promise<PublicReadResult<PublicSubmissionImage> | Response> {
   const markerIds = normalizePublicReadMarkerIds(payload.markerIds);
-  const markerItems = await readItems<PublicSubmissionImage>(markerIds, (markerId) => fetchSingleMarker(
+  const request = (markerId: string) => fetchSingleMarker(
     PUBLIC_READ_IMAGES_PATH,
     buildPublicImagesSearchParams({
       markerIds: [markerId],
@@ -194,7 +228,10 @@ export async function readPublicImagesFromWorkersCache(payload: {
       cacheNamespace: payload.cacheNamespace,
       assetBaseUrl: payload.assetBaseUrl
     })
-  ), "image", (images) => images.slice(0, payload.limit));
+  );
+  const markerItems = markerIds.length === 1
+    ? await readSingleItem<PublicSubmissionImage>(() => request(markerIds[0]!), "image", (images) => images.slice(0, payload.limit))
+    : await readItems<PublicSubmissionImage>(markerIds, request, "image", (images) => images.slice(0, payload.limit));
   if (markerItems instanceof Response) return markerItems;
 
   const items = markerItems.items.flat();
@@ -214,7 +251,7 @@ export async function readPublicCommentsFromWorkersCache(payload: {
   cacheNamespace: PublicReadCacheNamespace;
 }): Promise<PublicReadResult<PublicSubmissionComment> | Response> {
   const markerIds = normalizePublicReadMarkerIds(payload.markerIds);
-  const markerItems = await readItems<PublicSubmissionComment>(markerIds, (markerId) => fetchSingleMarker(
+  const request = (markerId: string) => fetchSingleMarker(
     PUBLIC_READ_COMMENTS_PATH,
     buildPublicCommentsSearchParams({
       markerIds: [markerId],
@@ -222,12 +259,16 @@ export async function readPublicCommentsFromWorkersCache(payload: {
       replyLimit: PUBLIC_MARKER_COMMENT_REPLY_CACHE_LIMIT,
       cacheNamespace: payload.cacheNamespace
     })
-  ), "comment", (comments) => comments
+  );
+  const selectComments = (comments: PublicSubmissionComment[]) => comments
     .slice(0, payload.limit)
     .map((comment) => ({
       ...comment,
       replies: comment.replies.slice(0, payload.replyLimit)
-    })));
+    }));
+  const markerItems = markerIds.length === 1
+    ? await readSingleItem<PublicSubmissionComment>(() => request(markerIds[0]!), "comment", selectComments)
+    : await readItems<PublicSubmissionComment>(markerIds, request, "comment", selectComments);
   if (markerItems instanceof Response) return markerItems;
 
   const items = markerItems.items.flat();

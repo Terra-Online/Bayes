@@ -148,7 +148,7 @@ function buildAuth(env: Bindings, metadata?: ReturnType<typeof authSchemaDatabas
 type Auth = ReturnType<typeof buildAuth>["auth"];
 type Context = Awaited<Auth["$context"]>;
 type SchemaSlot = { metadata?: ReturnType<typeof authSchemaDatabase>["metadata"] };
-type RequestAuth = { env: Bindings; auth: Auth; ready: Promise<Context> };
+type RequestAuth = { env: Bindings; auth: Auth; ready: Promise<Context>; defaultFacade?: Auth };
 const validatedSchemas = new WeakMap<D1Database, SchemaSlot>();
 const authRequests = new AsyncLocalStorage<WeakMap<D1Database, RequestAuth>>();
 
@@ -181,6 +181,7 @@ export function createAuth(env: Bindings, options?: AuthInvocation): Auth {
       if (requests && requests.get(env.DB) === request) requests.delete(env.DB);
     });
   }
+  if (!options && request.defaultFacade) return request.defaultFacade;
   const { auth, ready } = request;
   // Each request owns its Kysely connection/lock and pending checks. Only plain,
   // successfully validated schema results are shared across requests.
@@ -198,5 +199,7 @@ export function createAuth(env: Bindings, options?: AuthInvocation): Auth {
       });
     },
   });
-  return { ...auth, handler, fetch: handler, api, $context: ready };
+  const facade = { ...auth, handler, fetch: handler, api, $context: ready };
+  if (!options) request.defaultFacade = facade;
+  return facade;
 }
