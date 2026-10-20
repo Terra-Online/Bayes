@@ -28,6 +28,9 @@ interface WebSocketAttachment {
 }
 
 const NOTIFICATION_HEARTBEAT_PATTERN = /^[A-Za-z0-9]{8}$/;
+// The client switches back to nonce heartbeats after any missed acknowledgement,
+// so a delayed static echo cannot acknowledge a subsequent probe.
+const NOTIFICATION_AUTO_HEARTBEAT = "OEMping1";
 
 function jsonResponse(payload: unknown, init?: ResponseInit): Response {
   return new Response(JSON.stringify(payload), {
@@ -89,6 +92,13 @@ export async function publishNotificationsCreated(
 }
 
 export class OEMNotificationDO extends DurableObject<Bindings> {
+  constructor(ctx: DurableObjectState, env: Bindings) {
+    super(ctx, env);
+    ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair(
+      NOTIFICATION_AUTO_HEARTBEAT, NOTIFICATION_AUTO_HEARTBEAT
+    ));
+  }
+
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/connect") {

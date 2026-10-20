@@ -778,15 +778,6 @@ export function serializeNotificationItem(notification: NotificationRecord): Ser
   };
 }
 
-export async function getNotificationUnreadCount(
-  db: D1Database,
-  userId: string,
-  category: NotificationCategory
-): Promise<number> {
-  const counts = await getNotificationUnreadCounts(db, userId);
-  return counts[category];
-}
-
 export async function getNotificationUnreadCounts(
   db: D1Database,
   userId: string

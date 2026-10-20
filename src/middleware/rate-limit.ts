@@ -8,6 +8,7 @@ import type { AppEnv, Bindings } from "../types/app";
 const OTP_SEND_IP_LIMIT_PER_MINUTE = 20;
 const OTP_SEND_EMAIL_LIMIT_PER_HOUR = 8;
 const AUTH_LIMIT_PER_MINUTE = 120;
+const PREVIEW_LIMIT_PER_MINUTE = 300;
 const BINDING_LIMIT_PER_MINUTE = 80;
 const PUBLIC_LIMIT_PER_MINUTE = 80;
 const RESET_SEND_LIMIT_PER_MINUTE = 80;
@@ -16,7 +17,7 @@ const ONE_MINUTE_MS = 60 * 1000;
 const ONE_HOUR_MS = 60 * ONE_MINUTE_MS;
 const LOCAL_READ_RATE_CACHE_MAX_ENTRIES = 5000;
 
-type RateLimitScope = "public" | "auth" | "binding" | "otp-send" | "reset-send" | "upload";
+type RateLimitScope = "public" | "auth" | "preview" | "binding" | "otp-send" | "reset-send" | "upload";
 
 interface SlidingWindowResult {
   count: number;
@@ -43,6 +44,7 @@ function buildRateLimitDetails(result: SlidingWindowResult, limit: number): Reco
 const localReadWindows = new Map<string, LocalWindowEntry>();
 
 function getScopeLimit(scope: RateLimitScope): number {
+  if (scope === "preview") return PREVIEW_LIMIT_PER_MINUTE;
   if (scope === "upload" || scope === "auth") {
     return AUTH_LIMIT_PER_MINUTE;
   }
@@ -127,7 +129,7 @@ function canUseLocalReadLimit(
 ): boolean {
   const method = c.req.method.toUpperCase();
   const readMethod = method === "GET" || method === "HEAD" || method === "OPTIONS";
-  return readMethod && (scope === "public" || scope === "auth");
+  return readMethod && (scope === "public" || scope === "auth" || scope === "preview");
 }
 
 function normalizeEmail(input: string): string {
@@ -256,7 +258,9 @@ export function rateLimit(scope: RateLimitScope): MiddlewareHandler<AppEnv> {
       await next();
       return;
     }
-    const identity = scope === "upload" && user ? `user:${user.uid}` : `ip:${requestIp}`;
+    const identity = user && (scope === "upload" || scope === "auth" || scope === "preview")
+      ? `user:${user.uid}`
+      : `ip:${requestIp}`;
     const limit = getLimitForRequest(scope, c);
 
     try {

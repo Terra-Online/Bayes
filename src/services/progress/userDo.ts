@@ -172,6 +172,24 @@ function emptyPublicProgress(markerIndexHash = ""): PublicProgressState {
   }, []);
 }
 
+function logProgressRequest(
+  startedAt: number,
+  operation: string,
+  stage: string,
+  response: Response
+): void {
+  const latencyMs = Date.now() - startedAt;
+  // Keep one low-cardinality completion event per operation. Invocation
+  // metrics remain the billing/request source, while this event preserves the
+  // operation/status denominator for existing progress dashboards.
+  console.warn("[progress][sync] request completed", {
+    operation,
+    status: response.status,
+    stage,
+    latencyMs
+  });
+}
+
 export class OEMUserDO {
   private queue: Promise<void> = Promise.resolve();
 
@@ -184,7 +202,6 @@ export class OEMUserDO {
     const url = new URL(request.url);
     const startedAt = Date.now();
     let stage = "identity";
-    let mutationContext: Record<string, unknown> | undefined;
 
     try {
       const uid = this.state.id.name?.trim();
@@ -201,22 +218,13 @@ export class OEMUserDO {
         const manifest = await requireProgressManifest(this.env, normalizeStateManifestHash(url));
         stage = "state_read";
         const response = await this.handleState(uid, manifest);
-        console.warn("[progress][sync] request completed", {
-          operation: "state",
-          status: response.status,
-          latencyMs: Date.now() - startedAt
-        });
+        logProgressRequest(startedAt, "state", stage, response);
         return response;
       }
 
       if (request.method === "POST" && url.pathname === "/sync") {
         stage = "sync_parse";
         const incoming = normalizeSyncPatch(await request.json().catch(() => null));
-        mutationContext = {
-          clientMutationId: incoming.clientMutationId,
-          baseRevision: incoming.baseRevision,
-          manifestHash: incoming.markerIndexHash
-        };
         stage = "sync_prepare";
         const [manifest, requestHash, eventId] = await Promise.all([
           requireProgressManifest(this.env, incoming.markerIndexHash),
@@ -227,11 +235,7 @@ export class OEMUserDO {
         const response = await this.runExclusive(
           () => this.handleSync(uid, incoming, requestHash, eventId, manifest)
         );
-        console.warn("[progress][sync] request completed", {
-          operation: "sync",
-          status: response.status,
-          latencyMs: Date.now() - startedAt
-        });
+        logProgressRequest(startedAt, "sync", stage, response);
         return response;
       }
 
@@ -242,26 +246,25 @@ export class OEMUserDO {
           normalizeArchiveStateManifestHash(url)
         );
         stage = "archive_state_read";
-        return await this.runExclusive(() => handleArchiveProgressState(this.env, uid, manifest));
+        const response = await this.runExclusive(() => handleArchiveProgressState(this.env, uid, manifest));
+        logProgressRequest(startedAt, "archive-state", stage, response);
+        return response;
       }
 
       if (request.method === "POST" && url.pathname === "/archive/sync") {
         stage = "archive_sync_parse";
         const incoming = normalizeArchiveSyncPatch(await request.json().catch(() => null));
-        mutationContext = {
-          clientMutationId: incoming.clientMutationId,
-          baseRevision: incoming.baseRevision,
-          manifestHash: incoming.archiveIndexHash
-        };
         stage = "archive_sync_prepare";
         const [manifest, requestHash] = await Promise.all([
           requireArchiveProgressManifest(this.env, incoming.archiveIndexHash),
           buildArchiveSyncRequestHash(incoming)
         ]);
         stage = "archive_sync_critical";
-        return await this.runExclusive(
+        const response = await this.runExclusive(
           () => handleArchiveProgressSync(this.env, uid, incoming, requestHash, manifest)
         );
+        logProgressRequest(startedAt, "archive-sync", stage, response);
+        return response;
       }
 
       return jsonResponse({ code: "NOT_FOUND", message: "Progress DO route not found." }, { status: 404 });
@@ -274,7 +277,6 @@ export class OEMUserDO {
         status: apiError.status,
         code: apiError.code,
         requestId: request.headers.get("x-request-id"),
-        ...mutationContext,
         latencyMs: Date.now() - startedAt,
         error: error instanceof Error ? error.message : String(error)
       });
@@ -436,11 +438,6 @@ export class OEMUserDO {
           "clientMutationId was already used for a different progress payload."
         );
       }
-      console.warn("[progress][sync] idempotent replay", {
-        uid,
-        clientMutationId: incoming.clientMutationId,
-        resultVersion: existingMutation.resultVersion
-      });
       return new Response(existingMutation.responseJson, {
         headers: {
           "content-type": "application/json; charset=utf-8",
@@ -595,12 +592,6 @@ export class OEMUserDO {
       statsEvent
     });
     this.state.waitUntil(drainUserProgressStatsOutbox(this.env, uid));
-    console.warn("[progress][sync] committed", {
-      uid,
-      mutationId: incoming.clientMutationId,
-      version: nextProgress.version,
-      statsEventId: statsEvent?.eventId ?? null
-    });
     return new Response(responseJson, {
       headers: { "content-type": "application/json; charset=utf-8" }
     });

@@ -1,23 +1,27 @@
-import { betterAuth } from "better-auth";
+import { betterAuth, type BetterAuthOptions } from "better-auth";
+import { getSchema } from "better-auth/db";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { bearer, emailOTP } from "better-auth/plugins";
 import type { Bindings } from "../../types/app";
-import { getRuntimeConfig } from "../config";
-import { initResend, sendEmail } from "../email/sender";
+import { getSessionTtlSeconds } from "../config";
+import { sendEmail } from "../email/sender";
 import {
   createOtpEmailTemplate,
   createResetPasswordMagicLinkTemplate,
 } from "../email/templates";
-import { envOrThrow, readEnv } from "../utils";
+import { envOrThrow } from "../utils";
 import { toSerializableError } from "./errors";
 import { pickRequestFromCtx, resolvePreferredEmailLocale } from "./locale";
 import {
-  DEFAULT_AUTH_BASE_URL,
-  PARTITIONED_AUTH_COOKIE_PREFIX,
-  isLocalBaseUrl,
+  authCookieOptions,
   parseAuthTrustedOrigins,
-  resolveCookieAttributes,
 } from "./origins";
 import { createAuthSocialProviders } from "./providers";
+import { sameAuthEnvironment } from "./environment";
+import { authSchemaDatabase } from "./schemaMetadata";
+
+type AuthInvocation = { onError?: (error: unknown) => void };
+const authInvocation = new AsyncLocalStorage<AuthInvocation>();
 
 function generateNumericOtp(length: number): string {
   const bytes = new Uint8Array(length);
@@ -31,13 +35,13 @@ function generateNumericOtp(length: number): string {
   return otp;
 }
 
-export function createAuth(env: Bindings, options?: { onError?: (error: unknown) => void }) {
-  initResend(env);
-  const { sessionTtlSeconds } = getRuntimeConfig(env);
+function buildAuth(env: Bindings, metadata?: ReturnType<typeof authSchemaDatabase>["metadata"]) {
+  const sessionTtlSeconds = getSessionTtlSeconds(env);
 
-  return betterAuth({
+  const cookies = authCookieOptions(env);
+  const options = {
     database: env.DB,
-    baseURL: readEnv(env.BETTER_AUTH_URL) ?? DEFAULT_AUTH_BASE_URL,
+    baseURL: cookies.baseURL,
     basePath: "/auth/v1",
     secret: envOrThrow(env.BETTER_AUTH_SECRET, "BETTER_AUTH_SECRET"),
     trustedOrigins: parseAuthTrustedOrigins(env),
@@ -52,7 +56,7 @@ export function createAuth(env: Bindings, options?: { onError?: (error: unknown)
           subject: content.subject,
           text: content.text,
           html: content.html,
-        });
+        }, env);
       },
     },
     emailVerification: {
@@ -78,7 +82,7 @@ export function createAuth(env: Bindings, options?: { onError?: (error: unknown)
     },
     onAPIError: {
       onError: (error, ctx) => {
-        options?.onError?.(error);
+        authInvocation.getStore()?.onError?.(error);
         console.error("[better-auth][api-error]", {
           oauthStateStrategy: ctx.oauthConfig.storeStateStrategy,
           hasSession: Boolean(ctx.session),
@@ -121,20 +125,81 @@ export function createAuth(env: Bindings, options?: { onError?: (error: unknown)
             subject: content.subject,
             text: content.text,
             html: content.html,
-          });
+          }, env);
         },
       }),
     ],
     advanced: {
-      cookiePrefix: isLocalBaseUrl(env.BETTER_AUTH_URL) ? undefined : PARTITIONED_AUTH_COOKIE_PREFIX,
-      defaultCookieAttributes: resolveCookieAttributes(env.BETTER_AUTH_URL),
+      ...cookies.advanced,
       ipAddress: {
         ipAddressHeaders: ["cf-connecting-ip"],
         ipv6Subnet: 64,
       },
       database: {
         generateId: () => crypto.randomUUID(),
+        validateSchema: true,
       },
     },
+  } satisfies BetterAuthOptions;
+  const schema = authSchemaDatabase(env.DB, metadata, () => new Set(Object.keys(getSchema(options))));
+  return { auth: betterAuth({ ...options, database: schema.db }), schema };
+}
+
+type Auth = ReturnType<typeof buildAuth>["auth"];
+type Context = Awaited<Auth["$context"]>;
+type SchemaSlot = { metadata?: ReturnType<typeof authSchemaDatabase>["metadata"] };
+type RequestAuth = { env: Bindings; auth: Auth; ready: Promise<Context>; defaultFacade?: Auth };
+const validatedSchemas = new WeakMap<D1Database, SchemaSlot>();
+const authRequests = new AsyncLocalStorage<WeakMap<D1Database, RequestAuth>>();
+
+export function runWithAuthRequest<T>(handler: () => T): T {
+  return authRequests.run(new WeakMap(), handler);
+}
+
+export function createAuth(env: Bindings, options?: AuthInvocation): Auth {
+  const requests = authRequests.getStore();
+  let request = requests?.get(env.DB);
+  if (!request || !sameAuthEnvironment(request.env, env)) {
+    let slot = validatedSchemas.get(env.DB);
+    if (!slot) {
+      slot = {};
+      validatedSchemas.set(env.DB, slot);
+    }
+    const currentSlot = slot;
+    const requestEnv = { ...env };
+    const { auth, schema } = buildAuth(requestEnv, slot.metadata);
+    const ready = auth.$context.then(async (context) => {
+      await context.checkSchema?.();
+      if (!currentSlot.metadata) {
+        currentSlot.metadata = new Map(schema.metadata);
+      }
+      return context;
+    });
+    request = { env: requestEnv, auth, ready };
+    requests?.set(env.DB, request);
+    void ready.catch(() => {
+      if (requests && requests.get(env.DB) === request) requests.delete(env.DB);
+    });
+  }
+  if (!options && request.defaultFacade) return request.defaultFacade;
+  const { auth, ready } = request;
+  // Each request owns its Kysely connection/lock and pending checks. Only plain,
+  // successfully validated schema results are shared across requests.
+  const handler: Auth["handler"] = (request) => ready.then(() => (
+    authInvocation.run(options ?? {}, () => auth.handler(request))
+  ));
+  const api = new Proxy(auth.api, {
+    get(target, key, receiver) {
+      const endpoint = Reflect.get(target, key, receiver);
+      if (typeof endpoint !== "function") return endpoint;
+      return new Proxy(endpoint, {
+        apply(fn, thisArg, args) {
+          return ready.then(() => authInvocation.run(options ?? {}, () => Reflect.apply(fn, thisArg, args)));
+        },
+      });
+    },
   });
+  const facade = { ...auth, handler, fetch: handler, api, $context: ready };
+  if (!options) request.defaultFacade = facade;
+  return facade;
 }

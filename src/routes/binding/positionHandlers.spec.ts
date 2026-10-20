@@ -11,9 +11,11 @@ vi.mock("./credentials", () => ({
   withAutoRefreshedBinding: vi.fn()
 }));
 vi.mock("./locatorTicket", () => ({ verifyLocatorSocketTicket: async () => "user-1", issueLocatorSocketTicket: vi.fn() }));
-vi.mock("./locatorCache", () => ({ positionCache: new Map(), getPositionCacheKey: () => "key", refreshPositionCache: vi.fn() }));
+vi.mock("./locatorCache", () => ({ readPositionCache: vi.fn(), writePositionCache: vi.fn(), getPositionCacheKey: () => "key", refreshPositionCache: vi.fn() }));
 import { handleEndfieldPositionSocket } from "./positionHandlers";
 import { positionReconnectDelay } from "./helpers";
+import { ApiError } from "../../lib/errors";
+import type { EndfieldPositionTermination } from "../../lib/endfieldClient/positionSocket";
 
 class TestSocket extends EventTarget {
   accept = vi.fn();
@@ -25,7 +27,11 @@ describe("locator reconnection lifecycle", () => {
   let server: TestSocket;
   let context: AppContext;
   let waits: Promise<unknown>[];
-  const callbacks: Array<{ onClose: () => void; onSubscribed: () => void; onError: () => void }> = [];
+  const callbacks: Array<{
+    onClose: (termination?: EndfieldPositionTermination) => void;
+    onSubscribed: () => void;
+    onError: (termination?: EndfieldPositionTermination) => void;
+  }> = [];
 
   beforeEach(() => {
     vi.useFakeTimers();
@@ -97,6 +103,24 @@ describe("locator reconnection lifecycle", () => {
     expect(mocks.connect).toHaveBeenCalledTimes(3);
   });
 
+  it("records fixed upstream termination metadata without changing reconnect behavior", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    await connect();
+    callbacks[0]!.onClose({
+      kind: "remote-close",
+      phase: "subscribed",
+      code: 1006,
+      lifetimeMs: 12_345
+    });
+    expect(warn).toHaveBeenCalledWith("[locator][position-stream] reconnect scheduled", expect.objectContaining({
+      reason: "upstream-closed",
+      upstreamTermination: "remote-close",
+      upstreamPhase: "subscribed",
+      upstreamCode: 1006,
+      upstreamConnectionLifetimeMs: 12_345
+    }));
+  });
+
   it("ignores a failed in-flight upstream connection after the client has closed", async () => {
     let rejectConnection!: (reason: Error) => void;
     mocks.connect.mockImplementation(() => new Promise((_resolve, reject) => { rejectConnection = reject; }));
@@ -107,5 +131,37 @@ describe("locator reconnection lifecycle", () => {
     await vi.advanceTimersByTimeAsync(60000);
     expect(mocks.connect).toHaveBeenCalledTimes(1);
     expect(server.send).toHaveBeenCalledTimes(sent);
+  });
+
+  it("aborts a pending upgrade and closes a late upstream connection", async () => {
+    let finish!: (value: TestSocket) => void;
+    mocks.connect.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+    await connect();
+    const signal = mocks.connect.mock.calls[0]![0].signal as AbortSignal;
+    server.dispatchEvent(new Event("close"));
+    expect(signal.aborted).toBe(true);
+    const upstream = new TestSocket();
+    finish(upstream);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(upstream.close).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("cleans client listeners immediately when the initial send fails", async () => {
+    const remove = vi.spyOn(server, "removeEventListener");
+    server.send.mockImplementation(() => { throw new Error("peer gone"); });
+    await connect();
+    expect(server.close).toHaveBeenCalledWith(1011, "send failed");
+    expect(remove.mock.calls.map(([type]) => type).sort()).toEqual(["close", "error", "message"]);
+    expect(mocks.connect).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("closes an unauthorized stream with a policy code", async () => {
+    mocks.binding.mockRejectedValueOnce(new ApiError(401, "UNAUTHORIZED", "invalid binding"));
+    await connect();
+    expect(server.close).toHaveBeenCalledWith(1008, "locator stream unavailable");
+    expect(mocks.connect).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
   });
 });

@@ -1,5 +1,5 @@
 import { mapVoteValue, toCount } from "./mapper";
-import type { SubmissionVoteValue, ViewerVoteValue } from "./types";
+import type { SubmissionVoteValue } from "./types";
 import type { AuthUser } from "../../types/app";
 import {
   notificationsFromResult,

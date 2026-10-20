@@ -148,7 +148,7 @@ export async function handleBindRole(c: AppContext) {
     token: await encryptSecret(pending.token, secret),
     accountToken: pending.accountToken ? await encryptSecret(pending.accountToken, secret) : undefined
   });
-  deleteLocatorCaches(user.uid);
+  deleteLocatorCaches(c.env, user.uid);
   await deletePendingSession(c, user.uid, parsed.data.flowId);
 
   const binding = await getBinding(c.env.DB, user.uid);
@@ -158,7 +158,7 @@ export async function handleBindRole(c: AppContext) {
 export async function handleDisableBinding(c: AppContext) {
   const user = requireUser(c);
   await disableBinding(c.env.DB, user.uid);
-  deleteLocatorCaches(user.uid);
+  deleteLocatorCaches(c.env, user.uid);
   const binding = await getBinding(c.env.DB, user.uid);
   return c.json({ ok: true, binding: publicBinding(binding) });
 }
@@ -166,7 +166,7 @@ export async function handleDisableBinding(c: AppContext) {
 export async function handleUnlinkBinding(c: AppContext) {
   const user = requireUser(c);
   await deleteBinding(c.env.DB, user.uid);
-  deleteLocatorCaches(user.uid);
+  deleteLocatorCaches(c.env, user.uid);
   return c.json({ ok: true, binding: publicBinding(null) });
 }
 

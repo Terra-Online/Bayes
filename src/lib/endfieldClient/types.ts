@@ -56,33 +56,6 @@ export type EndfieldCaptchaChallenge = {
   riskType?: string;
 };
 
-export type EndfieldCaptchaSolution = {
-  captcha?: {
-    captcha_id: string;
-    lot_number: string;
-    pass_token: string;
-    gen_time: string;
-    captcha_output: string;
-    challenge?: string;
-  };
-  challenge?: string;
-  validate?: string;
-  seccode?: string;
-  geetest_challenge?: string;
-  geetest_validate?: string;
-  geetest_seccode?: string;
-};
-
-export type EmailPasswordTokenData = {
-  accountToken?: string;
-  token?: string;
-};
-
-export type PhoneCodeTokenData = {
-  token: string;
-  hgId?: string;
-};
-
 export type OauthGrantData = {
   code: string;
   token?: string;

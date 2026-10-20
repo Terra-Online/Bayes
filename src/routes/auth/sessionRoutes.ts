@@ -1,10 +1,11 @@
 import type { Hono } from "hono";
 import type { Context } from "hono";
 import { z } from "zod";
+import { hasSessionCredentials } from "../../lib/auth/sessionCredentials";
 import { createAuth } from "../../lib/auth/createAuth";
 import { getLegacyCookieExpirations, resolveBrowserSessionHeaders, serializeBrowserSessionCookie } from "../../lib/auth/browserSession";
 import { ApiError } from "../../lib/errors";
-import { getRequestAuthHeaders, invalidateAuthUserCache, requireAuth } from "../../middleware/auth";
+import { getRequestAuthHeaders, invalidateAuthUserCache, requireAuth, resolveAuthUser } from "../../middleware/auth";
 import { rateLimit } from "../../middleware/rate-limit";
 import { formatPublicUid, getErrorMessage, updateUserNickname } from "../../repositories/users";
 import type { AppEnv } from "../../types/app";
@@ -81,9 +82,13 @@ export function registerSessionAuthRoutes(app: Hono<AppEnv>) {
   app.get("/session", async (c, next) => {
     await next();
     c.header("Cache-Control", "private, no-store");
-  }, requireAuth, rateLimit("auth"), async (c) => {
+  }, async (c, next) => {
+    const authHeaders = getRequestAuthHeaders(c.req.raw);
+    if (!hasSessionCredentials(c.env, authHeaders)) {
+      throw new ApiError(401, "SESSION_REQUIRED", "Session is required.");
+    }
     const auth = createAuth(c.env);
-    const browserSession = resolveBrowserSessionHeaders(auth, getRequestAuthHeaders(c.req.raw));
+    const browserSession = resolveBrowserSessionHeaders(auth, authHeaders);
     const { response: session, headers } = await auth.api.getSession({
       headers: browserSession.headers,
       returnHeaders: true,
@@ -92,24 +97,33 @@ export function registerSessionAuthRoutes(app: Hono<AppEnv>) {
       c.header("Set-Cookie", cookie, { append: true });
     }
     if (!session) {
-      invalidateAuthUserCache(c.req.raw.headers);
+      invalidateAuthUserCache(authHeaders, c.env);
+      if (authHeaders.get("authorization")?.trim().toLowerCase().startsWith("bearer ")) {
+        throw new ApiError(401, "TOKEN_EXPIRED", "Token is expired, missing, or invalid.");
+      }
       throw new ApiError(401, "SESSION_REQUIRED", "Session is required.");
     }
 
-    const user = c.get("authUser");
-    if (!user) {
-      throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
-    }
+    // This fresh, renewing session check also authenticates the middleware.
+    // A cached identity with disableRefresh must never replace it.
+    c.set("authUser", await resolveAuthUser(c.env, authHeaders, {
+      uid: session.user.id,
+      email: session.user.email,
+      displayName: session.user.name,
+    }));
 
     if (browserSession.migrating) {
       c.header("Set-Cookie", await serializeBrowserSessionCookie(auth, session.session), { append: true });
     } else if (c.req.header("cookie")?.includes("better-auth.")) {
       for (const cookie of getLegacyCookieExpirations(auth)) c.header("Set-Cookie", cookie, { append: true });
     }
-
+    c.set("authSessionMigrating", browserSession.migrating);
+    await next();
+  }, rateLimit("auth"), (c) => {
+    const user = c.get("authUser")!;
     const response = c.json({
       user: toSessionUser(user),
-      ...(browserSession.migrating ? { requiresCookieConfirmation: true } : {}),
+      ...(c.get("authSessionMigrating") ? { requiresCookieConfirmation: true } : {}),
     });
     response.headers.set("Cache-Control", "private, no-store");
     return response;
@@ -135,7 +149,7 @@ export function registerSessionAuthRoutes(app: Hono<AppEnv>) {
         avatar: parsed.data.avatar
       });
 
-      invalidateAuthUserCache(c.req.raw.headers);
+      invalidateAuthUserCache(getRequestAuthHeaders(c.req.raw), c.env);
 
       return c.json({
         user: {

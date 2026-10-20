@@ -37,7 +37,7 @@ export function createAuthRoutes() {
   app.post("/sign-out", rateLimit("public"), async (c) => {
     const response = await forwardToAuthRawRequest(c);
     if (response.ok) {
-      invalidateAuthUserCache(c.req.raw.headers);
+      invalidateAuthUserCache(c.req.raw.headers, c.env);
       for (const cookie of getLegacyCookieExpirations(createAuth(c.env))) response.headers.append("Set-Cookie", cookie);
     }
     response.headers.set("Cache-Control", "private, no-store");

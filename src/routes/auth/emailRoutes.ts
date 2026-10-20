@@ -8,7 +8,7 @@ import { rateLimit } from "../../middleware/rate-limit";
 import { toApiError } from "../../middleware/error-handler";
 import type { AppEnv } from "../../types/app";
 import { deriveDisplayName, normalizeEmail } from "./emailUtils";
-import type { AuthRouteContext, ForwardToAuthJsonPath, ForwardToAuthRawRequest } from "./types";
+import type { ForwardToAuthJsonPath, ForwardToAuthRawRequest } from "./types";
 
 type AuthSignInResult = {
   token: string;

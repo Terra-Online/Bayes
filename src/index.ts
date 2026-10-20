@@ -4,7 +4,7 @@ import { evaluateKarmaIfDue } from './services/karma/evaluation';
 import { createApp } from './app';
 import { handleNotificationLiveUpgrade } from './routes/notify';
 import type { Bindings } from './types/app';
-import { initResend } from './lib/email/sender';
+import { runWithAuthRequest } from './lib/auth/createAuth';
 import {
   ensureModerationBackfill,
   processModerationQueueBatch,
@@ -35,7 +35,7 @@ export {
 } from './services/notify/live';
 export {
   PublicReadCache,
-} from './middleware/cache/publicReadCache';
+} from './publicRead/origin/entrypoint';
 
 const app = createApp();
 
@@ -99,11 +99,12 @@ async function runProgressRecovery(env: Bindings): Promise<void> {
 
 export default {
   async fetch(request: Request, env: Bindings, ctx: ExecutionContext) {
-    const liveResponse = await handleNotificationLiveUpgrade(request, env);
-    return liveResponse ?? app.fetch(request, env, ctx);
+    return runWithAuthRequest(async () => {
+      const liveResponse = await handleNotificationLiveUpgrade(request, env);
+      return liveResponse ?? app.fetch(request, env, ctx);
+    });
   },
   async scheduled(_event: ScheduledEvent, env: Bindings, ctx: ExecutionContext) {
-    initResend(env);
     ctx.waitUntil(runProgressRecovery(env));
     ctx.waitUntil(runScheduledJobs(env));
   },

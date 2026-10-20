@@ -12,11 +12,28 @@ vi.mock("cloudflare:workers", () => ({
   }
 }));
 
-import { fetchPublicImagesFromWorkersCache } from "./publicReadClient";
+import { publicReadResponse, readPublicImagesFromWorkersCache } from "./client";
+const fetchPublicImagesFromWorkersCache = async (payload: Parameters<typeof readPublicImagesFromWorkersCache>[0]) => publicReadResponse(await readPublicImagesFromWorkersCache(payload));
 
 describe("fetchPublicImagesFromWorkersCache", () => {
   beforeEach(() => {
     mocks.fetch.mockReset();
+  });
+
+  it("keeps aggregate data structured until the HTTP response boundary", async () => {
+    const upstream = Response.json({ items: [{ id: "image", markerId: "marker" }] });
+    mocks.fetch.mockResolvedValue(upstream);
+    const stringify = vi.spyOn(JSON, "stringify");
+    try {
+      const result = await readPublicImagesFromWorkersCache({
+        markerIds: ["marker"], limit: 6, cacheNamespace: "prod", assetBaseUrl: "https://assets.example"
+      });
+      expect(stringify).not.toHaveBeenCalled();
+      expect(result).not.toBeInstanceOf(Response);
+      expect(result).toMatchObject({ payload: { items: [{ id: "image", markerId: "marker" }] } });
+    } finally {
+      stringify.mockRestore();
+    }
   });
 
   it("returns successful markers as an uncacheable partial response", async () => {
@@ -43,7 +60,8 @@ describe("fetchPublicImagesFromWorkersCache", () => {
     expect(response.headers.get("x-oem-failed-marker-count")).toBe("1");
     await expect(response.json()).resolves.toEqual({
       items: [{ id: "image-1", markerId: "success" }],
-      partial: true
+      partial: true,
+      failedMarkerIds: ["failed"]
     });
   });
 

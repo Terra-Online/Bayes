@@ -88,8 +88,3 @@ export type OemTranslationQueueMessage = {
   source: TransPrewarmSource;
   queuedAt: string;
 };
-
-export type OemQueueMessage =
-  | OemModerationQueueMessage
-  | OemWebhookQueueMessage
-  | OemTranslationQueueMessage;

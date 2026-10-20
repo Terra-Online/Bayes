@@ -28,16 +28,22 @@ describe("notification Durable Object lifecycle", () => {
   let sockets: TestSocket[];
   let accept: ReturnType<typeof vi.fn>;
   let env: Bindings;
+  let autoResponse: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     vi.clearAllMocks();
     sockets = [];
     accept = vi.fn((socket: TestSocket) => sockets.push(socket));
+    autoResponse = vi.fn();
     env = {
       DB: {}, OEM_NOTIFICATION_DO: { idFromName: (uid: string) => uid, get: () => ({ fetch: mocks.fanout }) }
     } as unknown as Bindings;
+    vi.stubGlobal("WebSocketRequestResponsePair", class {
+      constructor(readonly request: string, readonly response: string) {}
+    });
     object = new OEMNotificationDO({
-      id: { name: "user-1" }, getWebSockets: () => sockets, acceptWebSocket: accept
+      id: { name: "user-1" }, getWebSockets: () => sockets, acceptWebSocket: accept,
+      setWebSocketAutoResponse: autoResponse
     } as unknown as DurableObjectState, env);
     mocks.unread.mockResolvedValue({ system: 1, community: 0, total: 1 });
     vi.stubGlobal("WebSocketPair", class { 0 = new TestSocket(); 1 = new TestSocket(); });
@@ -58,6 +64,13 @@ describe("notification Durable Object lifecycle", () => {
 
   const request = () => new Request("https://notify.internal/connect", {
     headers: { upgrade: "websocket", "x-oem-notify-user": "user-1", "x-oem-notify-client-id": "client-1" }
+  });
+
+  it("registers the fixed heartbeat for platform echo and preserves nonce clients", async () => {
+    expect(autoResponse).toHaveBeenCalledWith(expect.objectContaining({ request: "OEMping1", response: "OEMping1" }));
+    const socket = new TestSocket();
+    await object.webSocketMessage(socket as unknown as WebSocket, "Ab234567");
+    expect(socket.send).toHaveBeenCalledWith("Ab234567");
   });
 
   it("does not accept an orphan socket when the ready snapshot cannot be read", async () => {

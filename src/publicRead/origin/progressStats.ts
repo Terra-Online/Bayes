@@ -1,11 +1,13 @@
 import { getJsonFromKv, MIN_KV_EXPIRATION_TTL_SECONDS, putJsonToKv } from "../../middleware/cache/kvJson";
-import { CACHE_KEY_VERSIONS } from "../../middleware/cache/versions";
 import type { Bindings } from "../../types/app";
 
 export const PROGRESS_STATS_HTTP_MAX_AGE_SECONDS = 10;
 export const PROGRESS_STATS_KV_TTL_SECONDS = MIN_KV_EXPIRATION_TTL_SECONDS;
 
-const PROGRESS_STATS_KV_KEY_PREFIX = `progress:stats:${CACHE_KEY_VERSIONS.progressStats}:`;
+function buildProgressStatsCacheKey(markerIndexHash: string): string {
+  const version = "v2";
+  return `progress:stats:${version}:${markerIndexHash}`;
+}
 
 function jsonResponse(payload: unknown, headers?: HeadersInit): Response {
   return new Response(JSON.stringify(payload), {
@@ -20,7 +22,7 @@ export async function buildPublicProgressStatsResponse(
   env: Bindings,
   markerIndexHash: string
 ): Promise<Response> {
-  const kvKey = `${PROGRESS_STATS_KV_KEY_PREFIX}${markerIndexHash}`;
+  const kvKey = buildProgressStatsCacheKey(markerIndexHash);
   const cached = await getJsonFromKv<unknown>(env.OEM_KV, kvKey);
   if (cached) {
     return jsonResponse(cached, {

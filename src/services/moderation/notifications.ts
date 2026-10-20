@@ -1,6 +1,6 @@
 import type { AuthUser, Bindings } from "../../types/app";
 import { buildPointShareUrl } from "../../lib/pointShare";
-import type { SubmissionKind, SubmissionRecord, SubmissionStatus } from "../../repositories/submission/types";
+import type { SubmissionRecord, SubmissionStatus } from "../../repositories/submission/types";
 import type {
   ModerationNotificationEvent,
   OemWebhookQueueMessage,
@@ -34,29 +34,6 @@ export function recordPendingOpenAICompletionStatus(
   }
 }
 
-export async function notifyPendingOpenAICompleted(
-  env: Bindings,
-  payload: {
-    mode: "queue" | "selected";
-    requested: number;
-    stats: PendingOpenAICompletionStats;
-  }
-): Promise<void> {
-  if (payload.stats.processed === 0) {
-    return;
-  }
-
-  await enqueueModerationNotification(env, {
-    type: "pending_openai_completed",
-    mode: payload.mode,
-    requested: payload.requested,
-    processed: payload.stats.processed,
-    active: payload.stats.active,
-    pendingAudit: payload.stats.pendingAudit,
-    stale: payload.stats.stale
-  });
-}
-
 export async function notifyFlagCreated(
   env: Bindings,
   payload: {
@@ -75,20 +52,6 @@ export async function notifyFlagCreated(
     flagCount: payload.flagCount,
     previousStatus: payload.submission.status,
     nextStatus: payload.nextStatus
-  });
-}
-
-export async function notifySubmissionApproved(
-  env: Bindings,
-  payload: {
-    submission: SubmissionRecord;
-    previousStatus: SubmissionStatus;
-    source: TransPrewarmSource;
-  }
-): Promise<void> {
-  await notifySubmissionModerationResult(env, {
-    ...payload,
-    nextStatus: "active"
   });
 }
 
@@ -258,28 +221,7 @@ function resolveModerationWebhookUrl(env: Bindings): string {
   return (env.DISCORD_MODERATION_WEBHOOK_URL ?? "").trim();
 }
 
-function formatDiscordWebhookPayload(event: ModerationNotificationEvent): Record<string, unknown> {
-  if (event.type === "pending_openai_completed") {
-    return {
-      username: "OEM Moderation",
-      embeds: [
-        {
-          title: "OpenAI moderation completed",
-          color: event.stale > 0 ? 0xd83c3e : 0x2f855a,
-          fields: [
-            { name: "mode", value: event.mode, inline: true },
-            { name: "requested", value: String(event.requested), inline: true },
-            { name: "processed", value: String(event.processed), inline: true },
-            { name: "active", value: String(event.active), inline: true },
-            { name: "pending_audit", value: String(event.pendingAudit), inline: true },
-            { name: "stale", value: String(event.stale), inline: true }
-          ],
-          timestamp: new Date().toISOString()
-        }
-      ]
-    };
-  }
-
+function formatDiscordWebhookPayload(event: Exclude<ModerationNotificationEvent, { type: "pending_openai_completed" }>): Record<string, unknown> {
   if (event.type === "submission_moderation_result") {
     const approved = event.nextStatus === "active";
     return {
@@ -359,7 +301,7 @@ function formatDiscordWebhookPayload(event: ModerationNotificationEvent): Record
 function submissionFields(submission: SubmissionRecord): Array<{ name: string; value: string; inline: boolean }> {
   return [
     { name: "submission", value: submission.id, inline: true },
-    { name: "kind", value: formatKind(submission.kind), inline: true },
+    { name: "kind", value: submission.kind, inline: true },
     { name: "marker", value: truncateFieldValue(submission.markerId), inline: true },
     { name: "point", value: buildPointShareUrl(submission), inline: false },
     { name: "uploader", value: formatSubmitter(submission), inline: true }
@@ -377,10 +319,6 @@ function actorFields(actor: AuthUser): Array<{ name: string; value: string; inli
     { name: "actor", value: `${actor.nickname} (${actor.publicUid})`, inline: true },
     { name: "actor_role", value: actor.role, inline: true }
   ];
-}
-
-function formatKind(kind: SubmissionKind): string {
-  return kind;
 }
 
 function formatSubmitter(submission: SubmissionRecord): string {

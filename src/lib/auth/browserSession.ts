@@ -49,10 +49,11 @@ function getLegacyCookies(auth: Auth) {
 }
 
 export function resolveBrowserSessionHeaders(auth: Auth, headers: Headers): { headers: Headers; migrating: boolean } {
+  if (headers.has("authorization") || !headers.get("cookie")) return { headers, migrating: false };
   const currentName = getCookies(auth.options).sessionToken.name;
   const legacyName = getLegacyCookies(auth).sessionToken.name;
   const cookies = parseCookies((headers.get("cookie") ?? "").split(";").map((cookie) => cookie.trim()).join("; "));
-  if (currentName === legacyName || headers.has("authorization") || cookies.has(currentName)) {
+  if (currentName === legacyName || cookies.has(currentName)) {
     return { headers, migrating: false };
   }
   const legacyToken = cookies.get(legacyName);

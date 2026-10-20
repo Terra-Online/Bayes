@@ -159,13 +159,20 @@ describe("upload route policies", () => {
     expect(await response.json()).toMatchObject({ code: "VALIDATION_ERROR" });
   });
 
-  it.each(["/images/mine", "/comments/mine", "/file/private.webp"])(
+  it.each(["/images/mine", "/images?includeMine=1", "/comments/mine", "/file/private.webp"])(
     "protects private read %s",
     async (path) => {
       expect((await request(path)).status).toBe(401);
       expect((await request(path, { user: suspendedUser })).status).toBe(403);
     }
   );
+
+  it("rejects conflicting or invalid image modes", async () => {
+    for (const query of ["includeMine=1&publicOnly=1", "includeMine=invalid"]) {
+      expect((await request(`/images?markerId=42&${query}`)).status).toBe(422);
+    }
+    expect((await request("/point-images?markerId=42")).status).toBe(404);
+  });
 
   it("returns a normal 404 for unknown upload paths while locked", async () => {
     expect((await request("/unknown")).status).toBe(404);

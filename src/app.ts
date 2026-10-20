@@ -76,6 +76,7 @@ export function createApp() {
       },
       allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
       allowHeaders: ["Content-Type", "Authorization", "x-request-id", "x-oem-locale"],
+      exposeHeaders: ["x-request-id"],
       credentials: true,
       maxAge: 86400
     })

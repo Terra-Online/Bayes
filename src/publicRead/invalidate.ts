@@ -1,6 +1,6 @@
-import { deletePublicMarkerCommentCache } from "./publicMarkerComments";
-import { deletePublicMarkerImageCache } from "./publicMarkerImages";
-import { purgePublicMarkerResponseCache } from "./publicReadClient";
+import { deletePublicMarkerCommentCache } from "./origin/markerComments";
+import { deletePublicMarkerImageCache } from "./origin/markerImages";
+import { purgePublicMarkerResponseCache } from "./client/client";
 
 export type UploadCacheKind = "comment" | "image";
 

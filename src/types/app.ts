@@ -92,6 +92,8 @@ export interface AuthUser {
 export interface Variables {
   requestId: string;
   authUser?: AuthUser;
+  authUserPromise?: Promise<AuthUser>;
+  authSessionMigrating?: boolean;
 }
 
 export type AppEnv = {

@@ -15,6 +15,7 @@ import {
 } from "./notifications";
 import type { SubmissionRecord, SubmissionStatus } from "./submission/types";
 import { transitionSubmissionStatusWithNotifications } from "./submission/statusSubmission";
+import { markImageSubmissionsStaleByFilePathPrefix } from "./submission-review";
 import { createSubmissionUpvote } from "./submission/voteSubmission";
 
 class SqliteD1Statement {
@@ -550,6 +551,7 @@ describe("notification aggregation SQL", () => {
       );
       ${readFileSync(new URL("../../migrations/0029_notifications.sql", import.meta.url), "utf8")}
       ${readFileSync(new URL("../../migrations/0030_notification_aggregation.sql", import.meta.url), "utf8")}
+      ${readFileSync(new URL("../../migrations/0035_ugc_review_events.sql", import.meta.url), "utf8")}
       INSERT INTO users (uid) VALUES ('owner');
       INSERT INTO ugc_submissions (
         id, user_id, poi_id, poi_hash, poi_type, snapshot_id,
@@ -574,12 +576,49 @@ describe("notification aggregation SQL", () => {
       source: "user_action"
     });
 
+    expect(database.sqlite.prepare("SELECT from_status, to_status, source FROM ugc_review_events").all()).toEqual([
+      { from_status: "active", to_status: "stale", source: "user_action" }
+    ]);
+    const conflict = await transitionSubmissionStatusWithNotifications(db, {
+      submission: current, status: "stale", source: "manual_moderation"
+    });
+    expect(conflict.updated).toBe(false);
+    expect(database.sqlite.prepare("SELECT COUNT(*) AS count FROM ugc_review_events").get()).toEqual({ count: 1 });
+    database.sqlite.exec("UPDATE ugc_submissions SET status = 'pending_openai' WHERE id = 'remove-1'");
+    const manualArchive = await transitionSubmissionStatusWithNotifications(db, {
+      submission: { ...current, status: "pending_openai" }, status: "stale", source: "manual_moderation"
+    });
+    expect(manualArchive.updated).toBe(true);
+    expect(manualArchive.notifications).toEqual([]);
+    expect(database.sqlite.prepare("SELECT from_status, to_status, source FROM ugc_review_events ORDER BY id DESC LIMIT 1").get()).toEqual({
+      from_status: "pending_openai", to_status: "stale", source: "manual_moderation"
+    });
     expect(result.updated).toBe(true);
     expect(result.notifications).toHaveLength(1);
     expect(result.notifications[0]?.type).toBe("system.remove_request.resolved");
     const listed = await listNotifications(db, { userId: "owner", category: "system", limit: 20 });
     expect(listed.items).toHaveLength(1);
     expect(listed.items[0]?.type).toBe("system.remove_request.resolved");
+  });
+
+  it("records bulk manual archives atomically and respects escaped prefixes", async () => {
+    database = new SqliteD1Database();
+    const db = database as unknown as D1Database;
+    database.sqlite.exec(`
+      CREATE TABLE ugc_submissions (
+        id TEXT PRIMARY KEY, snapshot_id TEXT, kind TEXT, status TEXT,
+        file_path TEXT, moderation_note TEXT, updated_at TEXT, poi_id TEXT
+      );
+      ${readFileSync(new URL("../../migrations/0035_ugc_review_events.sql", import.meta.url), "utf8")}
+      INSERT INTO ugc_submissions VALUES
+        ('mine', 'v1', 'image', 'pending_openai', 'test_a/a.webp', NULL, 'old', 'point1'),
+        ('other', 'v1', 'image', 'active', 'testXa/b.webp', NULL, 'old', 'point2');
+    `);
+    expect(await markImageSubmissionsStaleByFilePathPrefix(db, "test_a", "Manual cleanup")).toEqual({ changedRows: 1, markerIds: ["point1"] });
+    expect(database.sqlite.prepare("SELECT submission_id, from_status, to_status, source FROM ugc_review_events").all()).toEqual([
+      { submission_id: "mine", from_status: "pending_openai", to_status: "stale", source: "manual_moderation" }
+    ]);
+    expect(database.sqlite.prepare("SELECT status FROM ugc_submissions WHERE id = 'other'").get()).toEqual({ status: "active" });
   });
 
   it("notifies image owners for a new upvote, ignores duplicates, and suppresses self-upvotes", async () => {

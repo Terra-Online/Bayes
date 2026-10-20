@@ -1,5 +1,6 @@
 import { mapSubmission } from "./mapper";
 import type { SubmissionRecord, SubmissionStatus } from "./types";
+import type { AuthUser } from "../../types/app";
 import {
   notificationsFromResult,
   prepareApprovedReplyNotificationWrite,
@@ -44,16 +45,22 @@ export async function getPublicSubmissionByFilePath(db: D1Database, filePath: st
   return row ? mapSubmission(row) : null;
 }
 
-export async function getImageSubmissionByFilePath(db: D1Database, filePath: string): Promise<SubmissionRecord | null> {
+export async function getImageSubmissionByFilePath(
+  db: D1Database, filePath: string, viewer: Pick<AuthUser, "uid" | "role">
+): Promise<SubmissionRecord | null> {
+  // Multiple snapshots/owners can share a path. Filter access before LIMIT so
+  // choosing a different index cannot turn an arbitrary owner's row into a 404.
+  const canReadAll = viewer.role === "p" || viewer.role === "a" || viewer.role === "r";
   const row = await db
     .prepare(
       `SELECT *
        FROM ugc_submissions
        WHERE file_path = ?1
          AND kind = 'image'
+         AND (?2 = 1 OR (user_id = ?3 AND status <> 'stale'))
        LIMIT 1`
     )
-    .bind(filePath)
+    .bind(filePath, canReadAll ? 1 : 0, viewer.uid)
     .first<Record<string, unknown>>();
 
   return row ? mapSubmission(row) : null;
@@ -79,40 +86,6 @@ export async function updateSubmissionStatus(
     .run();
 }
 
-export async function updateSubmissionStatusForSnapshot(
-  db: D1Database,
-  payload: {
-    id: string;
-    snapshotId: string;
-    fromStatus: SubmissionStatus;
-    status: SubmissionStatus;
-    moderationNote?: string;
-  }
-): Promise<boolean> {
-  const result = await db
-    .prepare(
-      `UPDATE ugc_submissions
-       SET status = ?3,
-           moderation_note = COALESCE(?4, moderation_note),
-           edit_original_content = CASE WHEN ?3 = 'active' THEN NULL ELSE edit_original_content END,
-           edit_original_status = CASE WHEN ?3 = 'active' THEN NULL ELSE edit_original_status END,
-           edit_original_snapshot_id = CASE WHEN ?3 = 'active' THEN NULL ELSE edit_original_snapshot_id END,
-           updated_at = CURRENT_TIMESTAMP
-       WHERE id = ?1
-         AND snapshot_id = ?2
-         AND status = ?5`
-    )
-    .bind(
-      payload.id,
-      payload.snapshotId,
-      payload.status,
-      payload.moderationNote ?? null,
-      payload.fromStatus
-    )
-    .run();
-  return (result.meta.changes ?? 0) > 0;
-}
-
 export async function transitionSubmissionStatusWithNotifications(
   db: D1Database,
   payload: {
@@ -120,6 +93,7 @@ export async function transitionSubmissionStatusWithNotifications(
     status: SubmissionStatus;
     moderationNote?: string | null;
     source: "auto_moderation" | "manual_moderation" | "user_action";
+    aiReviewed?: boolean;
     clearFlags?: boolean;
   }
 ): Promise<{ updated: boolean; notifications: NotificationRecord[] }> {
@@ -156,6 +130,23 @@ export async function transitionSubmissionStatusWithNotifications(
         transitionedAt
       )
   ];
+
+  // Persist every review transition, including silent manual rejection. Keep it
+  // atomic with the status update and exclude stale-snapshot conflicts/no-ops.
+  if (payload.submission.status !== payload.status) {
+    statements.push(db.prepare(
+      `INSERT INTO ugc_review_events
+         (submission_id, snapshot_id, from_status, to_status, source, created_at, ai_reviewed)
+       SELECT id, snapshot_id, ?3, ?4, ?5, ?6, ?7
+       FROM ugc_submissions
+       WHERE id = ?1 AND snapshot_id = ?2 AND status = ?4 AND updated_at = ?6
+         AND changes() > 0`
+    ).bind(
+      payload.submission.id, payload.submission.snapshotId,
+      payload.submission.status, payload.status, payload.source, transitionedAt,
+      payload.source === "auto_moderation" && payload.aiReviewed !== false ? 1 : 0
+    ));
+  }
 
   if (payload.clearFlags) {
     statements.push(

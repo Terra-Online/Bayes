@@ -12,12 +12,14 @@ type EmailProviderName = 'resend' | 'cloudflare';
 type EmailProviderMode = 'resend_only' | 'resend_then_cloudflare' | 'cloudflare_only';
 type ResendFailureKind = 'quota' | 'temporary' | 'permanent' | 'ambiguous';
 
-let resend: Resend | undefined;
-let activeEnv: Bindings | undefined;
-let fromAddress = DEFAULT_FROM_ADDRESS;
-let fromName: string | undefined;
-let providerMode: EmailProviderMode = 'resend_then_cloudflare';
-let resendDailyLimit = DEFAULT_RESEND_DAILY_LIMIT;
+type EmailConfiguration = {
+  env: Bindings;
+  resend?: Resend;
+  fromAddress: string;
+  fromName?: string;
+  providerMode: EmailProviderMode;
+  resendDailyLimit: number;
+};
 
 function stripOuterQuotes(value: string): string {
   const trimmed = value.trim();
@@ -123,7 +125,7 @@ class ResendEmailProvider implements EmailProvider {
   async send(payload: EmailPayload): Promise<SendEmailResult> {
     try {
       const result = await this.client.emails.send({
-        from: getFromAddress(payload.from),
+        from: payload.from!,
         to: payload.to,
         subject: payload.subject,
         text: payload.text,
@@ -147,7 +149,7 @@ class CloudflareEmailProvider implements EmailProvider {
     try {
       const result = await this.binding.send({
         to: payload.to,
-        from: getFromAddress(payload.from),
+        from: payload.from!,
         subject: payload.subject,
         text: payload.text,
         html: payload.html,
@@ -166,7 +168,8 @@ class CloudflareEmailProvider implements EmailProvider {
   }
 }
 
-function getFromAddress(override?: string): string {
+function getFromAddress(config: EmailConfiguration, override?: string): string {
+  const { fromAddress, fromName } = config;
   if (override) return normalizeFromAddress(override);
   if (fromAddress.includes('<') || !fromName) return fromAddress;
   return `${fromName} <${fromAddress}>`;
@@ -244,7 +247,7 @@ function getUsageDate(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-async function reserveResendSlot(env: Bindings, usageDate: string): Promise<boolean> {
+async function reserveResendSlot(env: Bindings, usageDate: string, resendDailyLimit: number): Promise<boolean> {
   const redis = createRedisClient(env);
   const usageKey = `${USAGE_KEY_PREFIX}${usageDate}:reserved`;
   const exhaustedKey = `${USAGE_KEY_PREFIX}${usageDate}:exhausted`;
@@ -331,24 +334,27 @@ function logProviderFailure(payload: EmailPayload, error: EmailProviderError): v
   });
 }
 
-export function initResend(env: Bindings): void {
-  activeEnv = env;
-  providerMode = resolveProviderMode(env);
-  resendDailyLimit = parsePositiveInt(env.EMAIL_RESEND_DAILY_LIMIT, DEFAULT_RESEND_DAILY_LIMIT);
-  fromAddress = normalizeFromAddress(
-    readEnv(env.EMAIL_FROM_EMAIL) ?? readEnv(env.RESEND_FROM_EMAIL) ?? DEFAULT_FROM_ADDRESS,
-  );
-  fromName = readEnv(env.EMAIL_FROM_NAME) ?? readEnv(env.RESEND_FROM_NAME);
-  if (providerMode === 'cloudflare_only') {
-    resend = undefined;
-    return;
-  }
-  resend = new Resend(envOrThrow(env.RESEND_AUTH_KEY, 'RESEND_AUTH_KEY'));
+function createEmailConfiguration(env: Bindings): EmailConfiguration {
+  const providerMode = resolveProviderMode(env);
+  return {
+    env: { ...env },
+    providerMode,
+    resendDailyLimit: parsePositiveInt(env.EMAIL_RESEND_DAILY_LIMIT, DEFAULT_RESEND_DAILY_LIMIT),
+    fromAddress: normalizeFromAddress(
+      readEnv(env.EMAIL_FROM_EMAIL) ?? readEnv(env.RESEND_FROM_EMAIL) ?? DEFAULT_FROM_ADDRESS,
+    ),
+    fromName: readEnv(env.EMAIL_FROM_NAME) ?? readEnv(env.RESEND_FROM_NAME),
+    resend: providerMode === 'cloudflare_only'
+      ? undefined : new Resend(envOrThrow(env.RESEND_AUTH_KEY, 'RESEND_AUTH_KEY')),
+  };
 }
 
-export async function sendEmail(payload: EmailPayload): Promise<SendEmailResult> {
-  if (!activeEnv) throw new Error('EMAIL_NOT_INITIALIZED');
-  const env = activeEnv;
+export async function sendEmail(payload: EmailPayload, boundEnv: Bindings): Promise<SendEmailResult> {
+  const config = createEmailConfiguration(boundEnv);
+  const { env, providerMode, resend, resendDailyLimit } = config;
+  // Resolve every setting before awaiting quota/provider I/O. A concurrent auth
+  // or scheduled invocation must not change this delivery's sender or provider.
+  payload = { ...payload, from: getFromAddress(config, payload.from) };
   const usageDate = getUsageDate();
   const cloudflare = env.OEM_ID_MAILS ? new CloudflareEmailProvider(env.OEM_ID_MAILS) : undefined;
 
@@ -360,7 +366,7 @@ export async function sendEmail(payload: EmailPayload): Promise<SendEmailResult>
   }
   if (!resend) throw new Error('RESEND_NOT_INITIALIZED');
 
-  const hasResendSlot = await reserveResendSlot(env, usageDate);
+  const hasResendSlot = await reserveResendSlot(env, usageDate, resendDailyLimit);
   if (!hasResendSlot) {
     if (providerMode !== 'resend_then_cloudflare' || !cloudflare) {
       throw new EmailProviderError({

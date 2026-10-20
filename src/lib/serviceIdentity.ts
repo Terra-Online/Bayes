@@ -40,11 +40,3 @@ export async function hmacServiceIdentifier(
   );
   return toBase64Url(new Uint8Array(signature));
 }
-
-export async function durableObjectNameForSecret(
-  env: Bindings,
-  namespace: string,
-  value: string
-): Promise<string> {
-  return `v1:${namespace}:${await hmacServiceIdentifier(env, namespace, value)}`;
-}

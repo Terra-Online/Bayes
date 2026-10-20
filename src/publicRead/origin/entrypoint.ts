@@ -1,32 +1,35 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
-import { toApiError } from "../error-handler";
-import { isSha256Hex } from "../../services/progress/manifest";
-import { buildPublicProgressStatsResponse } from "../../services/progress/publicStats";
-import { listCachedPublicCommentsByMarker } from "../../services/upload/listPublicComments";
-import { listCachedPublicImagesByMarker } from "../../services/upload/listPublicImages";
-import type { Bindings } from "../../types/app";
-import {
-  PUBLIC_MARKER_COMMENT_EMPTY_TTL_SECONDS,
-  PUBLIC_MARKER_COMMENT_POSITIVE_TTL_SECONDS
-} from "./publicMarkerComments";
-import {
-  PUBLIC_MARKER_IMAGE_EMPTY_TTL_SECONDS,
-  PUBLIC_MARKER_IMAGE_POSITIVE_TTL_SECONDS
-} from "./publicMarkerImages";
-import {
-  buildPublicReadMarkerTag,
-  normalizePublicReadMarkerIds,
-  parsePublicReadNamespace,
-  PUBLIC_READ_COMMENTS_PATH,
-  PUBLIC_READ_IMAGES_PATH,
-  PUBLIC_READ_PROGRESS_STATS_PATH,
-  resolveScopeFromPublicReadNamespace,
-  type PublicReadMarkerKind
-} from "./publicReadKeys";
+import { toApiError } from "../../middleware/error-handler";
 import {
   UGC_PUBLIC_EMPTY_LIST_CACHE_CONTROL,
   UGC_PUBLIC_LIST_CACHE_CONTROL
-} from "./publicUgcAssets";
+} from "../../middleware/cache/publicUgcAssets";
+import { isSha256Hex } from "../../services/progress/manifest";
+import type { Bindings } from "../../types/app";
+import { buildPublicReadMarkerTag } from "../contract/cacheKeys";
+import {
+  parsePublicReadNamespace,
+  resolveScopeFromPublicReadNamespace,
+  type PublicReadMarkerKind
+} from "../contract/markers";
+import {
+  normalizePublicReadMarkerIds,
+  PUBLIC_READ_COMMENTS_PATH,
+  PUBLIC_READ_IMAGES_PATH,
+  PUBLIC_READ_PROGRESS_STATS_PATH,
+  parsePublicReadInteger
+} from "../contract/requests";
+import {
+  listCachedPublicCommentsByMarker,
+  PUBLIC_MARKER_COMMENT_EMPTY_TTL_SECONDS,
+  PUBLIC_MARKER_COMMENT_POSITIVE_TTL_SECONDS
+} from "./markerComments";
+import {
+  listCachedPublicImagesByMarker,
+  PUBLIC_MARKER_IMAGE_EMPTY_TTL_SECONDS,
+  PUBLIC_MARKER_IMAGE_POSITIVE_TTL_SECONDS
+} from "./markerImages";
+import { buildPublicProgressStatsResponse } from "./progressStats";
 
 function noStoreError(status: number, message: string): Response {
   return new Response(JSON.stringify({ code: "INVALID_PUBLIC_CACHE_REQUEST", message }), {
@@ -36,12 +39,6 @@ function noStoreError(status: number, message: string): Response {
       "Cache-Control": "private, no-store"
     }
   });
-}
-
-function parseInteger(value: string | null, minimum: number, maximum: number): number | null {
-  if (!value || !/^\d+$/.test(value)) return null;
-  const parsed = Number(value);
-  return Number.isSafeInteger(parsed) && parsed >= minimum && parsed <= maximum ? parsed : null;
 }
 
 async function buildMarkerTags(kind: PublicReadMarkerKind, markerIds: string[]): Promise<string> {
@@ -100,7 +97,7 @@ export class PublicReadCache extends WorkerEntrypoint<Bindings> {
 
   private async fetchImages(url: URL): Promise<Response> {
     const markerIds = normalizePublicReadMarkerIds(url.searchParams.getAll("markerId")).slice(0, 100);
-    const limit = parseInteger(url.searchParams.get("limit"), 1, 24);
+    const limit = parsePublicReadInteger(url.searchParams.get("limit"), 1, 24);
     const namespace = parsePublicReadNamespace(url.searchParams.get("namespace"));
     const assetBaseUrl = url.searchParams.get("assetBaseUrl")?.trim();
     if (markerIds.length === 0 || limit === null || !namespace || !assetBaseUrl) {
@@ -137,8 +134,8 @@ export class PublicReadCache extends WorkerEntrypoint<Bindings> {
 
   private async fetchComments(url: URL): Promise<Response> {
     const markerIds = normalizePublicReadMarkerIds(url.searchParams.getAll("markerId")).slice(0, 100);
-    const limit = parseInteger(url.searchParams.get("limit"), 1, 50);
-    const replyLimit = parseInteger(url.searchParams.get("replyLimit"), 0, 10);
+    const limit = parsePublicReadInteger(url.searchParams.get("limit"), 1, 50);
+    const replyLimit = parsePublicReadInteger(url.searchParams.get("replyLimit"), 0, 10);
     const namespace = parsePublicReadNamespace(url.searchParams.get("namespace"));
     if (markerIds.length === 0 || limit === null || replyLimit === null || !namespace) {
       return noStoreError(422, "Invalid public comment cache request.");

@@ -1,4 +1,14 @@
 import { z } from "zod";
+import { getCommentLength } from "./commentLength";
+
+const COMMENT_MAX_LENGTH = 500;
+// A valid nine-character emoji token counts as two units: 250 tokens is the
+// longest source that can fit within the submission limit.
+const COMMENT_MAX_SOURCE_LENGTH = COMMENT_MAX_LENGTH / 2 * ":sns_001:".length;
+const commentContentSchema = z.string().trim().min(1).refine(
+  (content) => content.length <= COMMENT_MAX_SOURCE_LENGTH && getCommentLength(content) <= COMMENT_MAX_LENGTH,
+  { message: "Comment must not exceed 500 characters." }
+);
 
 export const imagesQuerySchema = z.object({
   markerId: z.string().min(1).max(128).optional(),
@@ -28,12 +38,12 @@ export const commentSubmissionSchema = z.object({
   markerId: z.string().min(1).max(128),
   poiHash: z.string().min(1).max(128),
   poiType: z.string().min(1).max(128),
-  content: z.string().trim().min(1).max(199),
+  content: commentContentSchema,
   parentId: z.string().min(1).max(64).optional()
 });
 
 export const commentEditSchema = z.object({
-  content: z.string().trim().min(1).max(199)
+  content: commentContentSchema
 });
 
 export const commentTranslationSchema = z.object({

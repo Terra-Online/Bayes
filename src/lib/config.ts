@@ -150,6 +150,19 @@ function normalizePrivateKey(value: string | undefined): string | undefined {
   return trimmed.replace(/\\n/g, "\n");
 }
 
+export function getSessionTtlSeconds(env: Bindings): number {
+  return parsePositiveInt(env.SESSION_TTL_SECONDS, DEFAULT_SESSION_TTL_SECONDS);
+}
+
+export function getUgcReadConfig(env: Bindings): Pick<RuntimeConfig, "ugcAssetBaseUrl" | "ugcUploadPathPrefix"> {
+  return {
+    ugcAssetBaseUrl: (env.UGC_ASSET_BASE_URL ?? DEFAULT_UGC_ASSET_BASE_URL).replace(/\/$/, ""),
+    ugcUploadPathPrefix: normalizeUploadPrefix(
+      env.UGC_UPLOAD_TEST_PREFIX ?? (isLocalBackendUrl(env.BETTER_AUTH_URL) ? DEFAULT_TEST_UPLOAD_PREFIX : "")
+    ),
+  };
+}
+
 export function getRuntimeConfig(env: Bindings): RuntimeConfig {
   const allowed = (env.ALLOWED_UPLOAD_MIME ?? "image/jpeg,image/png,image/webp,image/avif,image/heic,image/heif")
     .split(",")
@@ -160,15 +173,12 @@ export function getRuntimeConfig(env: Bindings): RuntimeConfig {
     .toLowerCase();
 
   return {
-    sessionTtlSeconds: parsePositiveInt(env.SESSION_TTL_SECONDS, DEFAULT_SESSION_TTL_SECONDS),
+    sessionTtlSeconds: getSessionTtlSeconds(env),
     progressCacheTtlSeconds: parsePositiveInt(env.PROGRESS_CACHE_TTL_SECONDS, DEFAULT_PROGRESS_TTL_SECONDS),
     uploadUrlTtlSeconds: parsePositiveInt(env.UPLOAD_URL_TTL_SECONDS, DEFAULT_UPLOAD_URL_TTL_SECONDS),
     allowedUploadMime: new Set(allowed),
     maxUploadBytes: parsePositiveInt(env.MAX_UPLOAD_BYTES, DEFAULT_MAX_UPLOAD_BYTES),
-    ugcAssetBaseUrl: (env.UGC_ASSET_BASE_URL ?? DEFAULT_UGC_ASSET_BASE_URL).replace(/\/$/, ""),
-    ugcUploadPathPrefix: normalizeUploadPrefix(
-      env.UGC_UPLOAD_TEST_PREFIX ?? (isLocalBackendUrl(env.BETTER_AUTH_URL) ? DEFAULT_TEST_UPLOAD_PREFIX : "")
-    ),
+    ...getUgcReadConfig(env),
     skipAiModeration: parseBoolean(env.SKIP_AI_MODERATION, false),
     localUploadAutoApprove: ["1", "true", "on", "yes"].includes(localAutoApprove),
     scheduledModerationEnabled: parseBoolean(env.ENABLE_SCHEDULED_MODERATION, true),

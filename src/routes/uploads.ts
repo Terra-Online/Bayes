@@ -1,3 +1,4 @@
+import { handleListPointImages } from "../services/upload/listPointImages";
 import { Hono, type MiddlewareHandler } from "hono";
 import { ApiError } from "../lib/errors";
 import { resolveContextAuthUser } from "../middleware/auth";
@@ -104,7 +105,24 @@ export function createUploadRoutes() {
   app.post("/images/:id/remove-request", requireActiveUser, requireUploadsEnabled, rateLimit("auth"), handleImageRemoveRequest);
   app.post("/images/:id/unrecall", requireActiveUser, requireUploadsEnabled, rateLimit("auth"), handleUnrecallImage);
   app.post("/images/:id/recall", requireActiveUser, requireUploadsEnabled, rateLimit("auth"), handleRecallImage);
-  app.get("/images", rateLimit("public"), handleListPublicImages);
+  const publicImageLimit = rateLimit("public");
+  const privateImageLimit = rateLimit("auth");
+  app.get("/images", async (c, next) => {
+    const includeMine = c.req.query("includeMine");
+    if (includeMine !== undefined && includeMine !== "1") {
+      throw new ApiError(422, "VALIDATION_ERROR", "includeMine must be 1 when supplied.");
+    }
+    if (includeMine === "1") {
+      if (c.req.query("publicOnly") === "1") {
+        throw new ApiError(422, "VALIDATION_ERROR", "includeMine and publicOnly cannot be combined.");
+      }
+      await assertActiveUser(c);
+      return privateImageLimit(c, next);
+    }
+    return publicImageLimit(c, next);
+  }, (c) => c.req.query("includeMine") === "1"
+    ? handleListPointImages(c)
+    : handleListPublicImages(c));
 
   return app;
 }

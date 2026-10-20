@@ -14,7 +14,7 @@ import { registerSessionAuthRoutes } from "./sessionRoutes";
 import { registerSocialAuthRoutes } from "./socialRoutes";
 
 vi.mock("../../lib/auth/createAuth", () => ({ createAuth: vi.fn() }));
-vi.mock("../../lib/email/sender", () => ({ initResend: vi.fn(), sendEmail: vi.fn() }));
+vi.mock("../../lib/email/sender", () => ({ sendEmail: vi.fn() }));
 vi.mock("../../lib/auth/providers", () => ({ createAuthSocialProviders: () => ({}) }));
 vi.mock("../../middleware/rate-limit", () => ({
   rateLimit: () => async (_context: unknown, next: () => Promise<void>) => next(),

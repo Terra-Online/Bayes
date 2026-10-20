@@ -385,7 +385,6 @@ export function createModerationWarningEmailTemplate(input: {
   displayName: string;
   publicUid: string;
 }): RenderedEmail {
-  const safeDisplayName = escapeHtml(input.displayName);
   const safePublicUid = escapeHtml(input.publicUid);
   const safeCommunityGuidelinesUrl = escapeHtml(MODERATION_WARNING_TEMPLATE.communityGuidelinesUrl);
   const safeUgcStatementUrl = escapeHtml(MODERATION_WARNING_TEMPLATE.ugcStatementUrl);

@@ -9,7 +9,7 @@ export interface ModerationWarningResult {
 }
 
 export async function sendModerationWarning(
-  env: Pick<Bindings, "DB">,
+  env: Bindings,
   input: {
     publicUid: string;
   },
@@ -28,7 +28,7 @@ export async function sendModerationWarning(
     subject: content.subject,
     text: content.text,
     html: content.html,
-  });
+  }, env);
 
   return {
     publicUid,

@@ -1,5 +1,6 @@
 import { ApiError } from "../../lib/errors";
 import { PROGRESS_MARKER_FORMAT } from "./model";
+import { Buffer } from "node:buffer";
 
 export function decodeBase64(value: string): Uint8Array {
   if (!value) return new Uint8Array(0);
@@ -16,11 +17,9 @@ export function decodeBase64(value: string): Uint8Array {
 }
 
 export function encodeBase64(bytes: Uint8Array): string {
-  let binary = "";
-  for (let index = 0; index < bytes.length; index += 1) {
-    binary += String.fromCharCode(bytes[index]!);
-  }
-  return btoa(binary);
+  // Use the existing nodejs_compat runtime rather than building a temporary
+  // binary string byte by byte. Respect views into a larger backing buffer.
+  return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString("base64");
 }
 
 export function expectedBitmapBytes(pointCount: number, bitsPerPoint: number): number {

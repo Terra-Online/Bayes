@@ -11,11 +11,11 @@ import {
   isEndfieldDeviceErrorCode
 } from "../../lib/endfieldClient/positionParser";
 import { ApiError } from "../../lib/errors";
-import { deleteLocatorCaches, readDecryptedBindingCache, writeDecryptedBindingCache } from "./locatorCache";
-import { getBindingWithDeviceProfile, publicBinding, saveRoleDeviceProfile } from "./repository";
+import { deleteLocatorCaches, getLocatorCache, readDecryptedBindingCache, writeDecryptedBindingCache } from "./locatorCache";
+import { getBindingWithDeviceProfile, publicBinding, updateBindingCredentials } from "./repository";
 import type { AppContext, DecryptedBinding } from "./types";
 
-const credentialRefreshInFlight = new Map<string, Promise<DecryptedBinding | null>>();
+const credentialRequests = new WeakMap<AppContext, Map<string, Promise<DecryptedBinding>>>();
 
 export function getCredentialSecret(c: AppContext): string {
   const secret = c.env.ENDFIELD_CREDENTIAL_SECRET ?? c.env.BETTER_AUTH_SECRET;
@@ -30,7 +30,9 @@ export async function getDecryptedBinding(
   uid: string,
   options: { bypassCache?: boolean } = {}
 ): Promise<DecryptedBinding> {
-  const cached = options.bypassCache ? null : readDecryptedBindingCache(uid);
+  const cache = getLocatorCache(c.env);
+  const revision = cache.revision;
+  const cached = options.bypassCache ? null : readDecryptedBindingCache(c.env, uid);
   if (cached) {
     return cached;
   }
@@ -62,7 +64,9 @@ export async function getDecryptedBinding(
     wsBaseUrl: c.env.ENDFIELD_WS_BASE_URL,
     deviceProfile
   };
-  writeDecryptedBindingCache(uid, decrypted);
+  if (getLocatorCache(c.env) === cache && cache.revision === revision) {
+    writeDecryptedBindingCache(c.env, uid, decrypted);
+  }
   return decrypted;
 }
 
@@ -90,23 +94,14 @@ async function updateStoredCredential(
     encryptSecret(generated.cred, secret),
     encryptSecret(generated.token, secret)
   ]);
-  const updated = await c.env.DB
-    .prepare(
-      `UPDATE endfield_bindings
-      SET cred_enc = ?2, token_enc = ?3, status = 'enabled', updated_at = CURRENT_TIMESTAMP
-      WHERE uid = ?1
-      RETURNING updated_at`
-    )
-    .bind(
-      uid,
-      encryptedCred,
-      encryptedToken
-    )
-    .first<{ updated_at: string }>();
+  const updated = await updateBindingCredentials(c.env.DB, {
+    uid, binding: binding.binding, credEnc: encryptedCred, tokenEnc: encryptedToken,
+    deviceProfile: deviceProfile !== binding.deviceProfile ? deviceProfile : undefined
+  });
   if (!updated) {
-    throw new ApiError(404, "ENDFIELD_BINDING_NOT_FOUND", "Endfield binding is not configured.");
+    return getDecryptedBinding(c, uid, { bypassCache: true });
   }
-  deleteLocatorCaches(uid);
+  deleteLocatorCaches(c.env, uid);
 
   const updatedBinding = {
     ...binding.binding,
@@ -123,7 +118,7 @@ async function updateStoredCredential(
     token: generated.token,
     deviceProfile
   };
-  writeDecryptedBindingCache(uid, refreshed);
+  writeDecryptedBindingCache(c.env, uid, refreshed);
   return refreshed;
 }
 
@@ -131,7 +126,7 @@ async function performCredentialRefresh(
   c: AppContext,
   uid: string,
   binding: DecryptedBinding
-): Promise<DecryptedBinding | null> {
+): Promise<DecryptedBinding> {
   const latest = await getDecryptedBinding(c, uid, { bypassCache: true });
   if (
     latest.binding.cred_enc !== binding.binding.cred_enc
@@ -164,7 +159,6 @@ async function performCredentialRefresh(
           await createEndfieldDeviceId(),
           SKLAND_DEVICE_PROFILE_USER_AGENT
         );
-        await saveRoleDeviceProfile(c.env.DB, binding.binding.role_id, deviceProfile);
         const refreshed = await refreshEndfieldAuth({
           provider: binding.binding.provider,
           cred: binding.cred,
@@ -203,17 +197,19 @@ export async function refreshBindingCredentials(
   c: AppContext,
   uid: string,
   binding: DecryptedBinding
-): Promise<DecryptedBinding | null> {
-  const pending = credentialRefreshInFlight.get(uid);
+): Promise<DecryptedBinding> {
+  let requests = credentialRequests.get(c);
+  if (!requests) { requests = new Map(); credentialRequests.set(c, requests); }
+  const pending = requests.get(uid);
   if (pending) return pending;
 
   const refresh = performCredentialRefresh(c, uid, binding);
-  credentialRefreshInFlight.set(uid, refresh);
+  requests.set(uid, refresh);
   try {
     return await refresh;
   } finally {
-    if (credentialRefreshInFlight.get(uid) === refresh) {
-      credentialRefreshInFlight.delete(uid);
+    if (requests.get(uid) === refresh) {
+      requests.delete(uid);
     }
   }
 }
@@ -232,9 +228,6 @@ export async function withAutoRefreshedBinding<T>(
       throw error;
     }
     const refreshed = await refreshBindingCredentials(c, uid, binding);
-    if (!refreshed) {
-      throw error;
-    }
     return operation(refreshed);
   }
 }

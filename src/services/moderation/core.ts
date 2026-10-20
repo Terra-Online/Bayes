@@ -5,7 +5,7 @@ import {
   isCommentEditModerationNote
 } from "../../lib/moderation";
 import { prewarmPublicUgcAsset } from "../../middleware/cache/publicUgcAssets";
-import { invalidateUploadCaches } from "../../middleware/cache/uploadCaches";
+import { invalidateUploadCaches } from "../../publicRead/client/invalidate";
 import { getModerationPointsDeltaWithDailyBackoff } from "../karma/moderationPoints";
 import {
   createEmptyPendingOpenAICompletionStats,
@@ -60,6 +60,7 @@ interface ModOptions {
 interface ApplyStatusOptions extends Omit<ModOptions, "openAiApiKey" | "ugcBucket" | "skipAiModeration" | "localAutoApprove"> {
   id: string;
   moderationNote: string;
+  aiReviewed: boolean;
 }
 
 export async function moderateSubmissionIds(
@@ -115,6 +116,7 @@ export async function moderateSubmissionById(
       enqueueApprovedCommentTransPrewarm: options.enqueueApprovedCommentTransPrewarm,
       enqueueSubmissionModerationNotice: options.enqueueSubmissionModerationNotice,
       id: submissionId,
+      aiReviewed: false,
       moderationNote: "AI moderation skipped; waiting for manual audit."
     });
     return applied ? "pending_audit" : null;
@@ -132,6 +134,7 @@ export async function moderateSubmissionById(
       enqueueApprovedCommentTransPrewarm: options.enqueueApprovedCommentTransPrewarm,
       enqueueSubmissionModerationNotice: options.enqueueSubmissionModerationNotice,
       id: submissionId,
+      aiReviewed: false,
       moderationNote: options.localAutoApprove
         ? "Local upload debug auto-approved (OPENAI_API_KEY missing)."
         : "OpenAI moderation skipped in local mode; waiting for manual audit."
@@ -173,6 +176,7 @@ export async function moderateSubmissionById(
     enqueueApprovedCommentTransPrewarm: options.enqueueApprovedCommentTransPrewarm,
     enqueueSubmissionModerationNotice: options.enqueueSubmissionModerationNotice,
     id: submissionId,
+    aiReviewed: true,
     moderationNote: result.approved
       ? `${AI_ACTIVE_MODERATION_NOTE_PREFIX} ${result.categorySummary}`
       : `${AI_PENDING_AUDIT_MODERATION_NOTE_PREFIX} ${result.categorySummary}`
@@ -190,7 +194,8 @@ async function applyModerationStatus(
     submission,
     status,
     moderationNote: options.moderationNote,
-    source: "auto_moderation"
+    source: "auto_moderation",
+    aiReviewed: options.aiReviewed
   });
   if (!transition.updated) {
     return false;

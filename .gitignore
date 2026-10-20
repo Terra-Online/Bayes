@@ -167,6 +167,13 @@ src/lib/emailBlacklist.json
 .env.local
 /.idea/
 
-docs/
+docs/*
 !src/services/progress/progressConsistency.test.ts
 src/data
+
+# Archived local performance experiment output (not part of the active test suite)
+benchmark/results/
+
+# Production database snapshots, repair records and telemetry exports stay local
+/docs/performance-evidence-*/production-*.json
+/docs/performance-evidence-*/profile-repair*.json

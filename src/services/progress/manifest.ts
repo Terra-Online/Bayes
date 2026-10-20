@@ -1,6 +1,5 @@
 import { ApiError } from "../../lib/errors";
 import { getJsonFromKv, putJsonToKv, sha256Hex } from "../../middleware/cache/kvJson";
-import { CACHE_KEY_VERSIONS } from "../../middleware/cache/versions";
 import type { Bindings } from "../../types/app";
 import {
   PROGRESS_BITS_PER_POINT,
@@ -24,7 +23,10 @@ export type RegisteredManifest = {
 
 type StoredManifest = Omit<RegisteredManifest, "indexById">;
 
-const MANIFEST_KV_KEY_PREFIX = `progress:manifest:${CACHE_KEY_VERSIONS.progressManifest}:`;
+function buildProgressManifestCacheKey(markerIndexHash: string): string {
+  const version = "v1";
+  return `progress:manifest:${version}:${markerIndexHash}`;
+}
 
 export function normalizePointIds(value: unknown, fieldName: string): string[] {
   if (!Array.isArray(value)) {
@@ -117,7 +119,7 @@ export async function loadProgressManifest(
 ): Promise<RegisteredManifest | null> {
   const cached = await getJsonFromKv<StoredManifest>(
     env.OEM_KV,
-    `${MANIFEST_KV_KEY_PREFIX}${markerIndexHash}`
+    buildProgressManifestCacheKey(markerIndexHash)
   );
   if (cached) {
     return manifestFromStored(cached);
@@ -151,7 +153,7 @@ export async function loadProgressManifest(
   };
   await putJsonToKv(
     env.OEM_KV,
-    `${MANIFEST_KV_KEY_PREFIX}${manifest.markerIndexHash}`,
+    buildProgressManifestCacheKey(manifest.markerIndexHash),
     manifestToStored(manifest)
   ).catch(() => undefined);
   return manifest;
@@ -179,7 +181,7 @@ export async function saveProgressManifest(
     .run();
   await putJsonToKv(
     env.OEM_KV,
-    `${MANIFEST_KV_KEY_PREFIX}${manifest.markerIndexHash}`,
+    buildProgressManifestCacheKey(manifest.markerIndexHash),
     manifestToStored(manifest)
   ).catch(() => undefined);
 }

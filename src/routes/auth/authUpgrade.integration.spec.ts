@@ -9,7 +9,7 @@ import { registerEmailAuthRoutes } from "./emailRoutes";
 import { forwardToAuthJsonPath, forwardToAuthRawRequest } from "./forwarding";
 import { registerPasswordResetRoutes } from "./passwordResetRoutes";
 
-vi.mock("../../lib/email/sender", () => ({ initResend: vi.fn(), sendEmail: vi.fn() }));
+vi.mock("../../lib/email/sender", () => ({ sendEmail: vi.fn() }));
 vi.mock("../../middleware/rate-limit", () => ({
   rateLimit: () => async (_context: unknown, next: () => Promise<void>) => next(),
 }));

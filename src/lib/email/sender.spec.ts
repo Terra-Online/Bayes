@@ -22,7 +22,7 @@ vi.mock('../redis', () => ({
   })),
 }));
 
-import { initResend, sendEmail } from './sender';
+import { sendEmail } from './sender';
 
 function makeEnv(input: {
   slotAvailable?: boolean;
@@ -55,14 +55,13 @@ describe('email provider fallback', () => {
     resendSend.mockResolvedValue({ data: { id: 'resend-message-id' }, error: null });
     redisIncr.mockResolvedValue(1);
     const env = makeEnv();
-    initResend(env);
 
     await expect(sendEmail({
       to: 'user@example.com',
       subject: 'Subject',
       text: 'Text',
       html: '<p>Text</p>',
-    })).resolves.toEqual({ provider: 'resend', id: 'resend-message-id' });
+    }, env)).resolves.toEqual({ provider: 'resend', id: 'resend-message-id' });
     expect(resendSend).toHaveBeenCalledWith(expect.objectContaining({
       from: 'Test <noreply@example.com>',
       to: 'user@example.com',
@@ -72,14 +71,13 @@ describe('email provider fallback', () => {
   it('supports a per-message sender override', async () => {
     resendSend.mockResolvedValue({ data: { id: 'resend-message-id' }, error: null });
     const env = makeEnv();
-    initResend(env);
 
     await expect(sendEmail({
       to: 'user@example.com',
       from: 'moderation@opendfieldmap.org',
       subject: 'Warning',
       text: 'Text',
-    })).resolves.toEqual({ provider: 'resend', id: 'resend-message-id' });
+    }, env)).resolves.toEqual({ provider: 'resend', id: 'resend-message-id' });
     expect(resendSend).toHaveBeenCalledWith(expect.objectContaining({
       from: 'moderation@opendfieldmap.org',
     }));
@@ -89,9 +87,8 @@ describe('email provider fallback', () => {
     const cloudflareSend = vi.fn().mockResolvedValue({ messageId: 'cf-message-id' });
     redisGet.mockResolvedValue('1');
     const env = makeEnv({ slotAvailable: false, cloudflareSend });
-    initResend(env);
 
-    await expect(sendEmail({ to: 'user@example.com', subject: 'Subject', text: 'Text' }))
+    await expect(sendEmail({ to: 'user@example.com', subject: 'Subject', text: 'Text' }, env))
       .resolves.toEqual({ provider: 'cloudflare', id: 'cf-message-id' });
     expect(resendSend).not.toHaveBeenCalled();
     expect(cloudflareSend).toHaveBeenCalledTimes(1);
@@ -105,9 +102,8 @@ describe('email provider fallback', () => {
     redisIncr.mockResolvedValue(1);
     const cloudflareSend = vi.fn().mockResolvedValue({ messageId: 'cf-message-id' });
     const env = makeEnv({ cloudflareSend });
-    initResend(env);
 
-    await expect(sendEmail({ to: 'user@example.com', subject: 'Subject', text: 'Text' }))
+    await expect(sendEmail({ to: 'user@example.com', subject: 'Subject', text: 'Text' }, env))
       .resolves.toEqual({ provider: 'cloudflare', id: 'cf-message-id' });
     expect(cloudflareSend).toHaveBeenCalledTimes(1);
   });
@@ -119,9 +115,8 @@ describe('email provider fallback', () => {
     });
     const cloudflareSend = vi.fn().mockResolvedValue({ messageId: 'cf-message-id' });
     const env = makeEnv({ cloudflareSend });
-    initResend(env);
 
-    await expect(sendEmail({ to: 'user@example.com', subject: 'Subject', text: 'Text' }))
+    await expect(sendEmail({ to: 'user@example.com', subject: 'Subject', text: 'Text' }, env))
       .resolves.toEqual({ provider: 'cloudflare', id: 'cf-message-id' });
     expect(cloudflareSend).toHaveBeenCalledTimes(1);
   });
@@ -129,9 +124,8 @@ describe('email provider fallback', () => {
   it('supports an explicit Cloudflare-only mode without constructing Resend', async () => {
     const cloudflareSend = vi.fn().mockResolvedValue({ messageId: 'cf-message-id' });
     const env = makeEnv({ mode: 'cloudflare_only', cloudflareSend });
-    initResend(env);
 
-    await expect(sendEmail({ to: 'user@example.com', subject: 'Subject', text: 'Text' }))
+    await expect(sendEmail({ to: 'user@example.com', subject: 'Subject', text: 'Text' }, env))
       .resolves.toEqual({ provider: 'cloudflare', id: 'cf-message-id' });
     expect(resendSend).not.toHaveBeenCalled();
   });
@@ -144,9 +138,8 @@ describe('email provider fallback', () => {
     redisIncr.mockResolvedValue(1);
     const cloudflareSend = vi.fn();
     const env = makeEnv({ cloudflareSend });
-    initResend(env);
 
-    await expect(sendEmail({ to: 'user@example.com', subject: 'Subject', text: 'Text' }))
+    await expect(sendEmail({ to: 'user@example.com', subject: 'Subject', text: 'Text' }, env))
       .rejects.toThrow('Invalid API key');
     expect(cloudflareSend).not.toHaveBeenCalled();
   });
@@ -156,10 +149,25 @@ describe('email provider fallback', () => {
     redisIncr.mockResolvedValue(1);
     const cloudflareSend = vi.fn();
     const env = makeEnv({ cloudflareSend });
-    initResend(env);
 
-    await expect(sendEmail({ to: 'user@example.com', subject: 'Subject', text: 'Text' }))
+    await expect(sendEmail({ to: 'user@example.com', subject: 'Subject', text: 'Text' }, env))
       .rejects.toThrow('request timed out');
     expect(cloudflareSend).not.toHaveBeenCalled();
+  });
+
+  it('keeps sender, quota and provider bound while another environment sends', async () => {
+    let release!: (value: null) => void;
+    redisGet.mockImplementationOnce(() => new Promise<null>((resolve) => { release = resolve; }));
+    resendSend.mockResolvedValue({ data: { id: 'first-delivery' }, error: null });
+    const first = { ...makeEnv(), EMAIL_FROM_NAME: 'First', EMAIL_RESEND_DAILY_LIMIT: '1' };
+    const secondSend = vi.fn().mockResolvedValue({ messageId: 'second-delivery' });
+    const second = { ...makeEnv({ mode: 'cloudflare_only', cloudflareSend: secondSend }), EMAIL_FROM_NAME: 'Second' };
+    const pending = sendEmail({ to: 'first@example.test', subject: 'First', text: 'First' }, first);
+    await sendEmail({ to: 'second@example.test', subject: 'Second', text: 'Second' }, second);
+    release(null);
+    await expect(pending).resolves.toMatchObject({ provider: 'resend', id: 'first-delivery' });
+    expect(resendSend).toHaveBeenCalledWith(expect.objectContaining({ from: 'First <noreply@example.com>' }));
+    expect(secondSend).toHaveBeenCalledTimes(1);
+    expect(secondSend).toHaveBeenCalledWith(expect.objectContaining({ from: 'Second <noreply@example.com>' }));
   });
 });

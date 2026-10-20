@@ -11,13 +11,9 @@ vi.mock("../../repositories/submission/listComments", () => ({
   listCommentViewerStateByMarker: vi.fn(),
   listUserCommentsByMarker: vi.fn()
 }));
-vi.mock("../../middleware/cache/publicReadClient", () => ({
-  fetchPublicImagesFromWorkersCache: vi.fn(),
-  fetchPublicCommentsFromWorkersCache: vi.fn()
-}));
 
-import { listCachedPublicCommentsByMarker } from "./listPublicComments";
-import { listCachedPublicImagesByMarker } from "./listPublicImages";
+import { listCachedPublicCommentsByMarker } from "./markerComments";
+import { listCachedPublicImagesByMarker } from "./markerImages";
 
 beforeEach(() => vi.resetAllMocks());
 
@@ -70,5 +66,33 @@ describe.each(["images", "comments"] as const)("%s invocation isolation", (kind)
     expect(firstWaitUntil).toHaveBeenCalledTimes(1);
     expect(secondWaitUntil).toHaveBeenCalledTimes(1);
     await Promise.all([...firstWaitUntil.mock.calls, ...secondWaitUntil.mock.calls].map(([promise]) => promise));
+  });
+
+  it("processes every missing marker in sequential batches of at most 100", async () => {
+    const ids = Array.from({ length: 205 }, (_, index) => `marker-${index}`);
+    let active = 0;
+    let maximum = 0;
+    mocks[kind].mockImplementation(async () => {
+      maximum = Math.max(maximum, ++active);
+      await Promise.resolve();
+      active--;
+      return [];
+    });
+    await read({} as D1Database, [...ids, ids[0]!]);
+    expect(mocks[kind].mock.calls.map(([, args]) => args.markerIds.length)).toEqual([100, 100, 5]);
+    expect(mocks[kind].mock.calls.flatMap(([, args]) => args.markerIds)).toEqual(ids);
+    expect(maximum).toBe(1);
+  });
+
+  it("preserves origin results when a cache write fails and retries a failed origin on the next invocation", async () => {
+    const wait = vi.fn();
+    const kv = { get: vi.fn().mockResolvedValue(null), put: vi.fn().mockRejectedValue(new Error("KV unavailable")) } as unknown as KVNamespace;
+    mocks[kind].mockRejectedValueOnce(new Error("D1 unavailable")).mockResolvedValue([]);
+    await expect(read({} as D1Database, ["marker"], wait, kv)).rejects.toThrow("D1 unavailable");
+    expect(wait).not.toHaveBeenCalled();
+    await expect(read({} as D1Database, ["marker"], wait, kv)).resolves.toEqual([]);
+    await Promise.all(wait.mock.calls.map(([promise]) => promise));
+    expect(mocks[kind]).toHaveBeenCalledTimes(2);
+    expect(wait).toHaveBeenCalledOnce();
   });
 });

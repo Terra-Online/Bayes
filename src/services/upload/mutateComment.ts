@@ -5,7 +5,7 @@ import {
   COMMENT_EDIT_MODERATION_NOTE_PREFIX,
   RECALL_MODERATION_NOTE_PREFIX
 } from "../../lib/moderation";
-import { invalidateUploadCaches } from "../../middleware/cache/uploadCaches";
+import { invalidateUploadCaches } from "../../publicRead/client/invalidate";
 import {
   countSubmissionFlags,
   clearSubmissionFlags,

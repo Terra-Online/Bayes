@@ -19,18 +19,24 @@ async function deliverProgressStatsEvent(
   event: ProgressStatsOutboxRecord
 ): Promise<void> {
   const stub = env.OEM_STATS_DO.getByName(event.markerIndexHash);
-  const response = await stub.fetch("https://progress-stats/apply", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ ...event.payload, eventId: event.eventId }),
-    signal: AbortSignal.timeout(10_000)
-  });
-  if (response.ok) return;
-
-  const body = await response.text().catch(() => "");
-  const error = new Error(`Stats DO returned ${response.status}: ${body.slice(0, 500)}`);
-  Object.assign(error, { status: response.status });
-  throw error;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(new DOMException("Stats delivery timed out", "TimeoutError")), 10_000);
+  try {
+    const response = await stub.fetch("https://progress-stats/apply", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ...event.payload, eventId: event.eventId }),
+      signal: controller.signal
+    });
+    if (response.ok) {
+      await response.body?.cancel();
+      return;
+    }
+    const body = await response.text().catch(() => "");
+    throw Object.assign(new Error(`Stats DO returned ${response.status}: ${body.slice(0, 500)}`), { status: response.status });
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 async function dispatchProgressStatsEvent(

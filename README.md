@@ -172,7 +172,7 @@ Workers Cache hits or D1 latency individually.
 Validate changes with:
 
 ```sh
-pnpm exec vitest run src/services/upload/publicReadIsolation.spec.ts src/middleware/cache src/services/upload/ugcReadEfficiency.spec.ts
+pnpm exec vitest run src/publicRead src/middleware/cache src/services/upload/ugcReadEfficiency.spec.ts
 pnpm run typecheck
 pnpm run lint
 ```

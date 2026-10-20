@@ -1,24 +1,22 @@
 import { getRuntimeConfig, type RuntimeConfig } from "../../lib/config";
 import { getJsonFromKv, putJsonToKv, sha256Hex } from "../../middleware/cache/kvJson";
-import { CACHE_KEY_VERSIONS } from "../../middleware/cache/versions";
 import { getVisibleCommentsByIds } from "../../repositories/submission/statusSubmission";
 import {
   getTextTranslation,
   getTextTranslationByTarget,
   upsertTextTranslation
 } from "../../repositories/submission/textTranslationCache";
-import type { SubmissionRecord, TextTranslationRecord } from "../../repositories/submission/types";
+import type { TextTranslationRecord } from "../../repositories/submission/types";
 import type { TransPrewarmTarget } from "../moderation/messages";
 import type { Bindings } from "../../types/app";
+import { buildCommentTranslationKeys } from "./commentTranslationKeys";
 
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
 const GOOGLE_TRANSLATION_SCOPE = "https://www.googleapis.com/auth/cloud-translation";
 const GOOGLE_TRANSLATION_PROVIDER = "google_cloud_translation_v3";
-const GOOGLE_TRANSLATION_CACHE_PROVIDER = "google-v3";
 const GOOGLE_ACCESS_TOKEN_SKEW_SECONDS = 60;
 const GOOGLE_FETCH_TIMEOUT_MS = 15_000;
 const MAX_TRANSLATION_BATCH_SIZE = 100;
-const TRANSLATION_KV_CACHE_PREFIX = `translate:${CACHE_KEY_VERSIONS.commentTranslations}`;
 const TRANSLATION_NO_GLOSSARY_CACHE_VERSION = "g0";
 const SAME_LANGUAGE_ERROR = "Target language cannot be equal to source language.";
 const APPROVED_COMMENT_PREWARM_TARGET_LANGUAGES = ["zh-CN", "en-US", "ru-RU", "ja-JP", "ko-KR"] as const;
@@ -443,15 +441,14 @@ async function getTextTranslationTargetDescriptor(payload: {
   const targetLanguage = toTranslationCacheLanguage(payload.targetLanguage);
   const glossaryVersion = getGlossaryCacheVersion(payload.glossaryKey, payload.glossaryVersion);
   const textHash = await sha256Hex(payload.normalizedText);
+  const { cacheKey } = buildCommentTranslationKeys({
+    kind: "detection",
+    targetLanguage,
+    glossaryVersion,
+    textHash
+  });
   return {
-    detectionCacheKey: [
-      TRANSLATION_KV_CACHE_PREFIX,
-      glossaryVersion,
-      GOOGLE_TRANSLATION_CACHE_PROVIDER,
-      "detect",
-      targetLanguage,
-      textHash
-    ].join(":"),
+    detectionCacheKey: cacheKey,
     textHash,
     targetLanguage,
     glossaryVersion,
@@ -470,16 +467,16 @@ async function getTextTranslationCacheDescriptor(payload: {
   const targetLanguage = toTranslationCacheLanguage(payload.targetLanguage);
   const glossaryVersion = getGlossaryCacheVersion(payload.glossaryKey, payload.glossaryVersion);
   const textHash = await sha256Hex(payload.normalizedText);
-  const flowVersion = [
-    TRANSLATION_KV_CACHE_PREFIX,
-    glossaryVersion,
-    GOOGLE_TRANSLATION_CACHE_PROVIDER,
+  const { cacheKey, flowVersion } = buildCommentTranslationKeys({
+    kind: "translation",
     sourceLanguage,
-    targetLanguage
-  ].join(":");
+    targetLanguage,
+    glossaryVersion,
+    textHash
+  });
 
   return {
-    cacheKey: `${flowVersion}:${textHash}`,
+    cacheKey,
     textHash,
     flowVersion,
     sourceLanguage,
@@ -506,16 +503,16 @@ function getTextTranslationCacheDescriptorFromTarget(
   targetDescriptor: TextTranslationTargetDescriptor
 ): TextTranslationCacheDescriptor {
   const normalizedSourceLanguage = toTranslationCacheLanguage(sourceLanguage);
-  const flowVersion = [
-    TRANSLATION_KV_CACHE_PREFIX,
-    targetDescriptor.glossaryVersion,
-    GOOGLE_TRANSLATION_CACHE_PROVIDER,
-    normalizedSourceLanguage,
-    targetDescriptor.targetLanguage
-  ].join(":");
+  const { cacheKey, flowVersion } = buildCommentTranslationKeys({
+    kind: "translation",
+    sourceLanguage: normalizedSourceLanguage,
+    targetLanguage: targetDescriptor.targetLanguage,
+    glossaryVersion: targetDescriptor.glossaryVersion,
+    textHash: targetDescriptor.textHash
+  });
 
   return {
-    cacheKey: `${flowVersion}:${targetDescriptor.textHash}`,
+    cacheKey,
     textHash: targetDescriptor.textHash,
     flowVersion,
     sourceLanguage: normalizedSourceLanguage,

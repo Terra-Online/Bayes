@@ -4,11 +4,6 @@ import { getImageSubmissionByFilePath, getPublicSubmissionByFilePath } from "../
 import type { AppEnv } from "../../types/app";
 import { parseObjectKeyFromRequestPath } from "./helpers";
 
-function canReadPrivateImage(user: NonNullable<AppEnv["Variables"]["authUser"]>, submissionUserId: string, status: string): boolean {
-  const effectiveRole = user.role === "r" ? "a" : user.role;
-  return effectiveRole === "p" || effectiveRole === "a" || (submissionUserId === user.uid && status !== "stale");
-}
-
 export async function handleServePublicImageFile(c: import("hono").Context<AppEnv>) {
   const objectKey = parseObjectKeyFromRequestPath(c.req.path);
   const submission = await getPublicSubmissionByFilePath(c.env.DB, objectKey);
@@ -39,8 +34,8 @@ export async function handleServePrivateImageFile(c: import("hono").Context<AppE
     throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
   }
   const objectKey = parseObjectKeyFromRequestPath(c.req.path);
-  const submission = await getImageSubmissionByFilePath(c.env.DB, objectKey);
-  if (!submission || !canReadPrivateImage(user, submission.userId, submission.status)) {
+  const submission = await getImageSubmissionByFilePath(c.env.DB, objectKey, user);
+  if (!submission) {
     throw new ApiError(404, "IMAGE_NOT_FOUND", "Image file was not found.");
   }
 

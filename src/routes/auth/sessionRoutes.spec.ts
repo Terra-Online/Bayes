@@ -9,7 +9,7 @@ import type { AppEnv, Bindings } from "../../types/app";
 import { registerSessionAuthRoutes } from "./sessionRoutes";
 
 vi.mock("../../lib/auth/createAuth", () => ({ createAuth: vi.fn() }));
-vi.mock("../../lib/email/sender", () => ({ initResend: vi.fn(), sendEmail: vi.fn() }));
+vi.mock("../../lib/email/sender", () => ({ sendEmail: vi.fn() }));
 vi.mock("../../lib/auth/providers", () => ({ createAuthSocialProviders: () => ({}) }));
 vi.mock("../../middleware/rate-limit", () => ({
   rateLimit: () => async (_context: unknown, next: () => Promise<void>) => next(),
@@ -75,6 +75,17 @@ describe.each(["http://localhost:8787", "https://api.opendfieldmap.org"])("persi
   function sessionRecord() {
     return database.auth_sessions![0]!;
   }
+
+  it("rejects missing session credentials before constructing auth", async () => {
+    vi.mocked(createAuth).mockClear();
+    for (const headers of [new Headers(), new Headers({ cookie: "analytics=abc" })]) {
+      const response = await app.request("/session", { headers }, env);
+      expect(response.status).toBe(401);
+      expect(response.headers.get("cache-control")).toBe("private, no-store");
+      expect(await response.json()).toMatchObject({ code: "SESSION_REQUIRED" });
+    }
+    expect(createAuth).not.toHaveBeenCalled();
+  });
 
   it("uses a 180-day persistent, HttpOnly cookie and a one-day update age", async () => {
     expect(auth.options.session).toMatchObject({ expiresIn: 15_552_000, updateAge: 86_400 });
@@ -212,5 +223,12 @@ describe.each(["http://localhost:8787", "https://api.opendfieldmap.org"])("persi
     const response = await app.request("/session", { headers }, env);
     expect(response.status).toBe(401);
     expect(response.headers.get("set-cookie") ?? "").not.toContain("Max-Age=15552000");
+  });
+
+  it("retains token-specific expiry errors and private cache headers", async () => {
+    const response = await app.request("/session", { headers: { authorization: "Bearer missing-token" } }, env);
+    expect(response.status).toBe(401);
+    expect(await response.json()).toMatchObject({ code: "TOKEN_EXPIRED" });
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
   });
 });

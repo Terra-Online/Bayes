@@ -80,17 +80,3 @@ export async function getPendingOpenAISubmissions(
 
   return (result.results ?? []).map((row) => mapSubmission(row));
 }
-
-export async function getPendingAuditSubmissions(db: D1Database, limit = 50): Promise<SubmissionRecord[]> {
-  const result = await db
-    .prepare(
-      `SELECT * FROM ugc_submissions
-       WHERE status = 'pending_audit'
-       ORDER BY created_at ASC
-       LIMIT ?1`
-    )
-    .bind(limit)
-    .all<Record<string, unknown>>();
-
-  return (result.results ?? []).map((row) => mapSubmission(row));
-}

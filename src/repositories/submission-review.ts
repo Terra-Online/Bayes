@@ -175,22 +175,30 @@ export async function markImageSubmissionsStaleByFilePathPrefix(
   moderationNote: string
 ): Promise<{ changedRows: number; markerIds: string[] }> {
   const escapedPrefix = `${escapeLikePattern(prefix)}/%`;
-  const result = await db
-    .prepare(
+  const now = new Date().toISOString();
+  const results = await db.batch<{ poi_id: string }>([
+    db.prepare(
+      `INSERT INTO ugc_review_events
+         (submission_id, snapshot_id, from_status, to_status, source, created_at, ai_reviewed)
+       SELECT id, snapshot_id, status, 'stale', 'manual_moderation', ?2, 0
+       FROM ugc_submissions
+       WHERE kind = 'image' AND file_path LIKE ?1 ESCAPE '\\' AND status <> 'stale'`
+    ).bind(escapedPrefix, now),
+    db.prepare(
       `UPDATE ugc_submissions
        SET status = 'stale',
            moderation_note = CASE
              WHEN moderation_note IS NULL OR TRIM(moderation_note) = '' THEN ?2
              ELSE moderation_note || ' ' || ?2
            END,
-           updated_at = CURRENT_TIMESTAMP
+           updated_at = ?3
        WHERE kind = 'image'
          AND file_path LIKE ?1 ESCAPE '\\'
          AND status <> 'stale'
        RETURNING poi_id`
-    )
-    .bind(escapedPrefix, moderationNote)
-    .all<{ poi_id: string }>();
+    ).bind(escapedPrefix, moderationNote, now)
+  ]);
+  const result = results[1];
   const rows = result.results ?? [];
 
   return {

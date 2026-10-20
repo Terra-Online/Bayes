@@ -64,3 +64,13 @@ export function resolveCookieAttributes(baseUrl: string | undefined):
     partitioned: true,
   };
 }
+
+export function authCookieOptions(env: Pick<Bindings, "BETTER_AUTH_URL">) {
+  return {
+    baseURL: readEnv(env.BETTER_AUTH_URL) ?? DEFAULT_AUTH_BASE_URL,
+    advanced: {
+      cookiePrefix: isLocalBaseUrl(env.BETTER_AUTH_URL) ? undefined : PARTITIONED_AUTH_COOKIE_PREFIX,
+      defaultCookieAttributes: resolveCookieAttributes(env.BETTER_AUTH_URL),
+    },
+  };
+}
