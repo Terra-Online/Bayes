@@ -1,7 +1,7 @@
 import { nanoid } from "nanoid";
 import { getRuntimeConfig } from "../../lib/config";
 import { ApiError } from "../../lib/errors";
-import { UGC_PUBLIC_IMAGE_CACHE_CONTROL } from "../../middleware/cache/publicUgcAssets";
+import { UGC_PUBLIC_IMAGE_CACHE_CONTROL } from "./imageDeliveryPolicy";
 import { getDuplicateImageMarkerSummary } from "../../repositories/submission-duplicates";
 import { createPendingSubmission } from "../../repositories/submission/createSubmission";
 import { enqueueModeration } from "../moderation/queue";

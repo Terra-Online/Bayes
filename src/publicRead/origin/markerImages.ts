@@ -1,12 +1,12 @@
+import { sha256Hex } from "../../lib/crypto";
 import { listActiveImagesByMarker } from "../../repositories/submission/listImages";
 import { PUBLIC_MARKER_IMAGE_CACHE_LIMIT, type PublicImageCacheNamespace } from "../contract/markers";
 import type { PublicSubmissionImage } from "../../repositories/submission/types";
 import {
   DEFAULT_KV_READ_CACHE_TTL_SECONDS,
   getJsonFromKv,
-  putJsonToKv,
-  sha256Hex
-} from "../../middleware/cache/kvJson";
+  putJsonToKv
+} from "../../lib/kvJson";
 
 export const PUBLIC_MARKER_IMAGE_POSITIVE_TTL_SECONDS = 90 * 24 * 60 * 60;
 export const PUBLIC_MARKER_IMAGE_EMPTY_TTL_SECONDS = 60 * 60;

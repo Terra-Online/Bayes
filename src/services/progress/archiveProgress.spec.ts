@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { sha256Hex } from "../../middleware/cache/kvJson";
+import { sha256Hex } from "../../lib/crypto";
 import { encodeBase64 } from "./bitmap";
 import {
   archiveIdsFromBitmap,

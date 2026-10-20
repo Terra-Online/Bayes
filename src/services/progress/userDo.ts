@@ -1,7 +1,7 @@
 import { ApiError } from "../../lib/errors";
 import { toApiError } from "../../middleware/error-handler";
 import { getUserByUid } from "../../repositories/users";
-import { sha256Hex } from "../../middleware/cache/kvJson";
+import { sha256Hex } from "../../lib/crypto";
 import {
   buildProgressRevision,
   isEmptyProgress,

@@ -4,7 +4,7 @@ import {
   AI_PENDING_AUDIT_MODERATION_NOTE_PREFIX,
   isCommentEditModerationNote
 } from "../../lib/moderation";
-import { prewarmPublicUgcAsset } from "../../middleware/cache/publicUgcAssets";
+import { prewarmPublicUgcAsset } from "../../lib/publicUgcAssets";
 import { invalidateUploadCaches } from "../../publicRead/client/invalidate";
 import { getModerationPointsDeltaWithDailyBackoff } from "../karma/moderationPoints";
 import {

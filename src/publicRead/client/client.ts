@@ -24,9 +24,9 @@ import {
   PUBLIC_READ_PROGRESS_STATS_PATH
 } from "../contract/requests";
 import {
-  UGC_PUBLIC_EMPTY_LIST_CACHE_CONTROL,
-  UGC_PUBLIC_LIST_CACHE_CONTROL
-} from "../../middleware/cache/publicUgcAssets";
+  PUBLIC_EMPTY_IMAGE_LIST_CACHE_CONTROL,
+  PUBLIC_IMAGE_LIST_CACHE_CONTROL
+} from "../contract/cachePolicy";
 
 function createPublicReadRequest(path: string, searchParams: URLSearchParams): {
   request: Request;
@@ -238,7 +238,7 @@ export async function readPublicImagesFromWorkersCache(payload: {
   const items = markerItems.items.flat();
   return combinedResult(
     items,
-    items.length > 0 ? UGC_PUBLIC_LIST_CACHE_CONTROL : UGC_PUBLIC_EMPTY_LIST_CACHE_CONTROL,
+    items.length > 0 ? PUBLIC_IMAGE_LIST_CACHE_CONTROL : PUBLIC_EMPTY_IMAGE_LIST_CACHE_CONTROL,
     "x-oem-marker-kv-cache",
     markerItems.failedCount,
     markerItems.failedMarkerIds

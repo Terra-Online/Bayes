@@ -1,4 +1,4 @@
-import { buildPublicUgcAssetUrl } from "../../middleware/cache/publicUgcAssets";
+import { buildPublicUgcAssetUrl } from "../../lib/publicUgcAssets";
 import { listAllImageFilePaths } from "../../repositories/submission-review";
 
 export type OrphanImageObject = {

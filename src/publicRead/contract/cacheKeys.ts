@@ -1,4 +1,4 @@
-import { sha256Hex } from "../../middleware/cache/kvJson";
+import { sha256Hex } from "../../lib/crypto";
 import type { PublicReadMarkerKind } from "./markers";
 
 export function buildPublicReadCacheKey(path: string, searchParams: URLSearchParams): string {
