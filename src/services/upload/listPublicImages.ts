@@ -1,102 +1,16 @@
 import { getUgcReadConfig } from "../../lib/config";
 import { ApiError } from "../../lib/errors";
+import { resolvePublicImageCacheNamespace } from "../../publicRead/client/scope";
+import { readPublicImagesFromWorkersCache, publicReadResponse } from "../../publicRead/client/client";
 import {
-  PUBLIC_MARKER_IMAGE_CACHE_LIMIT,
-  readPublicMarkerImageCache,
-  resolvePublicImageCacheNamespace,
-  writePublicMarkerImageCache
-} from "../../middleware/cache/publicMarkerImages";
-import { readPublicImagesFromWorkersCache, publicReadResponse } from "../../middleware/cache/publicReadClient";
-import {
-  listActiveImagesByMarker,
   listImageViewerReactionsByMarker,
   listUserImagesByMarker
 } from "../../repositories/submission/listImages";
-import type { PublicSubmissionImage } from "../../repositories/submission/types";
 import type { AppEnv } from "../../types/app";
 import { getOptionalAuthIdentity, hasAuthHeaders, requireMarkerIds } from "./helpers";
 import { imagesQuerySchema } from "./schemas";
 import { resolveImageScope, resolvePrivateAssetBaseUrl, resolvePublicAssetBaseUrl } from "./scope";
 import { applyImageViewerReactions } from "./viewerOverlay";
-
-function groupPublicImagesByMarker(
-  markerIds: string[],
-  images: PublicSubmissionImage[]
-): Map<string, PublicSubmissionImage[]> {
-  const grouped = new Map<string, PublicSubmissionImage[]>();
-  markerIds.forEach((markerId) => grouped.set(markerId, []));
-  images.forEach((image) => {
-    const bucket = grouped.get(image.markerId);
-    if (bucket) {
-      bucket.push(image);
-    }
-  });
-  return grouped;
-}
-
-function flattenPublicImagesByMarker(
-  markerIds: string[],
-  grouped: Map<string, PublicSubmissionImage[]>,
-  limit: number
-): PublicSubmissionImage[] {
-  return markerIds.flatMap((markerId) => (grouped.get(markerId) ?? []).slice(0, limit));
-}
-
-export async function listCachedPublicImagesByMarker(
-  payload: {
-    db: D1Database;
-    kv?: KVNamespace;
-    markerIds: string[];
-    assetBaseUrl: string;
-    pathPrefix?: string;
-    excludePathPrefix?: string;
-    limit: number;
-    cacheNamespace: ReturnType<typeof resolvePublicImageCacheNamespace>;
-    waitUntil: (promise: Promise<unknown>) => void;
-  }
-): Promise<PublicSubmissionImage[]> {
-  const grouped = new Map<string, PublicSubmissionImage[]>();
-  const missingIds: string[] = [];
-
-  if (payload.kv) {
-    const cacheResults = await Promise.all(
-      [...new Set(payload.markerIds)].map(async (markerId) => ({
-        markerId,
-        images: await readPublicMarkerImageCache(payload.kv, payload.cacheNamespace, markerId)
-      }))
-    );
-
-    cacheResults.forEach(({ markerId, images }) => {
-      if (images) {
-        grouped.set(markerId, images);
-      } else {
-        missingIds.push(markerId);
-      }
-    });
-  } else {
-    missingIds.push(...new Set(payload.markerIds));
-  }
-
-  for (let offset = 0; offset < missingIds.length; offset += 100) {
-    const markerIds = missingIds.slice(offset, offset + 100);
-    const items = await listActiveImagesByMarker(payload.db, {
-      markerIds,
-      assetBaseUrl: payload.assetBaseUrl,
-      pathPrefix: payload.pathPrefix,
-      excludePathPrefix: payload.excludePathPrefix,
-      limit: PUBLIC_MARKER_IMAGE_CACHE_LIMIT,
-    });
-    const loaded = groupPublicImagesByMarker(markerIds, items);
-    for (const [markerId, values] of loaded) grouped.set(markerId, values);
-    if (payload.kv) {
-      payload.waitUntil(Promise.all(markerIds.map((markerId) => (
-        writePublicMarkerImageCache(payload.kv, payload.cacheNamespace, markerId, loaded.get(markerId)!)
-      ))).catch(() => undefined));
-    }
-  }
-
-  return flattenPublicImagesByMarker(payload.markerIds, grouped, payload.limit);
-}
 
 export async function handleListMyImages(c: import("hono").Context<AppEnv>) {
   const user = c.get("authUser");

@@ -1,8 +1,8 @@
 // Local workerd fixture for public reads, upstream sockets, and outbox delivery.
 import { connectEndfieldPositionSocket, getEndfieldPositionFromSocket } from "../lib/endfieldClient/positionSocket";
 import { drainUserProgressStatsOutbox } from "../services/progress/outbox";
-import { listCachedPublicImagesByMarker } from "../services/upload/listPublicImages";
-import { listCachedPublicCommentsByMarker } from "../services/upload/listPublicComments";
+import { listCachedPublicImagesByMarker } from "../publicRead/origin/markerImages";
+import { listCachedPublicCommentsByMarker } from "../publicRead/origin/markerComments";
 import { updateBindingCredentials } from "../routes/binding/repository";
 import type { EndfieldBindingRow } from "../routes/binding/types";
 import type { EndfieldDeviceProfile } from "../lib/endfieldClient/types";

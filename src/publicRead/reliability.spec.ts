@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { Bindings } from "../../types/app";
+import type { Bindings } from "../types/app";
 
 const mocks = vi.hoisted(() => ({ fetch: vi.fn(), images: vi.fn(), comments: vi.fn() }));
 vi.mock("cloudflare:workers", () => ({
@@ -8,12 +8,18 @@ vi.mock("cloudflare:workers", () => ({
     constructor(protected ctx: ExecutionContext, protected env: Bindings) {}
   }
 }));
-vi.mock("../../services/upload/listPublicImages", () => ({ listCachedPublicImagesByMarker: mocks.images }));
-vi.mock("../../services/upload/listPublicComments", () => ({ listCachedPublicCommentsByMarker: mocks.comments }));
-import { publicReadResponse, readPublicImagesFromWorkersCache, readPublicCommentsFromWorkersCache } from "./publicReadClient";
+vi.mock("./origin/markerImages", async (importOriginal) => ({
+  ...await importOriginal<typeof import("./origin/markerImages")>(),
+  listCachedPublicImagesByMarker: mocks.images
+}));
+vi.mock("./origin/markerComments", async (importOriginal) => ({
+  ...await importOriginal<typeof import("./origin/markerComments")>(),
+  listCachedPublicCommentsByMarker: mocks.comments
+}));
+import { publicReadResponse, readPublicImagesFromWorkersCache, readPublicCommentsFromWorkersCache } from "./client/client";
 const fetchPublicImagesFromWorkersCache = async (payload: Parameters<typeof readPublicImagesFromWorkersCache>[0]) => publicReadResponse(await readPublicImagesFromWorkersCache(payload));
 const fetchPublicCommentsFromWorkersCache = async (payload: Parameters<typeof readPublicCommentsFromWorkersCache>[0]) => publicReadResponse(await readPublicCommentsFromWorkersCache(payload));
-import { PublicReadCache } from "./publicReadCache";
+import { PublicReadCache } from "./origin/entrypoint";
 
 beforeEach(() => mocks.fetch.mockReset());
 afterEach(() => vi.restoreAllMocks());
@@ -149,5 +155,35 @@ describe("bounded public reads", () => {
     expect(response.headers.get("retry-after")).toBe("5");
     expect(await response.json()).toMatchObject({ code: "DEPENDENCY_OVERLOADED" });
   });
+
+  it("serves progress statistics through KV and the statistics Durable Object", async () => {
+    const markerIndexHash = "a".repeat(64);
+    const snapshot = { markerIndexHash, totalSyncedUsers: 12, pointCount: 3, counts: "AQID", updatedAt: 42 };
+    const kv = {
+      get: vi.fn().mockResolvedValueOnce(null).mockResolvedValueOnce(JSON.stringify(snapshot)),
+      put: vi.fn().mockResolvedValue(undefined)
+    };
+    const stub = { fetch: vi.fn().mockResolvedValue(Response.json(snapshot)) };
+    const stats = { idFromName: vi.fn().mockReturnValue("stats-id"), get: vi.fn().mockReturnValue(stub) };
+    const cache = new PublicReadCache({ waitUntil: vi.fn() } as unknown as ExecutionContext, {
+      OEM_KV: kv, OEM_STATS_DO: stats
+    } as unknown as Bindings);
+    const request = new Request(`https://public-read-cache.internal/progress-stats?markerIndexHash=${markerIndexHash}`);
+
+    const miss = await cache.fetch(request);
+    expect(await miss.json()).toEqual(snapshot);
+    expect(miss.headers.get("cache-control")).toBe("public, max-age=10");
+    expect(miss.headers.get("cloudflare-cdn-cache-control")).toBe("public, max-age=60");
+    expect(miss.headers.get("x-oem-kv-cache")).toBe("miss");
+    expect(stats.idFromName).toHaveBeenCalledWith(markerIndexHash);
+    expect(stub.fetch.mock.calls[0]![0].url).toBe(`https://progress-stats/state?markerIndexHash=${markerIndexHash}`);
+    expect(kv.put).toHaveBeenCalledWith(`progress:stats:v2:${markerIndexHash}`, JSON.stringify(snapshot), { expirationTtl: 60 });
+
+    const hit = await cache.fetch(request);
+    expect(await hit.json()).toEqual(snapshot);
+    expect(hit.headers.get("x-oem-kv-cache")).toBe("hit");
+    expect(stub.fetch).toHaveBeenCalledTimes(1);
+  });
+
 
 });

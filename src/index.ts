@@ -35,7 +35,7 @@ export {
 } from './services/notify/live';
 export {
   PublicReadCache,
-} from './middleware/cache/publicReadCache';
+} from './publicRead/origin/entrypoint';
 
 const app = createApp();
 

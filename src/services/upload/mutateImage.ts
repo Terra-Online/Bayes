@@ -2,7 +2,7 @@ import { getRuntimeConfig } from "../../lib/config";
 import { ApiError } from "../../lib/errors";
 import { RECALL_MODERATION_NOTE_PREFIX } from "../../lib/moderation";
 import { prewarmPublicUgcAsset } from "../../middleware/cache/publicUgcAssets";
-import { invalidateUploadCaches } from "../../middleware/cache/uploadCaches";
+import { invalidateUploadCaches } from "../../publicRead/client/invalidate";
 import {
   countSubmissionUpvotes,
   createSubmissionUpvote,

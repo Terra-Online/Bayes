@@ -6,12 +6,14 @@ import type {
 } from "../../repositories/submission/types";
 import {
   PUBLIC_MARKER_COMMENT_CACHE_LIMIT,
-  PUBLIC_MARKER_COMMENT_REPLY_CACHE_LIMIT
-} from "./publicMarkerComments";
-import { PUBLIC_MARKER_IMAGE_CACHE_LIMIT } from "./publicMarkerImages";
+  PUBLIC_MARKER_COMMENT_REPLY_CACHE_LIMIT,
+  PUBLIC_MARKER_IMAGE_CACHE_LIMIT,
+  type PublicReadCacheNamespace,
+  type PublicReadMarkerKind,
+  type PublicMarkerListResponse
+} from "../contract/markers";
+import { buildPublicReadCacheKey, buildPublicReadMarkerTag } from "../contract/cacheKeys";
 import {
-  buildPublicReadCacheKey,
-  buildPublicReadMarkerTag,
   buildProgressStatsSearchParams,
   buildPublicCommentsSearchParams,
   buildPublicImagesSearchParams,
@@ -19,14 +21,12 @@ import {
   PUBLIC_READ_CACHE_ORIGIN,
   PUBLIC_READ_COMMENTS_PATH,
   PUBLIC_READ_IMAGES_PATH,
-  PUBLIC_READ_PROGRESS_STATS_PATH,
-  type PublicReadCacheNamespace,
-  type PublicReadMarkerKind
-} from "./publicReadKeys";
+  PUBLIC_READ_PROGRESS_STATS_PATH
+} from "../contract/requests";
 import {
   UGC_PUBLIC_EMPTY_LIST_CACHE_CONTROL,
   UGC_PUBLIC_LIST_CACHE_CONTROL
-} from "./publicUgcAssets";
+} from "../../middleware/cache/publicUgcAssets";
 
 function createPublicReadRequest(path: string, searchParams: URLSearchParams): {
   request: Request;
@@ -101,7 +101,7 @@ async function readItems<T>(
           throw new Error(`Public cache read failed: ${response.status}`);
         }
         stage = "body";
-        const payload = await response.json() as { items?: T[] };
+        const payload = await response.json() as Partial<PublicMarkerListResponse<T>>;
         if (!Array.isArray(payload.items)) {
           throw new Error("Public cache response did not contain an items array.");
         }
@@ -309,3 +309,5 @@ export async function purgePublicMarkerResponseCache(
     });
   }
 }
+
+export type { PublicMarkerListResponse } from "../contract/markers";

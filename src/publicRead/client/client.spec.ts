@@ -12,7 +12,7 @@ vi.mock("cloudflare:workers", () => ({
   }
 }));
 
-import { publicReadResponse, readPublicImagesFromWorkersCache } from "./publicReadClient";
+import { publicReadResponse, readPublicImagesFromWorkersCache } from "./client";
 const fetchPublicImagesFromWorkersCache = async (payload: Parameters<typeof readPublicImagesFromWorkersCache>[0]) => publicReadResponse(await readPublicImagesFromWorkersCache(payload));
 
 describe("fetchPublicImagesFromWorkersCache", () => {

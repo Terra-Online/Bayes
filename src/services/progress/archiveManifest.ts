@@ -1,6 +1,5 @@
 import { ApiError } from "../../lib/errors";
 import { getJsonFromKv, putJsonToKv, sha256Hex } from "../../middleware/cache/kvJson";
-import { CACHE_KEY_VERSIONS } from "../../middleware/cache/versions";
 import type { Bindings } from "../../types/app";
 import { getBitmapBit } from "./bitmap";
 import { isSha256Hex } from "./manifest";
@@ -21,7 +20,10 @@ export type RegisteredArchiveManifest = {
 
 type StoredArchiveManifest = Omit<RegisteredArchiveManifest, "indexById">;
 
-const MANIFEST_KV_KEY_PREFIX = `progress:archive-manifest:${CACHE_KEY_VERSIONS.archiveProgressManifest}:`;
+function buildArchiveProgressManifestCacheKey(archiveIndexHash: string): string {
+  const version = "v1";
+  return `progress:archive-manifest:${version}:${archiveIndexHash}`;
+}
 const MAX_ARCHIVE_COUNT = 20_000;
 const MAX_ARCHIVE_ID_LENGTH = 256;
 
@@ -134,7 +136,7 @@ export async function loadArchiveProgressManifest(
   env: Bindings,
   archiveIndexHash: string
 ): Promise<RegisteredArchiveManifest | null> {
-  const cacheKey = `${MANIFEST_KV_KEY_PREFIX}${archiveIndexHash}`;
+  const cacheKey = buildArchiveProgressManifestCacheKey(archiveIndexHash);
   const cached = await getJsonFromKv<StoredArchiveManifest>(env.OEM_KV, cacheKey);
   if (cached) return manifestFromStored(cached);
 
@@ -184,7 +186,7 @@ export async function saveArchiveProgressManifest(
   ).run();
   await putJsonToKv(
     env.OEM_KV,
-    `${MANIFEST_KV_KEY_PREFIX}${manifest.archiveIndexHash}`,
+    buildArchiveProgressManifestCacheKey(manifest.archiveIndexHash),
     manifestToStored(manifest)
   ).catch(() => undefined);
 }

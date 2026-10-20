@@ -11,13 +11,9 @@ vi.mock("../../repositories/submission/listComments", () => ({
   listCommentViewerStateByMarker: vi.fn(),
   listUserCommentsByMarker: vi.fn()
 }));
-vi.mock("../../middleware/cache/publicReadClient", () => ({
-  readPublicImagesFromWorkersCache: vi.fn(),
-  readPublicCommentsFromWorkersCache: vi.fn()
-}));
 
-import { listCachedPublicCommentsByMarker } from "./listPublicComments";
-import { listCachedPublicImagesByMarker } from "./listPublicImages";
+import { listCachedPublicCommentsByMarker } from "./markerComments";
+import { listCachedPublicImagesByMarker } from "./markerImages";
 
 beforeEach(() => vi.resetAllMocks());
 

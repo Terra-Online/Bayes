@@ -13,8 +13,8 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("../../middleware/auth", () => ({ resolveAuthIdentity: mocks.identity }));
 vi.mock("cloudflare:workers", () => ({ exports: {} }));
-vi.mock("../../middleware/cache/publicReadClient", async (importOriginal) => ({
-  ...await importOriginal<typeof import("../../middleware/cache/publicReadClient")>(),
+vi.mock("../../publicRead/client/client", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../../publicRead/client/client")>(),
   readPublicImagesFromWorkersCache: mocks.imagesCache,
   readPublicCommentsFromWorkersCache: mocks.commentsCache
 }));

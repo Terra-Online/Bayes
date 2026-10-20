@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { ApiError } from "../../lib/errors";
-import { fetchProgressStatsFromWorkersCache } from "../../middleware/cache/publicReadClient";
+import { fetchProgressStatsFromWorkersCache } from "../../publicRead/client/client";
 import { requireAuth } from "../../middleware/auth";
 import { rateLimit } from "../../middleware/rate-limit";
 import {

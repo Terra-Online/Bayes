@@ -5,7 +5,7 @@ import {
   isCommentEditModerationNote
 } from "../../lib/moderation";
 import { prewarmPublicUgcAsset } from "../../middleware/cache/publicUgcAssets";
-import { invalidateUploadCaches } from "../../middleware/cache/uploadCaches";
+import { invalidateUploadCaches } from "../../publicRead/client/invalidate";
 import { getModerationPointsDeltaWithDailyBackoff } from "../karma/moderationPoints";
 import {
   createEmptyPendingOpenAICompletionStats,

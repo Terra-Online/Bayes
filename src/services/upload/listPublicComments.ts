@@ -1,15 +1,8 @@
 import { getUgcReadConfig } from "../../lib/config";
 import { ApiError } from "../../lib/errors";
+import { resolvePublicCommentCacheNamespace } from "../../publicRead/client/scope";
+import { readPublicCommentsFromWorkersCache, publicReadResponse } from "../../publicRead/client/client";
 import {
-  PUBLIC_MARKER_COMMENT_CACHE_LIMIT,
-  PUBLIC_MARKER_COMMENT_REPLY_CACHE_LIMIT,
-  readPublicMarkerCommentCache,
-  resolvePublicCommentCacheNamespace,
-  writePublicMarkerCommentCache
-} from "../../middleware/cache/publicMarkerComments";
-import { readPublicCommentsFromWorkersCache, publicReadResponse } from "../../middleware/cache/publicReadClient";
-import {
-  listActiveCommentsByMarker,
   listCommentViewerStateByMarker,
   listUserCommentsByMarker
 } from "../../repositories/submission/listComments";
@@ -22,42 +15,6 @@ import { getOptionalAuthIdentity, hasAuthHeaders, requireMarkerIds } from "./hel
 import { commentsQuerySchema } from "./schemas";
 import { resolveImageScope } from "./scope";
 import { applyCommentViewerReactions } from "./viewerOverlay";
-
-function groupPublicCommentsByMarker(
-  markerIds: string[],
-  comments: PublicSubmissionComment[]
-): Map<string, PublicSubmissionComment[]> {
-  const grouped = new Map<string, PublicSubmissionComment[]>();
-  markerIds.forEach((markerId) => grouped.set(markerId, []));
-  comments.forEach((comment) => {
-    const bucket = grouped.get(comment.markerId);
-    if (bucket) {
-      bucket.push(comment);
-    }
-  });
-  return grouped;
-}
-
-function sliceCommentTree(
-  comment: PublicSubmissionComment,
-  replyLimit: number
-): PublicSubmissionComment {
-  return {
-    ...comment,
-    replies: comment.replies.slice(0, replyLimit)
-  };
-}
-
-function flattenPublicCommentsByMarker(
-  markerIds: string[],
-  grouped: Map<string, PublicSubmissionComment[]>,
-  limit: number,
-  replyLimit: number
-): PublicSubmissionComment[] {
-  return markerIds.flatMap((markerId) => (grouped.get(markerId) ?? [])
-    .slice(0, limit)
-    .map((comment) => sliceCommentTree(comment, replyLimit)));
-}
 
 function mergeViewerPendingComments(
   publicComments: PublicSubmissionComment[],
@@ -100,58 +57,6 @@ function mergeViewerPendingComments(
   });
 
   return pendingRoots.length > 0 ? [...pendingRoots, ...publicComments] : publicComments;
-}
-
-export async function listCachedPublicCommentsByMarker(
-  payload: {
-    db: D1Database;
-    kv?: KVNamespace;
-    markerIds: string[];
-    limit: number;
-    replyLimit: number;
-    cacheNamespace: ReturnType<typeof resolvePublicCommentCacheNamespace>;
-    waitUntil: (promise: Promise<unknown>) => void;
-  }
-): Promise<PublicSubmissionComment[]> {
-  const grouped = new Map<string, PublicSubmissionComment[]>();
-  const missingIds: string[] = [];
-
-  if (payload.kv) {
-    const cacheResults = await Promise.all(
-      [...new Set(payload.markerIds)].map(async (markerId) => ({
-        markerId,
-        comments: await readPublicMarkerCommentCache(payload.kv, payload.cacheNamespace, markerId)
-      }))
-    );
-
-    cacheResults.forEach(({ markerId, comments }) => {
-      if (comments) {
-        grouped.set(markerId, comments);
-      } else {
-        missingIds.push(markerId);
-      }
-    });
-  } else {
-    missingIds.push(...new Set(payload.markerIds));
-  }
-
-  for (let offset = 0; offset < missingIds.length; offset += 100) {
-    const markerIds = missingIds.slice(offset, offset + 100);
-    const items = await listActiveCommentsByMarker(payload.db, {
-      markerIds,
-      limit: PUBLIC_MARKER_COMMENT_CACHE_LIMIT,
-      replyLimit: PUBLIC_MARKER_COMMENT_REPLY_CACHE_LIMIT,
-    });
-    const loaded = groupPublicCommentsByMarker(markerIds, items);
-    for (const [markerId, values] of loaded) grouped.set(markerId, values);
-    if (payload.kv) {
-      payload.waitUntil(Promise.all(markerIds.map((markerId) => (
-        writePublicMarkerCommentCache(payload.kv, payload.cacheNamespace, markerId, loaded.get(markerId)!)
-      ))).catch(() => undefined));
-    }
-  }
-
-  return flattenPublicCommentsByMarker(payload.markerIds, grouped, payload.limit, payload.replyLimit);
 }
 
 export async function handleListMyComments(c: import("hono").Context<AppEnv>) {
