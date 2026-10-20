@@ -111,7 +111,7 @@ The endpoint requires the admin role and requires
 `LOCK_MODERATION_ENDPOINTS=false`. The message is sent from
 `Open Endfield Map Moderation <moderation@opendfieldmap.org>` and includes:
 
-- the account display name and `publicUid`;
+- the account `publicUid`;
 - the detected repeated or bulk link-only posting behavior;
 - links to the [Community Guidelines](https://blog.opendfieldmap.org/docs/community-guidelines)
   and [UGC Content Statement](https://blog.opendfieldmap.org/docs/ugc);
@@ -140,54 +140,38 @@ permissions returns `401` or `403`.
 - `src/app.ts`: Hono application and route mounting
 - `src/routes/`: HTTP route modules
 - `src/services/`: moderation, upload, progress, and notification logic
+- `src/publicRead/`: public read client, cache origin loaders, and shared contracts
 - `src/repositories/`: D1 data access
 - `src/lib/`: authentication, email, configuration, and shared utilities
 - `migrations/`: D1 schema migrations
 
-## Public Read Request Lifetimes
+## Performance and Runtime Checks
 
-Public image and comment cache misses use invocation-local batch loaders. Never
-store unfinished KV or D1 reads in module-global maps keyed by bindings or marker
-IDs: a later invocation must not depend on another invocation's I/O or
-`waitUntil` lifetime. Batch and deduplicate misses within a single invocation;
-use Workers Cache and KV for sharing completed public data across invocations.
-The generic KV JSON reader also performs its own read for each call rather than
-sharing a pending promise across requests.
+Public image and comment reads combine per-marker Workers Cache entries with KV
+and D1 origin reads. Each invocation deduplicates its missing markers and reads
+D1 in batches of up to 100. The public read client consumes up to eight marker
+responses concurrently, applies the requested limits, and preserves marker order.
+Partial responses include `failedMarkerIds` and use `private, no-store`.
 
-The public read client keeps at most eight marker reads active until their bodies
-have been consumed. It applies the requested image/comment limits immediately
-after each body is parsed, rather than retaining every full cache entry until
-the slowest marker finishes. This changes retention, not returned content,
-ranking, nested replies, cache keys, TTLs, or SQL access paths. A single large
-cache entry must still be parsed in full; this is not a general payload-size or
-comment-depth limit.
+Authentication creates a request-scoped Better Auth instance and reuses validated
+schema metadata. Locator caches hold completed values per database and environment;
+credential refreshes use conditional database updates to preserve concurrent edits.
+Managed position sockets release their timers and listeners when closed. Progress
+outbox delivery clears its deadline as soon as delivery settles.
 
-Partial responses remain `private, no-store`. Failed reads are not automatically
-retried, and no direct-D1 fallback is introduced. Each failed aggregate emits
-one diagnostic with total/failed marker counts and at most three samples of
-failure stage (`fetch` or `body`), upstream status, elapsed time, and a bounded
-error message. All-failed reads are logged too. These diagnostics do not measure
-Workers Cache hits or D1 latency individually.
-
-Validate changes with:
+Run the local regression checks:
 
 ```sh
-pnpm exec vitest run src/publicRead src/middleware/cache src/services/upload/ugcReadEfficiency.spec.ts
+pnpm test
+pnpm run test:auth-runtime
+pnpm run test:worker-lifecycle
 pnpm run typecheck
 pnpm run lint
 ```
 
-After deployment, compare equal traffic-normalized windows for public-read
-hangs, 5xx, partial responses, and p95/p99 latency. Separate Workers Cache misses
-that hit KV from those reaching D1, and compare D1 rows read per cold query.
-Removing cross-invocation coalescing can increase simultaneous cold KV/D1 reads;
-do not claim lower database usage without measuring it. Cache keys and TTLs are
-unchanged, so this fix needs no cache purge or database migration.
+The native runtime checks use local workerd, D1, KV, and WebSocket peers through
+Miniflare. Production acceptance uses existing Cloudflare telemetry: compare
+versioned, traffic-normalized windows for CPU, endpoint latency, outcomes, SQL
+rows read, cache origin calls, and connection recovery.
 
-The incident report ending at 2026-09-06 22:49 Asia/Shanghai alone cannot establish
-an out-of-memory failure or an error rate without invocation totals. Check
-`exceededMemory` outcomes and heap profiles separately. Auth and locator modules
-also contain cross-invocation pending-work maps; locator value caches currently
-lack explicit size bounds. Those paths require a separate lifetime/cache audit,
-especially before changing credential-refresh synchronization. They are not
-changed by the public-read fix.
+Performance reports and measurement evidence are kept locally and ignored by Git.
