@@ -173,10 +173,6 @@ src/data
 
 # Archived local performance experiment output (not part of the active test suite)
 benchmark/results/
-!docs/performance-architecture-2026-10-14.md
-!docs/benchmark-slo.md
-!docs/production-observation-2026-10-15.md
-!docs/performance-evidence-2026-10-14/
 
 # Production database snapshots, repair records and telemetry exports stay local
 /docs/performance-evidence-*/production-*.json
