@@ -1,14 +1,10 @@
+import { mapStatus, mapSubmission, toCount } from "./submission/mapper";
 import {
   ALL_STATUSES,
   type SubmissionKind,
   type SubmissionRecord,
-  type SubmissionStatus
+  type SubmissionStatus,
 } from "./submission/types";
-import {
-  mapStatus,
-  mapSubmission,
-  toCount,
-} from "./submission/mapper";
 
 export interface ReviewSubmissionStats {
   total: number;
@@ -30,7 +26,7 @@ export async function getReviewSubmissions(
     createdFrom?: string;
     createdTo?: string;
     limit?: number;
-  } = {}
+  } = {},
 ): Promise<SubmissionRecord[]> {
   const filters = buildReviewSubmissionWhere(payload);
   const limit = Math.min(Math.max(payload.limit ?? 1000, 1), 10000);
@@ -65,7 +61,7 @@ export async function getReviewSubmissions(
            ELSE 1
          END,
          s.created_at ASC
-       LIMIT ?${limitPlaceholder}`
+       LIMIT ?${limitPlaceholder}`,
     )
     .bind(...filters.bindings, limit)
     .all<Record<string, unknown>>();
@@ -75,7 +71,7 @@ export async function getReviewSubmissions(
 
 export async function getReviewSubmissionStats(
   db: D1Database,
-  payload: ReviewSubmissionFilters = {}
+  payload: ReviewSubmissionFilters = {},
 ): Promise<ReviewSubmissionStats> {
   const filters = buildReviewSubmissionWhere(payload);
   const [totalRow, kindRows, typeRows, statusRows] = await Promise.all([
@@ -83,7 +79,7 @@ export async function getReviewSubmissionStats(
       .prepare(
         `SELECT COUNT(*) AS count
          FROM ugc_submissions s
-         WHERE ${filters.whereSql}`
+         WHERE ${filters.whereSql}`,
       )
       .bind(...filters.bindings)
       .first<{ count: number | string }>(),
@@ -93,7 +89,7 @@ export async function getReviewSubmissionStats(
          FROM ugc_submissions s
          WHERE ${filters.whereSql}
          GROUP BY kind
-         ORDER BY kind ASC`
+         ORDER BY kind ASC`,
       )
       .bind(...filters.bindings)
       .all<{ kind: string; count: number | string }>(),
@@ -103,7 +99,7 @@ export async function getReviewSubmissionStats(
          FROM ugc_submissions s
          WHERE ${filters.whereSql}
          GROUP BY COALESCE(NULLIF(poi_type, ''), 'unknown')
-         ORDER BY count DESC, type ASC`
+         ORDER BY count DESC, type ASC`,
       )
       .bind(...filters.bindings)
       .all<{ type: string; count: number | string }>(),
@@ -112,32 +108,33 @@ export async function getReviewSubmissionStats(
         `SELECT status, COUNT(*) AS count
          FROM ugc_submissions s
          WHERE ${filters.whereSql}
-         GROUP BY status`
+         GROUP BY status`,
       )
       .bind(...filters.bindings)
-      .all<{ status: string; count: number | string }>()
+      .all<{ status: string; count: number | string }>(),
   ]);
 
   return {
     total: toCount(totalRow?.count),
     byKind: (kindRows.results ?? [])
-      .filter((row): row is { kind: SubmissionKind; count: number | string } => (
-        row.kind === "image" || row.kind === "comment"
-      ))
+      .filter(
+        (row): row is { kind: SubmissionKind; count: number | string } =>
+          row.kind === "image" || row.kind === "comment",
+      )
       .map((row) => ({
         kind: row.kind,
-        count: toCount(row.count)
+        count: toCount(row.count),
       })),
     byType: (typeRows.results ?? []).map((row) => ({
       type: String(row.type),
-      count: toCount(row.count)
+      count: toCount(row.count),
     })),
     byStatus: (statusRows.results ?? [])
       .map((row) => ({
         status: mapStatus(row.status),
-        count: toCount(row.count)
+        count: toCount(row.count),
       }))
-      .filter((row) => ALL_STATUSES.includes(row.status))
+      .filter((row) => ALL_STATUSES.includes(row.status)),
   };
 }
 
@@ -154,7 +151,7 @@ export async function listAllImageFilePaths(db: D1Database): Promise<string[]> {
            AND file_path IS NOT NULL
            AND file_path > ?1
          ORDER BY file_path ASC
-         LIMIT 1000`
+         LIMIT 1000`,
       )
       .bind(cursor)
       .all<{ file_path: string }>();
@@ -172,20 +169,23 @@ export async function listAllImageFilePaths(db: D1Database): Promise<string[]> {
 export async function markImageSubmissionsStaleByFilePathPrefix(
   db: D1Database,
   prefix: string,
-  moderationNote: string
+  moderationNote: string,
 ): Promise<{ changedRows: number; markerIds: string[] }> {
   const escapedPrefix = `${escapeLikePattern(prefix)}/%`;
   const now = new Date().toISOString();
   const results = await db.batch<{ poi_id: string }>([
-    db.prepare(
-      `INSERT INTO ugc_review_events
+    db
+      .prepare(
+        `INSERT INTO ugc_review_events
          (submission_id, snapshot_id, from_status, to_status, source, created_at, ai_reviewed)
        SELECT id, snapshot_id, status, 'stale', 'manual_moderation', ?2, 0
        FROM ugc_submissions
-       WHERE kind = 'image' AND file_path LIKE ?1 ESCAPE '\\' AND status <> 'stale'`
-    ).bind(escapedPrefix, now),
-    db.prepare(
-      `UPDATE ugc_submissions
+       WHERE kind = 'image' AND file_path LIKE ?1 ESCAPE '\\' AND status <> 'stale'`,
+      )
+      .bind(escapedPrefix, now),
+    db
+      .prepare(
+        `UPDATE ugc_submissions
        SET status = 'stale',
            moderation_note = CASE
              WHEN moderation_note IS NULL OR TRIM(moderation_note) = '' THEN ?2
@@ -195,15 +195,16 @@ export async function markImageSubmissionsStaleByFilePathPrefix(
        WHERE kind = 'image'
          AND file_path LIKE ?1 ESCAPE '\\'
          AND status <> 'stale'
-       RETURNING poi_id`
-    ).bind(escapedPrefix, moderationNote, now)
+       RETURNING poi_id`,
+      )
+      .bind(escapedPrefix, moderationNote, now),
   ]);
   const result = results[1];
   const rows = result.results ?? [];
 
   return {
     changedRows: rows.length,
-    markerIds: [...new Set(rows.map((row) => row.poi_id).filter(Boolean))]
+    markerIds: [...new Set(rows.map((row) => row.poi_id).filter(Boolean))],
   };
 }
 
@@ -211,12 +212,13 @@ function escapeLikePattern(value: string): string {
   return value.replace(/[\\%_]/g, (character) => `\\${character}`);
 }
 
-function buildReviewSubmissionWhere(payload: ReviewSubmissionFilters): { whereSql: string; bindings: string[] } {
+function buildReviewSubmissionWhere(payload: ReviewSubmissionFilters): {
+  whereSql: string;
+  bindings: string[];
+} {
   const statuses = payload.statuses?.length ? payload.statuses : ALL_STATUSES;
   const bindings: string[] = [...statuses];
-  const clauses = [
-    `s.status IN (${statuses.map((_, index) => `?${index + 1}`).join(", ")})`
-  ];
+  const clauses = [`s.status IN (${statuses.map((_, index) => `?${index + 1}`).join(", ")})`];
 
   if (payload.createdFrom) {
     bindings.push(payload.createdFrom);
@@ -230,6 +232,6 @@ function buildReviewSubmissionWhere(payload: ReviewSubmissionFilters): { whereSq
 
   return {
     whereSql: clauses.join(" AND "),
-    bindings
+    bindings,
   };
 }

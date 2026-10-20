@@ -6,17 +6,25 @@ class SqliteStatement {
   constructor(
     private readonly database: SqliteD1,
     private readonly sql: string,
-    private readonly values: SQLInputValue[] = []
+    private readonly values: SQLInputValue[] = [],
   ) {}
 
   bind(...values: unknown[]): D1PreparedStatement {
-    if (values.length > 100) throw new Error("D1 parameter limit exceeded");
-    return new SqliteStatement(this.database, this.sql, values as SQLInputValue[]) as unknown as D1PreparedStatement;
+    if (values.length > 100) {
+      throw new Error("D1 parameter limit exceeded");
+    }
+    return new SqliteStatement(
+      this.database,
+      this.sql,
+      values as SQLInputValue[],
+    ) as unknown as D1PreparedStatement;
   }
 
   execute(): D1Result<Record<string, unknown>> {
     const statement = this.database.sqlite.prepare(this.sql);
-    const parameters = Object.fromEntries(this.values.map((value, index) => [String(index + 1), value]));
+    const parameters = Object.fromEntries(
+      this.values.map((value, index) => [String(index + 1), value]),
+    );
     const write = /^\s*(UPDATE|INSERT|DELETE)/i.test(this.sql);
     const results = statement.columns().length > 0 ? statement.all(parameters) : [];
     let changes = 0;
@@ -54,7 +62,9 @@ export class SqliteD1 {
   async batch<Result>(statements: D1PreparedStatement[]): Promise<D1Result<Result>[]> {
     this.sqlite.exec("BEGIN");
     try {
-      const results = statements.map((statement) => (statement as unknown as SqliteStatement).execute());
+      const results = statements.map((statement) =>
+        (statement as unknown as SqliteStatement).execute(),
+      );
       this.sqlite.exec("COMMIT");
       return results as unknown as D1Result<Result>[];
     } catch (error) {
@@ -64,8 +74,13 @@ export class SqliteD1 {
   }
 
   explain(query: RecordedQuery): string {
-    const values = Object.fromEntries(query.values.map((value, index) => [String(index + 1), value]));
-    return this.sqlite.prepare(`EXPLAIN QUERY PLAN ${query.sql}`).all(values)
-      .map((row) => String(row.detail)).join("\n");
+    const values = Object.fromEntries(
+      query.values.map((value, index) => [String(index + 1), value]),
+    );
+    return this.sqlite
+      .prepare(`EXPLAIN QUERY PLAN ${query.sql}`)
+      .all(values)
+      .map((row) => String(row.detail))
+      .join("\n");
   }
 }

@@ -14,7 +14,7 @@ const REPLY_TRAVERSAL_LIMIT = 256;
 
 export async function getPublicCommentContextById(
   db: D1Database,
-  payload: { id: string; markerId: string; viewerUserId?: string }
+  payload: { id: string; markerId: string; viewerUserId?: string },
 ): Promise<PublicCommentContext | null> {
   const pathViewerSelect = payload.viewerUserId
     ? `,
@@ -71,18 +71,20 @@ export async function getPublicCommentContextById(
        FROM comment_path path
        LEFT JOIN users u ON u.uid = path.user_id
        WHERE path.status IN ('active', 'flagged', 'remove_request')
-       ORDER BY path.ancestor_distance DESC`
+       ORDER BY path.ancestor_distance DESC`,
     )
     .bind(
       payload.id,
       payload.markerId,
       ANCESTOR_CONTEXT_LIMIT,
-      ...(payload.viewerUserId ? [payload.viewerUserId] : [])
+      ...(payload.viewerUserId ? [payload.viewerUserId] : []),
     )
     .all<Record<string, unknown>>();
 
   const path = (result.results ?? []).map((row) => publicCommentFromRow(row, payload.viewerUserId));
-  if (path.length === 0) return null;
+  if (path.length === 0) {
+    return null;
+  }
 
   const replyViewerSelect = payload.viewerUserId
     ? `,
@@ -169,7 +171,7 @@ export async function getPublicCommentContextById(
        FROM traversal_meta meta
        LEFT JOIN selected_replies reply ON TRUE
        LEFT JOIN users u ON u.uid = reply.user_id
-       ORDER BY reply.relative_depth ASC, reply.created_at ASC, reply.id ASC`
+       ORDER BY reply.relative_depth ASC, reply.created_at ASC, reply.id ASC`,
     )
     .bind(
       payload.id,
@@ -177,7 +179,7 @@ export async function getPublicCommentContextById(
       ANCESTOR_CONTEXT_LIMIT,
       REPLY_TRAVERSAL_LIMIT + 1,
       REPLY_CONTEXT_LIMIT + 1,
-      ...(payload.viewerUserId ? [payload.viewerUserId] : [])
+      ...(payload.viewerUserId ? [payload.viewerUserId] : []),
     )
     .all<Record<string, unknown>>();
 
@@ -193,6 +195,6 @@ export async function getPublicCommentContextById(
     path,
     replies: replyCandidates.slice(0, REPLY_CONTEXT_LIMIT),
     repliesTruncated:
-      traversalExhausted || depthTruncated || replyCandidates.length > REPLY_CONTEXT_LIMIT
+      traversalExhausted || depthTruncated || replyCandidates.length > REPLY_CONTEXT_LIMIT,
   };
 }

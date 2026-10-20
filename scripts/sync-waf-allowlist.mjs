@@ -3,6 +3,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+
 import ts from "typescript";
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
@@ -22,19 +23,28 @@ function fail(message) {
 }
 
 async function loadEnvFile(path) {
-  if (!path) return;
+  if (!path) {
+    return;
+  }
   let content;
   try {
     content = await readFile(resolve(repositoryRoot, path), "utf8");
   } catch (error) {
-    if (error?.code === "ENOENT") return;
+    if (error?.code === "ENOENT") {
+      return;
+    }
     throw error;
   }
   for (const line of content.split(/\r?\n/)) {
     const match = line.match(/^\s*([A-Z][A-Z0-9_]*)\s*=\s*(.*)\s*$/);
-    if (!match || process.env[match[1]]) continue;
+    if (!match || process.env[match[1]]) {
+      continue;
+    }
     let value = match[2];
-    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
       value = value.slice(1, -1);
     }
     process.env[match[1]] = value.replace(/\\n/g, "\n");
@@ -51,16 +61,26 @@ function isIgnored(source, node) {
 }
 
 function normalizePath(raw, sourceName) {
-  if (!raw.startsWith("/")) throw new Error(`${sourceName}: path must start with /: ${raw}`);
+  if (!raw.startsWith("/")) {
+    throw new Error(`${sourceName}: path must start with /: ${raw}`);
+  }
   if (raw.includes("?") || raw.includes("#") || raw.includes("..")) {
     throw new Error(`${sourceName}: path contains query, fragment, or traversal: ${raw}`);
   }
-  if (raw === "/*") throw new Error(`${sourceName}: root wildcard is not allowed`);
+  if (raw === "/*") {
+    throw new Error(`${sourceName}: root wildcard is not allowed`);
+  }
   return raw.replace(/\/$/, "") || "/";
 }
 
 function extractPrefixes(source) {
-  const file = ts.createSourceFile("src/app.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const file = ts.createSourceFile(
+    "src/app.ts",
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  );
   const prefixes = new Set();
   const directPaths = [];
 
@@ -76,8 +96,11 @@ function extractPrefixes(source) {
         const raw = node.arguments[0] ? literalText(node.arguments[0]) : null;
         if (raw && !isIgnored(source, node)) {
           const normalized = normalizePath(raw, `app.${method}`);
-          if (method === "route") prefixes.add(normalized);
-          else directPaths.push({ method, path: normalized });
+          if (method === "route") {
+            prefixes.add(normalized);
+          } else {
+            directPaths.push({ method, path: normalized });
+          }
         }
       }
     }
@@ -86,15 +109,30 @@ function extractPrefixes(source) {
 
   visit(file);
   for (const item of directPaths) {
-    if (item.path === "/") prefixes.add("/");
-    else throw new Error(`app.${item.method}(${JSON.stringify(item.path)}) needs // @waf-ignore or a route mount`);
+    if (item.path === "/") {
+      prefixes.add("/");
+    } else {
+      throw new Error(
+        `app.${item.method}(${JSON.stringify(item.path)}) needs // @waf-ignore or a route mount`,
+      );
+    }
   }
 
-  return [...prefixes].sort((a, b) => (a === "/" ? -1 : b === "/" ? 1 : a.localeCompare(b)));
+  return [...prefixes].sort((a, b) => {
+    if (a === "/") {
+      return -1;
+    }
+    if (b === "/") {
+      return 1;
+    }
+    return a.localeCompare(b);
+  });
 }
 
 function pathExpression(path) {
-  if (path === "/") return 'http.request.uri.path eq "/"';
+  if (path === "/") {
+    return 'http.request.uri.path eq "/"';
+  }
   return `(http.request.uri.path eq "${path}" or starts_with(http.request.uri.path, "${path}/"))`;
 }
 
@@ -105,25 +143,33 @@ function buildExpression(host, paths) {
 
 async function cloudflare(path, options = {}) {
   const token = process.env.CLOUDFLARE_API_TOKEN;
-  if (!token) throw new Error("CLOUDFLARE_API_TOKEN is required for --apply");
+  if (!token) {
+    throw new Error("CLOUDFLARE_API_TOKEN is required for --apply");
+  }
   const response = await fetch(`https://api.cloudflare.com/client/v4${path}`, {
     method: options.method ?? "GET",
     headers: {
       Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json"
+      "Content-Type": "application/json",
     },
-    body: options.body ? JSON.stringify(options.body) : undefined
+    body: options.body ? JSON.stringify(options.body) : undefined,
   });
   const payload = await response.json();
   if (!response.ok || payload.success !== true) {
-    throw new Error(`Cloudflare API ${response.status}: ${JSON.stringify(payload.errors ?? payload)}`);
+    throw new Error(
+      `Cloudflare API ${response.status}: ${JSON.stringify(payload.errors ?? payload)}`,
+    );
   }
   return payload.result;
 }
 
 async function applyRule(host, expression, zoneId) {
-  if (!zoneId) throw new Error("A Cloudflare zone ID is required for --apply");
-  if (!/^[a-f0-9]{32}$/i.test(zoneId)) throw new Error(`invalid Cloudflare zone ID for ${host}`);
+  if (!zoneId) {
+    throw new Error("A Cloudflare zone ID is required for --apply");
+  }
+  if (!/^[a-f0-9]{32}$/i.test(zoneId)) {
+    throw new Error(`invalid Cloudflare zone ID for ${host}`);
+  }
   const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
   if (accountId && !/^[a-f0-9]{32}$/i.test(accountId)) {
     throw new Error("CLOUDFLARE_ACCOUNT_ID must be a 32-character hexadecimal account ID");
@@ -134,16 +180,18 @@ async function applyRule(host, expression, zoneId) {
     throw new Error(
       accountId
         ? "Cloudflare account API token verification failed; check CLOUDFLARE_ACCOUNT_ID and create an active API Token for that account"
-        : "Cloudflare API token verification failed; create an active API Token (not an API key) and check its value"
+        : "Cloudflare API token verification failed; create an active API Token (not an API key) and check its value",
     );
   }
   const rulesets = await cloudflare(`/zones/${zoneId}/rulesets?phase=${phase}`);
-  const listedRuleset = rulesets.find(
-    (item) =>
-      item.phase === phase
-      && item.kind === "zone"
-      && (item.name === "oem-backend-custom-waf" || item.description === "Managed by scripts/sync-waf-allowlist.mjs")
-  ) ?? rulesets.find((item) => item.phase === phase && item.kind === "zone");
+  const listedRuleset =
+    rulesets.find(
+      (item) =>
+        item.phase === phase &&
+        item.kind === "zone" &&
+        (item.name === "oem-backend-custom-waf" ||
+          item.description === "Managed by scripts/sync-waf-allowlist.mjs"),
+    ) ?? rulesets.find((item) => item.phase === phase && item.kind === "zone");
   const rule = { action: "block", description: ruleDescription, enabled: true, expression };
 
   if (!listedRuleset) {
@@ -154,8 +202,8 @@ async function applyRule(host, expression, zoneId) {
         description: "Managed by scripts/sync-waf-allowlist.mjs",
         kind: "zone",
         phase,
-        rules: [rule]
-      }
+        rules: [rule],
+      },
     });
     return;
   }
@@ -163,20 +211,25 @@ async function applyRule(host, expression, zoneId) {
   // The phase list endpoint returns ruleset summaries without `rules`; fetch the
   // detail document before deciding whether this managed rule already exists.
   const ruleset = await cloudflare(`/zones/${zoneId}/rulesets/${listedRuleset.id}`);
-  const existingRules = (ruleset.rules ?? []).filter((item) => item.description === ruleDescription);
+  const existingRules = (ruleset.rules ?? []).filter(
+    (item) => item.description === ruleDescription,
+  );
   if (existingRules.length === 0) {
-    await cloudflare(`/zones/${zoneId}/rulesets/${ruleset.id}/rules`, { method: "POST", body: rule });
+    await cloudflare(`/zones/${zoneId}/rulesets/${ruleset.id}/rules`, {
+      method: "POST",
+      body: rule,
+    });
     return;
   }
 
   await cloudflare(`/zones/${zoneId}/rulesets/${ruleset.id}/rules/${existingRules[0].id}`, {
     method: "PATCH",
-    body: rule
+    body: rule,
   });
 
   for (const duplicate of existingRules.slice(1)) {
     await cloudflare(`/zones/${zoneId}/rulesets/${ruleset.id}/rules/${duplicate.id}`, {
-      method: "DELETE"
+      method: "DELETE",
     });
     console.log(`[waf] removed duplicate rule ${duplicate.id}`);
   }
@@ -186,10 +239,14 @@ try {
   await loadEnvFile(envFilePath);
   const source = await readFile(sourcePath, "utf8");
   const paths = extractPrefixes(source);
-  if (paths.length === 0) throw new Error("no WAF prefixes found in src/app.ts");
+  if (paths.length === 0) {
+    throw new Error("no WAF prefixes found in src/app.ts");
+  }
 
   const host = process.env.WAF_HOST || "api.opendfieldmap.org";
-  if (!/^[a-z0-9.-]+$/i.test(host)) throw new Error(`invalid WAF_HOST: ${host}`);
+  if (!/^[a-z0-9.-]+$/i.test(host)) {
+    throw new Error(`invalid WAF_HOST: ${host}`);
+  }
   const output = { host, paths };
   const serialized = `${JSON.stringify(output, null, 2)}\n`;
   if (check) {
@@ -221,7 +278,9 @@ try {
       });
     }
     for (const target of targets) {
-      if (!/^[a-z0-9.-]+$/i.test(target.host)) throw new Error(`invalid WAF host: ${target.host}`);
+      if (!/^[a-z0-9.-]+$/i.test(target.host)) {
+        throw new Error(`invalid WAF host: ${target.host}`);
+      }
       await applyRule(target.host, buildExpression(target.host, paths), target.zoneId);
       console.log(`[waf] applied rule for ${target.host}: ${ruleDescription}`);
     }

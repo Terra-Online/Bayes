@@ -1,42 +1,77 @@
 import { Hono } from "hono";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
 import { createAuth } from "../lib/auth/createAuth";
 import { ensureUserProfile } from "../repositories/users";
 import type { AppEnv, Bindings } from "../types/app";
-import { invalidateAuthUserCache, resolveAuthIdentity, resolveAuthUser, resolveContextAuthUser } from "./auth";
+import {
+  invalidateAuthUserCache,
+  resolveAuthIdentity,
+  resolveAuthUser,
+  resolveContextAuthUser,
+} from "./auth";
 
 vi.mock("../lib/auth/createAuth", () => ({ createAuth: vi.fn() }));
-vi.mock("../lib/auth/browserSession", () => ({ resolveBrowserSessionHeaders: (_auth: unknown, headers: Headers) => ({ headers }) }));
-vi.mock("../repositories/users", () => ({ ensureUserProfile: vi.fn(), formatPublicUid: () => "100001AA" }));
+vi.mock("../lib/auth/browserSession", () => ({
+  resolveBrowserSessionHeaders: (_auth: unknown, headers: Headers) => ({ headers }),
+}));
+vi.mock("../repositories/users", () => ({
+  ensureUserProfile: vi.fn(),
+  formatPublicUid: () => "100001AA",
+}));
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (reason: unknown) => void;
-  const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
+  const promise = new Promise<T>((yes, no) => {
+    resolve = yes;
+    reject = no;
+  });
   return { promise, resolve, reject };
 }
 const identity = { uid: "first", email: "first@example.test" };
 const session = { user: { id: identity.uid, email: identity.email, name: "First" } };
-function environment() { return { DB: {} } as Bindings; }
-function headers() { return new Headers({ authorization: "Bearer same-token" }); }
+function environment() {
+  return { DB: {} } as Bindings;
+}
+function headers() {
+  return new Headers({ authorization: "Bearer same-token" });
+}
 
 describe("request-owned auth lookups", () => {
   const getSession = vi.fn();
   beforeEach(() => {
     vi.mocked(createAuth).mockClear();
     getSession.mockReset().mockResolvedValue(session);
-    vi.mocked(createAuth).mockReturnValue({ api: { getSession } } as unknown as ReturnType<typeof createAuth>);
-    vi.mocked(ensureUserProfile).mockReset().mockImplementation(async (_db, input) => ({
-      ...input, role: "n", karma: 0, avt: 1, nickname: "First", nicknameCustomized: true,
-    }) as Awaited<ReturnType<typeof ensureUserProfile>>);
+    vi.mocked(createAuth).mockReturnValue({ api: { getSession } } as unknown as ReturnType<
+      typeof createAuth
+    >);
+    vi.mocked(ensureUserProfile)
+      .mockReset()
+      .mockImplementation(
+        async (_db, input) =>
+          ({
+            ...input,
+            role: "n",
+            karma: 0,
+            avt: 1,
+            nickname: "First",
+            nicknameCustomized: true,
+          }) as Awaited<ReturnType<typeof ensureUserProfile>>,
+      );
   });
 
-  it.each([undefined, "analytics=abc; cf_clearance=xyz"])("avoids auth initialization without credentials (%s)", async (cookie) => {
-    const requestHeaders = new Headers(cookie ? { cookie } : undefined);
-    await expect(resolveAuthIdentity(environment(), requestHeaders)).rejects.toMatchObject({ code: "SESSION_REQUIRED" });
-    expect(createAuth).not.toHaveBeenCalled();
-    expect(getSession).not.toHaveBeenCalled();
-  });
+  it.each([undefined, "analytics=abc; cf_clearance=xyz"])(
+    "avoids auth initialization without credentials (%s)",
+    async (cookie) => {
+      const requestHeaders = new Headers(cookie ? { cookie } : undefined);
+      await expect(resolveAuthIdentity(environment(), requestHeaders)).rejects.toMatchObject({
+        code: "SESSION_REQUIRED",
+      });
+      expect(createAuth).not.toHaveBeenCalled();
+      expect(getSession).not.toHaveBeenCalled();
+    },
+  );
 
   it("does not join another request's pending identity lookup, and can retry failure", async () => {
     const env = environment();
@@ -87,10 +122,14 @@ describe("request-owned auth lookups", () => {
     expect(await resolveAuthIdentity(env, headers())).toMatchObject({ uid: "first" });
     invalidateAuthUserCache(headers(), env);
     getSession.mockResolvedValue(null);
-    await expect(resolveAuthIdentity(env, headers())).rejects.toMatchObject({ code: "TOKEN_EXPIRED" });
+    await expect(resolveAuthIdentity(env, headers())).rejects.toMatchObject({
+      code: "TOKEN_EXPIRED",
+    });
     expect(await resolveAuthIdentity(other, headers())).toMatchObject({ uid: "second" });
     other.BETTER_AUTH_SECRET = "rotated";
-    await expect(resolveAuthIdentity(other, headers())).rejects.toMatchObject({ code: "TOKEN_EXPIRED" });
+    await expect(resolveAuthIdentity(other, headers())).rejects.toMatchObject({
+      code: "TOKEN_EXPIRED",
+    });
   });
 
   it("keeps completed auth values when an unrelated binding wrapper changes", async () => {
@@ -101,7 +140,7 @@ describe("request-owned auth lookups", () => {
       OEM_KV: {} as KVNamespace,
       OEM_ID_MAILS: {} as Bindings["OEM_ID_MAILS"],
       UPSTASH_REDIS_REST_URL: "https://unrelated.example",
-      UPSTASH_REDIS_REST_TOKEN: "unrelated-token"
+      UPSTASH_REDIS_REST_TOKEN: "unrelated-token",
     };
     getSession.mockResolvedValue(null);
     await expect(resolveAuthIdentity(next, headers())).resolves.toMatchObject(identity);
@@ -111,7 +150,10 @@ describe("request-owned auth lookups", () => {
   it("never substitutes a warm cached account for a freshly verified different user", async () => {
     const env = environment();
     await resolveAuthUser(env, headers(), identity);
-    const second = await resolveAuthUser(env, headers(), { uid: "second", email: "second@example.test" });
+    const second = await resolveAuthUser(env, headers(), {
+      uid: "second",
+      email: "second@example.test",
+    });
     expect(second.uid).toBe("second");
     expect(getSession).not.toHaveBeenCalled();
   });
@@ -125,7 +167,9 @@ describe("request-owned auth lookups", () => {
     blocked.resolve(session);
     await first;
     getSession.mockResolvedValue(null);
-    await expect(resolveAuthIdentity(env, headers())).rejects.toMatchObject({ code: "TOKEN_EXPIRED" });
+    await expect(resolveAuthIdentity(env, headers())).rejects.toMatchObject({
+      code: "TOKEN_EXPIRED",
+    });
     expect(getSession).toHaveBeenCalledTimes(2);
   });
 });

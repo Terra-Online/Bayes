@@ -1,14 +1,17 @@
-import { mapSubmission } from "./mapper";
-import type { SubmissionRecord, SubmissionStatus } from "./types";
 import type { AuthUser } from "../../types/app";
 import {
   notificationsFromResult,
   prepareApprovedReplyNotificationWrite,
   prepareSubmissionStatusNotificationWrite,
-  type NotificationRecord
+  type NotificationRecord,
 } from "../notifications";
+import { mapSubmission } from "./mapper";
+import type { SubmissionRecord, SubmissionStatus } from "./types";
 
-export async function getSubmissionById(db: D1Database, id: string): Promise<SubmissionRecord | null> {
+export async function getSubmissionById(
+  db: D1Database,
+  id: string,
+): Promise<SubmissionRecord | null> {
   const row = await db
     .prepare(
       `SELECT
@@ -22,14 +25,17 @@ export async function getSubmissionById(db: D1Database, id: string): Promise<Sub
        FROM ugc_submissions s
        LEFT JOIN users u ON u.uid = s.user_id
        WHERE s.id = ?1
-       LIMIT 1`
+       LIMIT 1`,
     )
     .bind(id)
     .first<Record<string, unknown>>();
   return row ? mapSubmission(row) : null;
 }
 
-export async function getPublicSubmissionByFilePath(db: D1Database, filePath: string): Promise<SubmissionRecord | null> {
+export async function getPublicSubmissionByFilePath(
+  db: D1Database,
+  filePath: string,
+): Promise<SubmissionRecord | null> {
   const row = await db
     .prepare(
       `SELECT *
@@ -37,7 +43,7 @@ export async function getPublicSubmissionByFilePath(db: D1Database, filePath: st
        WHERE file_path = ?1
          AND kind = 'image'
          AND status IN ('active', 'flagged', 'remove_request')
-       LIMIT 1`
+       LIMIT 1`,
     )
     .bind(filePath)
     .first<Record<string, unknown>>();
@@ -46,7 +52,9 @@ export async function getPublicSubmissionByFilePath(db: D1Database, filePath: st
 }
 
 export async function getImageSubmissionByFilePath(
-  db: D1Database, filePath: string, viewer: Pick<AuthUser, "uid" | "role">
+  db: D1Database,
+  filePath: string,
+  viewer: Pick<AuthUser, "uid" | "role">,
 ): Promise<SubmissionRecord | null> {
   // Multiple snapshots/owners can share a path. Filter access before LIMIT so
   // choosing a different index cannot turn an arbitrary owner's row into a 404.
@@ -58,7 +66,7 @@ export async function getImageSubmissionByFilePath(
        WHERE file_path = ?1
          AND kind = 'image'
          AND (?2 = 1 OR (user_id = ?3 AND status <> 'stale'))
-       LIMIT 1`
+       LIMIT 1`,
     )
     .bind(filePath, canReadAll ? 1 : 0, viewer.uid)
     .first<Record<string, unknown>>();
@@ -72,7 +80,7 @@ export async function updateSubmissionStatus(
     id: string;
     status: SubmissionStatus;
     moderationNote?: string;
-  }
+  },
 ): Promise<void> {
   await db
     .prepare(
@@ -80,7 +88,7 @@ export async function updateSubmissionStatus(
        SET status = ?2,
            moderation_note = COALESCE(?3, moderation_note),
            updated_at = CURRENT_TIMESTAMP
-       WHERE id = ?1`
+       WHERE id = ?1`,
     )
     .bind(payload.id, payload.status, payload.moderationNote ?? null)
     .run();
@@ -95,7 +103,7 @@ export async function transitionSubmissionStatusWithNotifications(
     source: "auto_moderation" | "manual_moderation" | "user_action";
     aiReviewed?: boolean;
     clearFlags?: boolean;
-  }
+  },
 ): Promise<{ updated: boolean; notifications: NotificationRecord[] }> {
   const transitionedAt = new Date().toISOString();
   const transition = {
@@ -104,7 +112,7 @@ export async function transitionSubmissionStatusWithNotifications(
     nextStatus: payload.status,
     moderationNote: payload.moderationNote ?? payload.submission.moderationNote,
     source: payload.source,
-    transitionedAt
+    transitionedAt,
   };
   const statements: D1PreparedStatement[] = [
     db
@@ -119,7 +127,7 @@ export async function transitionSubmissionStatusWithNotifications(
          WHERE id = ?1
            AND snapshot_id = ?2
            AND status = ?5
-         RETURNING id`
+         RETURNING id`,
       )
       .bind(
         payload.submission.id,
@@ -127,25 +135,33 @@ export async function transitionSubmissionStatusWithNotifications(
         payload.status,
         payload.moderationNote ?? null,
         payload.submission.status,
-        transitionedAt
-      )
+        transitionedAt,
+      ),
   ];
 
   // Persist every review transition, including silent manual rejection. Keep it
   // atomic with the status update and exclude stale-snapshot conflicts/no-ops.
   if (payload.submission.status !== payload.status) {
-    statements.push(db.prepare(
-      `INSERT INTO ugc_review_events
+    statements.push(
+      db
+        .prepare(
+          `INSERT INTO ugc_review_events
          (submission_id, snapshot_id, from_status, to_status, source, created_at, ai_reviewed)
        SELECT id, snapshot_id, ?3, ?4, ?5, ?6, ?7
        FROM ugc_submissions
        WHERE id = ?1 AND snapshot_id = ?2 AND status = ?4 AND updated_at = ?6
-         AND changes() > 0`
-    ).bind(
-      payload.submission.id, payload.submission.snapshotId,
-      payload.submission.status, payload.status, payload.source, transitionedAt,
-      payload.source === "auto_moderation" && payload.aiReviewed !== false ? 1 : 0
-    ));
+         AND changes() > 0`,
+        )
+        .bind(
+          payload.submission.id,
+          payload.submission.snapshotId,
+          payload.submission.status,
+          payload.status,
+          payload.source,
+          transitionedAt,
+          payload.source === "auto_moderation" && payload.aiReviewed !== false ? 1 : 0,
+        ),
+    );
   }
 
   if (payload.clearFlags) {
@@ -163,15 +179,17 @@ export async function transitionSubmissionStatusWithNotifications(
                  AND snapshot_id = ?2
                  AND status = ?3
                  AND updated_at = ?4
-             )`
+             )`,
         )
-        .bind(payload.submission.id, payload.submission.snapshotId, payload.status, transitionedAt)
+        .bind(payload.submission.id, payload.submission.snapshotId, payload.status, transitionedAt),
     );
   }
 
   const notificationResultIndexes: number[] = [];
   const appendNotificationWrite = (writeStatements: D1PreparedStatement[]) => {
-    if (writeStatements.length === 0) return;
+    if (writeStatements.length === 0) {
+      return;
+    }
     notificationResultIndexes.push(statements.length + writeStatements.length - 1);
     statements.push(...writeStatements);
   };
@@ -192,7 +210,7 @@ export async function transitionSubmissionStatusWithNotifications(
     updated,
     notifications: updated
       ? notificationResultIndexes.flatMap((index) => notificationsFromResult(results[index]))
-      : []
+      : [],
   };
 }
 
@@ -204,7 +222,7 @@ export async function updateCommentContentForModeration(
     expectedSnapshotId: string;
     snapshotId: string;
     moderationNote: string;
-  }
+  },
 ): Promise<boolean> {
   const result = await db
     .prepare(
@@ -221,14 +239,14 @@ export async function updateCommentContentForModeration(
        WHERE id = ?1
          AND kind = 'comment'
          AND snapshot_id = ?5
-         AND status IN ('pending_openai', 'pending_audit', 'active', 'flagged', 'remove_request')`
+         AND status IN ('pending_openai', 'pending_audit', 'active', 'flagged', 'remove_request')`,
     )
     .bind(
       payload.id,
       payload.content,
       payload.snapshotId,
       payload.moderationNote,
-      payload.expectedSnapshotId
+      payload.expectedSnapshotId,
     )
     .run();
   return (result.meta.changes ?? 0) > 0;
@@ -241,7 +259,7 @@ export async function revertCommentEdit(
     expectedSnapshotId: string;
     status: SubmissionStatus;
     moderationNote: string;
-  }
+  },
 ): Promise<boolean> {
   const result = await db
     .prepare(
@@ -258,7 +276,7 @@ export async function revertCommentEdit(
        WHERE id = ?1
          AND kind = 'comment'
          AND snapshot_id = ?4
-         AND edit_original_content IS NOT NULL`
+         AND edit_original_content IS NOT NULL`,
     )
     .bind(payload.id, payload.status, payload.moderationNote, payload.expectedSnapshotId)
     .run();
@@ -271,7 +289,7 @@ export async function markSubmissionModerationQueued(
     id: string;
     snapshotId: string;
     queuedAt: string;
-  }
+  },
 ): Promise<void> {
   await db
     .prepare(
@@ -280,7 +298,7 @@ export async function markSubmissionModerationQueued(
            updated_at = CURRENT_TIMESTAMP
        WHERE id = ?1
          AND snapshot_id = ?2
-         AND status = 'pending_openai'`
+         AND status = 'pending_openai'`,
     )
     .bind(payload.id, payload.snapshotId, payload.queuedAt)
     .run();
@@ -288,7 +306,7 @@ export async function markSubmissionModerationQueued(
 
 export async function getVisibleCommentsByIds(
   db: D1Database,
-  ids: string[]
+  ids: string[],
 ): Promise<Array<Pick<SubmissionRecord, "id" | "content">>> {
   const uniqueIds = [...new Set(ids.map((id) => id.trim()).filter(Boolean))].slice(0, 100);
   if (uniqueIds.length === 0) {
@@ -302,7 +320,7 @@ export async function getVisibleCommentsByIds(
        FROM ugc_submissions s INDEXED BY sqlite_autoindex_ugc_submissions_1
        WHERE s.id IN (${placeholders})
          AND s.kind = 'comment'
-         AND s.status IN ('active', 'flagged', 'remove_request')`
+         AND s.status IN ('active', 'flagged', 'remove_request')`,
     )
     .bind(...uniqueIds)
     .all<Pick<SubmissionRecord, "id" | "content">>();

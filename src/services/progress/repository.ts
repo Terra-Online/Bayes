@@ -36,14 +36,14 @@ const PROCESSED_OUTBOX_RETENTION_MS = 45 * 24 * 60 * 60 * 1_000;
 export async function getProgressSyncMutation(
   db: D1Database,
   uid: string,
-  mutationId: string
+  mutationId: string,
 ): Promise<ProgressSyncMutationRecord | null> {
   const row = await db
     .prepare(
       `SELECT request_hash, response_json, result_version, created_at
        FROM progress_sync_mutations
        WHERE uid = ?1 AND mutation_id = ?2
-       LIMIT 1`
+       LIMIT 1`,
     )
     .bind(uid, mutationId)
     .first<{
@@ -55,18 +55,18 @@ export async function getProgressSyncMutation(
 
   return row
     ? {
-      requestHash: row.request_hash,
-      responseJson: row.response_json,
-      resultVersion: Number(row.result_version),
-      createdAt: Number(row.created_at)
-    }
+        requestHash: row.request_hash,
+        responseJson: row.response_json,
+        resultVersion: Number(row.result_version),
+        createdAt: Number(row.created_at),
+      }
     : null;
 }
 
 function prepareProgressUpdate(
   db: D1Database,
   uid: string,
-  progress: UserProgressWrite
+  progress: UserProgressWrite,
 ): D1PreparedStatement {
   return db
     .prepare(
@@ -84,7 +84,7 @@ function prepareProgressUpdate(
            progress_cloud_synced = ?12,
            progress_synced_at = COALESCE(?13, progress_synced_at),
            last_active = CURRENT_TIMESTAMP
-       WHERE uid = ?1`
+       WHERE uid = ?1`,
     )
     .bind(
       uid,
@@ -99,13 +99,13 @@ function prepareProgressUpdate(
       progress.updatedAt,
       progress.clientMutationId,
       progress.cloudSynced ? 1 : 0,
-      progress.syncedAt
+      progress.syncedAt,
     );
 }
 
 export async function commitProgressSync(
   db: D1Database,
-  options: CommitProgressSyncOptions
+  options: CommitProgressSyncOptions,
 ): Promise<void> {
   const statements: D1PreparedStatement[] = [];
   if (options.progress) {
@@ -113,35 +113,39 @@ export async function commitProgressSync(
   }
 
   statements.push(
-    db.prepare(
-      `INSERT INTO progress_sync_mutations
+    db
+      .prepare(
+        `INSERT INTO progress_sync_mutations
          (uid, mutation_id, request_hash, response_json, result_version, created_at)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6)`
-    ).bind(
-      options.uid,
-      options.mutationId,
-      options.requestHash,
-      options.responseJson,
-      options.resultVersion,
-      options.createdAt
-    )
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6)`,
+      )
+      .bind(
+        options.uid,
+        options.mutationId,
+        options.requestHash,
+        options.responseJson,
+        options.resultVersion,
+        options.createdAt,
+      ),
   );
 
   if (options.statsEvent) {
     statements.push(
-      db.prepare(
-        `INSERT INTO progress_stats_outbox
+      db
+        .prepare(
+          `INSERT INTO progress_stats_outbox
            (event_id, uid, mutation_id, marker_index_hash, payload, status, attempts,
             next_attempt_at, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, 'pending', 0, ?6, ?6)`
-      ).bind(
-        options.statsEvent.eventId,
-        options.uid,
-        options.mutationId,
-        options.statsEvent.markerIndexHash,
-        JSON.stringify(options.statsEvent),
-        options.createdAt
-      )
+         VALUES (?1, ?2, ?3, ?4, ?5, 'pending', 0, ?6, ?6)`,
+        )
+        .bind(
+          options.statsEvent.eventId,
+          options.uid,
+          options.mutationId,
+          options.statsEvent.markerIndexHash,
+          JSON.stringify(options.statsEvent),
+          options.createdAt,
+        ),
     );
   }
 
@@ -158,7 +162,7 @@ function mapOutboxRow(row: Record<string, unknown>): ProgressStatsOutboxRecord {
     markerIndexHash: String(row.marker_index_hash),
     payload,
     attempts: Number(row.attempts ?? 0),
-    createdAt: Number(row.created_at)
+    createdAt: Number(row.created_at),
   };
 }
 
@@ -180,14 +184,14 @@ export async function listDispatchableProgressStatsEvents(
   db: D1Database,
   now: number,
   limit: number,
-  uid?: string
+  uid?: string,
 ): Promise<ProgressStatsOutboxRecord[]> {
   const boundedLimit = Math.max(1, Math.min(100, Math.floor(limit)));
   const uidClause = uid ? " AND event.uid = ?3" : "";
   const statement = db.prepare(
     `${OUTBOX_SELECT}${uidClause}
      ORDER BY event.next_attempt_at ASC, event.id ASC
-     LIMIT ?2`
+     LIMIT ?2`,
   );
   const result = uid
     ? await statement.bind(now, boundedLimit, uid).all<Record<string, unknown>>()
@@ -198,13 +202,16 @@ export async function listDispatchableProgressStatsEvents(
 export async function markProgressStatsEventProcessed(
   db: D1Database,
   eventId: string,
-  processedAt: number
+  processedAt: number,
 ): Promise<void> {
-  await db.prepare(
-    `UPDATE progress_stats_outbox
+  await db
+    .prepare(
+      `UPDATE progress_stats_outbox
      SET status = 'processed', processed_at = ?2, last_error = NULL
-     WHERE event_id = ?1 AND status <> 'processed'`
-  ).bind(eventId, processedAt).run();
+     WHERE event_id = ?1 AND status <> 'processed'`,
+    )
+    .bind(eventId, processedAt)
+    .run();
 }
 
 export async function markProgressStatsEventFailed(
@@ -215,85 +222,97 @@ export async function markProgressStatsEventFailed(
     attempts: number;
     nextAttemptAt: number;
     error: string;
-  }
+  },
 ): Promise<void> {
-  await db.prepare(
-    `UPDATE progress_stats_outbox
+  await db
+    .prepare(
+      `UPDATE progress_stats_outbox
      SET status = ?2,
          attempts = ?3,
          next_attempt_at = ?4,
          last_error = ?5
-     WHERE event_id = ?1 AND status <> 'processed'`
-  ).bind(
-    options.eventId,
-    options.blocked ? "blocked" : "retry",
-    options.attempts,
-    options.nextAttemptAt,
-    options.error.slice(0, 2_000)
-  ).run();
+     WHERE event_id = ?1 AND status <> 'processed'`,
+    )
+    .bind(
+      options.eventId,
+      options.blocked ? "blocked" : "retry",
+      options.attempts,
+      options.nextAttemptAt,
+      options.error.slice(0, 2_000),
+    )
+    .run();
 }
 
 export async function cleanupProgressConsistencyRecords(
   db: D1Database,
-  now: number
+  now: number,
 ): Promise<void> {
   await db.batch([
-    db.prepare(
-      `DELETE FROM progress_sync_mutations
+    db
+      .prepare(
+        `DELETE FROM progress_sync_mutations
        WHERE rowid IN (
          SELECT rowid FROM progress_sync_mutations
          WHERE created_at < ?1
          ORDER BY created_at ASC
          LIMIT 500
-       )`
-    ).bind(now - MUTATION_RETENTION_MS),
-    db.prepare(
-      `DELETE FROM progress_stats_outbox
+       )`,
+      )
+      .bind(now - MUTATION_RETENTION_MS),
+    db
+      .prepare(
+        `DELETE FROM progress_stats_outbox
        WHERE id IN (
          SELECT id FROM progress_stats_outbox
          WHERE status = 'processed' AND processed_at < ?1
          ORDER BY processed_at ASC
          LIMIT 500
-       )`
-    ).bind(now - PROCESSED_OUTBOX_RETENTION_MS),
-    db.prepare(
-      `DELETE FROM archive_progress_sync_mutations
+       )`,
+      )
+      .bind(now - PROCESSED_OUTBOX_RETENTION_MS),
+    db
+      .prepare(
+        `DELETE FROM archive_progress_sync_mutations
        WHERE rowid IN (
          SELECT rowid FROM archive_progress_sync_mutations
          WHERE created_at < ?1
          ORDER BY created_at ASC
          LIMIT 500
-       )`
-    ).bind(now - MUTATION_RETENTION_MS)
+       )`,
+      )
+      .bind(now - MUTATION_RETENTION_MS),
   ]);
 }
 
 export async function getProgressStatsOutboxHealth(
   db: D1Database,
-  now: number
+  now: number,
 ): Promise<{
   pending: number;
   blocked: number;
   oldestAgeMs: number;
 }> {
-  const row = await db.prepare(
-    `SELECT
+  const row = await db
+    .prepare(
+      `SELECT
        SUM(CASE WHEN status IN ('pending', 'retry') THEN 1 ELSE 0 END) AS pending,
        SUM(CASE WHEN status = 'blocked' THEN 1 ELSE 0 END) AS blocked,
        MIN(CASE WHEN status IN ('pending', 'retry') THEN created_at ELSE NULL END) AS oldest_created_at
      FROM progress_stats_outbox
-     WHERE status IN ('pending', 'retry', 'blocked')`
-  ).first<{
-    pending: number | null;
-    blocked: number | null;
-    oldest_created_at: number | null;
-  }>();
+     WHERE status IN ('pending', 'retry', 'blocked')`,
+    )
+    .first<{
+      pending: number | null;
+      blocked: number | null;
+      oldest_created_at: number | null;
+    }>();
   const oldestCreatedAt = Number(row?.oldest_created_at ?? now);
   return {
     pending: Number(row?.pending ?? 0),
     blocked: Number(row?.blocked ?? 0),
-    oldestAgeMs: row?.oldest_created_at === null || row?.oldest_created_at === undefined
-      ? 0
-      : Math.max(0, now - oldestCreatedAt)
+    oldestAgeMs:
+      row?.oldest_created_at === null || row?.oldest_created_at === undefined
+        ? 0
+        : Math.max(0, now - oldestCreatedAt),
   };
 }

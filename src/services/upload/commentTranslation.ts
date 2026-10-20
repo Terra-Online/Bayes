@@ -1,15 +1,15 @@
 import { getRuntimeConfig, type RuntimeConfig } from "../../lib/config";
-import { getJsonFromKv, putJsonToKv } from "../../lib/kvJson";
 import { sha256Hex } from "../../lib/crypto";
+import { getJsonFromKv, putJsonToKv } from "../../lib/kvJson";
 import { getVisibleCommentsByIds } from "../../repositories/submission/statusSubmission";
 import {
   getTextTranslation,
   getTextTranslationByTarget,
-  upsertTextTranslation
+  upsertTextTranslation,
 } from "../../repositories/submission/textTranslationCache";
 import type { TextTranslationRecord } from "../../repositories/submission/types";
-import type { TransPrewarmTarget } from "../moderation/messages";
 import type { Bindings } from "../../types/app";
+import type { TransPrewarmTarget } from "../moderation/messages";
 import { buildCommentTranslationKeys } from "./commentTranslationKeys";
 
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
@@ -20,7 +20,13 @@ const GOOGLE_FETCH_TIMEOUT_MS = 15_000;
 const MAX_TRANSLATION_BATCH_SIZE = 100;
 const TRANSLATION_NO_GLOSSARY_CACHE_VERSION = "g0";
 const SAME_LANGUAGE_ERROR = "Target language cannot be equal to source language.";
-const APPROVED_COMMENT_PREWARM_TARGET_LANGUAGES = ["zh-CN", "en-US", "ru-RU", "ja-JP", "ko-KR"] as const;
+const APPROVED_COMMENT_PREWARM_TARGET_LANGUAGES = [
+  "zh-CN",
+  "en-US",
+  "ru-RU",
+  "ja-JP",
+  "ko-KR",
+] as const;
 const GOOGLE_LANGUAGE_BY_LOCALE: Record<string, string> = {
   "en-US": "en",
   "zh-CN": "zh-CN",
@@ -44,10 +50,13 @@ const GOOGLE_LANGUAGE_BY_LOCALE: Record<string, string> = {
   "el-GR": "el",
   "hi-IN": "hi",
   "uk-UA": "uk",
-  "tr-TR": "tr"
+  "tr-TR": "tr",
 };
 const GOOGLE_LANGUAGE_BY_LOWERCASE_LOCALE = Object.fromEntries(
-  Object.entries(GOOGLE_LANGUAGE_BY_LOCALE).map(([locale, language]) => [locale.toLowerCase(), language])
+  Object.entries(GOOGLE_LANGUAGE_BY_LOCALE).map(([locale, language]) => [
+    locale.toLowerCase(),
+    language,
+  ]),
 );
 
 type CachedGoogleAccessToken = {
@@ -136,9 +145,7 @@ type TextTranslationDetectionCacheRecord = {
 let cachedGoogleAccessToken: CachedGoogleAccessToken | null = null;
 
 function base64UrlEncode(input: string | ArrayBuffer): string {
-  const bytes = typeof input === "string"
-    ? new TextEncoder().encode(input)
-    : new Uint8Array(input);
+  const bytes = typeof input === "string" ? new TextEncoder().encode(input) : new Uint8Array(input);
   let binary = "";
   for (let index = 0; index < bytes.length; index += 1) {
     binary += String.fromCharCode(bytes[index]!);
@@ -165,10 +172,10 @@ async function importPrivateKey(pem: string): Promise<CryptoKey> {
     parsePemPrivateKey(pem),
     {
       name: "RSASSA-PKCS1-v1_5",
-      hash: "SHA-256"
+      hash: "SHA-256",
     },
     false,
-    ["sign"]
+    ["sign"],
   );
 }
 
@@ -180,28 +187,31 @@ async function createGoogleJwt(config: RuntimeConfig["googleTranslate"]): Promis
   const now = Math.floor(Date.now() / 1000);
   const header = {
     alg: "RS256",
-    typ: "JWT"
+    typ: "JWT",
   };
   const claim = {
     iss: config.clientEmail,
     scope: GOOGLE_TRANSLATION_SCOPE,
     aud: GOOGLE_TOKEN_URL,
     exp: now + 3600,
-    iat: now
+    iat: now,
   };
   const unsigned = `${base64UrlEncode(JSON.stringify(header))}.${base64UrlEncode(JSON.stringify(claim))}`;
   const key = await importPrivateKey(config.privateKey);
   const signature = await crypto.subtle.sign(
     "RSASSA-PKCS1-v1_5",
     key,
-    new TextEncoder().encode(unsigned)
+    new TextEncoder().encode(unsigned),
   );
   return `${unsigned}.${base64UrlEncode(signature)}`;
 }
 
 async function getGoogleAccessToken(config: RuntimeConfig["googleTranslate"]): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
-  if (cachedGoogleAccessToken && cachedGoogleAccessToken.expiresAt - GOOGLE_ACCESS_TOKEN_SKEW_SECONDS > now) {
+  if (
+    cachedGoogleAccessToken &&
+    cachedGoogleAccessToken.expiresAt - GOOGLE_ACCESS_TOKEN_SKEW_SECONDS > now
+  ) {
     return cachedGoogleAccessToken.token;
   }
 
@@ -212,14 +222,14 @@ async function getGoogleAccessToken(config: RuntimeConfig["googleTranslate"]): P
     {
       method: "POST",
       headers: {
-        "Content-Type": "application/x-www-form-urlencoded"
+        "Content-Type": "application/x-www-form-urlencoded",
       },
       body: new URLSearchParams({
         grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
-        assertion
-      })
+        assertion,
+      }),
     },
-    config.fetchProxyUrl
+    config.fetchProxyUrl,
   );
 
   if (!response.ok) {
@@ -236,7 +246,7 @@ async function getGoogleAccessToken(config: RuntimeConfig["googleTranslate"]): P
 
   cachedGoogleAccessToken = {
     token: payload.access_token,
-    expiresAt: now + Math.max(60, Number(payload.expires_in ?? 3600))
+    expiresAt: now + Math.max(60, Number(payload.expires_in ?? 3600)),
   };
   return payload.access_token;
 }
@@ -266,20 +276,20 @@ async function fetchThroughLocalProxy(
   proxyUrl: string,
   input: string,
   init: RequestInit,
-  signal: AbortSignal
+  signal: AbortSignal,
 ): Promise<Response> {
   const proxyResponse = await fetch(proxyUrl, {
     method: "POST",
     headers: {
-      "Content-Type": "application/json"
+      "Content-Type": "application/json",
     },
     body: JSON.stringify({
       url: input,
       method: init.method ?? "GET",
       headers: serializeFetchHeaders(init.headers),
-      body: serializeFetchBody(init.body)
+      body: serializeFetchBody(init.body),
     }),
-    signal
+    signal,
   });
   if (!proxyResponse.ok) {
     throw new Error(`Google local fetch proxy failed (${proxyResponse.status}).`);
@@ -288,7 +298,7 @@ async function fetchThroughLocalProxy(
   const payload = (await proxyResponse.json()) as GoogleFetchProxyResponse;
   return new Response(payload.body ?? "", {
     status: payload.status ?? 502,
-    headers: payload.headers
+    headers: payload.headers,
   });
 }
 
@@ -297,16 +307,19 @@ async function fetchWithTimeout(
   input: string,
   init: RequestInit,
   proxyUrl?: string,
-  timeoutMs = GOOGLE_FETCH_TIMEOUT_MS
+  timeoutMs = GOOGLE_FETCH_TIMEOUT_MS,
 ): Promise<Response> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort("Google Translation request timed out."), timeoutMs);
+  const timeout = setTimeout(
+    () => controller.abort("Google Translation request timed out."),
+    timeoutMs,
+  );
   try {
     return proxyUrl
       ? await fetchThroughLocalProxy(proxyUrl, input, init, controller.signal)
       : await fetch(input, {
           ...init,
-          signal: controller.signal
+          signal: controller.signal,
         });
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") {
@@ -320,21 +333,28 @@ async function fetchWithTimeout(
 
 function toGoogleLanguageCode(language: string): string {
   const trimmed = language.trim();
-  return GOOGLE_LANGUAGE_BY_LOCALE[trimmed]
-    ?? GOOGLE_LANGUAGE_BY_LOWERCASE_LOCALE[trimmed.toLowerCase()]
-    ?? trimmed;
+  return (
+    GOOGLE_LANGUAGE_BY_LOCALE[trimmed] ??
+    GOOGLE_LANGUAGE_BY_LOWERCASE_LOCALE[trimmed.toLowerCase()] ??
+    trimmed
+  );
 }
 
 function toTranslationCacheLanguage(language: string): string {
   return toGoogleLanguageCode(language).trim();
 }
 
-function isSameTranslationLanguage(sourceLanguage: string | undefined, targetLanguage: string): boolean {
+function isSameTranslationLanguage(
+  sourceLanguage: string | undefined,
+  targetLanguage: string,
+): boolean {
   if (!sourceLanguage?.trim()) {
     return false;
   }
-  return toTranslationCacheLanguage(sourceLanguage).toLowerCase()
-    === toTranslationCacheLanguage(targetLanguage).toLowerCase();
+  return (
+    toTranslationCacheLanguage(sourceLanguage).toLowerCase() ===
+    toTranslationCacheLanguage(targetLanguage).toLowerCase()
+  );
 }
 
 function hasGoogleLanguage(languages: Set<string>, language: string): boolean {
@@ -368,7 +388,7 @@ function shouldUseGlossary(
   payload: {
     sourceLanguage: string;
     targetLanguage: string;
-  }
+  },
 ): boolean {
   if (!config.glossary) {
     return false;
@@ -378,13 +398,15 @@ function shouldUseGlossary(
     return false;
   }
 
-  return payload.sourceLanguage !== "auto"
-    && hasGoogleLanguage(config.glossaryLanguages, payload.sourceLanguage);
+  return (
+    payload.sourceLanguage !== "auto" &&
+    hasGoogleLanguage(config.glossaryLanguages, payload.sourceLanguage)
+  );
 }
 
 function shouldUseAutoDetectedGlossary(
   config: RuntimeConfig["googleTranslate"],
-  targetLanguage: string
+  targetLanguage: string,
 ): boolean {
   return Boolean(config.glossary) && hasGoogleLanguage(config.glossaryLanguages, targetLanguage);
 }
@@ -394,9 +416,9 @@ function getGlossaryKey(
   payload: {
     sourceLanguage: string;
     targetLanguage: string;
-  }
+  },
 ): string {
-  return shouldUseGlossary(config, payload) ? config.glossary ?? "" : "";
+  return shouldUseGlossary(config, payload) ? (config.glossary ?? "") : "";
 }
 
 function getLookupGlossaryKeys(
@@ -404,10 +426,12 @@ function getLookupGlossaryKeys(
   payload: {
     sourceLanguage: string;
     targetLanguage: string;
-  }
+  },
 ): string[] {
   if (payload.sourceLanguage === "auto") {
-    return shouldUseAutoDetectedGlossary(config, payload.targetLanguage) ? [config.glossary ?? "", ""] : [""];
+    return shouldUseAutoDetectedGlossary(config, payload.targetLanguage)
+      ? [config.glossary ?? "", ""]
+      : [""];
   }
 
   const glossaryKey = getGlossaryKey(config, payload);
@@ -420,7 +444,7 @@ function getWriteGlossaryKey(
     sourceLanguage: string;
     targetLanguage: string;
     glossaryApplied: boolean;
-  }
+  },
 ): string {
   if (!payload.glossaryApplied) {
     return "";
@@ -446,14 +470,14 @@ async function getTextTranslationTargetDescriptor(payload: {
     kind: "detection",
     targetLanguage,
     glossaryVersion,
-    textHash
+    textHash,
   });
   return {
     detectionCacheKey: cacheKey,
     textHash,
     targetLanguage,
     glossaryVersion,
-    glossaryKey: payload.glossaryKey
+    glossaryKey: payload.glossaryKey,
   };
 }
 
@@ -473,7 +497,7 @@ async function getTextTranslationCacheDescriptor(payload: {
     sourceLanguage,
     targetLanguage,
     glossaryVersion,
-    textHash
+    textHash,
   });
 
   return {
@@ -483,11 +507,13 @@ async function getTextTranslationCacheDescriptor(payload: {
     sourceLanguage,
     targetLanguage,
     glossaryVersion,
-    glossaryKey: payload.glossaryKey
+    glossaryKey: payload.glossaryKey,
   };
 }
 
-function getTextTranslationCacheDescriptorFromRecord(record: TextTranslationRecord): TextTranslationCacheDescriptor {
+function getTextTranslationCacheDescriptorFromRecord(
+  record: TextTranslationRecord,
+): TextTranslationCacheDescriptor {
   return {
     cacheKey: record.cacheKey,
     textHash: record.textHash,
@@ -495,13 +521,13 @@ function getTextTranslationCacheDescriptorFromRecord(record: TextTranslationReco
     sourceLanguage: record.sourceLanguage,
     targetLanguage: record.targetLanguage,
     glossaryVersion: record.glossaryVersion,
-    glossaryKey: record.glossaryKey
+    glossaryKey: record.glossaryKey,
   };
 }
 
 function getTextTranslationCacheDescriptorFromTarget(
   sourceLanguage: string,
-  targetDescriptor: TextTranslationTargetDescriptor
+  targetDescriptor: TextTranslationTargetDescriptor,
 ): TextTranslationCacheDescriptor {
   const normalizedSourceLanguage = toTranslationCacheLanguage(sourceLanguage);
   const { cacheKey, flowVersion } = buildCommentTranslationKeys({
@@ -509,7 +535,7 @@ function getTextTranslationCacheDescriptorFromTarget(
     sourceLanguage: normalizedSourceLanguage,
     targetLanguage: targetDescriptor.targetLanguage,
     glossaryVersion: targetDescriptor.glossaryVersion,
-    textHash: targetDescriptor.textHash
+    textHash: targetDescriptor.textHash,
   });
 
   return {
@@ -519,13 +545,13 @@ function getTextTranslationCacheDescriptorFromTarget(
     sourceLanguage: normalizedSourceLanguage,
     targetLanguage: targetDescriptor.targetLanguage,
     glossaryVersion: targetDescriptor.glossaryVersion,
-    glossaryKey: targetDescriptor.glossaryKey
+    glossaryKey: targetDescriptor.glossaryKey,
   };
 }
 
 async function getCachedTextTranslation(
   kv: KVNamespace | undefined,
-  descriptor: TextTranslationCacheDescriptor
+  descriptor: TextTranslationCacheDescriptor,
 ): Promise<TextTranslationCacheRecord | null> {
   let cached: unknown;
   try {
@@ -533,7 +559,7 @@ async function getCachedTextTranslation(
   } catch (error) {
     console.warn("comment translation KV read failed", {
       cacheKey: descriptor.cacheKey,
-      error: error instanceof Error ? error.message : String(error)
+      error: error instanceof Error ? error.message : String(error),
     });
     return null;
   }
@@ -556,23 +582,23 @@ async function getCachedTextTranslation(
 
   return {
     translatedText: record.translatedText,
-    sourceLanguage: typeof record.sourceLanguage === "string" ? record.sourceLanguage : descriptor.sourceLanguage,
-    detectedSourceLanguage: typeof record.detectedSourceLanguage === "string"
-      ? record.detectedSourceLanguage
-      : undefined,
+    sourceLanguage:
+      typeof record.sourceLanguage === "string" ? record.sourceLanguage : descriptor.sourceLanguage,
+    detectedSourceLanguage:
+      typeof record.detectedSourceLanguage === "string" ? record.detectedSourceLanguage : undefined,
     targetLanguage: record.targetLanguage,
     provider: record.provider,
     glossaryApplied: record.glossaryApplied === true,
     glossaryKey: record.glossaryKey,
     glossaryVersion: record.glossaryVersion,
     flowVersion: record.flowVersion,
-    translatedAt: typeof record.translatedAt === "string" ? record.translatedAt : ""
+    translatedAt: typeof record.translatedAt === "string" ? record.translatedAt : "",
   };
 }
 
 async function getDetectedSourceFromKv(
   kv: KVNamespace | undefined,
-  descriptor: TextTranslationTargetDescriptor
+  descriptor: TextTranslationTargetDescriptor,
 ): Promise<TextTranslationDetectionCacheRecord | null> {
   let cached: unknown;
   try {
@@ -580,7 +606,7 @@ async function getDetectedSourceFromKv(
   } catch (error) {
     console.warn("comment translation detection KV read failed", {
       cacheKey: descriptor.detectionCacheKey,
-      error: error instanceof Error ? error.message : String(error)
+      error: error instanceof Error ? error.message : String(error),
     });
     return null;
   }
@@ -609,7 +635,7 @@ async function getDetectedSourceFromKv(
     provider: record.provider,
     glossaryVersion: record.glossaryVersion,
     glossaryKey: record.glossaryKey,
-    createdAt: typeof record.createdAt === "string" ? record.createdAt : ""
+    createdAt: typeof record.createdAt === "string" ? record.createdAt : "",
   };
 }
 
@@ -621,7 +647,7 @@ async function putCachedTextTranslationToKv(
     translatedText: string;
     glossaryApplied: boolean;
     translatedAt?: string;
-  }
+  },
 ): Promise<void> {
   const record: TextTranslationCacheRecord = {
     translatedText: payload.translatedText,
@@ -635,7 +661,7 @@ async function putCachedTextTranslationToKv(
     glossaryKey: descriptor.glossaryKey,
     glossaryVersion: descriptor.glossaryVersion,
     flowVersion: descriptor.flowVersion,
-    translatedAt: payload.translatedAt ?? new Date().toISOString()
+    translatedAt: payload.translatedAt ?? new Date().toISOString(),
   };
   await putJsonToKv(kv, descriptor.cacheKey, record);
 }
@@ -643,7 +669,7 @@ async function putCachedTextTranslationToKv(
 async function putDetectedSourceToKv(
   kv: KVNamespace | undefined,
   targetDescriptor: TextTranslationTargetDescriptor,
-  translationDescriptor: TextTranslationCacheDescriptor
+  translationDescriptor: TextTranslationCacheDescriptor,
 ): Promise<void> {
   const record: TextTranslationDetectionCacheRecord = {
     sourceLanguage: translationDescriptor.sourceLanguage,
@@ -653,20 +679,17 @@ async function putDetectedSourceToKv(
     provider: GOOGLE_TRANSLATION_PROVIDER,
     glossaryVersion: targetDescriptor.glossaryVersion,
     glossaryKey: targetDescriptor.glossaryKey,
-    createdAt: new Date().toISOString()
+    createdAt: new Date().toISOString(),
   };
   await putJsonToKv(kv, targetDescriptor.detectionCacheKey, record);
 }
 
-async function settleTranslationKvWrites(
-  label: string,
-  writes: Promise<void>[]
-): Promise<void> {
+async function settleTranslationKvWrites(label: string, writes: Promise<void>[]): Promise<void> {
   const results = await Promise.allSettled(writes);
   results.forEach((result) => {
     if (result.status === "rejected") {
       console.warn(`comment translation ${label} KV write failed`, {
-        error: result.reason instanceof Error ? result.reason.message : String(result.reason)
+        error: result.reason instanceof Error ? result.reason.message : String(result.reason),
       });
     }
   });
@@ -679,7 +702,7 @@ async function putCachedTextTranslationToD1(
     detectedSourceLanguage?: string;
     translatedText: string;
     glossaryApplied: boolean;
-  }
+  },
 ): Promise<void> {
   await upsertTextTranslation(db, {
     cacheKey: descriptor.cacheKey,
@@ -694,7 +717,7 @@ async function putCachedTextTranslationToD1(
     glossaryVersion: descriptor.glossaryVersion,
     glossaryKey: descriptor.glossaryKey,
     translatedContent: payload.translatedText,
-    glossaryApplied: payload.glossaryApplied
+    glossaryApplied: payload.glossaryApplied,
   });
 }
 
@@ -709,13 +732,13 @@ function cacheRecordFromD1(record: TextTranslationRecord): TextTranslationCacheR
     glossaryKey: record.glossaryKey,
     glossaryVersion: record.glossaryVersion,
     flowVersion: record.flowVersion,
-    translatedAt: record.translatedAt
+    translatedAt: record.translatedAt,
   };
 }
 
 async function getCachedOrStoredTextTranslationByDescriptor(
   env: Bindings,
-  descriptor: TextTranslationCacheDescriptor
+  descriptor: TextTranslationCacheDescriptor,
 ): Promise<TextTranslationCacheRecord | null> {
   const textCached = await getCachedTextTranslation(env.OEM_KV, descriptor);
   if (textCached?.translatedText) {
@@ -729,23 +752,30 @@ async function getCachedOrStoredTextTranslationByDescriptor(
 
   const record = cacheRecordFromD1(storedTextTranslation);
   await settleTranslationKvWrites("repair", [
-    putCachedTextTranslationToKv(env.OEM_KV, getTextTranslationCacheDescriptorFromRecord(storedTextTranslation), {
-      detectedSourceLanguage: record.detectedSourceLanguage,
-      translatedText: record.translatedText,
-      glossaryApplied: record.glossaryApplied,
-      translatedAt: record.translatedAt
-    })
+    putCachedTextTranslationToKv(
+      env.OEM_KV,
+      getTextTranslationCacheDescriptorFromRecord(storedTextTranslation),
+      {
+        detectedSourceLanguage: record.detectedSourceLanguage,
+        translatedText: record.translatedText,
+        glossaryApplied: record.glossaryApplied,
+        translatedAt: record.translatedAt,
+      },
+    ),
   ]);
   return record;
 }
 
 async function getCachedOrStoredAutoTextTranslation(
   env: Bindings,
-  targetDescriptor: TextTranslationTargetDescriptor
+  targetDescriptor: TextTranslationTargetDescriptor,
 ): Promise<TextTranslationCacheRecord | null> {
   const detectedSource = await getDetectedSourceFromKv(env.OEM_KV, targetDescriptor);
   if (detectedSource) {
-    const descriptor = getTextTranslationCacheDescriptorFromTarget(detectedSource.sourceLanguage, targetDescriptor);
+    const descriptor = getTextTranslationCacheDescriptorFromTarget(
+      detectedSource.sourceLanguage,
+      targetDescriptor,
+    );
     const record = await getCachedTextTranslation(env.OEM_KV, descriptor);
     if (record?.translatedText) {
       return record;
@@ -757,7 +787,7 @@ async function getCachedOrStoredAutoTextTranslation(
     targetLanguage: targetDescriptor.targetLanguage,
     provider: GOOGLE_TRANSLATION_PROVIDER,
     glossaryVersion: targetDescriptor.glossaryVersion,
-    glossaryKey: targetDescriptor.glossaryKey
+    glossaryKey: targetDescriptor.glossaryKey,
   });
   if (!storedTextTranslation?.translatedContent) {
     return null;
@@ -770,9 +800,9 @@ async function getCachedOrStoredAutoTextTranslation(
       detectedSourceLanguage: record.detectedSourceLanguage,
       translatedText: record.translatedText,
       glossaryApplied: record.glossaryApplied,
-      translatedAt: record.translatedAt
+      translatedAt: record.translatedAt,
     }),
-    putDetectedSourceToKv(env.OEM_KV, targetDescriptor, descriptor)
+    putDetectedSourceToKv(env.OEM_KV, targetDescriptor, descriptor),
   ]);
   return record;
 }
@@ -787,11 +817,12 @@ async function putCachedTextTranslation(
     normalizedText: string;
     translatedText: string;
     glossaryApplied: boolean;
-  }
+  },
 ): Promise<void> {
-  const sourceLanguage = payload.sourceLanguage === "auto"
-    ? payload.detectedSourceLanguage ?? "auto"
-    : payload.sourceLanguage;
+  const sourceLanguage =
+    payload.sourceLanguage === "auto"
+      ? (payload.detectedSourceLanguage ?? "auto")
+      : payload.sourceLanguage;
 
   if (isSameTranslationLanguage(sourceLanguage, payload.targetLanguage)) {
     return;
@@ -800,37 +831,37 @@ async function putCachedTextTranslation(
   const glossaryKey = getWriteGlossaryKey(config, {
     sourceLanguage,
     targetLanguage: payload.targetLanguage,
-    glossaryApplied: payload.glossaryApplied
+    glossaryApplied: payload.glossaryApplied,
   });
   const descriptor = await getTextTranslationCacheDescriptor({
     sourceLanguage,
     targetLanguage: payload.targetLanguage,
     glossaryKey,
     glossaryVersion: config.glossaryVersion,
-    normalizedText: payload.normalizedText
+    normalizedText: payload.normalizedText,
   });
   const targetDescriptor = await getTextTranslationTargetDescriptor({
     targetLanguage: payload.targetLanguage,
     glossaryKey,
     glossaryVersion: config.glossaryVersion,
-    normalizedText: payload.normalizedText
+    normalizedText: payload.normalizedText,
   });
 
   await putCachedTextTranslationToD1(env.DB, descriptor, {
     detectedSourceLanguage: payload.detectedSourceLanguage,
     translatedText: payload.translatedText,
-    glossaryApplied: payload.glossaryApplied
+    glossaryApplied: payload.glossaryApplied,
   });
 
   await settleTranslationKvWrites("store", [
     putCachedTextTranslationToKv(env.OEM_KV, descriptor, {
       detectedSourceLanguage: payload.detectedSourceLanguage,
       translatedText: payload.translatedText,
-      glossaryApplied: payload.glossaryApplied
+      glossaryApplied: payload.glossaryApplied,
     }),
     payload.sourceLanguage === "auto"
       ? putDetectedSourceToKv(env.OEM_KV, targetDescriptor, descriptor)
-      : Promise.resolve()
+      : Promise.resolve(),
   ]);
 }
 
@@ -845,7 +876,7 @@ function isGoogleTranslateConfigured(config: RuntimeConfig["googleTranslate"]): 
 function itemFromCachedTextTranslation(
   commentId: string,
   targetLanguage: string,
-  record: TextTranslationCacheRecord
+  record: TextTranslationCacheRecord,
 ): CommentTranslationItem {
   const sourceLanguage = record.detectedSourceLanguage ?? record.sourceLanguage;
   if (isSameTranslationLanguage(sourceLanguage, targetLanguage)) {
@@ -856,7 +887,7 @@ function itemFromCachedTextTranslation(
       provider: record.provider,
       glossaryApplied: false,
       cached: true,
-      error: SAME_LANGUAGE_ERROR
+      error: SAME_LANGUAGE_ERROR,
     };
   }
 
@@ -867,7 +898,7 @@ function itemFromCachedTextTranslation(
     targetLanguage,
     provider: record.provider,
     glossaryApplied: record.glossaryApplied,
-    cached: true
+    cached: true,
   };
 }
 
@@ -878,7 +909,7 @@ async function callGoogleTranslateRequest(
     sourceLanguage: string;
     targetLanguage: string;
     glossary: boolean;
-  }
+  },
 ): Promise<GoogleTranslation[]> {
   if (!config.projectId) {
     throw new Error("Google Translation project id is not configured.");
@@ -889,14 +920,14 @@ async function callGoogleTranslateRequest(
   const body: Record<string, unknown> = {
     contents: payload.contents,
     targetLanguageCode: toGoogleLanguageCode(payload.targetLanguage),
-    mimeType: "text/plain"
+    mimeType: "text/plain",
   };
   if (payload.sourceLanguage !== "auto") {
     body.sourceLanguageCode = toGoogleLanguageCode(payload.sourceLanguage);
   }
   if (payload.glossary) {
     body.glossaryConfig = {
-      glossary: config.glossary
+      glossary: config.glossary,
     };
   }
 
@@ -907,16 +938,18 @@ async function callGoogleTranslateRequest(
       method: "POST",
       headers: {
         Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
       },
-      body: JSON.stringify(body)
+      body: JSON.stringify(body),
     },
-    config.fetchProxyUrl
+    config.fetchProxyUrl,
   );
 
   if (!response.ok) {
     const errorText = await response.text().catch(() => "");
-    throw new Error(`Google Translation request failed (${response.status}). ${errorText.slice(0, 300)}`.trim());
+    throw new Error(
+      `Google Translation request failed (${response.status}). ${errorText.slice(0, 300)}`.trim(),
+    );
   }
 
   const data = (await response.json()) as GoogleTranslateResponse;
@@ -925,7 +958,7 @@ async function callGoogleTranslateRequest(
   return translations.map((translation) => ({
     translatedText: translation.translatedText ?? "",
     detectedLanguageCode: translation.detectedLanguageCode,
-    glossaryApplied: Boolean(glossaryTranslations)
+    glossaryApplied: Boolean(glossaryTranslations),
   }));
 }
 
@@ -935,14 +968,14 @@ async function callGoogleTranslate(
     contents: string[];
     sourceLanguage: string;
     targetLanguage: string;
-  }
+  },
 ): Promise<GoogleTranslation[]> {
   if (payload.sourceLanguage !== "auto") {
     if (isSameTranslationLanguage(payload.sourceLanguage, payload.targetLanguage)) {
       return payload.contents.map((translatedText) => ({
         translatedText,
         detectedLanguageCode: toTranslationCacheLanguage(payload.sourceLanguage),
-        glossaryApplied: false
+        glossaryApplied: false,
       }));
     }
 
@@ -950,7 +983,7 @@ async function callGoogleTranslate(
     try {
       return await callGoogleTranslateRequest(config, {
         ...payload,
-        glossary
+        glossary,
       });
     } catch (error) {
       if (!glossary) {
@@ -959,18 +992,18 @@ async function callGoogleTranslate(
       console.warn("comment translation glossary request failed; using base translation", {
         sourceLanguage: payload.sourceLanguage,
         targetLanguage: payload.targetLanguage,
-        error: error instanceof Error ? error.message : String(error)
+        error: error instanceof Error ? error.message : String(error),
       });
       return callGoogleTranslateRequest(config, {
         ...payload,
-        glossary: false
+        glossary: false,
       });
     }
   }
 
   const baseTranslations = await callGoogleTranslateRequest(config, {
     ...payload,
-    glossary: false
+    glossary: false,
   });
   if (!shouldUseAutoDetectedGlossary(config, payload.targetLanguage)) {
     return baseTranslations;
@@ -986,38 +1019,40 @@ async function callGoogleTranslate(
     if (isSameTranslationLanguage(googleLanguage, payload.targetLanguage)) {
       return;
     }
-    indexesBySourceLanguage.set(
-      googleLanguage,
-      [...(indexesBySourceLanguage.get(googleLanguage) ?? []), index]
-    );
+    indexesBySourceLanguage.set(googleLanguage, [
+      ...(indexesBySourceLanguage.get(googleLanguage) ?? []),
+      index,
+    ]);
   });
 
-  await Promise.all([...indexesBySourceLanguage.entries()].map(async ([sourceLanguage, indexes]) => {
-    try {
-      const glossaryTranslations = await callGoogleTranslateRequest(config, {
-        contents: indexes.map((index) => payload.contents[index] ?? ""),
-        sourceLanguage,
-        targetLanguage: payload.targetLanguage,
-        glossary: true
-      });
-      glossaryTranslations.forEach((translation, localIndex) => {
-        const originalIndex = indexes[localIndex];
-        if (originalIndex === undefined || !translation.translatedText) {
-          return;
-        }
-        baseTranslations[originalIndex] = {
-          ...translation,
-          detectedLanguageCode: translation.detectedLanguageCode ?? sourceLanguage
-        };
-      });
-    } catch (error) {
-      console.warn("comment translation glossary request failed; using base translation", {
-        sourceLanguage,
-        targetLanguage: payload.targetLanguage,
-        error: error instanceof Error ? error.message : String(error)
-      });
-    }
-  }));
+  await Promise.all(
+    [...indexesBySourceLanguage.entries()].map(async ([sourceLanguage, indexes]) => {
+      try {
+        const glossaryTranslations = await callGoogleTranslateRequest(config, {
+          contents: indexes.map((index) => payload.contents[index] ?? ""),
+          sourceLanguage,
+          targetLanguage: payload.targetLanguage,
+          glossary: true,
+        });
+        glossaryTranslations.forEach((translation, localIndex) => {
+          const originalIndex = indexes[localIndex];
+          if (originalIndex === undefined || !translation.translatedText) {
+            return;
+          }
+          baseTranslations[originalIndex] = {
+            ...translation,
+            detectedLanguageCode: translation.detectedLanguageCode ?? sourceLanguage,
+          };
+        });
+      } catch (error) {
+        console.warn("comment translation glossary request failed; using base translation", {
+          sourceLanguage,
+          targetLanguage: payload.targetLanguage,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }),
+  );
 
   return baseTranslations;
 }
@@ -1029,15 +1064,21 @@ export async function translateVisibleComments(
     cachedOnly?: boolean;
     sourceLanguage?: string;
     targetLanguage: string;
-  }
+  },
 ): Promise<{ items: CommentTranslationItem[] }> {
   const config = getRuntimeConfig(env).googleTranslate;
-  const commentIds = [...new Set(payload.commentIds.map((id) => id.trim()).filter(Boolean))].slice(0, MAX_TRANSLATION_BATCH_SIZE);
+  const commentIds = [...new Set(payload.commentIds.map((id) => id.trim()).filter(Boolean))].slice(
+    0,
+    MAX_TRANSLATION_BATCH_SIZE,
+  );
   const targetLanguage = payload.targetLanguage.trim();
   const sourceLanguage = normalizeSourceLanguage(payload.sourceLanguage);
   const lookupGlossaryKeys = getLookupGlossaryKeys(config, { sourceLanguage, targetLanguage });
 
-  if (!validateLanguage(config, targetLanguage) || (sourceLanguage !== "auto" && !validateLanguage(config, sourceLanguage))) {
+  if (
+    !validateLanguage(config, targetLanguage) ||
+    (sourceLanguage !== "auto" && !validateLanguage(config, sourceLanguage))
+  ) {
     return {
       items: commentIds.map((commentId) => ({
         commentId,
@@ -1045,8 +1086,8 @@ export async function translateVisibleComments(
         provider: GOOGLE_TRANSLATION_PROVIDER,
         glossaryApplied: false,
         cached: false,
-        error: "LANGUAGE_NOT_ALLOWED"
-      }))
+        error: "LANGUAGE_NOT_ALLOWED",
+      })),
     };
   }
 
@@ -1070,7 +1111,7 @@ export async function translateVisibleComments(
         provider: GOOGLE_TRANSLATION_PROVIDER,
         glossaryApplied: false,
         cached: false,
-        error: "COMMENT_NOT_TRANSLATABLE"
+        error: "COMMENT_NOT_TRANSLATABLE",
       });
       continue;
     }
@@ -1084,7 +1125,7 @@ export async function translateVisibleComments(
             targetLanguage,
             glossaryKey: lookupGlossaryKey,
             glossaryVersion: config.glossaryVersion,
-            normalizedText
+            normalizedText,
           });
           cachedRecord = await getCachedOrStoredAutoTextTranslation(env, targetDescriptor);
         } else {
@@ -1093,7 +1134,7 @@ export async function translateVisibleComments(
             targetLanguage,
             glossaryKey: lookupGlossaryKey,
             glossaryVersion: config.glossaryVersion,
-            normalizedText
+            normalizedText,
           });
           cachedRecord = await getCachedOrStoredTextTranslationByDescriptor(env, descriptor);
         }
@@ -1119,11 +1160,11 @@ export async function translateVisibleComments(
         provider: GOOGLE_TRANSLATION_PROVIDER,
         glossaryApplied: false,
         cached: false,
-        error: "TRANSLATION_CACHE_MISS"
+        error: "TRANSLATION_CACHE_MISS",
       });
     });
   } else if (misses.length > 0) {
-    const uniqueMissByText = new Map<string, typeof comments[number]>();
+    const uniqueMissByText = new Map<string, (typeof comments)[number]>();
     misses.forEach((comment) => {
       const normalizedText = normalizedTextById.get(comment.id) ?? "";
       if (!uniqueMissByText.has(normalizedText)) {
@@ -1136,36 +1177,41 @@ export async function translateVisibleComments(
       const translated = await callGoogleTranslate(config, {
         contents: uniqueMisses.map(([, comment]) => comment.content ?? ""),
         sourceLanguage,
-        targetLanguage
+        targetLanguage,
       });
 
-      const outcomeByNormalizedText = new Map<string, {
-        error?: string;
-        translation?: GoogleTranslation;
-      }>();
-      await Promise.all(uniqueMisses.map(async ([normalizedText], index) => {
-        const translation = translated[index];
-        if (!translation?.translatedText) {
-          outcomeByNormalizedText.set(normalizedText, { error: "TRANSLATION_EMPTY" });
-          return;
+      const outcomeByNormalizedText = new Map<
+        string,
+        {
+          error?: string;
+          translation?: GoogleTranslation;
         }
+      >();
+      await Promise.all(
+        uniqueMisses.map(async ([normalizedText], index) => {
+          const translation = translated[index];
+          if (!translation?.translatedText) {
+            outcomeByNormalizedText.set(normalizedText, { error: "TRANSLATION_EMPTY" });
+            return;
+          }
 
-        try {
-          await putCachedTextTranslation(env, config, {
-            sourceLanguage,
-            detectedSourceLanguage: translation.detectedLanguageCode,
-            targetLanguage,
-            normalizedText,
-            translatedText: translation.translatedText,
-            glossaryApplied: translation.glossaryApplied
-          });
-          outcomeByNormalizedText.set(normalizedText, { translation });
-        } catch (error) {
-          outcomeByNormalizedText.set(normalizedText, {
-            error: error instanceof Error ? error.message : "Translation persistence failed."
-          });
-        }
-      }));
+          try {
+            await putCachedTextTranslation(env, config, {
+              sourceLanguage,
+              detectedSourceLanguage: translation.detectedLanguageCode,
+              targetLanguage,
+              normalizedText,
+              translatedText: translation.translatedText,
+              glossaryApplied: translation.glossaryApplied,
+            });
+            outcomeByNormalizedText.set(normalizedText, { translation });
+          } catch (error) {
+            outcomeByNormalizedText.set(normalizedText, {
+              error: error instanceof Error ? error.message : "Translation persistence failed.",
+            });
+          }
+        }),
+      );
 
       misses.forEach((comment) => {
         const normalizedText = normalizedTextById.get(comment.id) ?? "";
@@ -1179,7 +1225,7 @@ export async function translateVisibleComments(
             provider: GOOGLE_TRANSLATION_PROVIDER,
             glossaryApplied: false,
             cached: false,
-            error: outcome?.error ?? "TRANSLATION_EMPTY"
+            error: outcome?.error ?? "TRANSLATION_EMPTY",
           });
           return;
         }
@@ -1192,7 +1238,7 @@ export async function translateVisibleComments(
             provider: GOOGLE_TRANSLATION_PROVIDER,
             glossaryApplied: false,
             cached: false,
-            error: SAME_LANGUAGE_ERROR
+            error: SAME_LANGUAGE_ERROR,
           });
           return;
         }
@@ -1204,7 +1250,7 @@ export async function translateVisibleComments(
           targetLanguage,
           provider: GOOGLE_TRANSLATION_PROVIDER,
           glossaryApplied: translation.glossaryApplied,
-          cached: false
+          cached: false,
         });
       });
     } catch (error) {
@@ -1216,27 +1262,30 @@ export async function translateVisibleComments(
           provider: GOOGLE_TRANSLATION_PROVIDER,
           glossaryApplied: false,
           cached: false,
-          error: message
+          error: message,
         });
       });
     }
   }
 
   return {
-    items: commentIds.map((commentId) => items.get(commentId) ?? {
-      commentId,
-      targetLanguage,
-      provider: GOOGLE_TRANSLATION_PROVIDER,
-      glossaryApplied: false,
-      cached: false,
-      error: "COMMENT_NOT_TRANSLATABLE"
-    })
+    items: commentIds.map(
+      (commentId) =>
+        items.get(commentId) ?? {
+          commentId,
+          targetLanguage,
+          provider: GOOGLE_TRANSLATION_PROVIDER,
+          glossaryApplied: false,
+          cached: false,
+          error: "COMMENT_NOT_TRANSLATABLE",
+        },
+    ),
   };
 }
 
 export async function prewarmApprovedCommentTrans(
   env: Bindings,
-  commentId: string
+  commentId: string,
 ): Promise<{ ok: boolean; skipped?: string; targets: TransPrewarmTarget[] }> {
   const id = commentId.trim();
   const targetLangs = [...APPROVED_COMMENT_PREWARM_TARGET_LANGUAGES];
@@ -1248,8 +1297,8 @@ export async function prewarmApprovedCommentTrans(
       targets: targetLangs.map((lang) => ({
         lang,
         status: "skipped",
-        error: "COMMENT_TRANSLATION_PREWARM_DISABLED"
-      }))
+        error: "COMMENT_TRANSLATION_PREWARM_DISABLED",
+      })),
     };
   }
 
@@ -1260,8 +1309,8 @@ export async function prewarmApprovedCommentTrans(
       targets: targetLangs.map((lang) => ({
         lang,
         status: "failed",
-        error: "COMMENT_ID_EMPTY"
-      }))
+        error: "COMMENT_ID_EMPTY",
+      })),
     };
   }
 
@@ -1273,18 +1322,20 @@ export async function prewarmApprovedCommentTrans(
       targets: targetLangs.map((lang) => ({
         lang,
         status: "skipped",
-        error: "GOOGLE_TRANSLATE_NOT_CONFIGURED"
-      }))
+        error: "GOOGLE_TRANSLATE_NOT_CONFIGURED",
+      })),
     };
   }
 
-  const results = await Promise.allSettled(targetLangs.map((targetLang) =>
-    translateVisibleComments(env, {
-      commentIds: [id],
-      sourceLanguage: "auto",
-      targetLanguage: targetLang
-    })
-  ));
+  const results = await Promise.allSettled(
+    targetLangs.map((targetLang) =>
+      translateVisibleComments(env, {
+        commentIds: [id],
+        sourceLanguage: "auto",
+        targetLanguage: targetLang,
+      }),
+    ),
+  );
 
   return {
     ok: true,
@@ -1294,7 +1345,7 @@ export async function prewarmApprovedCommentTrans(
         return {
           lang,
           status: "failed",
-          error: result.reason instanceof Error ? result.reason.message : String(result.reason)
+          error: result.reason instanceof Error ? result.reason.message : String(result.reason),
         };
       }
 
@@ -1303,15 +1354,15 @@ export async function prewarmApprovedCommentTrans(
         return {
           lang,
           status: "success",
-          cached: item.cached
+          cached: item.cached,
         };
       }
 
       return {
         lang,
         status: "failed",
-        error: item?.error ?? "TRANSLATION_EMPTY"
+        error: item?.error ?? "TRANSLATION_EMPTY",
       };
-    })
+    }),
   };
 }

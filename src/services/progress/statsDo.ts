@@ -1,12 +1,12 @@
 import { ApiError } from "../../lib/errors";
+import { buildStatsCountsBase64, parseStatsCountsBase64 } from "./bitmap";
+import { isSha256Hex, type ProgressDoEnv } from "./manifest";
 import {
   normalizeNonNegativeInt,
   nowTimestampMs,
   type ProgressStatsDelta,
-  type ProgressStatsSnapshot
+  type ProgressStatsSnapshot,
 } from "./model";
-import { buildStatsCountsBase64, parseStatsCountsBase64 } from "./bitmap";
-import { isSha256Hex, type ProgressDoEnv } from "./manifest";
 import { errorResponse, jsonResponse } from "./responses";
 
 const STATS_STORAGE_KEY = "stats:snapshot:v2";
@@ -45,7 +45,7 @@ export class OEMStatsDO {
 
   constructor(
     private readonly state: DurableObjectState,
-    private readonly env: ProgressDoEnv
+    private readonly env: ProgressDoEnv,
   ) {}
 
   async fetch(request: Request): Promise<Response> {
@@ -60,7 +60,10 @@ export class OEMStatsDO {
         return await this.runExclusive(() => this.handleApply(request));
       }
 
-      return jsonResponse({ code: "NOT_FOUND", message: "Progress stats DO route not found." }, { status: 404 });
+      return jsonResponse(
+        { code: "NOT_FOUND", message: "Progress stats DO route not found." },
+        { status: 404 },
+      );
     } catch (error) {
       return errorResponse(error);
     }
@@ -78,7 +81,7 @@ export class OEMStatsDO {
     } catch (error) {
       console.warn("[progress][stats] alarm failed", {
         markerIndexHash: this.state.id.name ?? null,
-        error: error instanceof Error ? error.message : String(error)
+        error: error instanceof Error ? error.message : String(error),
       });
       await this.state.storage.setAlarm(Date.now() + STATS_D1_FLUSH_ALARM_MS);
     }
@@ -104,26 +107,25 @@ export class OEMStatsDO {
       throw new ApiError(
         500,
         "PROGRESS_STATS_DO_IDENTITY_MISSING",
-        "Progress Stats Durable Object must be addressed by a named manifest hash."
+        "Progress Stats Durable Object must be addressed by a named manifest hash.",
       );
     }
     if (objectName !== markerIndexHash) {
       throw new ApiError(
         409,
         "PROGRESS_STATS_DATASET_CONFLICT",
-        "Stats event was routed to a different manifest Durable Object."
+        "Stats event was routed to a different manifest Durable Object.",
       );
     }
   }
 
   private async loadD1Snapshot(markerIndexHash: string): Promise<ProgressStatsSnapshot | null> {
-    const row = await this.env.DB
-      .prepare(
-        `SELECT marker_index_hash, point_count, total_synced_users, counts, updated_at
+    const row = await this.env.DB.prepare(
+      `SELECT marker_index_hash, point_count, total_synced_users, counts, updated_at
          FROM progress_stats_snapshots
          WHERE marker_index_hash = ?1 AND snapshot_version = ?2
-         LIMIT 1`
-      )
+         LIMIT 1`,
+    )
       .bind(markerIndexHash, STATS_SNAPSHOT_VERSION)
       .first<{
         marker_index_hash: string;
@@ -132,29 +134,32 @@ export class OEMStatsDO {
         counts: string;
         updated_at: number | null;
       }>();
-    if (!row) return null;
+    if (!row) {
+      return null;
+    }
 
     return {
       markerIndexHash: row.marker_index_hash || "",
       pointCount: normalizeNonNegativeInt(row.point_count, 0),
       totalSyncedUsers: normalizeNonNegativeInt(row.total_synced_users, 0),
       counts: row.counts || "",
-      updatedAt: row.updated_at ?? null
+      updatedAt: row.updated_at ?? null,
     };
   }
 
   private async loadSnapshot(markerIndexHash: string): Promise<void> {
-    if (this.d1SnapshotChecked) return;
+    if (this.d1SnapshotChecked) {
+      return;
+    }
 
-    const stored = this.snapshot
-      ?? await this.state.storage.get<ProgressStatsSnapshot>(STATS_STORAGE_KEY)
-      ?? null;
+    const stored =
+      this.snapshot ??
+      (await this.state.storage.get<ProgressStatsSnapshot>(STATS_STORAGE_KEY)) ??
+      null;
     const fromD1 = await this.loadD1Snapshot(markerIndexHash);
     const storedUpdatedAt = stored?.updatedAt ?? 0;
     const d1UpdatedAt = fromD1?.updatedAt ?? 0;
-    const snapshot = fromD1 && (!stored || d1UpdatedAt > storedUpdatedAt)
-      ? fromD1
-      : stored;
+    const snapshot = fromD1 && (!stored || d1UpdatedAt > storedUpdatedAt) ? fromD1 : stored;
 
     if (snapshot) {
       if (snapshot === fromD1) {
@@ -166,7 +171,7 @@ export class OEMStatsDO {
           markerIndexHash,
           previousUpdatedAt: stored?.updatedAt ?? null,
           rebuiltUpdatedAt: snapshot.updatedAt,
-          totalSyncedUsers: snapshot.totalSyncedUsers
+          totalSyncedUsers: snapshot.totalSyncedUsers,
         });
       }
       this.snapshot = snapshot;
@@ -184,9 +189,8 @@ export class OEMStatsDO {
   }
 
   private async writeSnapshotToD1(snapshot: ProgressStatsSnapshot): Promise<void> {
-    await this.env.DB
-      .prepare(
-        `INSERT INTO progress_stats_snapshots
+    await this.env.DB.prepare(
+      `INSERT INTO progress_stats_snapshots
            (marker_index_hash, point_count, total_synced_users, counts, updated_at, snapshot_version)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6)
          ON CONFLICT(marker_index_hash) DO UPDATE SET
@@ -194,26 +198,30 @@ export class OEMStatsDO {
            total_synced_users = excluded.total_synced_users,
            counts = excluded.counts,
            updated_at = excluded.updated_at,
-           snapshot_version = excluded.snapshot_version`
-      )
+           snapshot_version = excluded.snapshot_version`,
+    )
       .bind(
         snapshot.markerIndexHash,
         snapshot.pointCount,
         snapshot.totalSyncedUsers,
         snapshot.counts,
         snapshot.updatedAt,
-        STATS_SNAPSHOT_VERSION
+        STATS_SNAPSHOT_VERSION,
       )
       .run();
   }
 
   private async flushSnapshotToD1IfDirty(): Promise<void> {
     const dirty = await this.state.storage.get<boolean>(STATS_D1_DIRTY_KEY);
-    if (!dirty) return;
+    if (!dirty) {
+      return;
+    }
 
     const markerIndexHash = this.state.id.name?.trim().toLowerCase() ?? "";
     await this.loadSnapshot(markerIndexHash);
-    if (!this.snapshot) return;
+    if (!this.snapshot) {
+      return;
+    }
 
     await this.writeSnapshotToD1(this.snapshot);
     await this.state.storage.delete(STATS_D1_DIRTY_KEY);
@@ -223,7 +231,7 @@ export class OEMStatsDO {
     const now = Date.now();
     const expiryEntries = await this.state.storage.list<number>({
       prefix: STATS_EVENT_EXPIRY_KEY_PREFIX,
-      limit: STATS_RECEIPT_CLEANUP_LIMIT
+      limit: STATS_RECEIPT_CLEANUP_LIMIT,
     });
     const keysToDelete: string[] = [];
     let nextExpiry: number | null = null;
@@ -264,7 +272,7 @@ export class OEMStatsDO {
         totalSyncedUsers: 0,
         sampleSize: 0,
         counts: "",
-        updatedAt: null
+        updatedAt: null,
       });
     }
     return jsonResponse({
@@ -273,20 +281,21 @@ export class OEMStatsDO {
       totalSyncedUsers: this.snapshot.totalSyncedUsers,
       sampleSize: this.snapshot.totalSyncedUsers,
       counts: this.snapshot.counts,
-      updatedAt: this.snapshot.updatedAt
+      updatedAt: this.snapshot.updatedAt,
     });
   }
 
   private async handleApply(request: Request): Promise<Response> {
-    const payload = await request.json().catch(() => null) as Partial<ProgressStatsDelta> | null;
+    const payload = (await request.json().catch(() => null)) as Partial<ProgressStatsDelta> | null;
     if (!payload) {
       throw new ApiError(422, "VALIDATION_ERROR", "Invalid progress stats delta.");
     }
 
     const eventId = typeof payload.eventId === "string" ? payload.eventId.trim().toLowerCase() : "";
-    const markerIndexHash = typeof payload.markerIndexHash === "string"
-      ? payload.markerIndexHash.trim().toLowerCase()
-      : "";
+    const markerIndexHash =
+      typeof payload.markerIndexHash === "string"
+        ? payload.markerIndexHash.trim().toLowerCase()
+        : "";
     const pointCount = normalizeNonNegativeInt(payload.pointCount, 0);
     if (!isSha256Hex(eventId) || !isSha256Hex(markerIndexHash) || pointCount <= 0) {
       throw new ApiError(422, "VALIDATION_ERROR", "Invalid progress stats event metadata.");
@@ -299,23 +308,34 @@ export class OEMStatsDO {
       pointCount,
       totalSyncedUsers: 0,
       counts: buildStatsCountsBase64(new Uint32Array(pointCount)),
-      updatedAt: null
+      updatedAt: null,
     };
     const currentCounts = this.counts ?? new Uint32Array(pointCount);
 
-    if (currentSnapshot.markerIndexHash !== markerIndexHash || currentSnapshot.pointCount !== pointCount) {
-      throw new ApiError(409, "PROGRESS_STATS_DATASET_CONFLICT", "Stats dataset metadata does not match.");
+    if (
+      currentSnapshot.markerIndexHash !== markerIndexHash ||
+      currentSnapshot.pointCount !== pointCount
+    ) {
+      throw new ApiError(
+        409,
+        "PROGRESS_STATS_DATASET_CONFLICT",
+        "Stats dataset metadata does not match.",
+      );
     }
 
     const increments = Array.isArray(payload.increments) ? payload.increments : [];
     const decrements = Array.isArray(payload.decrements) ? payload.decrements : [];
     const nextCounts = new Uint32Array(currentCounts);
     for (const index of increments) {
-      if (!Number.isInteger(index) || index < 0 || index >= pointCount) continue;
+      if (!Number.isInteger(index) || index < 0 || index >= pointCount) {
+        continue;
+      }
       nextCounts[index] = (nextCounts[index] ?? 0) + 1;
     }
     for (const index of decrements) {
-      if (!Number.isInteger(index) || index < 0 || index >= pointCount) continue;
+      if (!Number.isInteger(index) || index < 0 || index >= pointCount) {
+        continue;
+      }
       nextCounts[index] = Math.max(0, (nextCounts[index] ?? 0) - 1);
     }
 
@@ -325,7 +345,7 @@ export class OEMStatsDO {
       pointCount,
       totalSyncedUsers: currentSnapshot.totalSyncedUsers + (payload.firstSync ? 1 : 0),
       counts: buildStatsCountsBase64(nextCounts),
-      updatedAt: appliedAt
+      updatedAt: appliedAt,
     };
     let duplicate = false;
     await this.state.storage.transaction(async (transaction) => {
@@ -348,7 +368,7 @@ export class OEMStatsDO {
         idempotent: true,
         markerIndexHash,
         totalSyncedUsers: currentSnapshot.totalSyncedUsers,
-        sampleSize: currentSnapshot.totalSyncedUsers
+        sampleSize: currentSnapshot.totalSyncedUsers,
       });
     }
 
@@ -358,7 +378,7 @@ export class OEMStatsDO {
       ok: true,
       markerIndexHash,
       totalSyncedUsers: nextSnapshot.totalSyncedUsers,
-      sampleSize: nextSnapshot.totalSyncedUsers
+      sampleSize: nextSnapshot.totalSyncedUsers,
     });
   }
 }

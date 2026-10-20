@@ -1,5 +1,6 @@
 import type { Hono } from "hono";
 import { z } from "zod";
+
 import { ApiError } from "../../lib/errors";
 import { rateLimit } from "../../middleware/rate-limit";
 import type { AppEnv } from "../../types/app";
@@ -64,7 +65,7 @@ function forwardPasswordResetRequest(
 
 async function handlePasswordResetRequest(
   c: AuthRouteContext,
-  forwardToAuthJsonPath: ForwardToAuthJsonPath
+  forwardToAuthJsonPath: ForwardToAuthJsonPath,
 ) {
   let body: unknown;
   try {
@@ -123,8 +124,9 @@ export function registerPasswordResetRoutes(
     }
 
     const identifier = `reset-password:${parsed.data.token}`;
-    const verification = await c.env.DB
-      .prepare("SELECT value, expiresAt FROM auth_verifications WHERE identifier = ?1 LIMIT 1")
+    const verification = await c.env.DB.prepare(
+      "SELECT value, expiresAt FROM auth_verifications WHERE identifier = ?1 LIMIT 1",
+    )
       .bind(identifier)
       .first<{ value: string; expiresAt: string }>();
 
@@ -133,8 +135,7 @@ export function registerPasswordResetRoutes(
       throw new ApiError(400, "INVALID_TOKEN", "Reset token is invalid or expired.");
     }
 
-    const user = await c.env.DB
-      .prepare("SELECT email FROM auth_users WHERE id = ?1 LIMIT 1")
+    const user = await c.env.DB.prepare("SELECT email FROM auth_users WHERE id = ?1 LIMIT 1")
       .bind(verification.value)
       .first<{ email: string }>();
 

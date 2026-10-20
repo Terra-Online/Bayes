@@ -19,7 +19,7 @@
     "typecheck:logger": "tsc --noEmit -p oem-logger/tsconfig.json",
     "lint": "eslint .",
     "logger:check": "pnpm run typecheck:logger && eslint oem-logger && vitest run oem-logger/src/index.spec.ts && wrangler deploy --dry-run --config oem-logger/wrangler.toml",
-    "check": "pnpm run waf:check && pnpm run typecheck && pnpm run typecheck:logger && pnpm run lint && pnpm test && pnpm run test:auth-runtime && pnpm run test:worker-lifecycle && wrangler deploy --dry-run --config oem-logger/wrangler.toml",
+    "check": "pnpm run format:check && pnpm run waf:check && pnpm run typecheck && pnpm run typecheck:logger && pnpm run lint && pnpm test && pnpm run test:auth-runtime && pnpm run test:worker-lifecycle && wrangler deploy --dry-run --config oem-logger/wrangler.toml",
     "db:migrate:local": "wrangler d1 migrations apply DB --local",
     "db:migrate:remote": "wrangler d1 migrations apply DB --remote",
     "logger:dev": "wrangler dev --config oem-logger/wrangler.toml",
@@ -31,7 +31,10 @@
     "glossary:update": "node scripts/update-google-glossary.mjs",
     "coverage-manifest:update": "node scripts/update-image-coverage-manifest.mjs",
     "progress:stats:rebuild": "node scripts/rebuild-progress-stats.mjs",
-    "demo:ugc:sync": "node scripts/sync-demo-ugc.mjs"
+    "demo:ugc:sync": "node scripts/sync-demo-ugc.mjs",
+    "format": "oxfmt --write .",
+    "format:check": "oxfmt --check .",
+    "lint:fix": "eslint . --fix"
   },
   "dependencies": {
     "@cloudflare/containers": "^0.3.7",
@@ -47,14 +50,17 @@
     "@cloudflare/workers-types": "^5.20260722.1",
     "@eslint/js": "^9.24.0",
     "@types/node": "^22.15.3",
+    "@typescript-eslint/eslint-plugin": "8.58.1",
     "@typescript-eslint/parser": "^8.46.1",
     "eslint": "^9.24.0",
+    "globals": "17.13.0",
+    "oxfmt": "0.73.0",
     "typescript": "^5.8.3",
     "user-agents": "^2.1.161",
     "vitest": "^3.2.4",
     "wrangler": "^4.113.0"
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=22.12.0"
   }
 }

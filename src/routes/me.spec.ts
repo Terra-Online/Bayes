@@ -1,17 +1,23 @@
 import { readFileSync } from "node:fs";
+
 import { Hono } from "hono";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { createUGCImageDatabase } from "../test/ugcImageDatabase";
+
 import { ApiError } from "../lib/errors";
+import { createUGCImageDatabase } from "../test/ugcImageDatabase";
 import type { AppEnv, AuthUser } from "../types/app";
 
 vi.mock("../middleware/auth", () => ({
   requireAuth: async (c: { get: (key: string) => unknown }, next: () => Promise<void>) => {
-    if (!c.get("authUser")) throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
+    if (!c.get("authUser")) {
+      throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
+    }
     await next();
-  }
+  },
 }));
-vi.mock("../middleware/rate-limit", () => ({ rateLimit: () => async (_c: unknown, next: () => Promise<void>) => next() }));
+vi.mock("../middleware/rate-limit", () => ({
+  rateLimit: () => async (_c: unknown, next: () => Promise<void>) => next(),
+}));
 import { createMeRoutes } from "./me";
 
 let database: ReturnType<typeof createUGCImageDatabase>;
@@ -32,10 +38,13 @@ beforeEach(() => {
     body: new Uint8Array([82, 73, 70, 70]),
     httpEtag: '"test"',
     httpMetadata: { contentType: "image/webp" },
-    writeHttpMetadata: (headers: Headers) => headers.set("Content-Type", "image/webp")
+    writeHttpMetadata: (headers: Headers) => headers.set("Content-Type", "image/webp"),
   });
 });
-afterEach(() => { database.sqlite.close(); vi.restoreAllMocks(); });
+afterEach(() => {
+  database.sqlite.close();
+  vi.restoreAllMocks();
+});
 
 function request(id: string, uid?: string, headers?: HeadersInit) {
   return requestPath(`/contributions/${id}/preview`, uid, headers);
@@ -43,17 +52,26 @@ function request(id: string, uid?: string, headers?: HeadersInit) {
 function requestPath(path: string, uid?: string, headers?: HeadersInit) {
   const app = new Hono<AppEnv>();
   app.onError((error) => {
-    if (error instanceof ApiError) return new Response(error.code, { status: error.status });
+    if (error instanceof ApiError) {
+      return new Response(error.code, { status: error.status });
+    }
     throw error;
   });
-  if (uid) app.use("*", async (c, next) => {
-    c.set("authUser", { uid } as AuthUser);
-    await next();
-  });
+  if (uid) {
+    app.use("*", async (c, next) => {
+      c.set("authUser", { uid } as AuthUser);
+      await next();
+    });
+  }
   app.route("/me/v1", createMeRoutes());
-  return app.request(`http://localhost/me/v1${path}`, { headers }, {
-    DB: database.db, UGC_BUCKET: { get } as unknown as R2Bucket
-  });
+  return app.request(
+    `http://localhost/me/v1${path}`,
+    { headers },
+    {
+      DB: database.db,
+      UGC_BUCKET: { get } as unknown as R2Bucket,
+    },
+  );
 }
 
 it("serves an owner's image bytes with private cache headers", async () => {
@@ -84,11 +102,11 @@ it("rejects unauthenticated requests and missing image objects", async () => {
 
 it("revalidates an owner's cached preview without sending image bytes", async () => {
   get.mockResolvedValueOnce({
-    httpEtag: '\"test\"',
+    httpEtag: '"test"',
     httpMetadata: { contentType: "image/webp" },
     writeHttpMetadata: (headers: Headers) => headers.set("Content-Type", "image/webp"),
   });
-  const response = await request("photo", "author", { "If-None-Match": '\"test\"' });
+  const response = await request("photo", "author", { "If-None-Match": '"test"' });
   expect(response.status).toBe(304);
   expect(await response.text()).toBe("");
   expect(response.headers.get("etag")).toBe('"test"');
@@ -100,21 +118,27 @@ it("revalidates an owner's cached preview without sending image bytes", async ()
 
 it("caches completed overview counts and pages separately by owner and filter", async () => {
   const prepare = vi.spyOn(database.db, "prepare");
-  const responses = await Promise.all([requestPath("/overview", "author"), requestPath("/overview", "author")]);
+  const responses = await Promise.all([
+    requestPath("/overview", "author"),
+    requestPath("/overview", "author"),
+  ]);
   expect(prepare).toHaveBeenCalledTimes(2);
   await requestPath("/overview", "author");
   expect(prepare).toHaveBeenCalledTimes(2);
-  type Summary = { contributions: { imageCount: number; recent?: unknown }; loginMethods?: unknown };
-  const data = await responses[0].json() as Summary;
+  type Summary = {
+    contributions: { imageCount: number; recent?: unknown };
+    loginMethods?: unknown;
+  };
+  const data = (await responses[0].json()) as Summary;
   expect(data.contributions.imageCount).toBe(3);
   expect(data.contributions.recent).toBeUndefined();
   expect(data.loginMethods).toBeUndefined();
   expect(responses[0].headers.get("Cache-Control")).toBe("private, max-age=15, must-revalidate");
-  const other = await (await requestPath("/overview", "other")).json() as Summary;
+  const other = (await (await requestPath("/overview", "other")).json()) as Summary;
   expect(other.contributions.imageCount).toBe(0);
   prepare.mockClear();
   const image = await requestPath("/contributions?kind=image&limit=1", "author");
-  expect((await image.json() as { items: unknown[] }).items).toHaveLength(1);
+  expect(((await image.json()) as { items: unknown[] }).items).toHaveLength(1);
   await requestPath("/contributions?kind=image&limit=1", "author");
   expect(prepare).toHaveBeenCalledOnce();
   await requestPath("/contributions?kind=comment&limit=1", "author");
@@ -128,15 +152,28 @@ it("caches completed overview counts and pages separately by owner and filter", 
 it("keeps concurrent overview queries independent when the first query fails", async () => {
   const prepare = database.db.prepare.bind(database.db);
   let rejectFirst!: (error: Error) => void;
-  vi.spyOn(database.db, "prepare").mockImplementationOnce(() => ({
-    bind() { return this; },
-    first: () => new Promise((_resolve, reject) => { rejectFirst = reject; })
-  } as unknown as D1PreparedStatement)).mockImplementation(prepare);
+  vi.spyOn(database.db, "prepare")
+    .mockImplementationOnce(
+      () =>
+        ({
+          bind() {
+            return this;
+          },
+          first: () =>
+            new Promise((_resolve, reject) => {
+              rejectFirst = reject;
+            }),
+        }) as unknown as D1PreparedStatement,
+    )
+    .mockImplementation(prepare);
   const first = requestPath("/overview", "author");
   const rejected = expect(first).rejects.toThrow("first request failed");
   await vi.waitFor(() => expect(rejectFirst).toBeTypeOf("function"));
-  try { expect((await requestPath("/overview", "author")).status).toBe(200); }
-  finally { rejectFirst(new Error("first request failed")); }
+  try {
+    expect((await requestPath("/overview", "author")).status).toBe(200);
+  } finally {
+    rejectFirst(new Error("first request failed"));
+  }
   await rejected;
   expect((await requestPath("/overview", "author")).status).toBe(200);
 });

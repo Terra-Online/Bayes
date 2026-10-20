@@ -1,15 +1,15 @@
+import { sha256Hex } from "../../lib/crypto";
 import { ApiError } from "../../lib/errors";
 import { getJsonFromKv, putJsonToKv } from "../../lib/kvJson";
-import { sha256Hex } from "../../lib/crypto";
 import type { Bindings } from "../../types/app";
+import { getBitmapBit } from "./bitmap";
 import {
   PROGRESS_BITS_PER_POINT,
   PROGRESS_FORMAT_VERSION,
   normalizeNonNegativeInt,
   nowTimestampMs,
-  type ProgressManifestPayload
+  type ProgressManifestPayload,
 } from "./model";
-import { getBitmapBit } from "./bitmap";
 
 export type ProgressDoEnv = Bindings;
 
@@ -34,9 +34,7 @@ export function normalizePointIds(value: unknown, fieldName: string): string[] {
     throw new ApiError(422, "VALIDATION_ERROR", `${fieldName} must be an array.`);
   }
 
-  const pointIds = value
-    .map((item) => String(item).trim())
-    .filter((item) => item.length > 0);
+  const pointIds = value.map((item) => String(item).trim()).filter((item) => item.length > 0);
 
   if (pointIds.length !== new Set(pointIds).size) {
     return [...new Set(pointIds)];
@@ -48,7 +46,7 @@ export function buildCanonicalMarkerManifest(pointIds: string[]): string {
   return JSON.stringify({
     schemaVersion: 1,
     mapId: "endfield",
-    points: pointIds
+    points: pointIds,
   });
 }
 
@@ -62,9 +60,8 @@ export async function normalizeManifestPayload(raw: unknown): Promise<Registered
   }
 
   const payload = raw as ProgressManifestPayload;
-  const markerIndexHash = typeof payload.markerIndexHash === "string"
-    ? payload.markerIndexHash.trim().toLowerCase()
-    : "";
+  const markerIndexHash =
+    typeof payload.markerIndexHash === "string" ? payload.markerIndexHash.trim().toLowerCase() : "";
   const pointIds = normalizePointIds(payload.pointIds, "pointIds");
 
   if (!isSha256Hex(markerIndexHash) || pointIds.length === 0) {
@@ -73,7 +70,11 @@ export async function normalizeManifestPayload(raw: unknown): Promise<Registered
 
   const computedHash = await sha256Hex(buildCanonicalMarkerManifest(pointIds));
   if (computedHash !== markerIndexHash) {
-    throw new ApiError(422, "PROGRESS_MANIFEST_HASH_MISMATCH", "Progress manifest hash does not match point index.");
+    throw new ApiError(
+      422,
+      "PROGRESS_MANIFEST_HASH_MISMATCH",
+      "Progress manifest hash does not match point index.",
+    );
   }
 
   return {
@@ -82,7 +83,7 @@ export async function normalizeManifestPayload(raw: unknown): Promise<Registered
     bitsPerPoint: PROGRESS_BITS_PER_POINT,
     pointIds,
     pointCount: pointIds.length,
-    indexById: new Map(pointIds.map((id, index) => [id, index]))
+    indexById: new Map(pointIds.map((id, index) => [id, index])),
   };
 }
 
@@ -91,7 +92,9 @@ export function pointIdsFromBitmap(bytes: Uint8Array, manifest: RegisteredManife
   for (let index = 0; index < manifest.pointCount; index += 1) {
     if (getBitmapBit(bytes, index)) {
       const pointId = manifest.pointIds[index];
-      if (pointId) pointIds.push(pointId);
+      if (pointId) {
+        pointIds.push(pointId);
+      }
     }
   }
   return pointIds;
@@ -100,7 +103,7 @@ export function pointIdsFromBitmap(bytes: Uint8Array, manifest: RegisteredManife
 function manifestFromStored(stored: StoredManifest): RegisteredManifest {
   return {
     ...stored,
-    indexById: new Map(stored.pointIds.map((id, index) => [id, index]))
+    indexById: new Map(stored.pointIds.map((id, index) => [id, index])),
   };
 }
 
@@ -110,29 +113,28 @@ function manifestToStored(manifest: RegisteredManifest): StoredManifest {
     formatVersion: manifest.formatVersion,
     bitsPerPoint: manifest.bitsPerPoint,
     pointIds: manifest.pointIds,
-    pointCount: manifest.pointCount
+    pointCount: manifest.pointCount,
   };
 }
 
 export async function loadProgressManifest(
   env: ProgressDoEnv,
-  markerIndexHash: string
+  markerIndexHash: string,
 ): Promise<RegisteredManifest | null> {
   const cached = await getJsonFromKv<StoredManifest>(
     env.OEM_KV,
-    buildProgressManifestCacheKey(markerIndexHash)
+    buildProgressManifestCacheKey(markerIndexHash),
   );
   if (cached) {
     return manifestFromStored(cached);
   }
 
-  const row = await env.DB
-    .prepare(
-      `SELECT marker_index_hash, format_version, bits_per_point, point_count, point_ids
+  const row = await env.DB.prepare(
+    `SELECT marker_index_hash, format_version, bits_per_point, point_count, point_ids
        FROM progress_marker_manifests
        WHERE marker_index_hash = ?1
-       LIMIT 1`
-    )
+       LIMIT 1`,
+  )
     .bind(markerIndexHash)
     .first<{
       marker_index_hash: string;
@@ -141,7 +143,9 @@ export async function loadProgressManifest(
       point_count: number;
       point_ids: string;
     }>();
-  if (!row) return null;
+  if (!row) {
+    return null;
+  }
 
   const pointIds = JSON.parse(row.point_ids) as string[];
   const manifest = {
@@ -150,39 +154,38 @@ export async function loadProgressManifest(
     bitsPerPoint: normalizeNonNegativeInt(row.bits_per_point, PROGRESS_BITS_PER_POINT),
     pointCount: normalizeNonNegativeInt(row.point_count, pointIds.length),
     pointIds,
-    indexById: new Map(pointIds.map((id, index) => [id, index]))
+    indexById: new Map(pointIds.map((id, index) => [id, index])),
   };
   await putJsonToKv(
     env.OEM_KV,
     buildProgressManifestCacheKey(manifest.markerIndexHash),
-    manifestToStored(manifest)
+    manifestToStored(manifest),
   ).catch(() => undefined);
   return manifest;
 }
 
 export async function saveProgressManifest(
   env: ProgressDoEnv,
-  manifest: RegisteredManifest
+  manifest: RegisteredManifest,
 ): Promise<void> {
-  await env.DB
-    .prepare(
-      `INSERT INTO progress_marker_manifests
+  await env.DB.prepare(
+    `INSERT INTO progress_marker_manifests
          (marker_index_hash, format_version, bits_per_point, point_count, point_ids, created_at)
        VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-       ON CONFLICT(marker_index_hash) DO NOTHING`
-    )
+       ON CONFLICT(marker_index_hash) DO NOTHING`,
+  )
     .bind(
       manifest.markerIndexHash,
       manifest.formatVersion,
       manifest.bitsPerPoint,
       manifest.pointCount,
       JSON.stringify(manifest.pointIds),
-      nowTimestampMs()
+      nowTimestampMs(),
     )
     .run();
   await putJsonToKv(
     env.OEM_KV,
     buildProgressManifestCacheKey(manifest.markerIndexHash),
-    manifestToStored(manifest)
+    manifestToStored(manifest),
   ).catch(() => undefined);
 }

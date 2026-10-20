@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+
 import { buildStatsCountsBase64, parseStatsCountsBase64 } from "./bitmap";
 import type { ProgressDoEnv } from "./manifest";
 import { OEMStatsDO } from "./statsDo";
@@ -13,7 +14,7 @@ class FakeStatement {
   constructor(
     private readonly database: FakeD1,
     readonly sql: string,
-    values: unknown[] = []
+    values: unknown[] = [],
   ) {
     this.values = values;
   }
@@ -87,7 +88,7 @@ class FakeD1 {
       mutations: this.mutations,
       archiveProgress: this.archiveProgress,
       archiveMutations: this.archiveMutations,
-      outbox: this.outbox
+      outbox: this.outbox,
     };
     this.users = users;
     this.mutations = mutations;
@@ -96,7 +97,9 @@ class FakeD1 {
     this.outbox = outbox;
     try {
       statements.forEach((statement, index) => {
-        if (this.failBatchAt === index) throw new Error("injected D1 batch failure");
+        if (this.failBatchAt === index) {
+          throw new Error("injected D1 batch failure");
+        }
         this.execute(statement);
       });
     } catch (error) {
@@ -107,7 +110,7 @@ class FakeD1 {
       this.outbox = original.outbox;
       throw error;
     }
-    return statements.map(() => ({ success: true } as unknown as D1Result));
+    return statements.map(() => ({ success: true }) as unknown as D1Result);
   }
 
   execute(statement: BoundStatement): void {
@@ -115,7 +118,9 @@ class FakeD1 {
     if (sql.includes("UPDATE users") && sql.includes("progress_version")) {
       const uid = String(values[0]);
       const user = this.users.get(uid);
-      if (!user) return;
+      if (!user) {
+        return;
+      }
       Object.assign(user, {
         progress_version: values[1],
         progress_marker: values[2],
@@ -128,18 +133,20 @@ class FakeD1 {
         progress_updated_at: values[9],
         progress_last_mutation_id: values[10],
         progress_cloud_synced: values[11],
-        progress_synced_at: values[12] ?? user.progress_synced_at
+        progress_synced_at: values[12] ?? user.progress_synced_at,
       });
       return;
     }
     if (sql.includes("INSERT INTO progress_sync_mutations")) {
       const key = `${values[0]}:${values[1]}`;
-      if (this.mutations.has(key)) throw new Error("duplicate mutation");
+      if (this.mutations.has(key)) {
+        throw new Error("duplicate mutation");
+      }
       this.mutations.set(key, {
         request_hash: values[2],
         response_json: values[3],
         result_version: values[4],
-        created_at: values[5]
+        created_at: values[5],
       });
       return;
     }
@@ -155,18 +162,20 @@ class FakeD1 {
         archive_count: values[7],
         retained_archive_ids: values[8],
         updated_at: values[9],
-        last_mutation_id: values[10]
+        last_mutation_id: values[10],
       });
       return;
     }
     if (sql.includes("INSERT INTO archive_progress_sync_mutations")) {
       const key = `${values[0]}:${values[1]}`;
-      if (this.archiveMutations.has(key)) throw new Error("duplicate archive mutation");
+      if (this.archiveMutations.has(key)) {
+        throw new Error("duplicate archive mutation");
+      }
       this.archiveMutations.set(key, {
         request_hash: values[2],
         response_json: values[3],
         result_version: values[4],
-        created_at: values[5]
+        created_at: values[5],
       });
       return;
     }
@@ -180,13 +189,15 @@ class FakeD1 {
         payload: values[4],
         status: "pending",
         attempts: 0,
-        created_at: values[5]
+        created_at: values[5],
       });
       return;
     }
     if (sql.includes("UPDATE progress_stats_outbox") && sql.includes("status = 'processed'")) {
       const event = this.outbox.find((candidate) => candidate.event_id === values[0]);
-      if (event) event.status = "processed";
+      if (event) {
+        event.status = "processed";
+      }
     }
   }
 }
@@ -208,7 +219,9 @@ class FakeStorage {
     if (Array.isArray(keyOrKeys)) {
       let deleted = 0;
       keyOrKeys.forEach((key) => {
-        if (this.values.delete(key)) deleted += 1;
+        if (this.values.delete(key)) {
+          deleted += 1;
+        }
       });
       return deleted;
     }
@@ -272,11 +285,14 @@ function userRow(uid: string): StoredUser {
     points: 0,
     karma: 0,
     created_at: "2026-01-01",
-    last_active: "2026-01-01"
+    last_active: "2026-01-01",
   };
 }
 
-function createState(name?: string, storage = new FakeStorage()): {
+function createState(
+  name?: string,
+  storage = new FakeStorage(),
+): {
   state: DurableObjectState;
   waits: Promise<unknown>[];
   storage: FakeStorage;
@@ -286,17 +302,17 @@ function createState(name?: string, storage = new FakeStorage()): {
     state: {
       id: { name },
       storage,
-      waitUntil: (promise: Promise<unknown>) => waits.push(promise)
+      waitUntil: (promise: Promise<unknown>) => waits.push(promise),
     } as unknown as DurableObjectState,
     waits,
-    storage
+    storage,
   };
 }
 
 function createUserDo(
   database: FakeD1,
   uid = "A",
-  statsFetch: () => Promise<Response> = async () => new Response("{}")
+  statsFetch: () => Promise<Response> = async () => new Response("{}"),
 ) {
   const markerIndexHash = "a".repeat(64);
   const manifest = JSON.stringify({
@@ -304,7 +320,7 @@ function createUserDo(
     formatVersion: 1,
     bitsPerPoint: 1,
     pointIds: ["p1", "p2"],
-    pointCount: 2
+    pointCount: 2,
   });
   const archiveIndexHash = "c".repeat(64);
   const archiveManifest = JSON.stringify({
@@ -312,26 +328,29 @@ function createUserDo(
     formatVersion: 1,
     bitsPerArchive: 1,
     archiveIds: ["archive-a", "archive-b"],
-    archiveCount: 2
+    archiveCount: 2,
   });
   const kv = {
-    get: async (key: string) => key.includes("archive-manifest") ? archiveManifest : manifest,
-    put: async () => undefined
+    get: async (key: string) => (key.includes("archive-manifest") ? archiveManifest : manifest),
+    put: async () => undefined,
   };
   const state = createState(uid);
   const env = {
     DB: database,
     OEM_KV: kv,
-    OEM_STATS_DO: { getByName: () => ({ fetch: statsFetch }) }
+    OEM_STATS_DO: { getByName: () => ({ fetch: statsFetch }) },
   } as unknown as ProgressDoEnv;
   return { object: new OEMUserDO(state.state, env), markerIndexHash, archiveIndexHash, state, kv };
 }
 
-function syncRequest(markerIndexHash: string, options: {
-  mutationId: string;
-  baseRevision?: string;
-  setPointIds?: string[];
-}): Request {
+function syncRequest(
+  markerIndexHash: string,
+  options: {
+    mutationId: string;
+    baseRevision?: string;
+    setPointIds?: string[];
+  },
+): Request {
   return new Request("https://progress-user/sync?uid=B", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -341,17 +360,20 @@ function syncRequest(markerIndexHash: string, options: {
       clientMutationId: options.mutationId,
       setPointIds: options.setPointIds ?? [],
       clearPointIds: [],
-      updatedAt: 1_700_000_000_000
-    })
+      updatedAt: 1_700_000_000_000,
+    }),
   });
 }
 
-function archiveSyncRequest(archiveIndexHash: string, options: {
-  mutationId: string;
-  baseRevision?: string;
-  setArchiveIds?: string[];
-  clearArchiveIds?: string[];
-}): Request {
+function archiveSyncRequest(
+  archiveIndexHash: string,
+  options: {
+    mutationId: string;
+    baseRevision?: string;
+    setArchiveIds?: string[];
+    clearArchiveIds?: string[];
+  },
+): Request {
   return new Request("https://progress-user/archive/sync", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -361,8 +383,8 @@ function archiveSyncRequest(archiveIndexHash: string, options: {
       clientMutationId: options.mutationId,
       setArchiveIds: options.setArchiveIds ?? [],
       clearArchiveIds: options.clearArchiveIds ?? [],
-      updatedAt: 1_700_000_000_000
-    })
+      updatedAt: 1_700_000_000_000,
+    }),
   });
 }
 
@@ -373,17 +395,22 @@ describe("OEMUserDO progress consistency", () => {
     database.users.set("A", userRow("A"));
     const { object, markerIndexHash } = createUserDo(database);
 
-    const response = await object.fetch(new Request(
-      `https://progress-user/state?markerIndexHash=${markerIndexHash}`
-    ));
+    const response = await object.fetch(
+      new Request(`https://progress-user/state?markerIndexHash=${markerIndexHash}`),
+    );
 
     expect(response.status).toBe(200);
-    expect(warningLog).toHaveBeenCalledWith("[progress][sync] request completed", expect.objectContaining({
-      operation: "state",
-      status: 200,
-      stage: "state_read"
-    }));
-    const completion = warningLog.mock.calls.find(([label]) => label === "[progress][sync] request completed")?.[1];
+    expect(warningLog).toHaveBeenCalledWith(
+      "[progress][sync] request completed",
+      expect.objectContaining({
+        operation: "state",
+        status: 200,
+        stage: "state_read",
+      }),
+    );
+    const completion = warningLog.mock.calls.find(
+      ([label]) => label === "[progress][sync] request completed",
+    )?.[1];
     expect(completion).not.toHaveProperty("uid");
     expect(completion).not.toHaveProperty("clientMutationId");
   });
@@ -392,22 +419,36 @@ describe("OEMUserDO progress consistency", () => {
     const database = new FakeD1();
     database.users.set("A", userRow("A"));
     const { object, markerIndexHash, state } = createUserDo(database);
-    const firstRequest = { mutationId: "legacy-1", setPointIds: ["p1", " legacy-old ", "legacy-old"] };
+    const firstRequest = {
+      mutationId: "legacy-1",
+      setPointIds: ["p1", " legacy-old ", "legacy-old"],
+    };
     const firstResponse = await object.fetch(syncRequest(markerIndexHash, firstRequest));
-    const first = await firstResponse.json() as { progress: { revision: string; retainedPointIds: string[] } };
+    const first = (await firstResponse.json()) as {
+      progress: { revision: string; retainedPointIds: string[] };
+    };
     expect(firstResponse.status).toBe(200);
     expect(first.progress.retainedPointIds).toEqual(["legacy-old"]);
-    expect(JSON.parse(String(database.users.get("A")?.progress_retained_point_ids))).toEqual(["legacy-old"]);
+    expect(JSON.parse(String(database.users.get("A")?.progress_retained_point_ids))).toEqual([
+      "legacy-old",
+    ]);
 
-    const readResponse = await object.fetch(new Request(`https://progress-user/state?markerIndexHash=${markerIndexHash}`));
+    const readResponse = await object.fetch(
+      new Request(`https://progress-user/state?markerIndexHash=${markerIndexHash}`),
+    );
     expect(await readResponse.json()).toMatchObject({
-      progress: { pointIds: ["p1"], retainedPointIds: ["legacy-old"] }
+      progress: { pointIds: ["p1"], retainedPointIds: ["legacy-old"] },
     });
-    const repeated = await object.fetch(syncRequest(markerIndexHash, {
-      ...firstRequest, mutationId: "legacy-2", baseRevision: first.progress.revision
-    }));
+    const repeated = await object.fetch(
+      syncRequest(markerIndexHash, {
+        ...firstRequest,
+        mutationId: "legacy-2",
+        baseRevision: first.progress.revision,
+      }),
+    );
     expect(await repeated.json()).toMatchObject({
-      unchanged: true, progress: { pointIds: ["p1"], retainedPointIds: ["legacy-old"] }
+      unchanged: true,
+      progress: { pointIds: ["p1"], retainedPointIds: ["legacy-old"] },
     });
     expect(database.users.get("A")?.progress_version).toBe(1);
     const replay = await object.fetch(syncRequest(markerIndexHash, firstRequest));
@@ -420,12 +461,16 @@ describe("OEMUserDO progress consistency", () => {
     const database = new FakeD1();
     database.users.set("A", userRow("A"));
     const { object, markerIndexHash, state } = createUserDo(database);
-    await object.fetch(syncRequest(markerIndexHash, { mutationId: "first", setPointIds: ["p1", "legacy"] }));
-    const conflict = await object.fetch(syncRequest(markerIndexHash, { mutationId: "stale", setPointIds: ["p2"] }));
+    await object.fetch(
+      syncRequest(markerIndexHash, { mutationId: "first", setPointIds: ["p1", "legacy"] }),
+    );
+    const conflict = await object.fetch(
+      syncRequest(markerIndexHash, { mutationId: "stale", setPointIds: ["p2"] }),
+    );
     expect(conflict.status).toBe(409);
     expect(await conflict.json()).toMatchObject({
       code: "PROGRESS_REVISION_CONFLICT",
-      details: { current: { pointIds: ["p1"], retainedPointIds: ["legacy"] } }
+      details: { current: { pointIds: ["p1"], retainedPointIds: ["legacy"] } },
     });
     expect(database.users.get("A")?.progress_version).toBe(1);
     await Promise.all(state.waits);
@@ -435,30 +480,52 @@ describe("OEMUserDO progress consistency", () => {
     const database = new FakeD1();
     const sourceHash = "b".repeat(64);
     database.users.set("A", {
-      ...userRow("A"), progress_version: 1, progress_marker: "Aw==",
-      progress_marker_index_hash: sourceHash, progress_checksum: "d".repeat(64),
-      progress_point_count: 2, progress_retained_point_ids: JSON.stringify(["legacy-old", "p2"])
+      ...userRow("A"),
+      progress_version: 1,
+      progress_marker: "Aw==",
+      progress_marker_index_hash: sourceHash,
+      progress_checksum: "d".repeat(64),
+      progress_point_count: 2,
+      progress_retained_point_ids: JSON.stringify(["legacy-old", "p2"]),
     });
     const { object, markerIndexHash, kv, state } = createUserDo(database);
     const getDefault = kv.get;
-    kv.get = async (key: string) => key.endsWith(sourceHash) ? JSON.stringify({
-      markerIndexHash: sourceHash, formatVersion: 1, bitsPerPoint: 1,
-      pointIds: ["p1", "removed"], pointCount: 2
-    }) : getDefault(key);
-    const response = await object.fetch(new Request(`https://progress-user/state?markerIndexHash=${markerIndexHash}`));
+    kv.get = async (key: string) =>
+      key.endsWith(sourceHash)
+        ? JSON.stringify({
+            markerIndexHash: sourceHash,
+            formatVersion: 1,
+            bitsPerPoint: 1,
+            pointIds: ["p1", "removed"],
+            pointCount: 2,
+          })
+        : getDefault(key);
+    const response = await object.fetch(
+      new Request(`https://progress-user/state?markerIndexHash=${markerIndexHash}`),
+    );
     expect(await response.json()).toMatchObject({
-      progress: { markerIndexHash: sourceHash, pointIds: ["p1"], retainedPointIds: ["legacy-old", "removed"] }
+      progress: {
+        markerIndexHash: sourceHash,
+        pointIds: ["p1"],
+        retainedPointIds: ["legacy-old", "removed"],
+      },
     });
     expect(database.mutations.size).toBe(0);
-    const migrated = await object.fetch(syncRequest(markerIndexHash, {
-      mutationId: "migration", baseRevision: "d".repeat(64)
-    }));
+    const migrated = await object.fetch(
+      syncRequest(markerIndexHash, {
+        mutationId: "migration",
+        baseRevision: "d".repeat(64),
+      }),
+    );
     expect(migrated.status).toBe(200);
     expect(await migrated.json()).toMatchObject({
-      progress: { markerIndexHash, retainedPointIds: ["legacy-old", "removed"] }
+      progress: { markerIndexHash, retainedPointIds: ["legacy-old", "removed"] },
     });
-    expect(JSON.parse(String(database.users.get("A")?.progress_retained_point_ids)))
-      .toEqual(["legacy-old", "p2", "removed"]);
+    expect(JSON.parse(String(database.users.get("A")?.progress_retained_point_ids))).toEqual([
+      "legacy-old",
+      "p2",
+      "removed",
+    ]);
     await Promise.all(state.waits);
   });
 
@@ -466,9 +533,11 @@ describe("OEMUserDO progress consistency", () => {
     const database = new FakeD1();
     database.users.set("A", { ...userRow("A"), progress_retained_point_ids: '["legacy"]' });
     const { object, markerIndexHash } = createUserDo(database);
-    const response = await object.fetch(new Request(`https://progress-user/state?markerIndexHash=${markerIndexHash}`));
+    const response = await object.fetch(
+      new Request(`https://progress-user/state?markerIndexHash=${markerIndexHash}`),
+    );
     expect(await response.json()).toMatchObject({
-      progress: { markerIndexHash, pointIds: [], retainedPointIds: ["legacy"] }
+      progress: { markerIndexHash, pointIds: [], retainedPointIds: ["legacy"] },
     });
   });
 
@@ -478,10 +547,12 @@ describe("OEMUserDO progress consistency", () => {
     database.users.set("B", userRow("B"));
     const { object, markerIndexHash, state } = createUserDo(database);
 
-    const response = await object.fetch(syncRequest(markerIndexHash, {
-      mutationId: "m1",
-      setPointIds: ["p1"]
-    }));
+    const response = await object.fetch(
+      syncRequest(markerIndexHash, {
+        mutationId: "m1",
+        setPointIds: ["p1"],
+      }),
+    );
     await Promise.all(state.waits);
 
     expect(response.status).toBe(200);
@@ -493,7 +564,9 @@ describe("OEMUserDO progress consistency", () => {
     const database = new FakeD1();
     const { state } = createState();
     const object = new OEMUserDO(state, { DB: database } as unknown as ProgressDoEnv);
-    const response = await object.fetch(new Request(`https://progress-user/state?markerIndexHash=${"a".repeat(64)}`));
+    const response = await object.fetch(
+      new Request(`https://progress-user/state?markerIndexHash=${"a".repeat(64)}`),
+    );
     expect(response.status).toBe(500);
     expect(await response.json()).toMatchObject({ code: "PROGRESS_DO_IDENTITY_MISSING" });
   });
@@ -504,10 +577,12 @@ describe("OEMUserDO progress consistency", () => {
     database.failBatchAt = 1;
     const { object, markerIndexHash, state } = createUserDo(database);
 
-    const response = await object.fetch(syncRequest(markerIndexHash, {
-      mutationId: "m1",
-      setPointIds: ["p1"]
-    }));
+    const response = await object.fetch(
+      syncRequest(markerIndexHash, {
+        mutationId: "m1",
+        setPointIds: ["p1"],
+      }),
+    );
     await Promise.all(state.waits);
 
     expect(response.status).toBe(500);
@@ -521,23 +596,30 @@ describe("OEMUserDO progress consistency", () => {
     database.users.set("A", userRow("A"));
     const { object, markerIndexHash, state } = createUserDo(database);
 
-    const first = await object.fetch(syncRequest(markerIndexHash, {
-      mutationId: "m1",
-      setPointIds: ["p1"]
-    }));
+    const first = await object.fetch(
+      syncRequest(markerIndexHash, {
+        mutationId: "m1",
+        setPointIds: ["p1"],
+      }),
+    );
     const firstBody = await first.text();
-    const firstRevision = (JSON.parse(firstBody) as { progress: { revision: string } }).progress.revision;
-    const second = await object.fetch(syncRequest(markerIndexHash, {
-      mutationId: "m2",
-      baseRevision: firstRevision,
-      setPointIds: ["p2"]
-    }));
+    const firstRevision = (JSON.parse(firstBody) as { progress: { revision: string } }).progress
+      .revision;
+    const second = await object.fetch(
+      syncRequest(markerIndexHash, {
+        mutationId: "m2",
+        baseRevision: firstRevision,
+        setPointIds: ["p2"],
+      }),
+    );
     expect(second.status).toBe(200);
 
-    const replay = await object.fetch(syncRequest(markerIndexHash, {
-      mutationId: "m1",
-      setPointIds: ["p1"]
-    }));
+    const replay = await object.fetch(
+      syncRequest(markerIndexHash, {
+        mutationId: "m1",
+        setPointIds: ["p1"],
+      }),
+    );
     await Promise.all(state.waits);
 
     expect(await replay.text()).toBe(firstBody);
@@ -552,20 +634,27 @@ describe("OEMUserDO progress consistency", () => {
     database.users.set("A", userRow("A"));
     database.dispatchOutbox = true;
     let acknowledge!: (response: Response) => void;
-    const statsNeverRespond = () => new Promise<Response>((resolve) => { acknowledge = resolve; });
+    const statsNeverRespond = () =>
+      new Promise<Response>((resolve) => {
+        acknowledge = resolve;
+      });
     const { object, markerIndexHash, state } = createUserDo(database, "A", statsNeverRespond);
 
     let timeout: ReturnType<typeof setTimeout> | undefined;
     const result = await Promise.race([
-      object.fetch(syncRequest(markerIndexHash, {
-        mutationId: "m1",
-        setPointIds: ["p1"]
-      })),
+      object.fetch(
+        syncRequest(markerIndexHash, {
+          mutationId: "m1",
+          setPointIds: ["p1"],
+        }),
+      ),
       new Promise<"timeout">((resolve) => {
         timeout = setTimeout(() => resolve("timeout"), 100);
-      })
+      }),
     ]);
-    if (timeout) clearTimeout(timeout);
+    if (timeout) {
+      clearTimeout(timeout);
+    }
 
     expect(result).toBeInstanceOf(Response);
     expect((result as Response).status).toBe(200);
@@ -581,21 +670,23 @@ describe("OEMUserDO archive progress consistency", () => {
     database.users.set("A", userRow("A"));
     const { object, archiveIndexHash } = createUserDo(database);
 
-    const syncResponse = await object.fetch(archiveSyncRequest(archiveIndexHash, {
-      mutationId: "archive-m1",
-      setArchiveIds: ["archive-a"]
-    }));
+    const syncResponse = await object.fetch(
+      archiveSyncRequest(archiveIndexHash, {
+        mutationId: "archive-m1",
+        setArchiveIds: ["archive-a"],
+      }),
+    );
     expect(syncResponse.status).toBe(200);
 
-    const stateResponse = await object.fetch(new Request(
-      `https://progress-user/archive/state?archiveIndexHash=${archiveIndexHash}`
-    ));
+    const stateResponse = await object.fetch(
+      new Request(`https://progress-user/archive/state?archiveIndexHash=${archiveIndexHash}`),
+    );
     expect(stateResponse.status).toBe(200);
     expect(await stateResponse.json()).toMatchObject({
       progress: {
         archiveIndexHash,
-        archiveIds: ["archive-a"]
-      }
+        archiveIds: ["archive-a"],
+      },
     });
     expect(database.archiveProgress.get("A")?.version).toBe(1);
     expect(database.users.get("A")?.progress_version).toBe(0);
@@ -608,36 +699,43 @@ describe("OEMUserDO archive progress consistency", () => {
     const { object, archiveIndexHash } = createUserDo(database);
     const firstRequest = archiveSyncRequest(archiveIndexHash, {
       mutationId: "archive-m1",
-      setArchiveIds: ["archive-a"]
+      setArchiveIds: ["archive-a"],
     });
     const first = await object.fetch(firstRequest);
     const firstBody = await first.text();
-    const firstRevision = (JSON.parse(firstBody) as { progress: { revision: string } }).progress.revision;
+    const firstRevision = (JSON.parse(firstBody) as { progress: { revision: string } }).progress
+      .revision;
 
-    const replay = await object.fetch(archiveSyncRequest(archiveIndexHash, {
-      mutationId: "archive-m1",
-      setArchiveIds: ["archive-a"]
-    }));
+    const replay = await object.fetch(
+      archiveSyncRequest(archiveIndexHash, {
+        mutationId: "archive-m1",
+        setArchiveIds: ["archive-a"],
+      }),
+    );
     expect(replay.status).toBe(200);
     expect(replay.headers.get("x-progress-idempotent")).toBe("true");
     expect(await replay.text()).toBe(firstBody);
 
-    const second = await object.fetch(archiveSyncRequest(archiveIndexHash, {
-      mutationId: "archive-m2",
-      baseRevision: firstRevision,
-      setArchiveIds: ["archive-b"]
-    }));
+    const second = await object.fetch(
+      archiveSyncRequest(archiveIndexHash, {
+        mutationId: "archive-m2",
+        baseRevision: firstRevision,
+        setArchiveIds: ["archive-b"],
+      }),
+    );
     expect(second.status).toBe(200);
 
-    const conflict = await object.fetch(archiveSyncRequest(archiveIndexHash, {
-      mutationId: "archive-m3",
-      baseRevision: firstRevision,
-      clearArchiveIds: ["archive-a"]
-    }));
+    const conflict = await object.fetch(
+      archiveSyncRequest(archiveIndexHash, {
+        mutationId: "archive-m3",
+        baseRevision: firstRevision,
+        clearArchiveIds: ["archive-a"],
+      }),
+    );
     expect(conflict.status).toBe(409);
     expect(await conflict.json()).toMatchObject({
       code: "ARCHIVE_PROGRESS_REVISION_CONFLICT",
-      details: { current: { archiveIds: ["archive-a", "archive-b"] } }
+      details: { current: { archiveIds: ["archive-a", "archive-b"] } },
     });
   });
 });
@@ -651,29 +749,32 @@ describe("OEMStatsDO event receipts", () => {
     pointCount: 2,
     increments: [0],
     decrements: [],
-    firstSync: true
+    firstSync: true,
   };
 
   function createStatsDo(storage = new FakeStorage(), database = new FakeD1()) {
     const state = createState(markerIndexHash, storage);
     return {
       object: new OEMStatsDO(state.state, { DB: database } as unknown as ProgressDoEnv),
-      storage
+      storage,
     };
   }
 
   it("deduplicates a retry after the first acknowledgement is lost", async () => {
     const { object, storage } = createStatsDo();
-    const request = () => new Request("https://progress-stats/apply", {
-      method: "POST",
-      body: JSON.stringify(payload)
-    });
+    const request = () =>
+      new Request("https://progress-stats/apply", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
 
     expect((await object.fetch(request())).status).toBe(200);
     const replay = await object.fetch(request());
     expect(await replay.json()).toMatchObject({ ok: true, idempotent: true });
 
-    const snapshot = await storage.get<{ counts: string; totalSyncedUsers: number }>("stats:snapshot:v2");
+    const snapshot = await storage.get<{ counts: string; totalSyncedUsers: number }>(
+      "stats:snapshot:v2",
+    );
     expect(snapshot?.totalSyncedUsers).toBe(1);
     expect([...parseStatsCountsBase64(snapshot?.counts ?? "", 2)]).toEqual([1, 0]);
   });
@@ -682,10 +783,11 @@ describe("OEMStatsDO event receipts", () => {
     const storage = new FakeStorage();
     storage.failNextTransaction = true;
     const { object } = createStatsDo(storage);
-    const request = () => new Request("https://progress-stats/apply", {
-      method: "POST",
-      body: JSON.stringify(payload)
-    });
+    const request = () =>
+      new Request("https://progress-stats/apply", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
 
     expect((await object.fetch(request())).status).toBe(500);
     expect(await storage.get("stats:snapshot:v2")).toBeUndefined();
@@ -701,7 +803,7 @@ describe("OEMStatsDO event receipts", () => {
       pointCount: 2,
       totalSyncedUsers: 7,
       counts: buildStatsCountsBase64(new Uint32Array([1, 0])),
-      updatedAt: 100
+      updatedAt: 100,
     });
     await storage.put("stats:d1:dirty:v2", true);
     const database = new FakeD1();
@@ -710,15 +812,17 @@ describe("OEMStatsDO event receipts", () => {
       point_count: 2,
       total_synced_users: 687,
       counts: buildStatsCountsBase64(new Uint32Array([300, 20])),
-      updated_at: 200
+      updated_at: 200,
     };
     const { object } = createStatsDo(storage, database);
 
-    const response = await object.fetch(new Request(
-      `https://progress-stats/state?markerIndexHash=${markerIndexHash}`
-    ));
+    const response = await object.fetch(
+      new Request(`https://progress-stats/state?markerIndexHash=${markerIndexHash}`),
+    );
     expect(await response.json()).toMatchObject({ totalSyncedUsers: 687, sampleSize: 687 });
-    const stored = await storage.get<{ counts: string; totalSyncedUsers: number }>("stats:snapshot:v2");
+    const stored = await storage.get<{ counts: string; totalSyncedUsers: number }>(
+      "stats:snapshot:v2",
+    );
     expect(stored?.totalSyncedUsers).toBe(687);
     expect([...parseStatsCountsBase64(stored?.counts ?? "", 2)]).toEqual([300, 20]);
     expect(await storage.get("stats:d1:dirty:v2")).toBeUndefined();

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+
 import type { SubmissionRecord } from "../../repositories/submission/types";
 import type { Bindings } from "../../types/app";
 import type { ModerationNotificationEvent, OemWebhookQueueMessage } from "./messages";
@@ -27,7 +28,7 @@ const submission: SubmissionRecord = {
   commentDepth: 0,
   submitter: null,
   createdAt: "2026-09-10T00:00:00.000Z",
-  updatedAt: "2026-09-10T00:00:00.000Z"
+  updatedAt: "2026-09-10T00:00:00.000Z",
 };
 
 const event: ModerationNotificationEvent = {
@@ -35,7 +36,7 @@ const event: ModerationNotificationEvent = {
   submission,
   previousStatus: "pending_openai",
   nextStatus: "pending_audit",
-  source: "auto_moderation"
+  source: "auto_moderation",
 };
 
 afterEach(() => {
@@ -44,8 +45,9 @@ afterEach(() => {
 
 describe("Discord moderation notifications", () => {
   it("fails when the webhook secret is missing", async () => {
-    await expect(sendModerationNotificationNow({} as Bindings, event))
-      .rejects.toThrow("DISCORD_MODERATION_WEBHOOK_URL is not configured");
+    await expect(sendModerationNotificationNow({} as Bindings, event)).rejects.toThrow(
+      "DISCORD_MODERATION_WEBHOOK_URL is not configured",
+    );
   });
 
   it("retries the queue message instead of acknowledging missing webhook configuration", async () => {
@@ -56,14 +58,14 @@ describe("Discord moderation notifications", () => {
       body: {
         type: "discord_notification",
         event,
-        queuedAt: "2026-09-10T00:00:00.000Z"
+        queuedAt: "2026-09-10T00:00:00.000Z",
       },
       ack,
-      retry
+      retry,
     };
     const batch = {
       queue: "oem-webhook",
-      messages: [message]
+      messages: [message],
     } as unknown as MessageBatch<OemWebhookQueueMessage>;
 
     await processWebhookQueueBatch({} as Bindings, batch);
@@ -74,8 +76,8 @@ describe("Discord moderation notifications", () => {
       "OEM_WEBHOOK_Q message failed",
       expect.objectContaining({
         eventType: "submission_moderation_result",
-        error: "DISCORD_MODERATION_WEBHOOK_URL is not configured"
-      })
+        error: "DISCORD_MODERATION_WEBHOOK_URL is not configured",
+      }),
     );
   });
 });

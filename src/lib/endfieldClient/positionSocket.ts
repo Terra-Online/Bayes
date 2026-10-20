@@ -7,10 +7,15 @@ import {
   normalizeEndfieldPositionData,
   parseEndfieldPositionSocketError,
   parseEndfieldPositionSocketMessage,
-  parseEndfieldSocketEnvelope
+  parseEndfieldSocketEnvelope,
 } from "./positionParser";
 import { createMessageId, getEndfieldTimestamp, getSignature } from "./signature";
-import type { EndfieldDeviceProfile, EndfieldPositionData, EndfieldProvider, WebSocketTokenData } from "./types";
+import type {
+  EndfieldDeviceProfile,
+  EndfieldPositionData,
+  EndfieldProvider,
+  WebSocketTokenData,
+} from "./types";
 
 const ENDFIELD_POSITION_SOCKET_HEARTBEAT_MS = 10_000;
 const ENDFIELD_POSITION_SOCKET_AUTH_TIMEOUT_MS = 8_000;
@@ -49,14 +54,16 @@ type EndfieldPositionSocketHandlers = {
   onSubscribed?: () => void;
 };
 
-export async function getEndfieldPosition(args: EndfieldPositionRequest): Promise<EndfieldPositionData> {
+export async function getEndfieldPosition(
+  args: EndfieldPositionRequest,
+): Promise<EndfieldPositionData> {
   try {
     return await getEndfieldPositionHttpFallback(args);
   } catch (httpError) {
     args.signal?.throwIfAborted();
     if (
-      httpError instanceof ApiError
-      && (httpError.status < 500 || httpError.code === "ENDFIELD_DEVICE_REJECTED")
+      httpError instanceof ApiError &&
+      (httpError.status < 500 || httpError.code === "ENDFIELD_DEVICE_REJECTED")
     ) {
       throw httpError;
     }
@@ -67,31 +74,43 @@ export async function getEndfieldPosition(args: EndfieldPositionRequest): Promis
       if (socketError instanceof ApiError && socketError.status === 401) {
         throw socketError;
       }
-      const httpDetails = httpError instanceof ApiError && httpError.details && typeof httpError.details === "object"
-        ? httpError.details as Record<string, unknown>
-        : {};
-      throw new ApiError(502, "ENDFIELD_POSITION_UPSTREAM_UNAVAILABLE", "Endfield position upstream was unavailable.", {
-        ...httpDetails,
-        httpCode: httpError instanceof ApiError ? httpError.code : "FETCH_FAILED",
-        socketCode: socketError instanceof ApiError ? socketError.code : "FETCH_FAILED"
-      });
+      const httpDetails =
+        httpError instanceof ApiError && httpError.details && typeof httpError.details === "object"
+          ? (httpError.details as Record<string, unknown>)
+          : {};
+      throw new ApiError(
+        502,
+        "ENDFIELD_POSITION_UPSTREAM_UNAVAILABLE",
+        "Endfield position upstream was unavailable.",
+        {
+          ...httpDetails,
+          httpCode: httpError instanceof ApiError ? httpError.code : "FETCH_FAILED",
+          socketCode: socketError instanceof ApiError ? socketError.code : "FETCH_FAILED",
+        },
+      );
     }
   }
 }
 
-export async function getEndfieldPositionHttpFallback(args: EndfieldPositionRequest): Promise<EndfieldPositionData> {
+export async function getEndfieldPositionHttpFallback(
+  args: EndfieldPositionRequest,
+): Promise<EndfieldPositionData> {
   const hosts = getEndfieldHosts(args.provider);
   const path = "/web/v1/game/endfield/map/me/position";
   const signPath = `${path}roleId=${args.roleId}&serverId=${args.serverId}`;
   const timestamp = getEndfieldTimestamp();
-  const sign = await getSignature(signPath, timestamp, args.token, "", args.deviceProfile?.deviceId ?? "");
+  const sign = await getSignature(
+    signPath,
+    timestamp,
+    args.token,
+    "",
+    args.deviceProfile?.deviceId ?? "",
+  );
   const query = new URLSearchParams({
     roleId: args.roleId,
-    serverId: String(args.serverId)
+    serverId: String(args.serverId),
   });
-  const origin = args.provider === "skland"
-    ? "https://game.skland.com"
-    : "https://game.skport.com";
+  const origin = args.provider === "skland" ? "https://game.skland.com" : "https://game.skport.com";
 
   const response = await fetch(`${buildUrl(hosts.baseUrl, path)}?${query.toString()}`, {
     method: "GET",
@@ -107,8 +126,8 @@ export async function getEndfieldPositionHttpFallback(args: EndfieldPositionRequ
       sign,
       "accept-language": "en-US",
       "sk-language": "en",
-      ...buildDeviceHeaders(args.deviceProfile)
-    }
+      ...buildDeviceHeaders(args.deviceProfile),
+    },
   });
 
   const data = await parseApiEnvelope<EndfieldPositionData>(response, { positionRequest: true });
@@ -123,7 +142,13 @@ export async function getEndfieldWebSocketToken(args: EndfieldCredentialRequest)
   const hosts = getEndfieldHosts(args.provider);
   const path = "/api/v1/websocket/token";
   const timestamp = getEndfieldTimestamp();
-  const sign = await getSignature(path, timestamp, args.token, "", args.deviceProfile?.deviceId ?? "");
+  const sign = await getSignature(
+    path,
+    timestamp,
+    args.token,
+    "",
+    args.deviceProfile?.deviceId ?? "",
+  );
 
   const response = await fetch(buildUrl(hosts.baseUrl, path), {
     method: "GET",
@@ -137,13 +162,17 @@ export async function getEndfieldWebSocketToken(args: EndfieldCredentialRequest)
       sign,
       "accept-language": "en-US",
       "sk-language": "en",
-      ...buildDeviceHeaders(args.deviceProfile)
-    }
+      ...buildDeviceHeaders(args.deviceProfile),
+    },
   });
 
   const data = await parseApiEnvelope<WebSocketTokenData>(response);
   if (!data.token) {
-    throw new ApiError(502, "ENDFIELD_POSITION_SOCKET_TOKEN_MISSING", "WebSocket token response did not include a token.");
+    throw new ApiError(
+      502,
+      "ENDFIELD_POSITION_SOCKET_TOKEN_MISSING",
+      "WebSocket token response did not include a token.",
+    );
   }
   return data.token;
 }
@@ -158,7 +187,7 @@ function closeEndfieldSocket(socket: WebSocket, reason: string, code = 1011): vo
 
 export async function connectEndfieldPositionSocket(
   args: EndfieldPositionRequest,
-  handlers: EndfieldPositionSocketHandlers
+  handlers: EndfieldPositionSocketHandlers,
 ): Promise<EndfieldPositionConnection> {
   args.signal?.throwIfAborted();
   const hosts = getEndfieldHosts(args.provider);
@@ -167,18 +196,31 @@ export async function connectEndfieldPositionSocket(
   const path = "/ws/v1/game/endfield/map";
   const signPath = `${path}roleId=${args.roleId}&serverId=${args.serverId}`;
   const timestamp = getEndfieldTimestamp();
-  const sign = await getSignature(signPath, timestamp, args.token, "", args.deviceProfile?.deviceId ?? "");
+  const sign = await getSignature(
+    signPath,
+    timestamp,
+    args.token,
+    "",
+    args.deviceProfile?.deviceId ?? "",
+  );
   const query = new URLSearchParams({ roleId: args.roleId, serverId: String(args.serverId) });
   const origin = args.provider === "skland" ? "https://game.skland.com" : "https://game.skport.com";
   const url = `${buildWebSocketHttpUrl(args.wsBaseUrl ?? hosts.wsBaseUrl, path)}?${query}`;
   const response = await fetch(url, {
     signal: args.signal,
     headers: {
-      upgrade: "websocket", cred: args.cred, origin, platform: "3",
-      referer: `${origin}/`, timestamp, vname: "1.0.0", sign,
-      "accept-language": "en-US", "sk-language": "en",
-      ...buildDeviceHeaders(args.deviceProfile)
-    }
+      upgrade: "websocket",
+      cred: args.cred,
+      origin,
+      platform: "3",
+      referer: `${origin}/`,
+      timestamp,
+      vname: "1.0.0",
+      sign,
+      "accept-language": "en-US",
+      "sk-language": "en",
+      ...buildDeviceHeaders(args.deviceProfile),
+    },
   });
   if (response.status !== 101 || !response.webSocket) {
     const detail = await response.text().catch(() => "");
@@ -187,7 +229,7 @@ export async function connectEndfieldPositionSocket(
       response.status === 401 || response.status === 403 ? 401 : 502,
       "ENDFIELD_POSITION_SOCKET_UNAVAILABLE",
       "Endfield realtime position socket was unavailable.",
-      { upstreamStatus: response.status, url, detail: detail.slice(0, 240) }
+      { upstreamStatus: response.status, url, detail: detail.slice(0, 240) },
     );
   }
 
@@ -212,32 +254,43 @@ export async function connectEndfieldPositionSocket(
     args.signal?.removeEventListener("abort", onAbort);
   };
   const close = (code = 1000, reason = "closed") => {
-    if (closed) return;
+    if (closed) {
+      return;
+    }
     closed = true;
     cleanup();
     closeEndfieldSocket(socket, reason, code);
   };
   const termination = (
     kind: EndfieldPositionTermination["kind"],
-    code?: number
+    code?: number,
   ): EndfieldPositionTermination => ({
     kind,
     phase,
     ...(code === undefined ? {} : { code }),
-    lifetimeMs: Date.now() - connectedAt
+    lifetimeMs: Date.now() - connectedAt,
   });
   const onClose = (event: Event) => {
-    if (closed) return;
+    if (closed) {
+      return;
+    }
     closed = true;
     cleanup();
     const code = Number((event as CloseEvent).code);
-    handlers.onClose?.(termination("remote-close", Number.isFinite(code) && code > 0 ? code : undefined));
+    handlers.onClose?.(
+      termination("remote-close", Number.isFinite(code) && code > 0 ? code : undefined),
+    );
   };
   const fail = (
-    kind: Extract<EndfieldPositionTermination["kind"], "socket-error" | "send-failed" | "authentication-timeout">,
-    reason: string
+    kind: Extract<
+      EndfieldPositionTermination["kind"],
+      "socket-error" | "send-failed" | "authentication-timeout"
+    >,
+    reason: string,
   ) => {
-    if (closed) return;
+    if (closed) {
+      return;
+    }
     closed = true;
     cleanup();
     closeEndfieldSocket(socket, reason, 1011);
@@ -246,34 +299,57 @@ export async function connectEndfieldPositionSocket(
   const onError = () => fail("socket-error", "upstream error");
   const onAbort = () => close(1000, "request canceled");
   const send = (payload: unknown): boolean => {
-    if (closed) return false;
-    try { socket.send(JSON.stringify(payload)); return true; }
-    catch { fail("send-failed", "upstream error"); return false; }
+    if (closed) {
+      return false;
+    }
+    try {
+      socket.send(JSON.stringify(payload));
+      return true;
+    } catch {
+      fail("send-failed", "upstream error");
+      return false;
+    }
   };
   const sendSubscription = () => {
-    const sent = send({ type: 1011, data: { roleId: args.roleId, serverId: String(args.serverId) }, msgId: createMessageId() });
-    if (sent) lastPositionFrameAt = Date.now();
+    const sent = send({
+      type: 1011,
+      data: { roleId: args.roleId, serverId: String(args.serverId) },
+      msgId: createMessageId(),
+    });
+    if (sent) {
+      lastPositionFrameAt = Date.now();
+    }
     return sent;
   };
   const sendHeartbeat = () => send({ type: 3, data: {}, msgId: createMessageId() });
   const onMessage = (event: MessageEvent) => {
     const data = event.data as string | ArrayBuffer;
     const message = parseEndfieldSocketEnvelope(data);
-    if (message?.type === 1012) lastPositionFrameAt = Date.now();
+    if (message?.type === 1012) {
+      lastPositionFrameAt = Date.now();
+    }
     if (!subscriptionSent && message?.type === 2) {
       clearTimeout(authenticationTimer);
       handlers.onAuthenticated?.();
-      if (!sendSubscription()) return;
+      if (!sendSubscription()) {
+        return;
+      }
       subscriptionSent = true;
       phase = "subscribed";
       handlers.onSubscribed?.();
-      if (!sendHeartbeat()) return;
+      if (!sendHeartbeat()) {
+        return;
+      }
       heartbeat = setInterval(sendHeartbeat, ENDFIELD_POSITION_SOCKET_HEARTBEAT_MS);
       resubscribeTimer = setInterval(() => {
-        if (Date.now() - lastPositionFrameAt >= ENDFIELD_POSITION_SOCKET_RESUBSCRIBE_MS) sendSubscription();
+        if (Date.now() - lastPositionFrameAt >= ENDFIELD_POSITION_SOCKET_RESUBSCRIBE_MS) {
+          sendSubscription();
+        }
       }, ENDFIELD_POSITION_SOCKET_RESUBSCRIBE_MS);
     }
-    if (!closed) handlers.onMessage?.(data);
+    if (!closed) {
+      handlers.onMessage?.(data);
+    }
   };
   socket.addEventListener("message", onMessage);
   socket.addEventListener("close", onClose);
@@ -287,19 +363,25 @@ export async function connectEndfieldPositionSocket(
     fail("authentication-timeout", "authentication timeout");
   }, ENDFIELD_POSITION_SOCKET_AUTH_TIMEOUT_MS);
   if (!send({ type: 1, data: { token: socketToken }, msgId: createMessageId() })) {
-    throw new ApiError(502, "ENDFIELD_POSITION_SOCKET_SEND_FAILED", "Endfield realtime position socket closed during authentication.");
+    throw new ApiError(
+      502,
+      "ENDFIELD_POSITION_SOCKET_SEND_FAILED",
+      "Endfield realtime position socket closed during authentication.",
+    );
   }
   return { close };
 }
 
 export async function getEndfieldPositionFromSocket(
   args: EndfieldPositionRequest,
-  timeoutMs = 8_000
+  timeoutMs = 8_000,
 ): Promise<EndfieldPositionData> {
   args.signal?.throwIfAborted();
   return new Promise((resolve, reject) => {
     const controller = new AbortController();
-    const signal = args.signal ? AbortSignal.any([controller.signal, args.signal]) : controller.signal;
+    const signal = args.signal
+      ? AbortSignal.any([controller.signal, args.signal])
+      : controller.signal;
     let socket: EndfieldPositionConnection | undefined;
     let timeout: ReturnType<typeof setTimeout> | undefined;
     let settled = false;
@@ -309,7 +391,9 @@ export async function getEndfieldPositionFromSocket(
     const seenCodes = new Set<number>();
 
     const settle = (reason: string, callback: () => void) => {
-      if (settled) return;
+      if (settled) {
+        return;
+      }
       settled = true;
       if (timeout !== undefined) {
         clearTimeout(timeout);
@@ -323,84 +407,92 @@ export async function getEndfieldPositionFromSocket(
 
     const onAbort = () => settle("request canceled", () => reject(args.signal!.reason));
     args.signal?.addEventListener("abort", onAbort, { once: true });
-    void connectEndfieldPositionSocket({ ...args, signal }, {
-      onAuthenticated: () => {
-        authAckSeen = true;
-      },
-      onSubscribed: () => {
-        subscriptionSent = true;
-      },
-      onMessage: (data) => {
-        const envelope = parseEndfieldSocketEnvelope(data);
-        if (envelope?.type !== undefined) {
-          seenTypes.add(envelope.type);
-        }
+    void connectEndfieldPositionSocket(
+      { ...args, signal },
+      {
+        onAuthenticated: () => {
+          authAckSeen = true;
+        },
+        onSubscribed: () => {
+          subscriptionSent = true;
+        },
+        onMessage: (data) => {
+          const envelope = parseEndfieldSocketEnvelope(data);
+          if (envelope?.type !== undefined) {
+            seenTypes.add(envelope.type);
+          }
 
-        const position = parseEndfieldPositionSocketMessage(data);
-        if (position) {
-          settle("position received", () => resolve(position));
-          return;
-        }
+          const position = parseEndfieldPositionSocketMessage(data);
+          if (position) {
+            settle("position received", () => resolve(position));
+            return;
+          }
 
-        const error = parseEndfieldPositionSocketError(data);
-        if (error) {
-          seenCodes.add(error.code);
-          const credentialRejected = isEndfieldCredentialErrorCode(error.code);
-          const deviceRejected = isEndfieldDeviceErrorCode(error.code);
-          settle("position unavailable", () => {
-            reject(new ApiError(
-              deviceRejected ? 502 : 401,
-              deviceRejected
-                ? "ENDFIELD_DEVICE_REJECTED"
-                : (credentialRejected ? "ENDFIELD_CREDENTIAL_REJECTED" : "ENDFIELD_POSITION_UNAVAILABLE"),
-              deviceRejected
-                ? (error.message ?? "Endfield device information was rejected.")
-                : credentialRejected
-                ? "Endfield credential was rejected."
-                : "Player is not currently logged into the game or position is unavailable.",
-              {
-                provider: args.provider,
-                upstreamCode: error.code,
-                upstreamMessage: error.message,
-                seenTypes: [...seenTypes]
+          const error = parseEndfieldPositionSocketError(data);
+          if (error) {
+            seenCodes.add(error.code);
+            const credentialRejected = isEndfieldCredentialErrorCode(error.code);
+            const deviceRejected = isEndfieldDeviceErrorCode(error.code);
+            settle("position unavailable", () => {
+              let code = "ENDFIELD_POSITION_UNAVAILABLE";
+              let message =
+                "Player is not currently logged into the game or position is unavailable.";
+              if (deviceRejected) {
+                code = "ENDFIELD_DEVICE_REJECTED";
+                message = error.message ?? "Endfield device information was rejected.";
+              } else if (credentialRejected) {
+                code = "ENDFIELD_CREDENTIAL_REJECTED";
+                message = "Endfield credential was rejected.";
               }
-            ));
+              reject(
+                new ApiError(deviceRejected ? 502 : 401, code, message, {
+                  provider: args.provider,
+                  upstreamCode: error.code,
+                  upstreamMessage: error.message,
+                  seenTypes: [...seenTypes],
+                }),
+              );
+            });
+          }
+        },
+        onClose: () => {
+          settle("upstream closed", () => {
+            reject(
+              new ApiError(
+                502,
+                "ENDFIELD_POSITION_SOCKET_CLOSED",
+                "Endfield realtime position socket closed before sending a position.",
+                {
+                  provider: args.provider,
+                  seenTypes: [...seenTypes],
+                  seenCodes: [...seenCodes],
+                  authAckSeen,
+                  subscriptionSent,
+                },
+              ),
+            );
           });
-        }
+        },
+        onError: () => {
+          settle("upstream error", () => {
+            reject(
+              new ApiError(
+                502,
+                "ENDFIELD_POSITION_SOCKET_ERROR",
+                "Endfield realtime position socket failed before sending a position.",
+                {
+                  provider: args.provider,
+                  seenTypes: [...seenTypes],
+                  seenCodes: [...seenCodes],
+                  authAckSeen,
+                  subscriptionSent,
+                },
+              ),
+            );
+          });
+        },
       },
-      onClose: () => {
-        settle("upstream closed", () => {
-          reject(new ApiError(
-            502,
-            "ENDFIELD_POSITION_SOCKET_CLOSED",
-            "Endfield realtime position socket closed before sending a position.",
-            {
-              provider: args.provider,
-              seenTypes: [...seenTypes],
-              seenCodes: [...seenCodes],
-              authAckSeen,
-              subscriptionSent
-            }
-          ));
-        });
-      },
-      onError: () => {
-        settle("upstream error", () => {
-          reject(new ApiError(
-            502,
-            "ENDFIELD_POSITION_SOCKET_ERROR",
-            "Endfield realtime position socket failed before sending a position.",
-            {
-              provider: args.provider,
-              seenTypes: [...seenTypes],
-              seenCodes: [...seenCodes],
-              authAckSeen,
-              subscriptionSent
-            }
-          ));
-        });
-      }
-    })
+    )
       .then((connectedSocket) => {
         socket = connectedSocket;
         if (settled) {
@@ -409,18 +501,20 @@ export async function getEndfieldPositionFromSocket(
         }
         timeout = setTimeout(() => {
           settle("position timeout", () => {
-            reject(new ApiError(
-              504,
-              "ENDFIELD_POSITION_SOCKET_TIMEOUT",
-              "Timed out waiting for a parsable Endfield realtime position.",
-              {
-                provider: args.provider,
-                seenTypes: [...seenTypes],
-                seenCodes: [...seenCodes],
-                authAckSeen,
-                subscriptionSent
-              }
-            ));
+            reject(
+              new ApiError(
+                504,
+                "ENDFIELD_POSITION_SOCKET_TIMEOUT",
+                "Timed out waiting for a parsable Endfield realtime position.",
+                {
+                  provider: args.provider,
+                  seenTypes: [...seenTypes],
+                  seenCodes: [...seenCodes],
+                  authAckSeen,
+                  subscriptionSent,
+                },
+              ),
+            );
           });
         }, timeoutMs);
       })

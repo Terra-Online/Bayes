@@ -6,7 +6,7 @@ import type {
   SubmissionRecord,
   SubmissionStatus,
   UserSubmissionComment,
-  ViewerVoteValue
+  ViewerVoteValue,
 } from "./types";
 
 export function toCount(value: unknown): number {
@@ -37,18 +37,19 @@ export function mapStatus(value: unknown): SubmissionStatus {
 }
 
 export function mapSubmission(row: Record<string, unknown>): SubmissionRecord {
-  const uidNumber = row.user_uid_number === null || row.user_uid_number === undefined
-    ? null
-    : Number(row.user_uid_number);
-  const uidSuffix = row.user_uid_suffix === null || row.user_uid_suffix === undefined
-    ? null
-    : String(row.user_uid_suffix);
-  const submitterUid = row.submitter_uid === null || row.submitter_uid === undefined
-    ? null
-    : String(row.submitter_uid);
-  const avatar = row.user_avt === null || row.user_avt === undefined
-    ? null
-    : Number(row.user_avt);
+  const uidNumber =
+    row.user_uid_number === null || row.user_uid_number === undefined
+      ? null
+      : Number(row.user_uid_number);
+  const uidSuffix =
+    row.user_uid_suffix === null || row.user_uid_suffix === undefined
+      ? null
+      : String(row.user_uid_suffix);
+  const submitterUid =
+    row.submitter_uid === null || row.submitter_uid === undefined
+      ? null
+      : String(row.submitter_uid);
+  const avatar = row.user_avt === null || row.user_avt === undefined ? null : Number(row.user_avt);
 
   return {
     id: String(row.id),
@@ -59,55 +60,70 @@ export function mapSubmission(row: Record<string, unknown>): SubmissionRecord {
     snapshotId: String(row.snapshot_id),
     userId: String(row.user_id),
     content: row.content === null ? null : String(row.content ?? ""),
-    editOriginalContent: row.edit_original_content === null || row.edit_original_content === undefined
-      ? null
-      : String(row.edit_original_content),
-    editOriginalStatus: row.edit_original_status === null || row.edit_original_status === undefined
-      ? null
-      : mapStatus(row.edit_original_status),
-    editOriginalSnapshotId: row.edit_original_snapshot_id === null || row.edit_original_snapshot_id === undefined
-      ? null
-      : String(row.edit_original_snapshot_id),
+    editOriginalContent:
+      row.edit_original_content === null || row.edit_original_content === undefined
+        ? null
+        : String(row.edit_original_content),
+    editOriginalStatus:
+      row.edit_original_status === null || row.edit_original_status === undefined
+        ? null
+        : mapStatus(row.edit_original_status),
+    editOriginalSnapshotId:
+      row.edit_original_snapshot_id === null || row.edit_original_snapshot_id === undefined
+        ? null
+        : String(row.edit_original_snapshot_id),
     filePath: row.file_path === null || row.file_path === undefined ? null : String(row.file_path),
     status: mapStatus(row.status),
     flagCount: toCount(row.flag_count),
     moderationNote: row.moderation_note === null ? null : String(row.moderation_note ?? ""),
-    moderationQueuedAt: row.moderation_queued_at === null || row.moderation_queued_at === undefined
-      ? null
-      : String(row.moderation_queued_at),
+    moderationQueuedAt:
+      row.moderation_queued_at === null || row.moderation_queued_at === undefined
+        ? null
+        : String(row.moderation_queued_at),
     mimeType: row.mime_type === null || row.mime_type === undefined ? null : String(row.mime_type),
-    sizeBytes: row.size_bytes === null || row.size_bytes === undefined ? null : Number(row.size_bytes),
+    sizeBytes:
+      row.size_bytes === null || row.size_bytes === undefined ? null : Number(row.size_bytes),
     parentId: row.parent_id === null || row.parent_id === undefined ? null : String(row.parent_id),
     commentDepth: toCount(row.comment_depth),
     submitter: submitterUid
       ? {
           uid: submitterUid,
           uidNumber: uidNumber !== null && Number.isFinite(uidNumber) ? uidNumber : null,
-          publicUid: uidNumber !== null && Number.isFinite(uidNumber) && uidSuffix
-            ? formatPublicUid(uidNumber, uidSuffix)
-            : null,
-          role: row.user_role === null || row.user_role === undefined ? null : String(row.user_role),
-          karma: row.user_karma === null || row.user_karma === undefined ? null : Number(row.user_karma),
-          nickname: row.user_nickname === null || row.user_nickname === undefined ? null : String(row.user_nickname),
-          avatar: avatar !== null && Number.isFinite(avatar) ? avatar : null
+          publicUid:
+            uidNumber !== null && Number.isFinite(uidNumber) && uidSuffix
+              ? formatPublicUid(uidNumber, uidSuffix)
+              : null,
+          role:
+            row.user_role === null || row.user_role === undefined ? null : String(row.user_role),
+          karma:
+            row.user_karma === null || row.user_karma === undefined ? null : Number(row.user_karma),
+          nickname:
+            row.user_nickname === null || row.user_nickname === undefined
+              ? null
+              : String(row.user_nickname),
+          avatar: avatar !== null && Number.isFinite(avatar) ? avatar : null,
         }
       : null,
     createdAt: String(row.created_at),
-    updatedAt: String(row.updated_at)
+    updatedAt: String(row.updated_at),
   };
 }
 
 export function mapVoteValue(value: unknown): ViewerVoteValue {
   const numeric = Number(value ?? 0);
-  if (numeric === 1) return 1;
-  if (numeric === -1) return -1;
+  if (numeric === 1) {
+    return 1;
+  }
+  if (numeric === -1) {
+    return -1;
+  }
   return 0;
 }
 
 export function publicImageFromRow(
   row: Record<string, unknown>,
   assetBaseUrl: string,
-  viewerUserId?: string
+  viewerUserId?: string,
 ): PublicSubmissionImage {
   const submission = mapSubmission(row);
   const filePath = submission.filePath ?? "";
@@ -116,24 +132,25 @@ export function publicImageFromRow(
     markerId: submission.markerId,
     url: `${assetBaseUrl}/${filePath}`,
     content: submission.content,
-    author: submission.submitter?.publicUid && submission.submitter.nickname
-      ? {
-          nickname: submission.submitter.nickname,
-          publicUid: submission.submitter.publicUid
-        }
-      : null,
+    author:
+      submission.submitter?.publicUid && submission.submitter.nickname
+        ? {
+            nickname: submission.submitter.nickname,
+            publicUid: submission.submitter.publicUid,
+          }
+        : null,
     status: submission.status,
     upvoteCount: toCount(row.upvote_count),
     flagCount: toCount(row.flag_count),
     upvoted: viewerUserId ? Boolean(row.viewer_upvoted) : undefined,
     flagged: viewerUserId ? Boolean(row.viewer_flagged) : undefined,
-    createdAt: submission.createdAt
+    createdAt: submission.createdAt,
   };
 }
 
 export function publicCommentFromRow(
   row: Record<string, unknown>,
-  viewerUserId?: string
+  viewerUserId?: string,
 ): PublicSubmissionComment {
   const submission = mapSubmission(row);
   return {
@@ -145,23 +162,26 @@ export function publicCommentFromRow(
     depth: submission.commentDepth,
     content: submission.content ?? "",
     editUndoAvailable: submission.editOriginalContent !== null,
-    author: submission.submitter?.publicUid && submission.submitter.nickname
-      ? {
-          nickname: submission.submitter.nickname,
-          publicUid: submission.submitter.publicUid,
-          ...(submission.submitter.avatar !== null ? { avatar: submission.submitter.avatar } : {}),
-          ...(submission.submitter.karma !== null && Number.isFinite(submission.submitter.karma)
-            ? { karma: submission.submitter.karma }
-            : {})
-        }
-      : null,
+    author:
+      submission.submitter?.publicUid && submission.submitter.nickname
+        ? {
+            nickname: submission.submitter.nickname,
+            publicUid: submission.submitter.publicUid,
+            ...(submission.submitter.avatar !== null
+              ? { avatar: submission.submitter.avatar }
+              : {}),
+            ...(submission.submitter.karma !== null && Number.isFinite(submission.submitter.karma)
+              ? { karma: submission.submitter.karma }
+              : {}),
+          }
+        : null,
     status: submission.status,
     score: Number(row.score ?? 0) || 0,
     viewerVote: viewerUserId ? mapVoteValue(row.viewer_vote) : undefined,
     flagged: viewerUserId ? Boolean(row.viewer_flagged) : undefined,
     replyCount: toCount(row.reply_count),
     replies: [],
-    createdAt: submission.createdAt
+    createdAt: submission.createdAt,
   };
 }
 
@@ -173,6 +193,6 @@ export function userCommentFromRow(row: Record<string, unknown>): UserSubmission
     snapshotId: submission.snapshotId,
     flagCount: toCount(row.flag_count),
     replies: undefined,
-    replyCount: undefined
+    replyCount: undefined,
   };
 }

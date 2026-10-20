@@ -23,13 +23,15 @@ function resolveTicketSecret(env: Bindings): string {
 
 function toBase64Url(bytes: Uint8Array): string {
   let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
   return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
 
 function fromBase64Url(value: string): Uint8Array {
   const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
-  const padded = normalized + "=".repeat((4 - normalized.length % 4) % 4);
+  const padded = normalized + "=".repeat((4 - (normalized.length % 4)) % 4);
   const binary = atob(padded);
   return Uint8Array.from(binary, (character) => character.charCodeAt(0));
 }
@@ -41,17 +43,8 @@ function toCryptoBuffer(bytes: Uint8Array): ArrayBuffer {
 }
 
 async function importTicketKey(env: Bindings, usage: KeyUsage): Promise<CryptoKey> {
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    encoder.encode(resolveTicketSecret(env))
-  );
-  return crypto.subtle.importKey(
-    "raw",
-    digest,
-    { name: "AES-GCM" },
-    false,
-    [usage]
-  );
+  const digest = await crypto.subtle.digest("SHA-256", encoder.encode(resolveTicketSecret(env)));
+  return crypto.subtle.importKey("raw", digest, { name: "AES-GCM" }, false, [usage]);
 }
 
 export async function issueLocatorSocketTicket(env: Bindings, uid: string): Promise<string> {
@@ -61,28 +54,28 @@ export async function issueLocatorSocketTicket(env: Bindings, uid: string): Prom
     typ: "locator-socket",
     uid,
     exp: Date.now() + LOCATOR_SOCKET_TICKET_TTL_MS,
-    nonce: crypto.randomUUID()
+    nonce: crypto.randomUUID(),
   };
   const key = await importTicketKey(env, "encrypt");
   const ciphertext = await crypto.subtle.encrypt(
     { name: "AES-GCM", iv },
     key,
-    encoder.encode(JSON.stringify(payload))
+    encoder.encode(JSON.stringify(payload)),
   );
   return `v${LOCATOR_SOCKET_TICKET_VERSION}.${toBase64Url(iv)}.${toBase64Url(new Uint8Array(ciphertext))}`;
 }
 
 export async function verifyLocatorSocketTicket(
   env: Bindings,
-  ticket: string
+  ticket: string,
 ): Promise<string | null> {
   try {
     const [version, encodedIv, encodedCiphertext] = ticket.split(".");
     if (
-      version !== `v${LOCATOR_SOCKET_TICKET_VERSION}`
-      || !encodedIv
-      || !encodedCiphertext
-      || ticket.length > 4_096
+      version !== `v${LOCATOR_SOCKET_TICKET_VERSION}` ||
+      !encodedIv ||
+      !encodedCiphertext ||
+      ticket.length > 4_096
     ) {
       return null;
     }
@@ -93,18 +86,18 @@ export async function verifyLocatorSocketTicket(
     const plaintext = await crypto.subtle.decrypt(
       { name: "AES-GCM", iv: toCryptoBuffer(iv) },
       key,
-      toCryptoBuffer(ciphertext)
+      toCryptoBuffer(ciphertext),
     );
     const payload = JSON.parse(decoder.decode(plaintext)) as Partial<LocatorSocketTicketPayload>;
     if (
-      payload.v !== LOCATOR_SOCKET_TICKET_VERSION
-      || payload.typ !== "locator-socket"
-      || typeof payload.uid !== "string"
-      || !payload.uid.trim()
-      || typeof payload.exp !== "number"
-      || payload.exp <= Date.now()
-      || typeof payload.nonce !== "string"
-      || !payload.nonce
+      payload.v !== LOCATOR_SOCKET_TICKET_VERSION ||
+      payload.typ !== "locator-socket" ||
+      typeof payload.uid !== "string" ||
+      !payload.uid.trim() ||
+      typeof payload.exp !== "number" ||
+      payload.exp <= Date.now() ||
+      typeof payload.nonce !== "string" ||
+      !payload.nonce
     ) {
       return null;
     }

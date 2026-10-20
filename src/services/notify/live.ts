@@ -1,4 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
+
 import { ApiError } from "../../lib/errors";
 import {
   getNotificationById,
@@ -6,7 +7,7 @@ import {
   serializeNotificationItem,
   type NotificationRecord,
   type SerializedNotificationItem,
-  type NotificationUnreadCounts
+  type NotificationUnreadCounts,
 } from "../../repositories/notifications";
 import type { Bindings } from "../../types/app";
 
@@ -37,8 +38,8 @@ function jsonResponse(payload: unknown, init?: ResponseInit): Response {
     ...init,
     headers: {
       "content-type": "application/json; charset=utf-8",
-      ...(init?.headers ?? {})
-    }
+      ...(init?.headers ?? {}),
+    },
   });
 }
 
@@ -48,15 +49,17 @@ function makeInternalUrl(path: string): string {
 
 export async function publishNotificationCreated(
   env: Bindings,
-  notification: NotificationRecord
+  notification: NotificationRecord,
 ): Promise<void> {
   const hydrated = await getNotificationById(env.DB, notification.id);
-  if (!hydrated) return;
+  if (!hydrated) {
+    return;
+  }
   const unread = await getNotificationUnreadCounts(env.DB, hydrated.recipientUserId);
   const envelope: NotificationLiveEnvelope = {
     event: "notification.upserted",
     notification: serializeNotificationItem(hydrated),
-    unread
+    unread,
   };
 
   const objectId = env.OEM_NOTIFICATION_DO.idFromName(hydrated.recipientUserId);
@@ -65,9 +68,9 @@ export async function publishNotificationCreated(
     method: "POST",
     headers: {
       "content-type": "application/json",
-      "x-oem-notify-user": hydrated.recipientUserId
+      "x-oem-notify-user": hydrated.recipientUserId,
     },
-    body: JSON.stringify(envelope)
+    body: JSON.stringify(envelope),
   });
   if (!response.ok) {
     const detail = await response.text().catch(() => "");
@@ -77,7 +80,7 @@ export async function publishNotificationCreated(
 
 export async function publishNotificationsCreated(
   env: Bindings,
-  notifications: NotificationRecord[]
+  notifications: NotificationRecord[],
 ): Promise<void> {
   for (const notification of notifications) {
     try {
@@ -85,7 +88,7 @@ export async function publishNotificationsCreated(
     } catch (error) {
       console.error("[notify] live delivery failed; notification remains persisted", {
         notificationId: notification.id,
-        error: error instanceof Error ? error.message : String(error)
+        error: error instanceof Error ? error.message : String(error),
       });
     }
   }
@@ -94,9 +97,9 @@ export async function publishNotificationsCreated(
 export class OEMNotificationDO extends DurableObject<Bindings> {
   constructor(ctx: DurableObjectState, env: Bindings) {
     super(ctx, env);
-    ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair(
-      NOTIFICATION_AUTO_HEARTBEAT, NOTIFICATION_AUTO_HEARTBEAT
-    ));
+    ctx.setWebSocketAutoResponse(
+      new WebSocketRequestResponsePair(NOTIFICATION_AUTO_HEARTBEAT, NOTIFICATION_AUTO_HEARTBEAT),
+    );
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -107,7 +110,10 @@ export class OEMNotificationDO extends DurableObject<Bindings> {
     if (request.method === "POST" && url.pathname === "/fanout") {
       return this.handleFanout(request);
     }
-    return jsonResponse({ code: "NOT_FOUND", message: "Notification DO route not found." }, { status: 404 });
+    return jsonResponse(
+      { code: "NOT_FOUND", message: "Notification DO route not found." },
+      { status: 404 },
+    );
   }
 
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
@@ -125,16 +131,27 @@ export class OEMNotificationDO extends DurableObject<Bindings> {
     if (message === "close") {
       try {
         ws.close(1000, "client requested close");
-      } catch {}
+      } catch {
+        // Closing is best-effort; the client may already have disconnected.
+      }
       return;
     }
   }
 
-  async webSocketClose(ws: WebSocket, code: number, reason: string, wasClean: boolean): Promise<void> {
+  async webSocketClose(
+    ws: WebSocket,
+    code: number,
+    reason: string,
+    wasClean: boolean,
+  ): Promise<void> {
     try {
       ws.close(1000, "peer closed");
-    } catch {}
-    if (wasClean && (code === 1000 || code === 1001)) return;
+    } catch {
+      // Continue recording the close event even if the socket is already closed.
+    }
+    if (wasClean && (code === 1000 || code === 1001)) {
+      return;
+    }
     const attachment = ws.deserializeAttachment() as WebSocketAttachment | null;
     console.warn("[notify] websocket closed", {
       clientId: attachment?.clientId ?? null,
@@ -143,7 +160,7 @@ export class OEMNotificationDO extends DurableObject<Bindings> {
       wasClean,
       connectedForMs: attachment
         ? Math.max(0, Date.now() - Date.parse(attachment.connectedAt))
-        : null
+        : null,
     });
   }
 
@@ -151,7 +168,7 @@ export class OEMNotificationDO extends DurableObject<Bindings> {
     const attachment = ws.deserializeAttachment() as WebSocketAttachment | null;
     console.error("[notify] websocket error", {
       clientId: attachment?.clientId ?? null,
-      error
+      error,
     });
     try {
       ws.close(1011, "websocket error");
@@ -164,7 +181,11 @@ export class OEMNotificationDO extends DurableObject<Bindings> {
     const uid = request.headers.get("x-oem-notify-user")?.trim();
     const objectName = this.ctx.id.name?.trim();
     if (!uid || !objectName || uid !== objectName) {
-      throw new ApiError(403, "NOTIFICATION_DO_FORBIDDEN", "Notification Durable Object user mismatch.");
+      throw new ApiError(
+        403,
+        "NOTIFICATION_DO_FORBIDDEN",
+        "Notification Durable Object user mismatch.",
+      );
     }
     return uid;
   }
@@ -173,8 +194,11 @@ export class OEMNotificationDO extends DurableObject<Bindings> {
     const uid = this.requireUser(request);
     if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") {
       return jsonResponse(
-        { code: "WEBSOCKET_REQUIRED", message: "Notification live endpoint requires a WebSocket upgrade." },
-        { status: 426 }
+        {
+          code: "WEBSOCKET_REQUIRED",
+          message: "Notification live endpoint requires a WebSocket upgrade.",
+        },
+        { status: 426 },
       );
     }
 
@@ -185,7 +209,9 @@ export class OEMNotificationDO extends DurableObject<Bindings> {
       if (previous?.clientId === clientId) {
         try {
           socket.close(1000, "connection replaced");
-        } catch {}
+        } catch {
+          // A stale connection must not prevent the replacement from connecting.
+        }
       }
     }
     const pair = new WebSocketPair();
@@ -193,7 +219,7 @@ export class OEMNotificationDO extends DurableObject<Bindings> {
     const attachment: WebSocketAttachment = {
       uid,
       clientId,
-      connectedAt: new Date().toISOString()
+      connectedAt: new Date().toISOString(),
     };
     server.serializeAttachment(attachment);
     this.ctx.acceptWebSocket(server, [`uid:${uid}`]);
@@ -201,30 +227,40 @@ export class OEMNotificationDO extends DurableObject<Bindings> {
     // Send a post-upgrade snapshot so reconnects do not require a second REST
     // request just to recover the badge state.
     try {
-      server.send(JSON.stringify({ event: "notification.ready", unread } satisfies NotificationLiveReadyEnvelope));
+      server.send(
+        JSON.stringify({
+          event: "notification.ready",
+          unread,
+        } satisfies NotificationLiveReadyEnvelope),
+      );
     } catch (error) {
       console.error("[notify] failed to send ready snapshot", {
         uid,
         clientId: attachment.clientId,
-        error
+        error,
       });
       try {
         server.close(1011, "ready snapshot failed");
-      } catch {}
+      } catch {
+        // Preserve the original ready-snapshot error if closing also fails.
+      }
       throw error;
     }
 
     return new Response(null, {
       status: 101,
-      webSocket: client
+      webSocket: client,
     });
   }
 
   private async handleFanout(request: Request): Promise<Response> {
     this.requireUser(request);
-    const envelope = await request.json().catch(() => null) as NotificationLiveEnvelope | null;
+    const envelope = (await request.json().catch(() => null)) as NotificationLiveEnvelope | null;
     if (!envelope || envelope.event !== "notification.upserted" || !envelope.notification) {
-      return jsonResponse({ code: "VALIDATION_ERROR", message: "Invalid notification fanout payload." }, { status: 422 });
+      return jsonResponse(
+        { code: "VALIDATION_ERROR", message: "Invalid notification fanout payload." },
+        { status: 422 },
+      );
     }
 
     const body = JSON.stringify(envelope);

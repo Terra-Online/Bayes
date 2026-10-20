@@ -1,12 +1,15 @@
 import { decryptSecret, encryptSecret } from "../../lib/crypto";
-import { generateEndfieldCredByCode, grantEndfieldOAuthCode } from "../../lib/endfieldClient/authClient";
-import { agreePolicy } from "../../lib/endfieldClient/mapClient";
-import { getEndfieldRoles } from "../../lib/endfieldClient/roleClient";
+import {
+  generateEndfieldCredByCode,
+  grantEndfieldOAuthCode,
+} from "../../lib/endfieldClient/authClient";
 import {
   createEndfieldDeviceId,
   createEndfieldDeviceProfile,
-  SKLAND_DEVICE_PROFILE_USER_AGENT
+  SKLAND_DEVICE_PROFILE_USER_AGENT,
 } from "../../lib/endfieldClient/deviceProfile";
+import { agreePolicy } from "../../lib/endfieldClient/mapClient";
+import { getEndfieldRoles } from "../../lib/endfieldClient/roleClient";
 import { ApiError } from "../../lib/errors";
 import { getCredentialSecret } from "./credentials";
 import { requireUser } from "./helpers";
@@ -19,7 +22,7 @@ import {
   getBindingDeviceProfile,
   publicBinding,
   saveBinding,
-  saveRoleDeviceProfile
+  saveRoleDeviceProfile,
 } from "./repository";
 import { agreeSchema, bindRoleSchema, exchangeCodeSchema, exchangeTokenSchema } from "./schemas";
 import type { AppContext } from "./types";
@@ -35,7 +38,12 @@ export async function handleExchangeToken(c: AppContext) {
   const payload = await c.req.json().catch(() => undefined);
   const parsed = exchangeTokenSchema.safeParse(payload);
   if (!parsed.success) {
-    throw new ApiError(422, "VALIDATION_ERROR", "Invalid exchange payload.", parsed.error.flatten());
+    throw new ApiError(
+      422,
+      "VALIDATION_ERROR",
+      "Invalid exchange payload.",
+      parsed.error.flatten(),
+    );
   }
 
   try {
@@ -45,20 +53,42 @@ export async function handleExchangeToken(c: AppContext) {
       try {
         deviceId = await createEndfieldDeviceId();
       } catch (error) {
-        throw new ApiError(502, "ENDFIELD_DEVICE_ID_GENERATION_FAILED", "Failed to obtain a Skland device id.", {
-          cause: error instanceof Error ? error.message : "unknown"
-        });
+        throw new ApiError(
+          502,
+          "ENDFIELD_DEVICE_ID_GENERATION_FAILED",
+          "Failed to obtain a Skland device id.",
+          {
+            cause: error instanceof Error ? error.message : "unknown",
+          },
+        );
       }
     }
     const deviceProfile = createEndfieldDeviceProfile(
       deviceId,
-      suppliedDeviceId ? c.req.header("user-agent") : SKLAND_DEVICE_PROFILE_USER_AGENT
+      suppliedDeviceId ? c.req.header("user-agent") : SKLAND_DEVICE_PROFILE_USER_AGENT,
     );
-    const grant = await grantEndfieldOAuthCode(parsed.data.provider, parsed.data.token, deviceProfile);
-    const generated = await generateEndfieldCredByCode(parsed.data.provider, grant.code, deviceProfile);
-    const roles = await getEndfieldRoles(parsed.data.provider, generated.cred, generated.token, deviceProfile);
+    const grant = await grantEndfieldOAuthCode(
+      parsed.data.provider,
+      parsed.data.token,
+      deviceProfile,
+    );
+    const generated = await generateEndfieldCredByCode(
+      parsed.data.provider,
+      grant.code,
+      deviceProfile,
+    );
+    const roles = await getEndfieldRoles(
+      parsed.data.provider,
+      generated.cred,
+      generated.token,
+      deviceProfile,
+    );
     if (roles.length === 0) {
-      throw new ApiError(404, "ENDFIELD_ROLE_NOT_FOUND", "No Endfield roles found on this account.");
+      throw new ApiError(
+        404,
+        "ENDFIELD_ROLE_NOT_FOUND",
+        "No Endfield roles found on this account.",
+      );
     }
 
     const flowId = await savePendingSession(c, user.uid, {
@@ -68,7 +98,7 @@ export async function handleExchangeToken(c: AppContext) {
       token: generated.token,
       accountToken: parsed.data.token,
       roles,
-      createdAt: Date.now()
+      createdAt: Date.now(),
     });
 
     return c.json({ flowId, roles });
@@ -90,7 +120,12 @@ export async function handleExchangeCode(c: AppContext) {
   const user = requireUser(c);
   const parsed = exchangeCodeSchema.safeParse(await c.req.json());
   if (!parsed.success) {
-    throw new ApiError(422, "VALIDATION_ERROR", "Invalid exchange payload.", parsed.error.flatten());
+    throw new ApiError(
+      422,
+      "VALIDATION_ERROR",
+      "Invalid exchange payload.",
+      parsed.error.flatten(),
+    );
   }
 
   const suppliedDeviceId = parsed.data.deviceId;
@@ -99,17 +134,31 @@ export async function handleExchangeCode(c: AppContext) {
     try {
       deviceId = await createEndfieldDeviceId();
     } catch (error) {
-      throw new ApiError(502, "ENDFIELD_DEVICE_ID_GENERATION_FAILED", "Failed to obtain a Skland device id.", {
-        cause: error instanceof Error ? error.message : "unknown"
-      });
+      throw new ApiError(
+        502,
+        "ENDFIELD_DEVICE_ID_GENERATION_FAILED",
+        "Failed to obtain a Skland device id.",
+        {
+          cause: error instanceof Error ? error.message : "unknown",
+        },
+      );
     }
   }
   const deviceProfile = createEndfieldDeviceProfile(
     deviceId,
-    suppliedDeviceId ? c.req.header("user-agent") : SKLAND_DEVICE_PROFILE_USER_AGENT
+    suppliedDeviceId ? c.req.header("user-agent") : SKLAND_DEVICE_PROFILE_USER_AGENT,
   );
-  const generated = await generateEndfieldCredByCode(parsed.data.provider, parsed.data.code, deviceProfile);
-  const roles = await getEndfieldRoles(parsed.data.provider, generated.cred, generated.token, deviceProfile);
+  const generated = await generateEndfieldCredByCode(
+    parsed.data.provider,
+    parsed.data.code,
+    deviceProfile,
+  );
+  const roles = await getEndfieldRoles(
+    parsed.data.provider,
+    generated.cred,
+    generated.token,
+    deviceProfile,
+  );
   if (roles.length === 0) {
     throw new ApiError(404, "ENDFIELD_ROLE_NOT_FOUND", "No Endfield roles found on this account.");
   }
@@ -120,7 +169,7 @@ export async function handleExchangeCode(c: AppContext) {
     cred: generated.cred,
     token: generated.token,
     roles,
-    createdAt: Date.now()
+    createdAt: Date.now(),
   });
 
   return c.json({ flowId, roles });
@@ -135,18 +184,28 @@ export async function handleBindRole(c: AppContext) {
 
   const pending = await readPendingSession(c, user.uid, parsed.data.flowId);
   const role = pending.roles.find(
-    (item) => item.serverId === parsed.data.serverId && item.roleId === parsed.data.roleId
+    (item) => item.serverId === parsed.data.serverId && item.roleId === parsed.data.roleId,
   );
   if (!role) {
-    throw new ApiError(404, "ENDFIELD_ROLE_NOT_FOUND", "Selected role is not available in this binding flow.");
+    throw new ApiError(
+      404,
+      "ENDFIELD_ROLE_NOT_FOUND",
+      "Selected role is not available in this binding flow.",
+    );
   }
 
   const secret = getCredentialSecret(c);
-  await saveRoleDeviceProfile(c.env.DB, role.roleId, pending.deviceProfile ?? createEndfieldDeviceProfile());
+  await saveRoleDeviceProfile(
+    c.env.DB,
+    role.roleId,
+    pending.deviceProfile ?? createEndfieldDeviceProfile(),
+  );
   await saveBinding(c.env.DB, user.uid, pending.provider, role, {
     cred: await encryptSecret(pending.cred, secret),
     token: await encryptSecret(pending.token, secret),
-    accountToken: pending.accountToken ? await encryptSecret(pending.accountToken, secret) : undefined
+    accountToken: pending.accountToken
+      ? await encryptSecret(pending.accountToken, secret)
+      : undefined,
   });
   deleteLocatorCaches(c.env, user.uid);
   await deletePendingSession(c, user.uid, parsed.data.flowId);
@@ -183,16 +242,25 @@ export async function handleAgree(c: AppContext) {
   const payload = await c.req.json().catch(() => undefined);
   const parsed = agreeSchema.safeParse(payload);
   if (!parsed.success) {
-    throw new ApiError(422, "VALIDATION_ERROR", "Invalid agree-policy payload.", parsed.error.flatten());
+    throw new ApiError(
+      422,
+      "VALIDATION_ERROR",
+      "Invalid agree-policy payload.",
+      parsed.error.flatten(),
+    );
   }
 
   const reqRole = parsed.data?.roleId;
   const reqServer = parsed.data?.serverId;
   if (
-    (reqRole && reqRole !== binding.role_id)
-    || (reqServer !== undefined && Number(reqServer) !== Number(binding.server_id))
+    (reqRole && reqRole !== binding.role_id) ||
+    (reqServer !== undefined && Number(reqServer) !== Number(binding.server_id))
   ) {
-    throw new ApiError(409, "ENDFIELD_BINDING_MISMATCH", "Policy authorization target does not match the current Endfield binding.");
+    throw new ApiError(
+      409,
+      "ENDFIELD_BINDING_MISMATCH",
+      "Policy authorization target does not match the current Endfield binding.",
+    );
   }
 
   const secret = getCredentialSecret(c);
@@ -202,7 +270,7 @@ export async function handleAgree(c: AppContext) {
     serverId: Number(binding.server_id),
     cred: await decryptSecret(binding.cred_enc, secret),
     token: await decryptSecret(binding.token_enc, secret),
-    deviceProfile: await getBindingDeviceProfile(c.env.DB, binding)
+    deviceProfile: await getBindingDeviceProfile(c.env.DB, binding),
   });
 
   return c.json({ ok: true, binding: publicBinding(binding) });

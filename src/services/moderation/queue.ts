@@ -1,22 +1,25 @@
 import { getRuntimeConfig } from "../../lib/config";
 import { createRedisClient } from "../../lib/redis";
 import { getPendingOpenAISubmissions } from "../../repositories/submission/createSubmission";
-import { getSubmissionById, markSubmissionModerationQueued } from "../../repositories/submission/statusSubmission";
-import type { Bindings } from "../../types/app";
-import { prewarmApprovedCommentTrans } from "../upload/commentTranslation";
-import { publishNotificationsCreated } from "../notify/live";
 import {
-  createEmptyPendingOpenAICompletionStats,
-  notifyCommentTransPrewarmDone,
-  notifySubmissionModerationResult,
-  recordPendingOpenAICompletionStatus
-} from "./notifications";
+  getSubmissionById,
+  markSubmissionModerationQueued,
+} from "../../repositories/submission/statusSubmission";
+import type { Bindings } from "../../types/app";
+import { publishNotificationsCreated } from "../notify/live";
+import { prewarmApprovedCommentTrans } from "../upload/commentTranslation";
 import { moderateSubmissionById } from "./core";
 import type {
   OemModerationQueueMessage,
   OemTranslationQueueMessage,
-  PendingOpenAICompletionStats
+  PendingOpenAICompletionStats,
 } from "./messages";
+import {
+  createEmptyPendingOpenAICompletionStats,
+  notifyCommentTransPrewarmDone,
+  notifySubmissionModerationResult,
+  recordPendingOpenAICompletionStatus,
+} from "./notifications";
 
 const MODERATION_BACKFILL_STALE_MS = 5 * 60 * 1000;
 
@@ -42,16 +45,16 @@ function createModerationOptions(env: Bindings): ModerationOptions {
         submission,
         previousStatus,
         nextStatus,
-        source: "auto_moderation"
+        source: "auto_moderation",
       }),
-    publishNotifications: (notifications) => publishNotificationsCreated(env, notifications)
+    publishNotifications: (notifications) => publishNotificationsCreated(env, notifications),
   };
 }
 
 export async function enqueueModeration(
   env: Bindings,
   submissionId: string,
-  snapshotId: string
+  snapshotId: string,
 ): Promise<void> {
   const queuedAt = new Date().toISOString();
   await env.OEM_MODERATION_Q.send({
@@ -59,16 +62,16 @@ export async function enqueueModeration(
     submissionId,
     snapshotId,
     source: "upload",
-    queuedAt
+    queuedAt,
   });
   await markSubmissionModerationQueued(env.DB, {
     id: submissionId,
     snapshotId,
-    queuedAt
+    queuedAt,
   }).catch((error) => {
     console.warn("moderation queued marker update failed", {
       submissionId,
-      error: error instanceof Error ? error.message : String(error)
+      error: error instanceof Error ? error.message : String(error),
     });
   });
 }
@@ -76,7 +79,7 @@ export async function enqueueModeration(
 export async function enqueueApprovedCommentTransPrewarm(
   env: Bindings,
   submissionId: string,
-  source: "auto_moderation" | "manual_moderation"
+  source: "auto_moderation" | "manual_moderation",
 ): Promise<void> {
   if (!getRuntimeConfig(env).commentTranslationPrewarmEnabled) {
     return;
@@ -86,13 +89,13 @@ export async function enqueueApprovedCommentTransPrewarm(
     type: "comment_translation_prewarm",
     submissionId,
     source,
-    queuedAt: new Date().toISOString()
+    queuedAt: new Date().toISOString(),
   });
 }
 
 export async function ensureModerationBackfill(
   env: Bindings,
-  targetQueueSize = 20
+  targetQueueSize = 20,
 ): Promise<number> {
   const queuedBefore = new Date(Date.now() - MODERATION_BACKFILL_STALE_MS).toISOString();
   const pending = await getPendingOpenAISubmissions(env.DB, targetQueueSize, queuedBefore);
@@ -105,16 +108,16 @@ export async function ensureModerationBackfill(
       submissionId: item.id,
       snapshotId: item.snapshotId,
       source: "scheduled_backfill",
-      queuedAt
+      queuedAt,
     });
     await markSubmissionModerationQueued(env.DB, {
       id: item.id,
       snapshotId: item.snapshotId,
-      queuedAt
+      queuedAt,
     }).catch((error) => {
       console.warn("moderation backfill marker update failed", {
         submissionId: item.id,
-        error: error instanceof Error ? error.message : String(error)
+        error: error instanceof Error ? error.message : String(error),
       });
     });
     enqueued += 1;
@@ -125,7 +128,7 @@ export async function ensureModerationBackfill(
 
 export async function processModerationQueueBatch(
   env: Bindings,
-  batch: MessageBatch<OemModerationQueueMessage>
+  batch: MessageBatch<OemModerationQueueMessage>,
 ): Promise<PendingOpenAICompletionStats> {
   const options = createModerationOptions(env);
   const stats = createEmptyPendingOpenAICompletionStats();
@@ -137,7 +140,7 @@ export async function processModerationQueueBatch(
     } catch (error) {
       console.warn("OEM_MODERATION_Q message failed", {
         type: message.body?.type,
-        error: error instanceof Error ? error.message : String(error)
+        error: error instanceof Error ? error.message : String(error),
       });
       message.retry();
     }
@@ -150,13 +153,13 @@ async function processModerationQueueMessage(
   env: Bindings,
   message: OemModerationQueueMessage,
   options: ModerationOptions,
-  stats: PendingOpenAICompletionStats
+  stats: PendingOpenAICompletionStats,
 ): Promise<void> {
   const status = await moderateSubmissionById(
     env.DB,
     message.submissionId,
     options,
-    message.snapshotId
+    message.snapshotId,
   );
   if (status) {
     recordPendingOpenAICompletionStatus(stats, status);
@@ -165,7 +168,7 @@ async function processModerationQueueMessage(
 
 export async function processTranslationQueueBatch(
   env: Bindings,
-  batch: MessageBatch<OemTranslationQueueMessage>
+  batch: MessageBatch<OemTranslationQueueMessage>,
 ): Promise<void> {
   for (const message of batch.messages) {
     try {
@@ -174,7 +177,7 @@ export async function processTranslationQueueBatch(
     } catch (error) {
       console.warn("OEM_TRANSLATION_Q message failed", {
         type: message.body?.type,
-        error: error instanceof Error ? error.message : String(error)
+        error: error instanceof Error ? error.message : String(error),
       });
       message.retry();
     }
@@ -183,7 +186,7 @@ export async function processTranslationQueueBatch(
 
 async function processTranslationQueueMessage(
   env: Bindings,
-  message: OemTranslationQueueMessage
+  message: OemTranslationQueueMessage,
 ): Promise<void> {
   if (!getRuntimeConfig(env).commentTranslationPrewarmEnabled) {
     return;
@@ -192,7 +195,7 @@ async function processTranslationQueueMessage(
   const result = await prewarmApprovedCommentTrans(env, message.submissionId).catch((error) => {
     console.warn("comment translation prewarm failed", {
       submissionId: message.submissionId,
-      error: error instanceof Error ? error.message : String(error)
+      error: error instanceof Error ? error.message : String(error),
     });
     return null;
   });
@@ -202,7 +205,7 @@ async function processTranslationQueueMessage(
       await notifyCommentTransPrewarmDone(env, {
         submission,
         source: message.source,
-        targets: result.targets
+        targets: result.targets,
       });
     }
   }

@@ -1,11 +1,12 @@
 import type { Hono } from "hono";
 import { z } from "zod";
+
 import { createAuth } from "../../lib/auth/createAuth";
 import { toSerializableError } from "../../lib/auth/errors";
 import { isDisposableEmail } from "../../lib/email/disposable";
 import { ApiError } from "../../lib/errors";
-import { rateLimit } from "../../middleware/rate-limit";
 import { toApiError } from "../../middleware/error-handler";
+import { rateLimit } from "../../middleware/rate-limit";
 import type { AppEnv } from "../../types/app";
 import { deriveDisplayName, normalizeEmail } from "./emailUtils";
 import type { ForwardToAuthJsonPath, ForwardToAuthRawRequest } from "./types";
@@ -29,7 +30,10 @@ const registerWithOtpSchema = z.object({
     .max(20, "Password must be 20 characters or fewer.")
     .regex(/[A-Z]/, "Password must include at least one uppercase letter.")
     .regex(/^\S+$/, "Password cannot contain spaces."),
-  otp: z.string().trim().regex(/^\d{6}$/, "OTP must be 6 digits."),
+  otp: z
+    .string()
+    .trim()
+    .regex(/^\d{6}$/, "OTP must be 6 digits."),
   name: z.string().trim().min(1).max(64).optional(),
 });
 
@@ -40,10 +44,10 @@ async function readAuthSignInResult(response: Response): Promise<AuthSignInResul
     const user = parsed.user as Record<string, unknown> | undefined;
     const userId = user?.id;
     if (
-      typeof token === "string"
-      && token.length > 0
-      && typeof userId === "string"
-      && userId.length > 0
+      typeof token === "string" &&
+      token.length > 0 &&
+      typeof userId === "string" &&
+      userId.length > 0
     ) {
       return {
         token,
@@ -80,20 +84,14 @@ function readCodeFromUnknownError(error: unknown): string | null {
     return maybeError.cause.code;
   }
 
-  if (
-    typeof maybeError.cause?.body?.code === "string"
-    && maybeError.cause.body.code.length > 0
-  ) {
+  if (typeof maybeError.cause?.body?.code === "string" && maybeError.cause.body.code.length > 0) {
     return maybeError.cause.body.code;
   }
 
   return null;
 }
 
-async function revokeRegistrationSession(input: {
-  env: AppEnv["Bindings"];
-  sessionToken: string;
-}) {
+async function revokeRegistrationSession(input: { env: AppEnv["Bindings"]; sessionToken: string }) {
   const auth = createAuth(input.env);
 
   try {
@@ -103,7 +101,9 @@ async function revokeRegistrationSession(input: {
       }),
     });
   } catch (error) {
-    console.error("[auth][register] failed to revoke session during rollback", { error: toSerializableError(error) });
+    console.error("[auth][register] failed to revoke session during rollback", {
+      error: toSerializableError(error),
+    });
   }
 }
 
@@ -167,14 +167,19 @@ export function registerEmailAuthRoutes(
       const code = readCodeFromUnknownError(error);
       if (code !== "PASSWORD_ALREADY_SET") {
         console.warn("[auth][register] password setup failed", {
-          requestId: c.get("requestId"), code, error: toSerializableError(error),
+          requestId: c.get("requestId"),
+          code,
+          error: toSerializableError(error),
         });
         await revokeRegistrationSession({
           env: c.env,
           sessionToken: signInResult.token,
         });
 
-        const status = error && typeof error === "object" && "statusCode" in error ? Number(error.statusCode) : undefined;
+        const status =
+          error && typeof error === "object" && "statusCode" in error
+            ? Number(error.statusCode)
+            : undefined;
         if (status && status >= 400 && status < 500) {
           throw new ApiError(status, code ?? "SET_PASSWORD_FAILED", "Failed to set password.");
         }
@@ -223,7 +228,7 @@ export function registerEmailAuthRoutes(
       },
       {
         headers: requestHeaders,
-      }
+      },
     );
   });
 
@@ -249,5 +254,4 @@ export function registerEmailAuthRoutes(
     payload.email = email;
     return deps.forwardToAuthJsonPath(c, "/sign-in/email", payload);
   });
-
 }

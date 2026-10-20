@@ -1,14 +1,14 @@
+import { sha256Hex } from "../../lib/crypto";
 import { ApiError } from "../../lib/errors";
 import { getJsonFromKv, putJsonToKv } from "../../lib/kvJson";
-import { sha256Hex } from "../../lib/crypto";
 import type { Bindings } from "../../types/app";
-import { getBitmapBit } from "./bitmap";
-import { isSha256Hex } from "./manifest";
 import {
   ARCHIVE_PROGRESS_BITS_PER_ARCHIVE,
   ARCHIVE_PROGRESS_FORMAT_VERSION,
-  type ArchiveProgressManifestPayload
+  type ArchiveProgressManifestPayload,
 } from "./archiveModel";
+import { getBitmapBit } from "./bitmap";
+import { isSha256Hex } from "./manifest";
 
 export type RegisteredArchiveManifest = {
   archiveIndexHash: string;
@@ -31,7 +31,7 @@ const MAX_ARCHIVE_ID_LENGTH = 256;
 export function normalizeArchiveIds(
   value: unknown,
   fieldName: string,
-  options: { requireSorted?: boolean } = {}
+  options: { requireSorted?: boolean } = {},
 ): string[] {
   if (!Array.isArray(value)) {
     throw new ApiError(422, "VALIDATION_ERROR", `${fieldName} must be an array.`);
@@ -54,7 +54,11 @@ export function normalizeArchiveIds(
 
   if (options.requireSorted) {
     if (uniqueIds.length !== archiveIds.length) {
-      throw new ApiError(422, "VALIDATION_ERROR", `${fieldName} must not contain duplicate archive ids.`);
+      throw new ApiError(
+        422,
+        "VALIDATION_ERROR",
+        `${fieldName} must not contain duplicate archive ids.`,
+      );
     }
     const sortedIds = [...archiveIds].sort();
     if (sortedIds.some((archiveId, index) => archiveId !== archiveIds[index])) {
@@ -69,22 +73,29 @@ export function buildCanonicalArchiveManifest(archiveIds: string[]): string {
   return JSON.stringify({
     schemaVersion: 1,
     scope: "intel-archives",
-    archives: archiveIds
+    archives: archiveIds,
   });
 }
 
-export async function normalizeArchiveManifestPayload(raw: unknown): Promise<RegisteredArchiveManifest> {
+export async function normalizeArchiveManifestPayload(
+  raw: unknown,
+): Promise<RegisteredArchiveManifest> {
   if (!raw || typeof raw !== "object") {
     throw new ApiError(422, "VALIDATION_ERROR", "Invalid archive progress manifest payload.");
   }
 
   const payload = raw as ArchiveProgressManifestPayload;
-  const archiveIndexHash = typeof payload.archiveIndexHash === "string"
-    ? payload.archiveIndexHash.trim().toLowerCase()
-    : "";
+  const archiveIndexHash =
+    typeof payload.archiveIndexHash === "string"
+      ? payload.archiveIndexHash.trim().toLowerCase()
+      : "";
   const archiveIds = normalizeArchiveIds(payload.archiveIds, "archiveIds", { requireSorted: true });
   if (!isSha256Hex(archiveIndexHash) || archiveIds.length === 0) {
-    throw new ApiError(422, "VALIDATION_ERROR", "Archive progress manifest metadata is incomplete.");
+    throw new ApiError(
+      422,
+      "VALIDATION_ERROR",
+      "Archive progress manifest metadata is incomplete.",
+    );
   }
 
   const computedHash = await sha256Hex(buildCanonicalArchiveManifest(archiveIds));
@@ -92,7 +103,7 @@ export async function normalizeArchiveManifestPayload(raw: unknown): Promise<Reg
     throw new ApiError(
       422,
       "ARCHIVE_PROGRESS_MANIFEST_HASH_MISMATCH",
-      "Archive progress manifest hash does not match archive index."
+      "Archive progress manifest hash does not match archive index.",
     );
   }
 
@@ -102,16 +113,23 @@ export async function normalizeArchiveManifestPayload(raw: unknown): Promise<Reg
     bitsPerArchive: ARCHIVE_PROGRESS_BITS_PER_ARCHIVE,
     archiveIds,
     archiveCount: archiveIds.length,
-    indexById: new Map(archiveIds.map((archiveId, index) => [archiveId, index]))
+    indexById: new Map(archiveIds.map((archiveId, index) => [archiveId, index])),
   };
 }
 
-export function archiveIdsFromBitmap(bytes: Uint8Array, manifest: RegisteredArchiveManifest): string[] {
+export function archiveIdsFromBitmap(
+  bytes: Uint8Array,
+  manifest: RegisteredArchiveManifest,
+): string[] {
   const archiveIds: string[] = [];
   for (let index = 0; index < manifest.archiveCount; index += 1) {
-    if (!getBitmapBit(bytes, index)) continue;
+    if (!getBitmapBit(bytes, index)) {
+      continue;
+    }
     const archiveId = manifest.archiveIds[index];
-    if (archiveId) archiveIds.push(archiveId);
+    if (archiveId) {
+      archiveIds.push(archiveId);
+    }
   }
   return archiveIds;
 }
@@ -119,7 +137,7 @@ export function archiveIdsFromBitmap(bytes: Uint8Array, manifest: RegisteredArch
 function manifestFromStored(stored: StoredArchiveManifest): RegisteredArchiveManifest {
   return {
     ...stored,
-    indexById: new Map(stored.archiveIds.map((archiveId, index) => [archiveId, index]))
+    indexById: new Map(stored.archiveIds.map((archiveId, index) => [archiveId, index])),
   };
 }
 
@@ -129,31 +147,37 @@ function manifestToStored(manifest: RegisteredArchiveManifest): StoredArchiveMan
     formatVersion: manifest.formatVersion,
     bitsPerArchive: manifest.bitsPerArchive,
     archiveIds: manifest.archiveIds,
-    archiveCount: manifest.archiveCount
+    archiveCount: manifest.archiveCount,
   };
 }
 
 export async function loadArchiveProgressManifest(
   env: Bindings,
-  archiveIndexHash: string
+  archiveIndexHash: string,
 ): Promise<RegisteredArchiveManifest | null> {
   const cacheKey = buildArchiveProgressManifestCacheKey(archiveIndexHash);
   const cached = await getJsonFromKv<StoredArchiveManifest>(env.OEM_KV, cacheKey);
-  if (cached) return manifestFromStored(cached);
+  if (cached) {
+    return manifestFromStored(cached);
+  }
 
   const row = await env.DB.prepare(
     `SELECT archive_index_hash, format_version, bits_per_archive, archive_count, archive_ids
      FROM archive_progress_manifests
      WHERE archive_index_hash = ?1
-     LIMIT 1`
-  ).bind(archiveIndexHash).first<{
-    archive_index_hash: string;
-    format_version: number;
-    bits_per_archive: number;
-    archive_count: number;
-    archive_ids: string;
-  }>();
-  if (!row) return null;
+     LIMIT 1`,
+  )
+    .bind(archiveIndexHash)
+    .first<{
+      archive_index_hash: string;
+      format_version: number;
+      bits_per_archive: number;
+      archive_count: number;
+      archive_ids: string;
+    }>();
+  if (!row) {
+    return null;
+  }
 
   const archiveIds = JSON.parse(row.archive_ids) as string[];
   const manifest: RegisteredArchiveManifest = {
@@ -162,7 +186,7 @@ export async function loadArchiveProgressManifest(
     bitsPerArchive: Number(row.bits_per_archive),
     archiveCount: Number(row.archive_count),
     archiveIds,
-    indexById: new Map(archiveIds.map((archiveId, index) => [archiveId, index]))
+    indexById: new Map(archiveIds.map((archiveId, index) => [archiveId, index])),
   };
   await putJsonToKv(env.OEM_KV, cacheKey, manifestToStored(manifest)).catch(() => undefined);
   return manifest;
@@ -170,24 +194,26 @@ export async function loadArchiveProgressManifest(
 
 export async function saveArchiveProgressManifest(
   env: Bindings,
-  manifest: RegisteredArchiveManifest
+  manifest: RegisteredArchiveManifest,
 ): Promise<void> {
   await env.DB.prepare(
     `INSERT INTO archive_progress_manifests
        (archive_index_hash, format_version, bits_per_archive, archive_count, archive_ids, created_at)
      VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-     ON CONFLICT(archive_index_hash) DO NOTHING`
-  ).bind(
-    manifest.archiveIndexHash,
-    manifest.formatVersion,
-    manifest.bitsPerArchive,
-    manifest.archiveCount,
-    JSON.stringify(manifest.archiveIds),
-    Date.now()
-  ).run();
+     ON CONFLICT(archive_index_hash) DO NOTHING`,
+  )
+    .bind(
+      manifest.archiveIndexHash,
+      manifest.formatVersion,
+      manifest.bitsPerArchive,
+      manifest.archiveCount,
+      JSON.stringify(manifest.archiveIds),
+      Date.now(),
+    )
+    .run();
   await putJsonToKv(
     env.OEM_KV,
     buildArchiveProgressManifestCacheKey(manifest.archiveIndexHash),
-    manifestToStored(manifest)
+    manifestToStored(manifest),
   ).catch(() => undefined);
 }

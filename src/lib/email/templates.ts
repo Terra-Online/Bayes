@@ -1,6 +1,26 @@
 import localeTemplates from "./templateLocales.json";
 
-export type EmailLocale = "zh-HK" | "zh-CN" | "en" | "ja-JP" | "ko-KR" | "de-DE" | "fr-FR" | "es-ES" | "it-IT" | "id-ID" | "pt-BR" | "ru-RU" | "vi-VN" | "th-TH" | "ar-AE" | "hi-IN" | "el-GR" | "ms-MY" | "sv-SE" | "pl-PL";
+export type EmailLocale =
+  | "zh-HK"
+  | "zh-CN"
+  | "en"
+  | "ja-JP"
+  | "ko-KR"
+  | "de-DE"
+  | "fr-FR"
+  | "es-ES"
+  | "it-IT"
+  | "id-ID"
+  | "pt-BR"
+  | "ru-RU"
+  | "vi-VN"
+  | "th-TH"
+  | "ar-AE"
+  | "hi-IN"
+  | "el-GR"
+  | "ms-MY"
+  | "sv-SE"
+  | "pl-PL";
 
 interface OtpTemplate {
   subject: string;
@@ -165,11 +185,7 @@ function renderOemLayout(input: {
 }
 
 export function resolveEmailLocale(locale: string | undefined): EmailLocale {
-  const normalized = locale
-    ?.split(",")[0]
-    .trim()
-    .replaceAll("_", "-")
-    .toLowerCase();
+  const normalized = locale?.split(",")[0].trim().replaceAll("_", "-").toLowerCase();
 
   if (!normalized) {
     return "en";
@@ -180,7 +196,11 @@ export function resolveEmailLocale(locale: string | undefined): EmailLocale {
     return exactMatch;
   }
 
-  if (normalized.startsWith("zh-hk") || normalized.startsWith("zh-tw") || normalized.startsWith("zh-hant")) {
+  if (
+    normalized.startsWith("zh-hk") ||
+    normalized.startsWith("zh-tw") ||
+    normalized.startsWith("zh-hant")
+  ) {
     return "zh-HK";
   }
 
@@ -274,10 +294,7 @@ function getOtpTemplate(localeTemplate: LocaleTemplates): OtpTemplate {
   return resolvedTemplate;
 }
 
-export function createOtpEmailTemplate(input: {
-  locale: EmailLocale;
-  otp: string;
-}): RenderedEmail {
+export function createOtpEmailTemplate(input: { locale: EmailLocale; otp: string }): RenderedEmail {
   const localeTemplate = getLocaleTemplates(input.locale);
   const template = getOtpTemplate(localeTemplate);
   const expiryText = fillTemplate(template.expires, OTP_PLACEHOLDER, input.otp);
@@ -318,7 +335,7 @@ export function createOtpEmailTemplate(input: {
 function createMagicLinkTemplate(
   localeObj: LocaleTemplates,
   template: LinkTemplate,
-  url: string
+  url: string,
 ): RenderedEmail {
   const safeUrl = escapeHtml(url);
   const contentHtml = `
@@ -366,15 +383,19 @@ export function createResetPasswordMagicLinkTemplate(input: {
 const MODERATION_WARNING_TEMPLATE: ModerationWarningTemplate = {
   subject: "[OEM Moderation] Warning: Repeated Link-Only Posts",
   title: "Moderation Warning",
-  accountLine: "We are contacting you regarding activity associated with your Open Endfield Map account",
-  detectedBehavior: "We detected repeated or bulk posting of context-free external links in the discussion area. This is not allowed regardless of Karma level.",
+  accountLine:
+    "We are contacting you regarding activity associated with your Open Endfield Map account",
+  detectedBehavior:
+    "We detected repeated or bulk posting of context-free external links in the discussion area. This is not allowed regardless of Karma level.",
   policyIntro: "Applicable policies:",
   communityGuidelinesLabel: "Community Guidelines",
   communityGuidelinesUrl: "https://blog.opendfieldmap.org/docs/community-guidelines",
   ugcStatementLabel: "UGC Content Statement",
   ugcStatementUrl: "https://blog.opendfieldmap.org/docs/ugc",
-  contextParagraph: "Please stop posting link-only comments. Relevant links must include brief context about their purpose or location.",
-  warningParagraph: "This is a moderation warning. Further violations may result in account suspension.",
+  contextParagraph:
+    "Please stop posting link-only comments. Relevant links must include brief context about their purpose or location.",
+  warningParagraph:
+    "This is a moderation warning. Further violations may result in account suspension.",
   appealParagraph: "If this notice is incorrect, reply to this email to appeal.",
   regards: "Regards,",
   signature: "OEM Moderation",

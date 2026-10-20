@@ -1,4 +1,4 @@
 export {
   resolvePublicCommentCacheNamespace,
-  resolvePublicImageCacheNamespace
+  resolvePublicImageCacheNamespace,
 } from "../contract/markers";

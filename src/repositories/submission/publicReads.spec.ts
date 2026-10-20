@@ -1,11 +1,21 @@
 import { readFileSync } from "node:fs";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
+
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { listActiveCommentsByMarker, listCommentViewerStateByMarker, listUserCommentsByMarker } from "./listComments";
-import { listActiveImagesByMarker, listImageViewerReactionsByMarker, listUserImagesByMarker } from "./listImages";
-import { markNotificationsRead } from "../notifications";
-import { getVisibleCommentsByIds } from "./statusSubmission";
+
 import { UGC_COMPETING_INDEXES_SQL } from "../../test/ugcIndexes";
+import { markNotificationsRead } from "../notifications";
+import {
+  listActiveCommentsByMarker,
+  listCommentViewerStateByMarker,
+  listUserCommentsByMarker,
+} from "./listComments";
+import {
+  listActiveImagesByMarker,
+  listImageViewerReactionsByMarker,
+  listUserImagesByMarker,
+} from "./listImages";
+import { getVisibleCommentsByIds } from "./statusSubmission";
 
 describe("public read SQL under D1 limits", () => {
   let sqlite: DatabaseSync;
@@ -53,40 +63,60 @@ describe("public read SQL under D1 limits", () => {
       ${readFileSync(new URL("../../../migrations/0032_visible_comment_parent_index.sql", import.meta.url), "utf8")}
       ${readFileSync(new URL("../../../migrations/0034_pending_comment_overlay_index.sql", import.meta.url), "utf8")}
     `);
-    const prepare = (sql: string, values: SQLInputValue[] = []): D1PreparedStatement => ({
-      bind: (...bindings: unknown[]) => {
-        expect(bindings.length).toBeLessThanOrEqual(100);
-        return prepare(sql, bindings as SQLInputValue[]);
-      },
-      run: async () => {
-        queries.push({ sql, values });
-        const named = Object.fromEntries(values.map((value, index) => [`${index + 1}`, value]));
-        const result = sqlite.prepare(sql).run(named);
-        return { success: true, results: [], meta: { changes: Number(result.changes) } };
-      },
-      all: async () => {
-        queries.push({ sql, values });
-        const statement = sqlite.prepare(sql);
-        statement.setAllowBareNamedParameters(true);
-        const named = Object.fromEntries(values.map((value, index) => [`${index + 1}`, value]));
-        return { success: true, results: statement.all(named), meta: {} };
-      }
-    }) as unknown as D1PreparedStatement;
+    const prepare = (sql: string, values: SQLInputValue[] = []): D1PreparedStatement =>
+      ({
+        bind: (...bindings: unknown[]) => {
+          expect(bindings.length).toBeLessThanOrEqual(100);
+          return prepare(sql, bindings as SQLInputValue[]);
+        },
+        run: async () => {
+          queries.push({ sql, values });
+          const named = Object.fromEntries(values.map((value, index) => [`${index + 1}`, value]));
+          const result = sqlite.prepare(sql).run(named);
+          return { success: true, results: [], meta: { changes: Number(result.changes) } };
+        },
+        all: async () => {
+          queries.push({ sql, values });
+          const statement = sqlite.prepare(sql);
+          statement.setAllowBareNamedParameters(true);
+          const named = Object.fromEntries(values.map((value, index) => [`${index + 1}`, value]));
+          return { success: true, results: statement.all(named), meta: {} };
+        },
+      }) as unknown as D1PreparedStatement;
     database = {
       prepare,
-      batch: (statements: D1PreparedStatement[]) => Promise.all(statements.map((statement) => statement.all()))
+      batch: (statements: D1PreparedStatement[]) =>
+        Promise.all(statements.map((statement) => statement.all())),
     } as unknown as D1Database;
   });
 
   afterEach(() => sqlite.close());
 
-  function insert(id: string, markerId: string, options: {
-    parentId?: string; depth?: number; kind?: string; status?: string; filePath?: string;
-  } = {}) {
-    sqlite.prepare(`INSERT INTO ugc_submissions VALUES (
+  function insert(
+    id: string,
+    markerId: string,
+    options: {
+      parentId?: string;
+      depth?: number;
+      kind?: string;
+      status?: string;
+      filePath?: string;
+    } = {},
+  ) {
+    sqlite
+      .prepare(`INSERT INTO ugc_submissions VALUES (
       ?, ?, 'hash', 'poi', ?, 'viewer', 'content', ?, ?, ?, ?, ?, '2026-09-05', '2026-09-05'
-    )`).run(id, markerId, `snapshot-${id}`, options.filePath ?? `prod/${id}.webp`,
-      options.kind ?? "comment", options.status ?? "active", options.parentId ?? null, options.depth ?? 0);
+    )`)
+      .run(
+        id,
+        markerId,
+        `snapshot-${id}`,
+        options.filePath ?? `prod/${id}.webp`,
+        options.kind ?? "comment",
+        options.status ?? "active",
+        options.parentId ?? null,
+        options.depth ?? 0,
+      );
   }
 
   it("loads 100 markers and more than 100 reply roots without excess SQL parameters", async () => {
@@ -98,10 +128,15 @@ describe("public read SQL under D1 limits", () => {
       }
     }
     const comments = await listActiveCommentsByMarker(database, {
-      markerIds, limit: 2, replyLimit: 3, viewerUserId: "viewer"
+      markerIds,
+      limit: 2,
+      replyLimit: 3,
+      viewerUserId: "viewer",
     });
     expect(comments).toHaveLength(200);
-    expect(comments.every((comment) => comment.replyCount === 1 && comment.replies.length === 1)).toBe(true);
+    expect(
+      comments.every((comment) => comment.replyCount === 1 && comment.replies.length === 1),
+    ).toBe(true);
     expect(queries).toHaveLength(1);
     expect(queries.every((query) => query.values.length === 4)).toBe(true);
   });
@@ -119,10 +154,19 @@ describe("public read SQL under D1 limits", () => {
       INSERT INTO ugc_submission_flags VALUES ('root-high', 'viewer', 1);
     `);
     const comments = await listActiveCommentsByMarker(database, {
-      markerId: "marker-1", limit: 1, replyLimit: 3, viewerUserId: "viewer"
+      markerId: "marker-1",
+      limit: 1,
+      replyLimit: 3,
+      viewerUserId: "viewer",
     });
     expect(comments).toHaveLength(1);
-    expect(comments[0]).toMatchObject({ id: "root-high", score: 1, viewerVote: 1, flagged: true, replyCount: 1 });
+    expect(comments[0]).toMatchObject({
+      id: "root-high",
+      score: 1,
+      viewerVote: 1,
+      flagged: true,
+      replyCount: 1,
+    });
     expect(comments[0]!.replies[0]).toMatchObject({ id: "reply", score: -1, replyCount: 1 });
     expect(comments[0]!.replies[0]!.replies.map((reply) => reply.id)).toEqual(["nested"]);
     for (const query of queries) {
@@ -144,28 +188,42 @@ describe("public read SQL under D1 limits", () => {
       INSERT INTO ugc_submission_upvotes (submission_id, user_id, active) VALUES ('public-image', 'viewer', 1);
     `);
     const scope = {
-      markerIds, userId: "viewer", excludePathPrefix: "_test",
-      submissionIds: ["public-comment", "public-image", "test-image"]
+      markerIds,
+      userId: "viewer",
+      excludePathPrefix: "_test",
+      submissionIds: ["public-comment", "public-image", "test-image"],
     };
     const images = await listActiveImagesByMarker(database, {
-      ...scope, assetBaseUrl: "https://assets.example", viewerUserId: "viewer"
+      ...scope,
+      assetBaseUrl: "https://assets.example",
+      viewerUserId: "viewer",
     });
     expect(images.map((image) => image.id)).toEqual(["public-image"]);
     expect(images[0]!.upvoted).toBe(true);
     const privateImages = await listUserImagesByMarker(database, {
-      ...scope, assetBaseUrl: "https://assets.example", privateAssetBaseUrl: "https://private.example"
+      ...scope,
+      assetBaseUrl: "https://assets.example",
+      privateAssetBaseUrl: "https://private.example",
     });
     expect(privateImages.map((image) => image.id)).toEqual(["public-image"]);
-    expect((await listImageViewerReactionsByMarker(database, scope)).get("public-image")?.upvoted).toBe(true);
+    expect(
+      (await listImageViewerReactionsByMarker(database, scope)).get("public-image")?.upvoted,
+    ).toBe(true);
     expect(await listUserCommentsByMarker(database, scope)).toHaveLength(2);
     const state = await listCommentViewerStateByMarker(database, scope);
     expect(state.pendingComments.map((comment) => comment.id)).toEqual(["pending-comment"]);
     expect(state.reactions.get("public-comment")?.viewerVote).toBe(1);
     for (const query of queries.filter((entry) => entry.sql.includes("ranked_images"))) {
       const named = Object.fromEntries(query.values.map((value, index) => [`${index + 1}`, value]));
-      const detail = sqlite.prepare(`EXPLAIN QUERY PLAN ${query.sql}`).all(named).map((row) => String(row.detail)).join("\n");
+      const detail = sqlite
+        .prepare(`EXPLAIN QUERY PLAN ${query.sql}`)
+        .all(named)
+        .map((row) => String(row.detail))
+        .join("\n");
       expect(detail).not.toContain("idx_ugc_submission_upvotes_active_created");
-      expect(detail).toContain("SEARCH ugc_submission_upvotes USING INDEX sqlite_autoindex_ugc_submission_upvotes_1 (submission_id=?)");
+      expect(detail).toContain(
+        "SEARCH ugc_submission_upvotes USING INDEX sqlite_autoindex_ugc_submission_upvotes_1 (submission_id=?)",
+      );
     }
   });
 
@@ -174,7 +232,10 @@ describe("public read SQL under D1 limits", () => {
     insert("reply", "marker-1", { parentId: "root", depth: 1 });
     insert("nested", "marker-1", { parentId: "reply", depth: 2 });
     insert("hidden", "marker-1", { parentId: "root", depth: 1, status: "rejected" });
-    const comments = await listActiveCommentsByMarker(database, { markerId: "marker-1", replyLimit: 0 });
+    const comments = await listActiveCommentsByMarker(database, {
+      markerId: "marker-1",
+      replyLimit: 0,
+    });
     expect(comments).toHaveLength(1);
     expect(comments[0]).toMatchObject({ id: "root", replyCount: 1, replies: [] });
     expect(queries).toHaveLength(1);
@@ -190,11 +251,17 @@ describe("public read SQL under D1 limits", () => {
     insert("hidden", "marker-1", { parentId: "root", depth: 1, status: "pending_audit" });
     insert("hidden-child", "marker-1", { parentId: "hidden", depth: 2 });
     insert("excluded-child", "marker-1", { parentId: "reply-c", depth: 2 });
-    const comments = await listActiveCommentsByMarker(database, { markerId: "marker-1", replyLimit: 2 });
+    const comments = await listActiveCommentsByMarker(database, {
+      markerId: "marker-1",
+      replyLimit: 2,
+    });
     expect(comments[0]!.replyCount).toBe(3);
     expect(comments[0]!.replies.map((reply) => reply.id)).toEqual(["reply-a", "reply-b"]);
     expect(comments[0]!.replies[0]!.replyCount).toBe(3);
-    expect(comments[0]!.replies[0]!.replies.map((reply) => reply.id)).toEqual(["nested-a", "nested-b"]);
+    expect(comments[0]!.replies[0]!.replies.map((reply) => reply.id)).toEqual([
+      "nested-a",
+      "nested-b",
+    ]);
     expect(JSON.stringify(comments)).not.toContain("hidden-child");
     expect(JSON.stringify(comments)).not.toContain("excluded-child");
   });
@@ -221,12 +288,18 @@ describe("public read SQL under D1 limits", () => {
     `);
     insert("pending", "marker-1", { status: "pending_openai" });
     const state = await listCommentViewerStateByMarker(database, {
-      userId: "viewer", markerIds: ["marker-1"], submissionIds: []
+      userId: "viewer",
+      markerIds: ["marker-1"],
+      submissionIds: [],
     });
     expect(state.pendingComments.map((comment) => comment.id)).toEqual(["pending"]);
     const query = queries[0]!;
     const named = Object.fromEntries(query.values.map((value, index) => [`${index + 1}`, value]));
-    const detail = sqlite.prepare(`EXPLAIN QUERY PLAN ${query.sql}`).all(named).map((row) => String(row.detail)).join("\n");
+    const detail = sqlite
+      .prepare(`EXPLAIN QUERY PLAN ${query.sql}`)
+      .all(named)
+      .map((row) => String(row.detail))
+      .join("\n");
     expect(detail).toContain("idx_ugc_user_pending_comment");
     expect(detail).not.toMatch(/SCAN ugc_submissions\b/);
   });
@@ -246,18 +319,31 @@ describe("public read SQL under D1 limits", () => {
       INSERT INTO ugc_submission_upvotes (submission_id, user_id, active) VALUES ('image-shown', 'other-user', 1);
     `);
     const payload = {
-      userId: "viewer", markerIds: ["marker-1"], excludePathPrefix: "_test",
-      submissionIds: ["image-shown", "image-hidden", "image-outside", "test-image",
-        "comment-shown", "comment-hidden", "comment-outside"]
+      userId: "viewer",
+      markerIds: ["marker-1"],
+      excludePathPrefix: "_test",
+      submissionIds: [
+        "image-shown",
+        "image-hidden",
+        "image-outside",
+        "test-image",
+        "comment-shown",
+        "comment-hidden",
+        "comment-outside",
+      ],
     };
-    expect(await listImageViewerReactionsByMarker(database, payload)).toEqual(new Map([
-      ["image-shown", { flagged: true, upvoted: false }]
-    ]));
+    expect(await listImageViewerReactionsByMarker(database, payload)).toEqual(
+      new Map([["image-shown", { flagged: true, upvoted: false }]]),
+    );
     const state = await listCommentViewerStateByMarker(database, payload);
     expect(state.reactions).toEqual(new Map([["comment-shown", { flagged: true, viewerVote: 0 }]]));
     for (const query of [queries[0]!, queries[2]!]) {
       const named = Object.fromEntries(query.values.map((value, index) => [`${index + 1}`, value]));
-      const detail = sqlite.prepare(`EXPLAIN QUERY PLAN ${query.sql}`).all(named).map((row) => String(row.detail)).join("\n");
+      const detail = sqlite
+        .prepare(`EXPLAIN QUERY PLAN ${query.sql}`)
+        .all(named)
+        .map((row) => String(row.detail))
+        .join("\n");
       expect(detail).toContain("SEARCH s USING INDEX sqlite_autoindex_ugc_submissions_1 (id=?)");
     }
   });
@@ -267,15 +353,26 @@ describe("public read SQL under D1 limits", () => {
     insert("flagged", "marker-1", { status: "flagged" });
     insert("hidden", "marker-1", { status: "pending_audit" });
     insert("image", "marker-1", { kind: "image" });
-    const comments = await getVisibleCommentsByIds(database, ["shown", "flagged", "hidden", "image", "missing", "shown"]);
-    expect(comments.sort((first, second) => first.id.localeCompare(second.id)))
-      .toEqual([{ id: "flagged", content: "content" }, { id: "shown", content: "content" }]);
+    const comments = await getVisibleCommentsByIds(database, [
+      "shown",
+      "flagged",
+      "hidden",
+      "image",
+      "missing",
+      "shown",
+    ]);
+    expect(comments.sort((first, second) => first.id.localeCompare(second.id))).toEqual([
+      { id: "flagged", content: "content" },
+      { id: "shown", content: "content" },
+    ]);
     expect(queries).toHaveLength(1);
     expect(queries[0]!.sql).not.toMatch(/JOIN users|s\.\*/);
   });
 
-  it.each(["requested", "empty"])("keeps %s comment reads bounded with competing production indexes and no ANALYZE", async (markerId) => {
-    sqlite.exec(`
+  it.each(["requested", "empty"])(
+    "keeps %s comment reads bounded with competing production indexes and no ANALYZE",
+    async (markerId) => {
+      sqlite.exec(`
       WITH RECURSIVE sequence(number) AS (
         SELECT 1 UNION ALL SELECT number + 1 FROM sequence WHERE number < 10000
       )
@@ -285,29 +382,55 @@ describe("public read SQL under D1 limits", () => {
       INSERT INTO ugc_submission_votes (submission_id, user_id, value, active)
         SELECT id, 'viewer', 1, 1 FROM ugc_submissions;
     `);
-    insert("selected-root", "requested");
-    insert("selected-reply", "requested", { parentId: "selected-root", depth: 1 });
-    const result = await listActiveCommentsByMarker(database, { markerId, limit: 1, replyLimit: 1 });
-    expect(result).toHaveLength(markerId === "requested" ? 1 : 0);
-    const query = queries[0]!;
-    const named = Object.fromEntries(query.values.map((value, index) => [`${index + 1}`, value]));
-    const detail = sqlite.prepare(`EXPLAIN QUERY PLAN ${query.sql}`).all(named).map((row) => String(row.detail)).join("\n");
-    expect(detail).not.toContain("idx_ugc_submission_votes_active_created");
-    expect(detail).not.toMatch(/SCAN s USING INDEX|SCAN ugc_submissions\b/);
-    expect(detail).toContain("SEARCH s USING INDEX sqlite_autoindex_ugc_submissions_1 (id=?)");
-    expect(detail).toMatch(/SEARCH child USING (?:COVERING )?INDEX idx_ugc_visible_comment_parent \(parent_id=\?\)/);
-  });
+      insert("selected-root", "requested");
+      insert("selected-reply", "requested", { parentId: "selected-root", depth: 1 });
+      const result = await listActiveCommentsByMarker(database, {
+        markerId,
+        limit: 1,
+        replyLimit: 1,
+      });
+      expect(result).toHaveLength(markerId === "requested" ? 1 : 0);
+      const query = queries[0]!;
+      const named = Object.fromEntries(query.values.map((value, index) => [`${index + 1}`, value]));
+      const detail = sqlite
+        .prepare(`EXPLAIN QUERY PLAN ${query.sql}`)
+        .all(named)
+        .map((row) => String(row.detail))
+        .join("\n");
+      expect(detail).not.toContain("idx_ugc_submission_votes_active_created");
+      expect(detail).not.toMatch(/SCAN s USING INDEX|SCAN ugc_submissions\b/);
+      expect(detail).toContain("SEARCH s USING INDEX sqlite_autoindex_ugc_submissions_1 (id=?)");
+      expect(detail).toMatch(
+        /SEARCH child USING (?:COVERING )?INDEX idx_ugc_visible_comment_parent \(parent_id=\?\)/,
+      );
+    },
+  );
 
   it("marks 100 notification ids without crossing recipient/category boundaries", async () => {
     const insertNotification = sqlite.prepare("INSERT INTO notifications VALUES (?, ?, ?, NULL)");
-    for (const notificationId of markerIds) insertNotification.run(notificationId, "viewer", "community");
+    for (const notificationId of markerIds) {
+      insertNotification.run(notificationId, "viewer", "community");
+    }
     insertNotification.run("other-user", "another-user", "community");
     insertNotification.run("other-category", "viewer", "system");
-    expect(await markNotificationsRead(database, { userId: "viewer", category: "community", ids: markerIds })).toBe(100);
-    expect(await markNotificationsRead(database, {
-      userId: "viewer", category: "community", ids: ["other-user", "other-category"]
-    })).toBe(0);
-    expect(sqlite.prepare("SELECT COUNT(*) AS count FROM notifications WHERE read_at IS NULL").get()?.count).toBe(2);
+    expect(
+      await markNotificationsRead(database, {
+        userId: "viewer",
+        category: "community",
+        ids: markerIds,
+      }),
+    ).toBe(100);
+    expect(
+      await markNotificationsRead(database, {
+        userId: "viewer",
+        category: "community",
+        ids: ["other-user", "other-category"],
+      }),
+    ).toBe(0);
+    expect(
+      sqlite.prepare("SELECT COUNT(*) AS count FROM notifications WHERE read_at IS NULL").get()
+        ?.count,
+    ).toBe(2);
     expect(queries.every((query) => query.values.length === 4)).toBe(true);
   });
 });

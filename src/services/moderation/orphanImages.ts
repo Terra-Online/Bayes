@@ -39,7 +39,7 @@ export async function getOrphanImages(payload: {
   do {
     const listed = await payload.bucket.list({
       cursor,
-      limit: 1000
+      limit: 1000,
     });
     r2ObjectCount += listed.objects.length;
 
@@ -58,14 +58,17 @@ export async function getOrphanImages(payload: {
         contentType: metadata?.httpMetadata?.contentType ?? null,
         sourceMimeType: metadata?.customMetadata?.sourceMimeType ?? null,
         convertedToWebp: metadata?.customMetadata?.convertedToWebp === "true",
-        storageClass: object.storageClass
+        storageClass: object.storageClass,
       });
     }
 
     cursor = listed.truncated ? listed.cursor : undefined;
   } while (cursor);
 
-  items.sort((left, right) => right.uploadedAt.localeCompare(left.uploadedAt) || left.key.localeCompare(right.key));
+  items.sort(
+    (left, right) =>
+      right.uploadedAt.localeCompare(left.uploadedAt) || left.key.localeCompare(right.key),
+  );
 
   return {
     generatedAt: new Date().toISOString(),
@@ -75,7 +78,7 @@ export async function getOrphanImages(payload: {
       r2SizeBytes,
       referencedFileCount: referencedPaths.size,
       orphanObjectCount: items.length,
-      orphanSizeBytes: items.reduce((total, item) => total + item.sizeBytes, 0)
-    }
+      orphanSizeBytes: items.reduce((total, item) => total + item.sizeBytes, 0),
+    },
   };
 }

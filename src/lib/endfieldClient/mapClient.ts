@@ -5,7 +5,7 @@ import type {
   EndfieldDeviceProfile,
   EndfieldMapId,
   EndfieldMapMarkListEnvelope,
-  EndfieldProvider
+  EndfieldProvider,
 } from "./types";
 
 export async function getEndfieldMapMarkList(args: {
@@ -21,15 +21,19 @@ export async function getEndfieldMapMarkList(args: {
   const path = "/web/v1/game/endfield/map/mark/list";
   const signPath = `${path}mapId=${args.mapId}&roleId=${args.roleId}&serverId=${args.serverId}`;
   const timestamp = getEndfieldTimestamp();
-  const sign = await getSignature(signPath, timestamp, args.token, "", args.deviceProfile?.deviceId ?? "");
+  const sign = await getSignature(
+    signPath,
+    timestamp,
+    args.token,
+    "",
+    args.deviceProfile?.deviceId ?? "",
+  );
   const query = new URLSearchParams({
     mapId: args.mapId,
     roleId: args.roleId,
-    serverId: String(args.serverId)
+    serverId: String(args.serverId),
   });
-  const origin = args.provider === "skland"
-    ? "https://game.skland.com"
-    : "https://game.skport.com";
+  const origin = args.provider === "skland" ? "https://game.skland.com" : "https://game.skport.com";
 
   const response = await fetch(`${buildUrl(hosts.baseUrl, path)}?${query.toString()}`, {
     method: "GET",
@@ -44,8 +48,8 @@ export async function getEndfieldMapMarkList(args: {
       sign,
       "accept-language": "en-US",
       "sk-language": "en",
-      ...buildDeviceHeaders(args.deviceProfile)
-    }
+      ...buildDeviceHeaders(args.deviceProfile),
+    },
   });
 
   return parseRawApiEnvelope(response);
@@ -63,13 +67,17 @@ export async function agreePolicy(args: {
   const path = "/web/v1/game/endfield/map/agree-policy";
   const body = JSON.stringify({
     roleId: args.roleId,
-    serverId: String(args.serverId)
+    serverId: String(args.serverId),
   });
   const timestamp = getEndfieldTimestamp();
-  const sign = await getSignature(path, timestamp, args.token, body, args.deviceProfile?.deviceId ?? "");
-  const origin = args.provider === "skland"
-    ? "https://game.skland.com"
-    : "https://game.skport.com";
+  const sign = await getSignature(
+    path,
+    timestamp,
+    args.token,
+    body,
+    args.deviceProfile?.deviceId ?? "",
+  );
+  const origin = args.provider === "skland" ? "https://game.skland.com" : "https://game.skport.com";
 
   const response = await fetch(buildUrl(hosts.baseUrl, path), {
     method: "POST",
@@ -85,9 +93,9 @@ export async function agreePolicy(args: {
       sign,
       "accept-language": "en-US",
       "sk-language": "en",
-      ...buildDeviceHeaders(args.deviceProfile)
+      ...buildDeviceHeaders(args.deviceProfile),
     },
-    body
+    body,
   });
 
   await parseApiEnvelope<void>(response);

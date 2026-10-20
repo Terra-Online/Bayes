@@ -1,4 +1,5 @@
 import type { Context } from "hono";
+
 import { getRuntimeConfig } from "../../lib/config";
 import { ApiError } from "../../lib/errors";
 import { getPublicImageById } from "../../repositories/submission/getPublicImage";
@@ -7,15 +8,17 @@ import { getOptionalAuthIdentity } from "./helpers";
 import { imagesQuerySchema } from "./schemas";
 import { resolveImageScope, resolvePublicAssetBaseUrl } from "./scope";
 
-const imageQuerySchema = imagesQuerySchema.pick({
-  markerId: true,
-  scope: true
-}).required({ markerId: true });
+const imageQuerySchema = imagesQuerySchema
+  .pick({
+    markerId: true,
+    scope: true,
+  })
+  .required({ markerId: true });
 
 export async function handleGetPublicImage(c: Context<AppEnv, "/images/:id">) {
   const parsed = imageQuerySchema.safeParse({
     markerId: c.req.query("markerId"),
-    scope: c.req.query("scope")
+    scope: c.req.query("scope"),
   });
   if (!parsed.success) {
     throw new ApiError(422, "VALIDATION_ERROR", "Invalid image query.", parsed.error.flatten());
@@ -29,7 +32,7 @@ export async function handleGetPublicImage(c: Context<AppEnv, "/images/:id">) {
     markerId: parsed.data.markerId,
     assetBaseUrl: resolvePublicAssetBaseUrl(c.req.url, config.ugcAssetBaseUrl),
     ...scope,
-    viewerUserId: identity?.uid
+    viewerUserId: identity?.uid,
   });
   if (!item) {
     throw new ApiError(404, "NOT_FOUND", "Image not found.");

@@ -1,9 +1,5 @@
 import { publicCommentFromRow, userCommentFromRow } from "./mapper";
-import type {
-  PublicSubmissionComment,
-  UserSubmissionComment,
-  ViewerVoteValue
-} from "./types";
+import type { PublicSubmissionComment, UserSubmissionComment, ViewerVoteValue } from "./types";
 
 export interface CommentViewerReaction {
   viewerVote: ViewerVoteValue;
@@ -18,7 +14,7 @@ export interface CommentViewerState {
 function buildCommentTree(
   roots: PublicSubmissionComment[],
   replies: PublicSubmissionComment[],
-  replyLimit: number
+  replyLimit: number,
 ): PublicSubmissionComment[] {
   const commentById = new Map(roots.map((root) => [root.id, root]));
   for (const reply of replies) {
@@ -27,7 +23,9 @@ function buildCommentTree(
 
   for (const reply of replies) {
     const parent = reply.parentId ? commentById.get(reply.parentId) : undefined;
-    if (!parent) continue;
+    if (!parent) {
+      continue;
+    }
     if (parent.replies.length < replyLimit) {
       parent.replies.push(reply);
     }
@@ -44,10 +42,13 @@ export async function listActiveCommentsByMarker(
     limit?: number;
     replyLimit?: number;
     viewerUserId?: string;
-  }
+  },
 ): Promise<PublicSubmissionComment[]> {
   const requestedIds = payload.markerIds ?? (payload.markerId ? [payload.markerId] : []);
-  const markerIds = [...new Set(requestedIds.map((item) => item.trim()).filter(Boolean))].slice(0, 100);
+  const markerIds = [...new Set(requestedIds.map((item) => item.trim()).filter(Boolean))].slice(
+    0,
+    100,
+  );
   if (markerIds.length === 0) {
     return [];
   }
@@ -154,12 +155,14 @@ export async function listActiveCommentsByMarker(
        LEFT JOIN users u ON u.uid = s.user_id
        ORDER BY (selected.root_rank IS NULL) ASC,
          CASE WHEN selected.root_rank IS NOT NULL THEN s.poi_id END ASC,
-         selected.root_rank ASC, s.comment_depth ASC, s.parent_id ASC, s.created_at ASC, s.id ASC`
+         selected.root_rank ASC, s.comment_depth ASC, s.parent_id ASC, s.created_at ASC, s.id ASC`,
     )
     .bind(JSON.stringify(markerIds), limit, replyLimit, ...viewerBindings)
     .all<Record<string, unknown>>();
 
-  const comments = (result.results ?? []).map((row) => publicCommentFromRow(row, payload.viewerUserId));
+  const comments = (result.results ?? []).map((row) =>
+    publicCommentFromRow(row, payload.viewerUserId),
+  );
   const roots = comments.filter((comment) => comment.parentId === null);
   const replies = comments.filter((comment) => comment.parentId !== null);
   return buildCommentTree(roots, replies, replyLimit);
@@ -172,10 +175,13 @@ export async function listUserCommentsByMarker(
     markerId?: string;
     markerIds?: string[];
     limit?: number;
-  }
+  },
 ): Promise<UserSubmissionComment[]> {
   const requestedIds = payload.markerIds ?? (payload.markerId ? [payload.markerId] : []);
-  const markerIds = [...new Set(requestedIds.map((item) => item.trim()).filter(Boolean))].slice(0, 100);
+  const markerIds = [...new Set(requestedIds.map((item) => item.trim()).filter(Boolean))].slice(
+    0,
+    100,
+  );
   if (markerIds.length === 0) {
     return [];
   }
@@ -225,7 +231,7 @@ export async function listUserCommentsByMarker(
        LEFT JOIN ugc_submission_votes vv ON vv.submission_id = s.id AND vv.user_id = ?1 AND vv.active = 1
        LEFT JOIN ugc_submission_flags vf ON vf.submission_id = s.id AND vf.user_id = ?1 AND vf.active = 1
        LEFT JOIN users u ON u.uid = s.user_id
-       ORDER BY s.created_at DESC, s.id DESC`
+       ORDER BY s.created_at DESC, s.id DESC`,
     )
     .bind(payload.userId, JSON.stringify(markerIds), limit)
     .all<Record<string, unknown>>();
@@ -240,17 +246,20 @@ export async function listCommentViewerStateByMarker(
     markerIds: string[];
     submissionIds: string[];
     pendingLimit?: number;
-  }
+  },
 ): Promise<CommentViewerState> {
-  const markerIds = [...new Set(payload.markerIds.map((item) => item.trim()).filter(Boolean))].slice(0, 100);
+  const markerIds = [
+    ...new Set(payload.markerIds.map((item) => item.trim()).filter(Boolean)),
+  ].slice(0, 100);
   if (markerIds.length === 0) {
     return { pendingComments: [], reactions: new Map() };
   }
 
   const pendingLimit = Math.min(Math.max(payload.pendingLimit ?? 200, 1), 200);
   const pendingLimitPlaceholder = 3;
-  const pendingStatement = db.prepare(
-    `WITH selected_comments AS MATERIALIZED (
+  const pendingStatement = db
+    .prepare(
+      `WITH selected_comments AS MATERIALIZED (
        SELECT *
        FROM ugc_submissions INDEXED BY idx_ugc_user_pending_comment
        WHERE user_id = ?1
@@ -287,12 +296,16 @@ export async function listCommentViewerStateByMarker(
        GROUP BY submission_id
      ) f ON f.submission_id = s.id
      LEFT JOIN users u ON u.uid = s.user_id
-     ORDER BY s.created_at DESC, s.id DESC`
-  ).bind(payload.userId, JSON.stringify(markerIds), pendingLimit);
+     ORDER BY s.created_at DESC, s.id DESC`,
+    )
+    .bind(payload.userId, JSON.stringify(markerIds), pendingLimit);
 
   const submissionIds = [...new Set(payload.submissionIds)];
-  const reactionStatement = submissionIds.length > 0 ? db.prepare(
-    `SELECT
+  const reactionStatement =
+    submissionIds.length > 0
+      ? db
+          .prepare(
+            `SELECT
        s.id,
        COALESCE(v.value, 0) AS viewer_vote,
        CASE WHEN f.user_id IS NULL THEN 0 ELSE 1 END AS viewer_flagged
@@ -303,24 +316,26 @@ export async function listCommentViewerStateByMarker(
        AND s.id IN (SELECT value FROM json_each(?3))
        AND s.kind = 'comment'
        AND s.status IN ('active', 'flagged', 'remove_request')
-       AND (v.user_id IS NOT NULL OR f.user_id IS NOT NULL)`
-  ).bind(payload.userId, JSON.stringify(markerIds), JSON.stringify(submissionIds)) : null;
+       AND (v.user_id IS NOT NULL OR f.user_id IS NOT NULL)`,
+          )
+          .bind(payload.userId, JSON.stringify(markerIds), JSON.stringify(submissionIds))
+      : null;
 
   const [pendingResult, reactionResult] = await db.batch<Record<string, unknown>>([
     pendingStatement,
-    ...(reactionStatement ? [reactionStatement] : [])
+    ...(reactionStatement ? [reactionStatement] : []),
   ]);
   const reactions = new Map<string, CommentViewerReaction>();
   (reactionResult?.results ?? []).forEach((row) => {
     const vote = Number(row.viewer_vote ?? 0);
     reactions.set(String(row.id), {
-      viewerVote: vote === 1 ? 1 : vote === -1 ? -1 : 0,
-      flagged: Boolean(row.viewer_flagged)
+      viewerVote: vote === 1 || vote === -1 ? vote : 0,
+      flagged: Boolean(row.viewer_flagged),
     });
   });
 
   return {
     pendingComments: (pendingResult.results ?? []).map((row) => userCommentFromRow(row)),
-    reactions
+    reactions,
   };
 }

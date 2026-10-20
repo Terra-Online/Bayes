@@ -9,7 +9,9 @@ const POINT_ID_PERMUTATION_OFFSET = 11n;
 const POINT_ID_TOKEN_LENGTH = 7;
 
 function encodeBase62(value: bigint): string {
-  if (value === 0n) return "0";
+  if (value === 0n) {
+    return "0";
+  }
 
   let num = value;
   let encoded = "";
@@ -22,12 +24,17 @@ function encodeBase62(value: bigint): string {
 }
 
 function encodePointIdToken(pointId: string): string | null {
-  if (!/^\d+$/.test(pointId)) return null;
+  if (!/^\d+$/.test(pointId)) {
+    return null;
+  }
 
   const id = BigInt(pointId);
-  if (id < 0n || id >= POINT_ID_PERMUTATION_MOD) return null;
+  if (id < 0n || id >= POINT_ID_PERMUTATION_MOD) {
+    return null;
+  }
 
-  const obfuscated = (id * POINT_ID_PERMUTATION_MULTIPLIER + POINT_ID_PERMUTATION_OFFSET) % POINT_ID_PERMUTATION_MOD;
+  const obfuscated =
+    (id * POINT_ID_PERMUTATION_MULTIPLIER + POINT_ID_PERMUTATION_OFFSET) % POINT_ID_PERMUTATION_MOD;
   return encodeBase62(obfuscated).padStart(POINT_ID_TOKEN_LENGTH, "0");
 }
 
@@ -43,6 +50,8 @@ export function buildPointShareUrlForMarker(markerId: string, poiType?: string):
 
   const params = new URLSearchParams();
   params.set("p", markerId);
-  if (poiType) params.set("type", poiType);
+  if (poiType) {
+    params.set("type", poiType);
+  }
   return `${POINT_SHARE_SHORT_ORIGIN}/?${params.toString()}`;
 }

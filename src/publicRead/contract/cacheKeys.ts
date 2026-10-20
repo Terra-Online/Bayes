@@ -10,7 +10,7 @@ export function buildPublicReadCacheKey(path: string, searchParams: URLSearchPar
 
 export async function buildPublicReadMarkerTag(
   kind: PublicReadMarkerKind,
-  markerId: string
+  markerId: string,
 ): Promise<string> {
   return `ugc-${kind}:${await sha256Hex(markerId)}`;
 }

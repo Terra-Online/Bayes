@@ -2,13 +2,18 @@ import { ApiError } from "../errors";
 import { parseApiEnvelope } from "./envelope";
 import { buildDeviceHeaders, buildUrl, getEndfieldHosts } from "./hosts";
 import { getEndfieldTimestamp, getSignature } from "./signature";
-import type { EndfieldDeviceProfile, EndfieldProvider, EndfieldRoleOption, PlayerBindingData } from "./types";
+import type {
+  EndfieldDeviceProfile,
+  EndfieldProvider,
+  EndfieldRoleOption,
+  PlayerBindingData,
+} from "./types";
 
 export async function getEndfieldRoles(
   provider: EndfieldProvider,
   cred: string,
   token: string,
-  deviceProfile?: EndfieldDeviceProfile
+  deviceProfile?: EndfieldDeviceProfile,
 ): Promise<EndfieldRoleOption[]> {
   const hosts = getEndfieldHosts(provider);
   const path = "/api/v1/game/player/binding";
@@ -26,14 +31,14 @@ export async function getEndfieldRoles(
       sign,
       "accept-language": "en-US",
       "sk-language": "en",
-      ...buildDeviceHeaders(deviceProfile)
-    }
+      ...buildDeviceHeaders(deviceProfile),
+    },
   });
 
   if (response.status === 404) {
     throw new ApiError(404, "ENDFIELD_ROLE_NOT_FOUND", "No Endfield roles found on this account.", {
       upstreamStatus: response.status,
-      provider
+      provider,
     });
   }
 
@@ -54,7 +59,7 @@ export async function getEndfieldRoles(
         level: role.level ?? 0,
         serverType: role.serverType ?? "",
         serverName: role.serverName ?? "",
-        isDefault: Boolean(role.isDefault)
+        isDefault: Boolean(role.isDefault),
       };
     })
     .filter((role): role is EndfieldRoleOption => Boolean(role));

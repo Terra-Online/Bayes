@@ -88,7 +88,10 @@ export interface PublicSubmissionComment {
   createdAt: string;
 }
 
-export interface UserSubmissionComment extends Omit<PublicSubmissionComment, "replies" | "replyCount"> {
+export interface UserSubmissionComment extends Omit<
+  PublicSubmissionComment,
+  "replies" | "replyCount"
+> {
   snapshotId: string;
   flagCount: number;
   replies?: PublicSubmissionComment[];
@@ -126,5 +129,5 @@ export const ALL_STATUSES: SubmissionStatus[] = [
   "active",
   "flagged",
   "remove_request",
-  "stale"
+  "stale",
 ];

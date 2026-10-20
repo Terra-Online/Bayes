@@ -1,8 +1,14 @@
 import { readFileSync } from "node:fs";
 import type { StatementSync } from "node:sqlite";
+
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+
 import { SqliteD1 } from "../../test/sqliteD1";
-import { cleanupProgressConsistencyRecords, getProgressStatsOutboxHealth, listDispatchableProgressStatsEvents } from "./repository";
+import {
+  cleanupProgressConsistencyRecords,
+  getProgressStatsOutboxHealth,
+  listDispatchableProgressStatsEvents,
+} from "./repository";
 
 describe("outbox query efficiency", () => {
   let database: SqliteD1;
@@ -33,23 +39,47 @@ describe("outbox query efficiency", () => {
   });
   afterEach(() => database.sqlite.close());
 
-  function insertEvent(eventId: string, status: string, createdAt: number, uid = "user-1", processedAt = now) {
-    eventInsert.run(eventId, uid, eventId, status, now - 1, createdAt, status === "processed" ? processedAt : null);
+  function insertEvent(
+    eventId: string,
+    status: string,
+    createdAt: number,
+    uid = "user-1",
+    processedAt = now,
+  ) {
+    eventInsert.run(
+      eventId,
+      uid,
+      eventId,
+      status,
+      now - 1,
+      createdAt,
+      status === "processed" ? processedAt : null,
+    );
   }
 
   it("reads only the active partial index, not retained processed history", async () => {
     insertEvent("pending", "pending", now - 10000);
     insertEvent("retry", "retry", now - 40000);
     insertEvent("blocked", "blocked", now - 90000, "blocked-user");
-    expect(await getProgressStatsOutboxHealth(database.db, now)).toEqual({ pending: 2, blocked: 1, oldestAgeMs: 40000 });
+    expect(await getProgressStatsOutboxHealth(database.db, now)).toEqual({
+      pending: 2,
+      blocked: 1,
+      oldestAgeMs: 40000,
+    });
     const plan = database.explain(database.queries.at(-1)!);
     expect(plan).toContain("idx_progress_stats_outbox_active_health");
     expect(plan).not.toMatch(/SCAN progress_stats_outbox\s*$/m);
   });
 
   it("returns zero health counts when all retained events are processed", async () => {
-    expect(await getProgressStatsOutboxHealth(database.db, now)).toEqual({ pending: 0, blocked: 0, oldestAgeMs: 0 });
-    expect(database.explain(database.queries.at(-1)!)).toContain("idx_progress_stats_outbox_active_health");
+    expect(await getProgressStatsOutboxHealth(database.db, now)).toEqual({
+      pending: 0,
+      blocked: 0,
+      oldestAgeMs: 0,
+    });
+    expect(database.explain(database.queries.at(-1)!)).toContain(
+      "idx_progress_stats_outbox_active_health",
+    );
   });
 
   it("preserves per-user ordering without scanning processed events in the predecessor lookup", async () => {
@@ -59,7 +89,9 @@ describe("outbox query efficiency", () => {
     insertEvent("pending-second", "pending", now - 30000);
     const events = await listDispatchableProgressStatsEvents(database.db, now, 20);
     expect(events.map((event) => event.eventId)).toEqual(["pending-first"]);
-    expect(database.explain(database.queries.at(-1)!)).toContain("idx_progress_stats_outbox_unprocessed_user");
+    expect(database.explain(database.queries.at(-1)!)).toContain(
+      "idx_progress_stats_outbox_unprocessed_user",
+    );
   });
 
   it("cleans only expired processed records through the cleanup index", async () => {
@@ -68,10 +100,24 @@ describe("outbox query efficiency", () => {
     insertEvent("old-pending", "pending", old);
     insertEvent("old-blocked", "blocked", old, "blocked-user");
     await cleanupProgressConsistencyRecords(database.db, now);
-    expect(database.sqlite.prepare("SELECT id FROM progress_stats_outbox WHERE event_id = 'expired'").get()).toBeUndefined();
-    expect(database.sqlite.prepare("SELECT id FROM progress_stats_outbox WHERE event_id = 'old-pending'").get()).toBeDefined();
-    expect(database.sqlite.prepare("SELECT id FROM progress_stats_outbox WHERE event_id = 'old-blocked'").get()).toBeDefined();
-    const cleanup = database.queries.find((query) => query.sql.includes("DELETE FROM progress_stats_outbox"))!;
+    expect(
+      database.sqlite
+        .prepare("SELECT id FROM progress_stats_outbox WHERE event_id = 'expired'")
+        .get(),
+    ).toBeUndefined();
+    expect(
+      database.sqlite
+        .prepare("SELECT id FROM progress_stats_outbox WHERE event_id = 'old-pending'")
+        .get(),
+    ).toBeDefined();
+    expect(
+      database.sqlite
+        .prepare("SELECT id FROM progress_stats_outbox WHERE event_id = 'old-blocked'")
+        .get(),
+    ).toBeDefined();
+    const cleanup = database.queries.find((query) =>
+      query.sql.includes("DELETE FROM progress_stats_outbox"),
+    )!;
     expect(database.explain(cleanup)).toContain("idx_progress_stats_outbox_processed_cleanup");
   });
 });

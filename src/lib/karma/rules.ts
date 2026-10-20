@@ -46,7 +46,10 @@ export function getKarmaEvaluationBatchSize(): number {
   return Math.max(1, Math.min(5000, karmaConfig.evaluation.batchSize));
 }
 
-export function calculateKarmaEvaluationScore(input: KarmaEvaluationInput, now = new Date()): number {
+export function calculateKarmaEvaluationScore(
+  input: KarmaEvaluationInput,
+  now = new Date(),
+): number {
   const activity = karmaConfig.evaluation.activity;
   const decay = karmaConfig.evaluation.decay;
   const quality = karmaConfig.evaluation.quality;
@@ -58,21 +61,22 @@ export function calculateKarmaEvaluationScore(input: KarmaEvaluationInput, now =
   const passiveActivityScore = asymptoticScore(
     usageSpanDays,
     activity.maxPassivePoints,
-    activity.medianDays
+    activity.medianDays,
   );
-  const inactivityPenalty = decay.penaltyAtMedianDays * Math.sqrt(inactiveOverdueDays / Math.max(1, decay.medianDays));
+  const inactivityPenalty =
+    decay.penaltyAtMedianDays * Math.sqrt(inactiveOverdueDays / Math.max(1, decay.medianDays));
   const imageQualityScore = calculateImageQualityScore({
     approvedImages: input.approvedImages,
     rejectedImages: input.rejectedImages,
     baseline: quality.imageApprovalBaseline,
     weight: quality.imageApprovalWeight,
     volumeMedian: quality.imageVolumeMedian,
-    minReviewedImages: quality.minReviewedImages
+    minReviewedImages: quality.minReviewedImages,
   });
 
   return Math.max(
     0,
-    Math.floor(input.points + passiveActivityScore + imageQualityScore - inactivityPenalty)
+    Math.floor(input.points + passiveActivityScore + imageQualityScore - inactivityPenalty),
   );
 }
 
@@ -109,7 +113,9 @@ function parseSqlDate(raw: string, fallback: Date): Date {
     return fallback;
   }
 
-  const timestamp = Date.parse(normalized.includes("T") ? normalized : `${normalized.replace(" ", "T")}Z`);
+  const timestamp = Date.parse(
+    normalized.includes("T") ? normalized : `${normalized.replace(" ", "T")}Z`,
+  );
   if (!Number.isFinite(timestamp)) {
     return fallback;
   }
@@ -123,11 +129,17 @@ function daysBetween(start: Date, end: Date): number {
 }
 
 export function getApprovedImageDailyBackoffTtlSeconds(): number {
-  return Math.max(3600, karmaConfig.scoreRules.moderation.approvedImageDailyBackoff.counterTtlSeconds);
+  return Math.max(
+    3600,
+    karmaConfig.scoreRules.moderation.approvedImageDailyBackoff.counterTtlSeconds,
+  );
 }
 
 export function getApprovedCommentDailyBackoffTtlSeconds(): number {
-  return Math.max(3600, karmaConfig.scoreRules.moderation.approvedCommentDailyBackoff.counterTtlSeconds);
+  return Math.max(
+    3600,
+    karmaConfig.scoreRules.moderation.approvedCommentDailyBackoff.counterTtlSeconds,
+  );
 }
 
 export function getModerationPointsDelta(
@@ -135,7 +147,7 @@ export function getModerationPointsDelta(
   status: KarmaModerationStatus,
   dailyApprovedCount = 1,
   minimumActivePoints = 0,
-  backoffMultiplier = 1
+  backoffMultiplier = 1,
 ): number {
   if (status === "active") {
     const normalizedBackoffMultiplier = Math.max(1, Math.floor(backoffMultiplier));
@@ -143,23 +155,35 @@ export function getModerationPointsDelta(
       const basePoints = karmaConfig.scoreRules.moderation.approvedComment;
       const halfRewardAtCount = Math.max(
         2,
-        karmaConfig.scoreRules.moderation.approvedCommentDailyBackoff.halfRewardAtCount * normalizedBackoffMultiplier
+        karmaConfig.scoreRules.moderation.approvedCommentDailyBackoff.halfRewardAtCount *
+          normalizedBackoffMultiplier,
       );
-      return Math.max(minimumActivePoints, calculateDailyBackoffPoints(basePoints, halfRewardAtCount, dailyApprovedCount));
+      return Math.max(
+        minimumActivePoints,
+        calculateDailyBackoffPoints(basePoints, halfRewardAtCount, dailyApprovedCount),
+      );
     }
 
     const basePoints = karmaConfig.scoreRules.moderation.approvedImage;
     const halfRewardAtCount = Math.max(
       2,
-      karmaConfig.scoreRules.moderation.approvedImageDailyBackoff.halfRewardAtCount * normalizedBackoffMultiplier
+      karmaConfig.scoreRules.moderation.approvedImageDailyBackoff.halfRewardAtCount *
+        normalizedBackoffMultiplier,
     );
-    return Math.max(minimumActivePoints, calculateDailyBackoffPoints(basePoints, halfRewardAtCount, dailyApprovedCount));
+    return Math.max(
+      minimumActivePoints,
+      calculateDailyBackoffPoints(basePoints, halfRewardAtCount, dailyApprovedCount),
+    );
   }
 
   return Math.floor(karmaConfig.scoreRules.moderation.rejectedSubmission);
 }
 
-function calculateDailyBackoffPoints(basePoints: number, halfRewardAtCount: number, dailyApprovedCount: number): number {
+function calculateDailyBackoffPoints(
+  basePoints: number,
+  halfRewardAtCount: number,
+  dailyApprovedCount: number,
+): number {
   const backoffBase = halfRewardAtCount - 1;
   const count = Math.max(1, Math.floor(dailyApprovedCount));
   return Math.floor(basePoints * (backoffBase / (backoffBase + count - 1)));
@@ -168,7 +192,7 @@ function calculateDailyBackoffPoints(basePoints: number, halfRewardAtCount: numb
 export function getUploadRateLimitForKarma(karma: number): number {
   const normalizedKarma = Number.isFinite(karma) ? Math.max(0, Math.floor(karma)) : 0;
   const bands = [...karmaConfig.uploadRateLimitPerMinute].sort(
-    (a: RateLimitBand, b: RateLimitBand) => a.minKarma - b.minKarma
+    (a: RateLimitBand, b: RateLimitBand) => a.minKarma - b.minKarma,
   );
   let limit = bands[0]?.limit ?? 4;
 

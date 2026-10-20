@@ -1,4 +1,5 @@
 import type { MiddlewareHandler } from "hono";
+
 import { createToken } from "../lib/crypto";
 import type { AppEnv } from "../types/app";
 

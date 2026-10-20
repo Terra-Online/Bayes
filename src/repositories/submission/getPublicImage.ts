@@ -11,7 +11,7 @@ export async function getPublicImageById(
     pathPrefix?: string;
     excludePathPrefix?: string;
     viewerUserId?: string;
-  }
+  },
 ): Promise<PublicSubmissionImage | null> {
   const scope = buildImageScopeFilters(payload, 2);
   const filters = [
@@ -19,7 +19,7 @@ export async function getPublicImageById(
     "s.poi_id = ?2",
     "s.kind = 'image'",
     "s.status IN ('active', 'flagged', 'remove_request')",
-    ...scope.clauses.map((clause) => `s.${clause}`)
+    ...scope.clauses.map((clause) => `s.${clause}`),
   ];
   const viewerBinding = scope.bindings.length + 3;
   const viewerSelect = payload.viewerUserId
@@ -29,8 +29,9 @@ export async function getPublicImageById(
        EXISTS(SELECT 1 FROM ugc_submission_flags
          WHERE submission_id = s.id AND user_id = ?${viewerBinding} AND active = 1) AS viewer_flagged`
     : "";
-  const row = await db.prepare(
-    `SELECT s.*,
+  const row = await db
+    .prepare(
+      `SELECT s.*,
        (SELECT COUNT(*) FROM ugc_submission_upvotes WHERE submission_id = s.id AND active = 1) AS upvote_count,
        (SELECT COUNT(*) FROM ugc_submission_flags WHERE submission_id = s.id AND active = 1) AS flag_count,
        u.uid AS submitter_uid,
@@ -40,13 +41,15 @@ export async function getPublicImageById(
        ${viewerSelect}
      FROM ugc_submissions s
      LEFT JOIN users u ON u.uid = s.user_id
-     WHERE ${filters.join(" AND ")}`
-  ).bind(
-    payload.id,
-    payload.markerId,
-    ...scope.bindings,
-    ...(payload.viewerUserId ? [payload.viewerUserId] : [])
-  ).first<Record<string, unknown>>();
+     WHERE ${filters.join(" AND ")}`,
+    )
+    .bind(
+      payload.id,
+      payload.markerId,
+      ...scope.bindings,
+      ...(payload.viewerUserId ? [payload.viewerUserId] : []),
+    )
+    .first<Record<string, unknown>>();
 
   return row ? publicImageFromRow(row, payload.assetBaseUrl, payload.viewerUserId) : null;
 }

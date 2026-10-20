@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+
 import { SqliteD1 } from "../test/sqliteD1";
 import { ensureUserProfile, getUserByPublicUid } from "./users";
 
@@ -28,12 +29,19 @@ describe("profile activity write throttling", () => {
     expect(first.role).toBe("n");
     expect(second).toMatchObject({ role: "s", karma: 1, lastActive: first.lastActive });
     expect(database.queries).toHaveLength(2);
-    expect(database.queries.every((query) => query.sql.startsWith("SELECT") && query.changes === 0)).toBe(true);
+    expect(
+      database.queries.every((query) => query.sql.startsWith("SELECT") && query.changes === 0),
+    ).toBe(true);
   });
 
   it("writes the activity timestamp only once across concurrent stale-profile requests", async () => {
-    database.sqlite.exec("UPDATE users SET last_active = datetime('now', '-2 hours') WHERE uid = 'user-1'");
-    await Promise.all([ensureUserProfile(database.db, identity), ensureUserProfile(database.db, identity)]);
+    database.sqlite.exec(
+      "UPDATE users SET last_active = datetime('now', '-2 hours') WHERE uid = 'user-1'",
+    );
+    await Promise.all([
+      ensureUserProfile(database.db, identity),
+      ensureUserProfile(database.db, identity),
+    ]);
     expect(database.queries.reduce((total, query) => total + query.changes, 0)).toBe(1);
     const count = database.queries.length;
     await ensureUserProfile(database.db, identity);
@@ -42,21 +50,33 @@ describe("profile activity write throttling", () => {
   });
 
   it("persists an email change immediately even when activity was just written", async () => {
-    expect(await ensureUserProfile(database.db, { ...identity, email: "NEW@example.test" }))
-      .toMatchObject({ uid: identity.uid, email: "new@example.test" });
+    expect(
+      await ensureUserProfile(database.db, { ...identity, email: "NEW@example.test" }),
+    ).toMatchObject({ uid: identity.uid, email: "new@example.test" });
     expect(database.queries.reduce((total, query) => total + query.changes, 0)).toBe(1);
   });
 
   it("preserves first-time profile creation", async () => {
-    const created = await ensureUserProfile(database.db, { uid: "new-user", email: "new@example.test", displayName: "NewTester" });
-    expect(created).toMatchObject({ uid: "new-user", email: "new@example.test", nickname: "NewTester", role: "n" });
+    const created = await ensureUserProfile(database.db, {
+      uid: "new-user",
+      email: "new@example.test",
+      displayName: "NewTester",
+    });
+    expect(created).toMatchObject({
+      uid: "new-user",
+      email: "new@example.test",
+      nickname: "NewTester",
+      role: "n",
+    });
     const count = database.queries.length;
     await ensureUserProfile(database.db, { uid: "new-user", email: "new@example.test" });
     expect(database.queries).toHaveLength(count + 1);
   });
 
   it("resolves users by their public UID", async () => {
-    database.sqlite.exec("UPDATE users SET uid_number = 103427, uid_suffix = 'VA' WHERE uid = 'user-1'");
+    database.sqlite.exec(
+      "UPDATE users SET uid_number = 103427, uid_suffix = 'VA' WHERE uid = 'user-1'",
+    );
 
     await expect(getUserByPublicUid(database.db, "103427va")).resolves.toMatchObject({
       uid: "user-1",

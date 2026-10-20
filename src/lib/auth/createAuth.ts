@@ -1,23 +1,19 @@
+import { AsyncLocalStorage } from "node:async_hooks";
+
 import { betterAuth, type BetterAuthOptions } from "better-auth";
 import { getSchema } from "better-auth/db";
-import { AsyncLocalStorage } from "node:async_hooks";
 import { bearer, emailOTP } from "better-auth/plugins";
+
 import type { Bindings } from "../../types/app";
 import { getSessionTtlSeconds } from "../config";
 import { sendEmail } from "../email/sender";
-import {
-  createOtpEmailTemplate,
-  createResetPasswordMagicLinkTemplate,
-} from "../email/templates";
+import { createOtpEmailTemplate, createResetPasswordMagicLinkTemplate } from "../email/templates";
 import { envOrThrow } from "../utils";
+import { sameAuthEnvironment } from "./environment";
 import { toSerializableError } from "./errors";
 import { pickRequestFromCtx, resolvePreferredEmailLocale } from "./locale";
-import {
-  authCookieOptions,
-  parseAuthTrustedOrigins,
-} from "./origins";
+import { authCookieOptions, parseAuthTrustedOrigins } from "./origins";
 import { createAuthSocialProviders } from "./providers";
-import { sameAuthEnvironment } from "./environment";
 import { authSchemaDatabase } from "./schemaMetadata";
 
 type AuthInvocation = { onError?: (error: unknown) => void };
@@ -51,12 +47,15 @@ function buildAuth(env: Bindings, metadata?: ReturnType<typeof authSchemaDatabas
       sendResetPassword: async ({ user, url }, request) => {
         const locale = resolvePreferredEmailLocale(env, user, request);
         const content = createResetPasswordMagicLinkTemplate({ locale, url });
-        await sendEmail({
-          to: user.email,
-          subject: content.subject,
-          text: content.text,
-          html: content.html,
-        }, env);
+        await sendEmail(
+          {
+            to: user.email,
+            subject: content.subject,
+            text: content.text,
+            html: content.html,
+          },
+          env,
+        );
       },
     },
     emailVerification: {
@@ -120,12 +119,15 @@ function buildAuth(env: Bindings, metadata?: ReturnType<typeof authSchemaDatabas
           const request = pickRequestFromCtx(ctx);
           const locale = resolvePreferredEmailLocale(env, null, request);
           const content = createOtpEmailTemplate({ locale, otp });
-          await sendEmail({
-            to: email,
-            subject: content.subject,
-            text: content.text,
-            html: content.html,
-          }, env);
+          await sendEmail(
+            {
+              to: email,
+              subject: content.subject,
+              text: content.text,
+              html: content.html,
+            },
+            env,
+          );
         },
       }),
     ],
@@ -141,7 +143,11 @@ function buildAuth(env: Bindings, metadata?: ReturnType<typeof authSchemaDatabas
       },
     },
   } satisfies BetterAuthOptions;
-  const schema = authSchemaDatabase(env.DB, metadata, () => new Set(Object.keys(getSchema(options))));
+  const schema = authSchemaDatabase(
+    env.DB,
+    metadata,
+    () => new Set(Object.keys(getSchema(options))),
+  );
   return { auth: betterAuth({ ...options, database: schema.db }), schema };
 }
 
@@ -178,28 +184,37 @@ export function createAuth(env: Bindings, options?: AuthInvocation): Auth {
     request = { env: requestEnv, auth, ready };
     requests?.set(env.DB, request);
     void ready.catch(() => {
-      if (requests && requests.get(env.DB) === request) requests.delete(env.DB);
+      if (requests && requests.get(env.DB) === request) {
+        requests.delete(env.DB);
+      }
     });
   }
-  if (!options && request.defaultFacade) return request.defaultFacade;
+  if (!options && request.defaultFacade) {
+    return request.defaultFacade;
+  }
   const { auth, ready } = request;
   // Each request owns its Kysely connection/lock and pending checks. Only plain,
   // successfully validated schema results are shared across requests.
-  const handler: Auth["handler"] = (request) => ready.then(() => (
-    authInvocation.run(options ?? {}, () => auth.handler(request))
-  ));
+  const handler: Auth["handler"] = (request) =>
+    ready.then(() => authInvocation.run(options ?? {}, () => auth.handler(request)));
   const api = new Proxy(auth.api, {
     get(target, key, receiver) {
       const endpoint = Reflect.get(target, key, receiver);
-      if (typeof endpoint !== "function") return endpoint;
+      if (typeof endpoint !== "function") {
+        return endpoint;
+      }
       return new Proxy(endpoint, {
         apply(fn, thisArg, args) {
-          return ready.then(() => authInvocation.run(options ?? {}, () => Reflect.apply(fn, thisArg, args)));
+          return ready.then(() =>
+            authInvocation.run(options ?? {}, () => Reflect.apply(fn, thisArg, args)),
+          );
         },
       });
     },
   });
   const facade = { ...auth, handler, fetch: handler, api, $context: ready };
-  if (!options) request.defaultFacade = facade;
+  if (!options) {
+    request.defaultFacade = facade;
+  }
   return facade;
 }

@@ -1,6 +1,13 @@
 import { nanoid } from "nanoid";
+
 import type { AuthUser } from "../types/app";
-import type { SubmissionKind, SubmissionRecord, SubmissionStatus, SubmissionVoteValue, ViewerVoteValue } from "./submission/types";
+import type {
+  SubmissionKind,
+  SubmissionRecord,
+  SubmissionStatus,
+  SubmissionVoteValue,
+  ViewerVoteValue,
+} from "./submission/types";
 
 export type NotificationCategory = "system" | "community";
 
@@ -127,11 +134,13 @@ const NOTIFICATION_MESSAGE_SELECT_COLUMNS = `
 `;
 
 function parsePayload(raw: unknown): Record<string, unknown> {
-  if (typeof raw !== "string" || raw.trim().length === 0) return {};
+  if (typeof raw !== "string" || raw.trim().length === 0) {
+    return {};
+  }
   try {
     const parsed = JSON.parse(raw) as unknown;
     return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-      ? parsed as Record<string, unknown>
+      ? (parsed as Record<string, unknown>)
       : {};
   } catch {
     return {};
@@ -185,7 +194,7 @@ export function mapNotification(row: Record<string, unknown>): NotificationRecor
     windowStartedAt: nullableString(row.window_started_at),
     windowExpiresAt: nullableString(row.window_expires_at),
     messageCount: Math.max(1, normalizeCount(row.message_count, 1)),
-    messages: []
+    messages: [],
   };
 }
 
@@ -201,28 +210,36 @@ function mapNotificationMessage(row: Record<string, unknown>): NotificationMessa
     poiType: nullableString(row.poi_type),
     payload: parsePayload(row.payload_json),
     dedupeKey: String(row.dedupe_key),
-    createdAt: String(row.created_at)
+    createdAt: String(row.created_at),
   };
 }
 
-export function notificationsFromResult(result: D1Result<Record<string, unknown>> | undefined): NotificationRecord[] {
+export function notificationsFromResult(
+  result: D1Result<Record<string, unknown>> | undefined,
+): NotificationRecord[] {
   return (result?.results ?? []).map((row) => mapNotification(row));
 }
 
 export function notificationTypeForTransition(
   previousStatus: SubmissionStatus,
   nextStatus: SubmissionStatus,
-  source?: TransitionNotificationPayload["source"]
+  source?: TransitionNotificationPayload["source"],
 ): NotificationType | null {
-  if (previousStatus === nextStatus) return null;
+  if (previousStatus === nextStatus) {
+    return null;
+  }
   if (previousStatus === "remove_request" && (nextStatus === "active" || nextStatus === "stale")) {
     return "system.remove_request.resolved";
   }
   if (source === "user_action" && nextStatus === "stale") {
     return "system.remove_request.resolved";
   }
-  if (nextStatus === "active") return "system.submission.approved";
-  if (nextStatus === "pending_audit") return "system.submission.needs_review";
+  if (nextStatus === "active") {
+    return "system.submission.approved";
+  }
+  if (nextStatus === "pending_audit") {
+    return "system.submission.needs_review";
+  }
   return null;
 }
 
@@ -242,10 +259,7 @@ function communityPayload(kind: SubmissionKind): Record<string, unknown> {
   return { kind };
 }
 
-function appendParentUpdateStatement(
-  db: D1Database,
-  messageId: string
-): D1PreparedStatement {
+function appendParentUpdateStatement(db: D1Database, messageId: string): D1PreparedStatement {
   return db
     .prepare(
       `UPDATE notifications
@@ -261,40 +275,54 @@ function appendParentUpdateStatement(
          FROM notification_messages
          WHERE id = ?1
        )
-       RETURNING ${NOTIFICATION_SELECT_COLUMNS}`
+       RETURNING ${NOTIFICATION_SELECT_COLUMNS}`,
     )
     .bind(messageId);
 }
 
 export function prepareSubmissionStatusNotificationWrite(
   db: D1Database,
-  payload: TransitionNotificationPayload
+  payload: TransitionNotificationPayload,
 ): D1PreparedStatement[] {
-  const type = notificationTypeForTransition(payload.previousStatus, payload.nextStatus, payload.source);
-  if (!type) return [];
+  const type = notificationTypeForTransition(
+    payload.previousStatus,
+    payload.nextStatus,
+    payload.source,
+  );
+  if (!type) {
+    return [];
+  }
 
   const notificationId = nanoid(18);
   const messageId = nanoid(18);
   const createdAt = payload.transitionedAt;
-  const openKey = JSON.stringify(["system", payload.submission.userId, type, payload.submission.kind]);
+  const openKey = JSON.stringify([
+    "system",
+    payload.submission.userId,
+    type,
+    payload.submission.kind,
+  ]);
   const eventDedupeKey = [
     "system",
     payload.submission.id,
     payload.submission.snapshotId,
     payload.previousStatus,
-    payload.nextStatus
+    payload.nextStatus,
   ].join(":");
   const payloadJson = serializePayload(systemPayload(payload.submission.kind));
 
   return [
-    db.prepare(
-      `UPDATE notifications
+    db
+      .prepare(
+        `UPDATE notifications
        SET open_aggregation_key = NULL
        WHERE open_aggregation_key = ?1
-         AND window_expires_at <= ?2`
-    ).bind(openKey, createdAt),
-    db.prepare(
-      `INSERT INTO notifications (
+         AND window_expires_at <= ?2`,
+      )
+      .bind(openKey, createdAt),
+    db
+      .prepare(
+        `INSERT INTO notifications (
          id, recipient_user_id, category, type, actor_user_id,
          submission_id, parent_submission_id, marker_id, poi_hash, poi_type,
          payload_json, dedupe_key, read_at, created_at,
@@ -314,22 +342,24 @@ export function prepareSubmissionStatusNotificationWrite(
          AND NOT EXISTS (
            SELECT 1 FROM notification_messages WHERE dedupe_key = ?11
          )
-       ON CONFLICT(open_aggregation_key) DO NOTHING`
-    ).bind(
-      notificationId,
-      type,
-      payloadJson,
-      `group:${notificationId}`,
-      createdAt,
-      openKey,
-      expiresAt(createdAt),
-      payload.submission.id,
-      payload.submission.snapshotId,
-      payload.nextStatus,
-      eventDedupeKey
-    ),
-    db.prepare(
-      `INSERT INTO notification_messages (
+       ON CONFLICT(open_aggregation_key) DO NOTHING`,
+      )
+      .bind(
+        notificationId,
+        type,
+        payloadJson,
+        `group:${notificationId}`,
+        createdAt,
+        openKey,
+        expiresAt(createdAt),
+        payload.submission.id,
+        payload.submission.snapshotId,
+        payload.nextStatus,
+        eventDedupeKey,
+      ),
+    db
+      .prepare(
+        `INSERT INTO notification_messages (
          id, notification_id, actor_user_id, submission_id, parent_submission_id,
          marker_id, poi_hash, poi_type, payload_json, dedupe_key, created_at
        )
@@ -343,26 +373,29 @@ export function prepareSubmissionStatusNotificationWrite(
          AND s.status = ?8
          AND s.updated_at = ?4
          AND ?4 < n.window_expires_at
-       ON CONFLICT(dedupe_key) DO NOTHING`
-    ).bind(
-      messageId,
-      payloadJson,
-      eventDedupeKey,
-      createdAt,
-      openKey,
-      payload.submission.id,
-      payload.submission.snapshotId,
-      payload.nextStatus
-    ),
-    appendParentUpdateStatement(db, messageId)
+       ON CONFLICT(dedupe_key) DO NOTHING`,
+      )
+      .bind(
+        messageId,
+        payloadJson,
+        eventDedupeKey,
+        createdAt,
+        openKey,
+        payload.submission.id,
+        payload.submission.snapshotId,
+        payload.nextStatus,
+      ),
+    appendParentUpdateStatement(db, messageId),
   ];
 }
 
 export function prepareApprovedReplyNotificationWrite(
   db: D1Database,
-  payload: TransitionNotificationPayload
+  payload: TransitionNotificationPayload,
 ): D1PreparedStatement[] {
-  if (!payload.submission.parentId) return [];
+  if (!payload.submission.parentId) {
+    return [];
+  }
 
   const notificationId = nanoid(18);
   const messageId = nanoid(18);
@@ -372,14 +405,17 @@ export function prepareApprovedReplyNotificationWrite(
   const payloadJson = serializePayload(communityPayload("comment"));
 
   return [
-    db.prepare(
-      `UPDATE notifications
+    db
+      .prepare(
+        `UPDATE notifications
        SET open_aggregation_key = NULL
        WHERE open_aggregation_key = ?1
-         AND window_expires_at <= ?2`
-    ).bind(openKey, createdAt),
-    db.prepare(
-      `INSERT INTO notifications (
+         AND window_expires_at <= ?2`,
+      )
+      .bind(openKey, createdAt),
+    db
+      .prepare(
+        `INSERT INTO notifications (
          id, recipient_user_id, category, type, actor_user_id,
          submission_id, parent_submission_id, marker_id, poi_hash, poi_type,
          payload_json, dedupe_key, read_at, created_at,
@@ -403,20 +439,22 @@ export function prepareApprovedReplyNotificationWrite(
          AND NOT EXISTS (
            SELECT 1 FROM notification_messages WHERE dedupe_key = ?9
          )
-       ON CONFLICT(open_aggregation_key) DO NOTHING`
-    ).bind(
-      notificationId,
-      payloadJson,
-      `group:${notificationId}`,
-      createdAt,
-      openKey,
-      expiresAt(createdAt),
-      payload.submission.id,
-      payload.submission.snapshotId,
-      eventDedupeKey
-    ),
-    db.prepare(
-      `INSERT INTO notification_messages (
+       ON CONFLICT(open_aggregation_key) DO NOTHING`,
+      )
+      .bind(
+        notificationId,
+        payloadJson,
+        `group:${notificationId}`,
+        createdAt,
+        openKey,
+        expiresAt(createdAt),
+        payload.submission.id,
+        payload.submission.snapshotId,
+        eventDedupeKey,
+      ),
+    db
+      .prepare(
+        `INSERT INTO notification_messages (
          id, notification_id, actor_user_id, submission_id, parent_submission_id,
          marker_id, poi_hash, poi_type, payload_json, dedupe_key, created_at
        )
@@ -434,29 +472,32 @@ export function prepareApprovedReplyNotificationWrite(
          AND parent.kind = 'comment'
          AND parent.user_id <> child.user_id
          AND ?4 < n.window_expires_at
-       ON CONFLICT(dedupe_key) DO NOTHING`
-    ).bind(
-      messageId,
-      payloadJson,
-      eventDedupeKey,
-      createdAt,
-      openKey,
-      payload.submission.id,
-      payload.submission.snapshotId
-    ),
-    appendParentUpdateStatement(db, messageId)
+       ON CONFLICT(dedupe_key) DO NOTHING`,
+      )
+      .bind(
+        messageId,
+        payloadJson,
+        eventDedupeKey,
+        createdAt,
+        openKey,
+        payload.submission.id,
+        payload.submission.snapshotId,
+      ),
+    appendParentUpdateStatement(db, messageId),
   ];
 }
 
 export function prepareCommentVoteNotificationWrite(
   db: D1Database,
-  payload: CommentVoteNotificationPayload
+  payload: CommentVoteNotificationPayload,
 ): D1PreparedStatement[] {
-  if (payload.value !== 1) return [];
+  if (payload.value !== 1) {
+    return [];
+  }
 
   return prepareCommunityVoteNotificationWrite(db, {
     ...payload,
-    kind: "comment"
+    kind: "comment",
   });
 }
 
@@ -468,22 +509,24 @@ export interface ImageUpvoteNotificationPayload {
 
 export function prepareImageUpvoteNotificationWrite(
   db: D1Database,
-  payload: ImageUpvoteNotificationPayload
+  payload: ImageUpvoteNotificationPayload,
 ): D1PreparedStatement[] {
   return prepareCommunityVoteNotificationWrite(db, {
     submissionId: payload.submissionId,
     actor: payload.actor,
     value: 1,
     changedAt: payload.changedAt,
-    kind: "image"
+    kind: "image",
   });
 }
 
 function prepareCommunityVoteNotificationWrite(
   db: D1Database,
-  payload: CommentVoteNotificationPayload & { kind: SubmissionKind }
+  payload: CommentVoteNotificationPayload & { kind: SubmissionKind },
 ): D1PreparedStatement[] {
-  if (payload.value !== 1) return [];
+  if (payload.value !== 1) {
+    return [];
+  }
 
   const notificationId = nanoid(18);
   const messageId = nanoid(18);
@@ -491,14 +534,15 @@ function prepareCommunityVoteNotificationWrite(
   const openKey = JSON.stringify(["community", "vote", payload.submissionId]);
   const eventDedupeKey = `vote:${payload.submissionId}:${payload.actor.uid}:${createdAt}`;
   const basePayloadJson = serializePayload(communityPayload(payload.kind));
-  const voteSource = payload.kind === "image"
-    ? `
+  const voteSource =
+    payload.kind === "image"
+      ? `
        INNER JOIN ugc_submission_upvotes v
          ON v.submission_id = s.id
         AND v.user_id = ?2
         AND v.active = 1
         AND v.created_at = ?5`
-    : `
+      : `
        INNER JOIN ugc_submission_votes v
          ON v.submission_id = s.id
         AND v.user_id = ?2
@@ -507,14 +551,17 @@ function prepareCommunityVoteNotificationWrite(
         AND v.updated_at = ?5`;
 
   return [
-    db.prepare(
-      `UPDATE notifications
+    db
+      .prepare(
+        `UPDATE notifications
        SET open_aggregation_key = NULL
        WHERE open_aggregation_key = ?1
-         AND window_expires_at <= ?2`
-    ).bind(openKey, createdAt),
-    db.prepare(
-      `INSERT INTO notifications (
+         AND window_expires_at <= ?2`,
+      )
+      .bind(openKey, createdAt),
+    db
+      .prepare(
+        `INSERT INTO notifications (
          id, recipient_user_id, category, type, actor_user_id,
          submission_id, parent_submission_id, marker_id, poi_hash, poi_type,
          payload_json, dedupe_key, read_at, created_at,
@@ -535,21 +582,23 @@ function prepareCommunityVoteNotificationWrite(
          AND NOT EXISTS (
            SELECT 1 FROM notification_messages WHERE dedupe_key = ?9
          )
-       ON CONFLICT(open_aggregation_key) DO NOTHING`
-    ).bind(
-      notificationId,
-      payload.actor.uid,
-      basePayloadJson,
-      `group:${notificationId}`,
-      createdAt,
-      openKey,
-      expiresAt(createdAt, VOTE_AGGREGATION_WINDOW_MS),
-      payload.submissionId,
-      eventDedupeKey,
-      payload.kind
-    ),
-    db.prepare(
-      `INSERT INTO notification_messages (
+       ON CONFLICT(open_aggregation_key) DO NOTHING`,
+      )
+      .bind(
+        notificationId,
+        payload.actor.uid,
+        basePayloadJson,
+        `group:${notificationId}`,
+        createdAt,
+        openKey,
+        expiresAt(createdAt, VOTE_AGGREGATION_WINDOW_MS),
+        payload.submissionId,
+        eventDedupeKey,
+        payload.kind,
+      ),
+    db
+      .prepare(
+        `INSERT INTO notification_messages (
          id, notification_id, actor_user_id, submission_id, parent_submission_id,
          marker_id, poi_hash, poi_type, payload_json, dedupe_key, created_at
        )
@@ -565,18 +614,19 @@ function prepareCommunityVoteNotificationWrite(
          AND s.status IN ('active', 'flagged', 'remove_request')
          AND s.user_id <> ?2
          AND ?5 < n.window_expires_at
-       ON CONFLICT(dedupe_key) DO NOTHING`
-    ).bind(
-      messageId,
-      payload.actor.uid,
-      basePayloadJson,
-      eventDedupeKey,
-      createdAt,
-      openKey,
-      payload.submissionId,
-      payload.kind
-    ),
-    appendParentUpdateStatement(db, messageId)
+       ON CONFLICT(dedupe_key) DO NOTHING`,
+      )
+      .bind(
+        messageId,
+        payload.actor.uid,
+        basePayloadJson,
+        eventDedupeKey,
+        createdAt,
+        openKey,
+        payload.submissionId,
+        payload.kind,
+      ),
+    appendParentUpdateStatement(db, messageId),
   ];
 }
 
@@ -585,28 +635,34 @@ export function encodeNotificationCursor(cursor: NotificationCursor): string {
 }
 
 export function decodeNotificationCursor(raw: string | undefined): NotificationCursor | null {
-  if (!raw?.trim()) return null;
+  if (!raw?.trim()) {
+    return null;
+  }
   const decoded = decodeURIComponent(raw.trim());
   const separatorIndex = decoded.lastIndexOf("|");
-  if (separatorIndex <= 0 || separatorIndex >= decoded.length - 1) return null;
+  if (separatorIndex <= 0 || separatorIndex >= decoded.length - 1) {
+    return null;
+  }
   return {
     createdAt: decoded.slice(0, separatorIndex),
-    id: decoded.slice(separatorIndex + 1)
+    id: decoded.slice(separatorIndex + 1),
   };
 }
 
 async function hydrateNotificationMessages(
   db: D1Database,
-  notifications: NotificationRecord[]
+  notifications: NotificationRecord[],
 ): Promise<NotificationRecord[]> {
-  if (notifications.length === 0) return notifications;
+  if (notifications.length === 0) {
+    return notifications;
+  }
   const placeholders = notifications.map((_, index) => `?${index + 1}`).join(", ");
   const result = await db
     .prepare(
       `SELECT ${NOTIFICATION_MESSAGE_SELECT_COLUMNS}
        FROM notification_messages
        WHERE notification_id IN (${placeholders})
-       ORDER BY created_at ASC, id ASC`
+       ORDER BY created_at ASC, id ASC`,
     )
     .bind(...notifications.map((item) => item.id))
     .all<Record<string, unknown>>();
@@ -619,19 +675,21 @@ async function hydrateNotificationMessages(
   }
   return notifications.map((notification) => ({
     ...notification,
-    messages: grouped.get(notification.id) ?? []
+    messages: grouped.get(notification.id) ?? [],
   }));
 }
 
 export async function getNotificationById(
   db: D1Database,
-  id: string
+  id: string,
 ): Promise<NotificationRecord | null> {
   const row = await db
     .prepare(`SELECT ${NOTIFICATION_SELECT_COLUMNS} FROM notifications WHERE id = ?1 LIMIT 1`)
     .bind(id)
     .first<Record<string, unknown>>();
-  if (!row) return null;
+  if (!row) {
+    return null;
+  }
   const [notification] = await hydrateNotificationMessages(db, [mapNotification(row)]);
   return notification ?? null;
 }
@@ -644,18 +702,20 @@ export async function listNotifications(
     limit: number;
     cursor?: NotificationCursor | null;
     unreadOnly?: boolean;
-  }
+  },
 ): Promise<{ items: NotificationRecord[]; nextCursor: string | null }> {
   const limit = Math.min(Math.max(payload.limit, 1), 50);
   const conditions = ["recipient_user_id = ?1", "category = ?2"];
   const bindings: unknown[] = [payload.userId, payload.category];
-  if (payload.unreadOnly) conditions.push("read_at IS NULL");
+  if (payload.unreadOnly) {
+    conditions.push("read_at IS NULL");
+  }
   if (payload.cursor) {
     const createdAtIndex = bindings.length + 1;
     const idIndex = bindings.length + 2;
     conditions.push(
       `(COALESCE(last_event_at, created_at) < ?${createdAtIndex} OR ` +
-      `(COALESCE(last_event_at, created_at) = ?${createdAtIndex} AND id < ?${idIndex}))`
+        `(COALESCE(last_event_at, created_at) = ?${createdAtIndex} AND id < ?${idIndex}))`,
     );
     bindings.push(payload.cursor.createdAt, payload.cursor.id);
   }
@@ -668,7 +728,7 @@ export async function listNotifications(
        FROM notifications
        WHERE ${conditions.join(" AND ")}
        ORDER BY COALESCE(last_event_at, created_at) DESC, id DESC
-       LIMIT ?${limitIndex}`
+       LIMIT ?${limitIndex}`,
     )
     .bind(...bindings)
     .all<Record<string, unknown>>();
@@ -680,7 +740,8 @@ export async function listNotifications(
   const last = items.at(-1);
   return {
     items,
-    nextCursor: hasNext && last ? encodeNotificationCursor({ createdAt: last.createdAt, id: last.id }) : null
+    nextCursor:
+      hasNext && last ? encodeNotificationCursor({ createdAt: last.createdAt, id: last.id }) : null,
   };
 }
 
@@ -690,37 +751,45 @@ function targetOf(item: NotificationTarget): NotificationTarget {
     parentSubmissionId: item.parentSubmissionId,
     markerId: item.markerId,
     poiHash: item.poiHash,
-    poiType: item.poiType
+    poiType: item.poiType,
   };
 }
 
 function commonTarget(messages: NotificationMessageRecord[]): NotificationTarget {
   const first = messages[0];
-  if (!first) return targetOf({
-    submissionId: null,
-    parentSubmissionId: null,
-    markerId: null,
-    poiHash: null,
-    poiType: null
-  });
+  if (!first) {
+    return targetOf({
+      submissionId: null,
+      parentSubmissionId: null,
+      markerId: null,
+      poiHash: null,
+      poiType: null,
+    });
+  }
   const target = targetOf(first);
-  const matches = messages.every((message) => (
-    message.submissionId === target.submissionId &&
-    message.parentSubmissionId === target.parentSubmissionId &&
-    message.markerId === target.markerId &&
-    message.poiHash === target.poiHash &&
-    message.poiType === target.poiType
-  ));
-  return matches ? target : {
-    submissionId: null,
-    parentSubmissionId: null,
-    markerId: null,
-    poiHash: null,
-    poiType: null
-  };
+  const matches = messages.every(
+    (message) =>
+      message.submissionId === target.submissionId &&
+      message.parentSubmissionId === target.parentSubmissionId &&
+      message.markerId === target.markerId &&
+      message.poiHash === target.poiHash &&
+      message.poiType === target.poiType,
+  );
+  return matches
+    ? target
+    : {
+        submissionId: null,
+        parentSubmissionId: null,
+        markerId: null,
+        poiHash: null,
+        poiType: null,
+      };
 }
 
-function minimalPayload(type: NotificationType, payload: Record<string, unknown>): Record<string, unknown> {
+function minimalPayload(
+  type: NotificationType,
+  payload: Record<string, unknown>,
+): Record<string, unknown> {
   if (type.startsWith("system.")) {
     return { kind: payload.kind === "comment" ? "comment" : "image" };
   }
@@ -729,7 +798,7 @@ function minimalPayload(type: NotificationType, payload: Record<string, unknown>
 
 function serializeMessage(
   parent: NotificationRecord,
-  message: NotificationMessageRecord
+  message: NotificationMessageRecord,
 ): SerializedNotificationItem {
   return {
     id: message.id,
@@ -739,11 +808,13 @@ function serializeMessage(
     readAt: parent.readAt,
     createdAt: message.createdAt,
     isMultiMsg: false,
-    messages: []
+    messages: [],
   };
 }
 
-export function serializeNotificationItem(notification: NotificationRecord): SerializedNotificationItem {
+export function serializeNotificationItem(
+  notification: NotificationRecord,
+): SerializedNotificationItem {
   const messages = notification.messages;
   if (messages.length <= 1) {
     const message = messages[0];
@@ -755,39 +826,43 @@ export function serializeNotificationItem(notification: NotificationRecord): Ser
       readAt: notification.readAt,
       createdAt: message?.createdAt ?? notification.createdAt,
       isMultiMsg: false,
-      messages: []
+      messages: [],
     };
   }
 
-  const firstPayload = minimalPayload(notification.type, messages[0]?.payload ?? notification.payload);
-  const kind = firstPayload.kind === "image" || firstPayload.kind === "comment"
-    ? firstPayload.kind
-    : undefined;
+  const firstPayload = minimalPayload(
+    notification.type,
+    messages[0]?.payload ?? notification.payload,
+  );
+  const kind =
+    firstPayload.kind === "image" || firstPayload.kind === "comment"
+      ? firstPayload.kind
+      : undefined;
   return {
     id: notification.id,
     type: notification.type,
     payload: {
       ...(kind ? { kind } : {}),
-      messageCount: messages.length
+      messageCount: messages.length,
     },
     target: commonTarget(messages),
     readAt: notification.readAt,
     createdAt: notification.createdAt,
     isMultiMsg: true,
-    messages: messages.map((message) => serializeMessage(notification, message))
+    messages: messages.map((message) => serializeMessage(notification, message)),
   };
 }
 
 export async function getNotificationUnreadCounts(
   db: D1Database,
-  userId: string
+  userId: string,
 ): Promise<NotificationUnreadCounts> {
   const row = await db
     .prepare(
       `SELECT system_unread, community_unread
        FROM notification_counters
        WHERE user_id = ?1
-       LIMIT 1`
+       LIMIT 1`,
     )
     .bind(userId)
     .first<{ system_unread: number | string; community_unread: number | string }>();
@@ -798,7 +873,7 @@ export async function getNotificationUnreadCounts(
 
 export async function markNotificationRead(
   db: D1Database,
-  payload: { userId: string; category: NotificationCategory; id: string }
+  payload: { userId: string; category: NotificationCategory; id: string },
 ): Promise<boolean> {
   const result = await db
     .prepare(
@@ -806,7 +881,7 @@ export async function markNotificationRead(
        SET read_at = COALESCE(read_at, ?4)
        WHERE id = ?1
          AND recipient_user_id = ?2
-         AND category = ?3`
+         AND category = ?3`,
     )
     .bind(payload.id, payload.userId, payload.category, new Date().toISOString())
     .run();
@@ -815,17 +890,19 @@ export async function markNotificationRead(
 
 export async function markNotificationsRead(
   db: D1Database,
-  payload: { userId: string; category: NotificationCategory; ids: string[] }
+  payload: { userId: string; category: NotificationCategory; ids: string[] },
 ): Promise<number> {
   const ids = [...new Set(payload.ids.map((id) => id.trim()).filter(Boolean))].slice(0, 100);
-  if (ids.length === 0) return 0;
+  if (ids.length === 0) {
+    return 0;
+  }
   const result = await db
     .prepare(
       `UPDATE notifications
        SET read_at = COALESCE(read_at, ?3)
        WHERE recipient_user_id = ?1
          AND category = ?2
-         AND id IN (SELECT value FROM json_each(?4))`
+         AND id IN (SELECT value FROM json_each(?4))`,
     )
     .bind(payload.userId, payload.category, new Date().toISOString(), JSON.stringify(ids))
     .run();
@@ -834,7 +911,7 @@ export async function markNotificationsRead(
 
 export async function markAllNotificationsRead(
   db: D1Database,
-  payload: { userId: string; category: NotificationCategory }
+  payload: { userId: string; category: NotificationCategory },
 ): Promise<number> {
   const result = await db
     .prepare(
@@ -842,7 +919,7 @@ export async function markAllNotificationsRead(
        SET read_at = ?3
        WHERE recipient_user_id = ?1
          AND category = ?2
-         AND read_at IS NULL`
+         AND read_at IS NULL`,
     )
     .bind(payload.userId, payload.category, new Date().toISOString())
     .run();

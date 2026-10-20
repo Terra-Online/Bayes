@@ -1,7 +1,8 @@
 import { getRandom } from "@cloudflare/containers";
-import type { oem_imgTrans } from "./imageTranscoderContainer";
-import { ApiError, transientDependencyError } from "../../lib/errors";
+
 import { toSerializableError } from "../../lib/auth/errors";
+import { ApiError, transientDependencyError } from "../../lib/errors";
+import type { oem_imgTrans } from "./imageTranscoderContainer";
 
 const IMAGE_TRANSFORM_CONTAINER_INSTANCES = 3;
 const IMAGE_PREPARATION_TIMEOUT_MS = 60_000;
@@ -10,7 +11,10 @@ function isContainerDisconnected(error: unknown): boolean {
   let current = error;
   for (let depth = 0; depth < 8 && current && typeof current === "object"; depth += 1) {
     const cause = current as { message?: unknown; cause?: unknown };
-    if (typeof cause.message === "string" && /\bcontainer\b.*(?:not running|(?:just |suddenly )?disconnected)/i.test(cause.message)) {
+    if (
+      typeof cause.message === "string" &&
+      /\bcontainer\b.*(?:not running|(?:just |suddenly )?disconnected)/i.test(cause.message)
+    ) {
       return true;
     }
     current = cause.cause;
@@ -19,7 +23,11 @@ function isContainerDisconnected(error: unknown): boolean {
 }
 
 function unavailableImageService(): ApiError {
-  return new ApiError(503, "DEPENDENCY_UNAVAILABLE", "Image processing is temporarily unavailable. Please try again later.");
+  return new ApiError(
+    503,
+    "DEPENDENCY_UNAVAILABLE",
+    "Image processing is temporarily unavailable. Please try again later.",
+  );
 }
 
 function imageDependencyError(error: unknown): ApiError {
@@ -28,12 +36,21 @@ function imageDependencyError(error: unknown): ApiError {
   const messages: string[] = [];
   for (let depth = 0; depth < 8 && current && typeof current === "object"; depth += 1) {
     const cause = current as { message?: unknown; cause?: unknown };
-    if (typeof cause.message === "string") messages.push(cause.message);
+    if (typeof cause.message === "string") {
+      messages.push(cause.message);
+    }
     current = cause.cause;
   }
-  const capacityExceeded = /too many (?:containers|instances)|(?:container|instance).*(?:overloaded|rate limited|(?:capacity|resource limit).*(?:exhausted|exceeded))/i.test(messages.join(" "));
+  const capacityExceeded =
+    /too many (?:containers|instances)|(?:container|instance).*(?:overloaded|rate limited|(?:capacity|resource limit).*(?:exhausted|exceeded))/i.test(
+      messages.join(" "),
+    );
   if (dependency?.code === "DEPENDENCY_OVERLOADED" || capacityExceeded) {
-    return new ApiError(503, "DEPENDENCY_OVERLOADED", "Image processing is busy. Please try again later.");
+    return new ApiError(
+      503,
+      "DEPENDENCY_OVERLOADED",
+      "Image processing is busy. Please try again later.",
+    );
   }
   return dependency ?? unavailableImageService();
 }
@@ -77,7 +94,7 @@ export async function prepareUploadImageForStorage(payload: {
       body: payload.body,
       mimeType: payload.mimeType,
       sizeBytes: payload.body.byteLength,
-      converted: false
+      converted: false,
     };
   }
 
@@ -85,18 +102,26 @@ export async function prepareUploadImageForStorage(payload: {
   const controller = new AbortController();
   const cancel = () => controller.abort(payload.signal?.reason);
   payload.signal?.addEventListener("abort", cancel, { once: true });
-  const timeout = setTimeout(() => controller.abort(unavailableImageService()), IMAGE_PREPARATION_TIMEOUT_MS);
+  const timeout = setTimeout(
+    () => controller.abort(unavailableImageService()),
+    IMAGE_PREPARATION_TIMEOUT_MS,
+  );
   const aborted = new Promise<never>((_resolve, reject) => {
-    controller.signal.addEventListener("abort", () => reject(controller.signal.reason), { once: true });
+    controller.signal.addEventListener("abort", () => reject(controller.signal.reason), {
+      once: true,
+    });
   });
-  const withinDeadline = <T>(operation: Promise<T>): Promise<T> => Promise.race([operation, aborted]);
+  const withinDeadline = <T>(operation: Promise<T>): Promise<T> =>
+    Promise.race([operation, aborted]);
   try {
     for (let attempt = 1; attempt <= 2; attempt += 1) {
       let stage = "container_lookup";
       let upstreamStatus: number | undefined;
       try {
         controller.signal.throwIfAborted();
-        const container = await withinDeadline(getRandom(payload.transcoder, IMAGE_TRANSFORM_CONTAINER_INSTANCES));
+        const container = await withinDeadline(
+          getRandom(payload.transcoder, IMAGE_TRANSFORM_CONTAINER_INSTANCES),
+        );
         stage = "container_fetch";
         // Each attempt gets a fresh request and stub; no storage writes happen here.
         const request = new Request("http://oem-img-trans/prepare", {
@@ -114,10 +139,18 @@ export async function prepareUploadImageForStorage(payload: {
         stage = "container_response";
         if (!response.ok) {
           const detail = await withinDeadline(response.text());
-          const transportError = new Error(detail || `Image transformer failed with HTTP ${response.status}.`);
-          const overloaded = response.status === 429 || imageDependencyError(transportError).code === "DEPENDENCY_OVERLOADED";
+          const transportError = new Error(
+            detail || `Image transformer failed with HTTP ${response.status}.`,
+          );
+          const overloaded =
+            response.status === 429 ||
+            imageDependencyError(transportError).code === "DEPENDENCY_OVERLOADED";
           if (overloaded) {
-            throw new ApiError(503, "DEPENDENCY_OVERLOADED", "Image processing is busy. Please try again later.");
+            throw new ApiError(
+              503,
+              "DEPENDENCY_OVERLOADED",
+              "Image processing is busy. Please try again later.",
+            );
           }
           if ([400, 413, 415, 422].includes(response.status)) {
             throw new ApiError(422, "IMAGE_PROCESSING_FAILED", "Image could not be processed.");
@@ -127,26 +160,54 @@ export async function prepareUploadImageForStorage(payload: {
 
         const mimeType = response.headers.get("Content-Type")?.split(";")[0]?.trim().toLowerCase();
         if (!mimeType || extensionFromMime(mimeType) === "bin") {
-          if (response.body) await withinDeadline(response.body.cancel());
-          throw new ApiError(502, "IMAGE_PROCESSING_BAD_RESPONSE", "Image processor returned an invalid response.");
+          if (response.body) {
+            await withinDeadline(response.body.cancel());
+          }
+          throw new ApiError(
+            502,
+            "IMAGE_PROCESSING_BAD_RESPONSE",
+            "Image processor returned an invalid response.",
+          );
         }
         stage = "container_body";
         const body = await withinDeadline(response.arrayBuffer());
         controller.signal.throwIfAborted();
         if (body.byteLength === 0) {
-          throw new ApiError(502, "IMAGE_PROCESSING_BAD_RESPONSE", "Image processor returned an empty image.");
+          throw new ApiError(
+            502,
+            "IMAGE_PROCESSING_BAD_RESPONSE",
+            "Image processor returned an empty image.",
+          );
         }
-        return { body, mimeType, sizeBytes: body.byteLength, converted: response.headers.get("X-Converted-To-Webp") === "true" };
+        return {
+          body,
+          mimeType,
+          sizeBytes: body.byteLength,
+          converted: response.headers.get("X-Converted-To-Webp") === "true",
+        };
       } catch (error) {
-        if (payload.signal?.aborted) throw payload.signal.reason;
+        if (payload.signal?.aborted) {
+          throw payload.signal.reason;
+        }
         const apiError = error instanceof ApiError ? error : imageDependencyError(error);
-        const retry = attempt === 1 && !controller.signal.aborted
-          && apiError.code === "DEPENDENCY_UNAVAILABLE" && isContainerDisconnected(error);
+        const retry =
+          attempt === 1 &&
+          !controller.signal.aborted &&
+          apiError.code === "DEPENDENCY_UNAVAILABLE" &&
+          isContainerDisconnected(error);
         console.warn("image preparation failed", {
-          requestId: payload.requestId, stage, attempt, elapsedMs: Date.now() - startedAt,
-          upstreamStatus, code: apiError.code, retry, error: toSerializableError(error),
+          requestId: payload.requestId,
+          stage,
+          attempt,
+          elapsedMs: Date.now() - startedAt,
+          upstreamStatus,
+          code: apiError.code,
+          retry,
+          error: toSerializableError(error),
         });
-        if (!retry) throw apiError;
+        if (!retry) {
+          throw apiError;
+        }
         await withinDeadline(new Promise<void>((resolve) => setTimeout(resolve, 250)));
       }
     }
@@ -172,12 +233,14 @@ export function buildUploadObjectKey(payload: {
 }
 
 export function normalizePathPart(value: string): string {
-  return value
-    .trim()
-    .replace(/[^a-zA-Z0-9_-]/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "")
-    .slice(0, 96) || "unknown";
+  return (
+    value
+      .trim()
+      .replace(/[^a-zA-Z0-9_-]/g, "-")
+      .replace(/-+/g, "-")
+      .replace(/^-|-$/g, "")
+      .slice(0, 96) || "unknown"
+  );
 }
 
 function normalizePathPrefix(value: string | undefined): string {

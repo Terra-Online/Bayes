@@ -2,14 +2,14 @@ import type { TextTranslationRecord } from "./types";
 
 export async function getTextTranslation(
   db: D1Database,
-  cacheKey: string
+  cacheKey: string,
 ): Promise<TextTranslationRecord | null> {
   const row = await db
     .prepare(
       `SELECT *
        FROM ugc_text_translations
        WHERE cache_key = ?1
-       LIMIT 1`
+       LIMIT 1`,
     )
     .bind(cacheKey)
     .first<Record<string, unknown>>();
@@ -25,7 +25,7 @@ export async function getTextTranslationByTarget(
     provider: string;
     glossaryVersion: string;
     glossaryKey: string;
-  }
+  },
 ): Promise<TextTranslationRecord | null> {
   const row = await db
     .prepare(
@@ -37,14 +37,14 @@ export async function getTextTranslationByTarget(
          AND glossary_version = ?4
          AND glossary_key = ?5
        ORDER BY translated_at DESC
-       LIMIT 1`
+       LIMIT 1`,
     )
     .bind(
       payload.textHash,
       payload.targetLanguage,
       payload.provider,
       payload.glossaryVersion,
-      payload.glossaryKey
+      payload.glossaryKey,
     )
     .first<Record<string, unknown>>();
 
@@ -65,7 +65,7 @@ export async function upsertTextTranslation(
     glossaryKey: string;
     translatedContent: string;
     glossaryApplied: boolean;
-  }
+  },
 ): Promise<void> {
   await db
     .prepare(
@@ -95,7 +95,7 @@ export async function upsertTextTranslation(
                      translated_content = excluded.translated_content,
                      glossary_applied = excluded.glossary_applied,
                      translated_at = CURRENT_TIMESTAMP,
-                     updated_at = CURRENT_TIMESTAMP`
+                     updated_at = CURRENT_TIMESTAMP`,
     )
     .bind(
       payload.cacheKey,
@@ -108,7 +108,7 @@ export async function upsertTextTranslation(
       payload.glossaryVersion,
       payload.glossaryKey,
       payload.translatedContent,
-      payload.glossaryApplied ? 1 : 0
+      payload.glossaryApplied ? 1 : 0,
     )
     .run();
 }
@@ -119,9 +119,10 @@ function mapTextTranslation(row: Record<string, unknown>): TextTranslationRecord
     textHash: String(row.text_hash),
     flowVersion: String(row.flow_version),
     sourceLanguage: String(row.source_language),
-    detectedSourceLanguage: row.detected_source_language === null || row.detected_source_language === undefined
-      ? null
-      : String(row.detected_source_language),
+    detectedSourceLanguage:
+      row.detected_source_language === null || row.detected_source_language === undefined
+        ? null
+        : String(row.detected_source_language),
     targetLanguage: String(row.target_language),
     provider: String(row.provider),
     glossaryVersion: String(row.glossary_version ?? "g0"),
@@ -129,6 +130,6 @@ function mapTextTranslation(row: Record<string, unknown>): TextTranslationRecord
     translatedContent: String(row.translated_content ?? ""),
     glossaryApplied: Boolean(row.glossary_applied),
     translatedAt: String(row.translated_at),
-    updatedAt: String(row.updated_at)
+    updatedAt: String(row.updated_at),
   };
 }

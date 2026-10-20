@@ -12,10 +12,10 @@ function toBase64Url(bytes: Uint8Array): string {
 
 function resolveServiceHmacSecret(env: Bindings): string {
   const secret = (
-    env.SERVICE_ID_HMAC_SECRET
-    ?? env.BETTER_AUTH_SECRET
-    ?? env.ENDFIELD_CREDENTIAL_SECRET
-    ?? ""
+    env.SERVICE_ID_HMAC_SECRET ??
+    env.BETTER_AUTH_SECRET ??
+    env.ENDFIELD_CREDENTIAL_SECRET ??
+    ""
   ).trim();
 
   return secret.length >= 16 ? secret : "oem-backend-local-service-id-secret";
@@ -24,19 +24,15 @@ function resolveServiceHmacSecret(env: Bindings): string {
 export async function hmacServiceIdentifier(
   env: Bindings,
   namespace: string,
-  value: string
+  value: string,
 ): Promise<string> {
   const key = await crypto.subtle.importKey(
     "raw",
     encoder.encode(resolveServiceHmacSecret(env)),
     { name: "HMAC", hash: "SHA-256" },
     false,
-    ["sign"]
+    ["sign"],
   );
-  const signature = await crypto.subtle.sign(
-    "HMAC",
-    key,
-    encoder.encode(`${namespace}:${value}`)
-  );
+  const signature = await crypto.subtle.sign("HMAC", key, encoder.encode(`${namespace}:${value}`));
   return toBase64Url(new Uint8Array(signature));
 }

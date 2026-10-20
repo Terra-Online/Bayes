@@ -5,9 +5,7 @@ function normalizeDomain(domain: string): string {
 }
 
 // Exact denylist only. Avoid heuristic domain matching so self-hosted mail domains are not blocked.
-const BANNED_EMAILS = new Set(
-  bannedEmails.map(normalizeDomain).filter(Boolean)
-);
+const BANNED_EMAILS = new Set(bannedEmails.map(normalizeDomain).filter(Boolean));
 
 export function isDisposableEmailDomain(domain: string): boolean {
   let candidate = normalizeDomain(domain);

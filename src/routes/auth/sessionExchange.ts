@@ -1,11 +1,16 @@
 import { z } from "zod";
+
+import {
+  expireOAuthExchangeProof,
+  inspectOAuthExchangeProof,
+  serializeBrowserSessionCookie,
+} from "../../lib/auth/browserSession";
 import { createAuth } from "../../lib/auth/createAuth";
-import { expireOAuthExchangeProof, inspectOAuthExchangeProof, serializeBrowserSessionCookie } from "../../lib/auth/browserSession";
 import { ApiError } from "../../lib/errors";
 import { ensureUserProfile, formatPublicUid } from "../../repositories/users";
+import { parseTrustedFrontendOrigins } from "./frontendOrigins";
 import { toSessionUser } from "./sessionUser";
 import type { AuthRouteContext } from "./types";
-import { parseTrustedFrontendOrigins } from "./frontendOrigins";
 
 const SESSION_EXCHANGE_CODE_PREFIX = "auth-session-exchange:";
 const SESSION_EXCHANGE_CODE_TTL_SECONDS = 120;
@@ -19,11 +24,21 @@ export const sessionExchangeSchema = z.object({
   code: z.string().trim().min(16, "Code is required."),
 });
 
-function classifyBrowser(userAgent: string | undefined): "firefox" | "chromium" | "safari" | "other" {
-  if (!userAgent) return "other";
-  if (/firefox\//i.test(userAgent)) return "firefox";
-  if (/(?:chrome|chromium|crios)\//i.test(userAgent)) return "chromium";
-  if (/safari\//i.test(userAgent)) return "safari";
+function classifyBrowser(
+  userAgent: string | undefined,
+): "firefox" | "chromium" | "safari" | "other" {
+  if (!userAgent) {
+    return "other";
+  }
+  if (/firefox\//i.test(userAgent)) {
+    return "firefox";
+  }
+  if (/(?:chrome|chromium|crios)\//i.test(userAgent)) {
+    return "chromium";
+  }
+  if (/safari\//i.test(userAgent)) {
+    return "safari";
+  }
   return "other";
 }
 
@@ -48,11 +63,10 @@ export async function createSessionExchangeCode(
 ): Promise<string> {
   const code = crypto.randomUUID();
   const expiresAt = new Date(Date.now() + SESSION_EXCHANGE_CODE_TTL_SECONDS * 1000).toISOString();
-  await c.env.DB
-    .prepare(
-      `INSERT INTO auth_verifications (id, identifier, value, expiresAt, createdAt, updatedAt)
+  await c.env.DB.prepare(
+    `INSERT INTO auth_verifications (id, identifier, value, expiresAt, createdAt, updatedAt)
        VALUES (?1, ?2, ?3, ?4, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
-    )
+  )
     .bind(
       crypto.randomUUID(),
       `${SESSION_EXCHANGE_CODE_PREFIX}${code}`,
@@ -82,8 +96,9 @@ export async function handleSessionExchange(c: AuthRouteContext) {
   }
 
   const identifier = `${SESSION_EXCHANGE_CODE_PREFIX}${parsed.data.code}`;
-  const verification = await c.env.DB
-    .prepare("SELECT value, expiresAt FROM auth_verifications WHERE identifier = ?1 LIMIT 1")
+  const verification = await c.env.DB.prepare(
+    "SELECT value, expiresAt FROM auth_verifications WHERE identifier = ?1 LIMIT 1",
+  )
     .bind(identifier)
     .first<{ value: string; expiresAt: string }>();
 
@@ -105,10 +120,18 @@ export async function handleSessionExchange(c: AuthRouteContext) {
   }
 
   const auth = createAuth(c.env);
-  const proofResult = await inspectOAuthExchangeProof(auth, c.req.raw.headers, exchange.data.challenge);
+  const proofResult = await inspectOAuthExchangeProof(
+    auth,
+    c.req.raw.headers,
+    exchange.data.challenge,
+  );
   if (proofResult !== "valid") {
     logExchangeFailure(c, proofResult === "missing" ? "proof_missing" : "proof_mismatch");
-    throw new ApiError(400, "INVALID_AUTH_CODE", "Auth code does not belong to this browser login attempt.");
+    throw new ApiError(
+      400,
+      "INVALID_AUTH_CODE",
+      "Auth code does not belong to this browser login attempt.",
+    );
   }
 
   const session = await auth.api.getSession({
@@ -123,8 +146,9 @@ export async function handleSessionExchange(c: AuthRouteContext) {
     throw new ApiError(401, "SESSION_REQUIRED", "Session is required.");
   }
 
-  const consumed = await c.env.DB
-    .prepare("DELETE FROM auth_verifications WHERE identifier = ?1 AND value = ?2 RETURNING id")
+  const consumed = await c.env.DB.prepare(
+    "DELETE FROM auth_verifications WHERE identifier = ?1 AND value = ?2 RETURNING id",
+  )
     .bind(identifier, verification.value)
     .first<{ id: string }>();
   if (!consumed || expiresAt <= Date.now()) {
@@ -138,7 +162,9 @@ export async function handleSessionExchange(c: AuthRouteContext) {
     displayName: session.user.name,
   });
 
-  c.header("Set-Cookie", await serializeBrowserSessionCookie(auth, session.session), { append: true });
+  c.header("Set-Cookie", await serializeBrowserSessionCookie(auth, session.session), {
+    append: true,
+  });
   c.header("Set-Cookie", expireOAuthExchangeProof(auth), { append: true });
   c.header("Cache-Control", "private, no-store");
 

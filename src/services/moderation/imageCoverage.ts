@@ -60,17 +60,20 @@ type CoverageManifest = {
   schemaVersion: number;
   generatedAt: string;
   sourceCommit: string;
-  regions: Record<string, {
-    name: string;
-    types: CoverageManifestType[];
-  }>;
+  regions: Record<
+    string,
+    {
+      name: string;
+      types: CoverageManifestType[];
+    }
+  >;
 };
 
 const manifest = rawManifest as CoverageManifest;
 const CATEGORY_NAMES: Record<string, string> = {
   collection: "收集物",
   archives: "档案",
-  exploration: "探索"
+  exploration: "探索",
 };
 
 export async function getImageCoverage(
@@ -78,7 +81,7 @@ export async function getImageCoverage(
   payload: {
     scope: "prod" | "test";
     imageScope: ImageCoverageScope;
-  }
+  },
 ): Promise<ImageCoverageResponse> {
   const imageRows = await listVisibleImageCountsByMarker(db, payload.imageScope);
   const imageCountByMarker = new Map(imageRows.map((row) => [row.markerId, row.imageCount]));
@@ -88,7 +91,7 @@ export async function getImageCoverage(
     const categories = categoryKeys.map((categoryKey) => ({
       key: categoryKey,
       name: CATEGORY_NAMES[categoryKey] ?? categoryKey,
-      ...sumMetrics(types.filter((type) => type.category === categoryKey))
+      ...sumMetrics(types.filter((type) => type.category === categoryKey)),
     }));
 
     return {
@@ -96,7 +99,7 @@ export async function getImageCoverage(
       name: region.name,
       categories,
       types,
-      ...sumMetrics(types)
+      ...sumMetrics(types),
     };
   });
 
@@ -106,16 +109,16 @@ export async function getImageCoverage(
     manifest: {
       schemaVersion: manifest.schemaVersion,
       generatedAt: manifest.generatedAt,
-      sourceCommit: manifest.sourceCommit
+      sourceCommit: manifest.sourceCommit,
     },
     total: sumMetrics(regions),
-    regions
+    regions,
   };
 }
 
 function metricForType(
   type: CoverageManifestType,
-  imageCountByMarker: Map<string, number>
+  imageCountByMarker: Map<string, number>,
 ): ImageCoverageType {
   let coveredPoints = 0;
   let imageCount = 0;
@@ -127,7 +130,10 @@ function metricForType(
     } else {
       missingMarkers.push({
         markerId: pointId,
-        shortUrl: buildPointShareUrlForMarker(pointId, type.key === "archives" ? undefined : type.key)
+        shortUrl: buildPointShareUrlForMarker(
+          pointId,
+          type.key === "archives" ? undefined : type.key,
+        ),
       });
     }
     imageCount += pointImageCount;
@@ -138,7 +144,7 @@ function metricForType(
     name: type.name,
     category: type.category,
     missingMarkers,
-    ...createMetric(type.pointIds.length, coveredPoints, imageCount)
+    ...createMetric(type.pointIds.length, coveredPoints, imageCount),
   };
 }
 
@@ -146,20 +152,20 @@ function sumMetrics(metrics: ImageCoverageMetric[]): ImageCoverageMetric {
   return createMetric(
     metrics.reduce((sum, metric) => sum + metric.totalPoints, 0),
     metrics.reduce((sum, metric) => sum + metric.coveredPoints, 0),
-    metrics.reduce((sum, metric) => sum + metric.imageCount, 0)
+    metrics.reduce((sum, metric) => sum + metric.imageCount, 0),
   );
 }
 
 function createMetric(
   totalPoints: number,
   coveredPoints: number,
-  imageCount: number
+  imageCount: number,
 ): ImageCoverageMetric {
   return {
     totalPoints,
     coveredPoints,
     missingPoints: Math.max(0, totalPoints - coveredPoints),
     imageCount,
-    coverageRate: totalPoints > 0 ? coveredPoints / totalPoints : 0
+    coverageRate: totalPoints > 0 ? coveredPoints / totalPoints : 0,
   };
 }

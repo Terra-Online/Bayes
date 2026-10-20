@@ -1,4 +1,6 @@
+import type { Context } from "hono";
 import { nanoid } from "nanoid";
+
 import { ApiError } from "../../lib/errors";
 import { createPendingSubmission } from "../../repositories/submission/createSubmission";
 import { getSubmissionById } from "../../repositories/submission/statusSubmission";
@@ -7,7 +9,7 @@ import { enqueueModeration } from "../moderation/queue";
 import { commentSubmissionSchema } from "./schemas";
 import { normalizePathPart } from "./storage";
 
-export async function handleSubmitComment(c: import("hono").Context<AppEnv>) {
+export async function handleSubmitComment(c: Context<AppEnv>) {
   const user = c.get("authUser");
   if (!user) {
     throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
@@ -35,12 +37,21 @@ export async function handleSubmitComment(c: import("hono").Context<AppEnv>) {
       parent.poiHash !== poiHash ||
       parent.poiType !== poiType
     ) {
-      throw new ApiError(409, "PARENT_COMMENT_MISMATCH", "Parent comment belongs to a different POI.");
+      throw new ApiError(
+        409,
+        "PARENT_COMMENT_MISMATCH",
+        "Parent comment belongs to a different POI.",
+      );
     }
     if (!["active", "flagged", "remove_request"].includes(parent.status)) {
-      throw new ApiError(409, "PARENT_COMMENT_NOT_VISIBLE", "Replies can only target visible comments.", {
-        status: parent.status
-      });
+      throw new ApiError(
+        409,
+        "PARENT_COMMENT_NOT_VISIBLE",
+        "Replies can only target visible comments.",
+        {
+          status: parent.status,
+        },
+      );
     }
     parentId = parent.id;
     commentDepth = parent.commentDepth + 1;
@@ -57,7 +68,7 @@ export async function handleSubmitComment(c: import("hono").Context<AppEnv>) {
     kind: "comment",
     status: "pending_openai",
     parentId,
-    commentDepth
+    commentDepth,
   });
   await enqueueModeration(c.env, submissionId, snapshotId);
 
@@ -69,7 +80,7 @@ export async function handleSubmitComment(c: import("hono").Context<AppEnv>) {
       parentId,
       depth: commentDepth,
       status: "pending_openai",
-      snapshotId
-    }
+      snapshotId,
+    },
   });
 }

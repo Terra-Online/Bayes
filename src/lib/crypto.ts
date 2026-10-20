@@ -19,7 +19,10 @@ function fromBase64(value: string): Uint8Array {
 }
 
 function fromBase64Url(value: string): Uint8Array {
-  const padded = value.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(value.length / 4) * 4, "=");
+  const padded = value
+    .replace(/-/g, "+")
+    .replace(/_/g, "/")
+    .padEnd(Math.ceil(value.length / 4) * 4, "=");
   return fromBase64(padded);
 }
 
@@ -43,7 +46,7 @@ export async function encryptSecret(value: string, secret: string): Promise<stri
   const encrypted = await crypto.subtle.encrypt(
     { name: "AES-GCM", iv: iv as unknown as BufferSource },
     key,
-    encoder.encode(value)
+    encoder.encode(value),
   );
 
   return `v1.${toBase64Url(iv)}.${toBase64Url(new Uint8Array(encrypted))}`;
@@ -59,7 +62,7 @@ export async function decryptSecret(value: string, secret: string): Promise<stri
   const decrypted = await crypto.subtle.decrypt(
     { name: "AES-GCM", iv: fromBase64Url(ivRaw) as unknown as BufferSource },
     key,
-    fromBase64Url(encryptedRaw) as unknown as BufferSource
+    fromBase64Url(encryptedRaw) as unknown as BufferSource,
   );
 
   return decoder.decode(decrypted);
@@ -67,7 +70,5 @@ export async function decryptSecret(value: string, secret: string): Promise<stri
 
 export async function sha256Hex(value: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
-  return [...new Uint8Array(digest)]
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }

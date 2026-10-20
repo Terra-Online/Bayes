@@ -1,9 +1,16 @@
 import type { Context } from "hono";
+
+import { toSerializableError } from "../lib/auth/errors";
 import { ApiError, isApiError, transientDependencyError } from "../lib/errors";
 import type { AppEnv } from "../types/app";
-import { toSerializableError } from "../lib/auth/errors";
 
-function errorJson(c: Context<AppEnv>, status: number, code: string, message: string, details?: unknown) {
+function errorJson(
+  c: Context<AppEnv>,
+  status: number,
+  code: string,
+  message: string,
+  details?: unknown,
+) {
   return new Response(
     JSON.stringify({
       code,
@@ -14,17 +21,17 @@ function errorJson(c: Context<AppEnv>, status: number, code: string, message: st
         code,
         message,
         details,
-        requestId: c.get("requestId")
-      }
+        requestId: c.get("requestId"),
+      },
     }),
     {
       status,
       headers: {
         "content-type": "application/json; charset=utf-8",
         "cache-control": "private, no-store",
-        ...(status === 503 ? { "retry-after": "5" } : {})
-      }
-    }
+        ...(status === 503 ? { "retry-after": "5" } : {}),
+      },
+    },
   );
 }
 
@@ -32,7 +39,9 @@ export function toApiError(error: unknown): ApiError {
   if (isApiError(error)) {
     return error;
   }
-  return transientDependencyError(error) ?? new ApiError(500, "INTERNAL_ERROR", "Internal server error.");
+  return (
+    transientDependencyError(error) ?? new ApiError(500, "INTERNAL_ERROR", "Internal server error.")
+  );
 }
 
 export function onAppError(error: unknown, c: Context<AppEnv>) {
@@ -43,7 +52,7 @@ export function onAppError(error: unknown, c: Context<AppEnv>) {
       code: apiError.code,
       message: apiError.message,
       details: apiError.details,
-      rawError: toSerializableError(error)
+      rawError: toSerializableError(error),
     });
   }
   return errorJson(c, apiError.status, apiError.code, apiError.message, apiError.details);

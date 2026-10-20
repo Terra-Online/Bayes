@@ -5,7 +5,7 @@ authentication, progress sync, UGC uploads, moderation, and related API routes.
 
 ## Requirements
 
-- Node.js 22 or later
+- Node.js 22.12.0 or later
 - pnpm
 - Cloudflare account and Wrangler access for remote development or deployment
 
@@ -53,15 +53,9 @@ pnpm run db:migrate:local
 
 ## Checks
 
-```sh
-pnpm run typecheck
-pnpm test
-pnpm run lint
-pnpm run check
-```
-
-`pnpm run check` runs the complete local validation workflow, including type
-checking, linting, tests, and deployment dry-runs.
+Before committing, run `pnpm run lint:fix` and `pnpm run format`, then verify
+`pnpm run format:check` and `pnpm run lint` pass. Before pushing, run
+`pnpm run check` and resolve failures. Recheck after any further changes.
 
 ## Deployment
 

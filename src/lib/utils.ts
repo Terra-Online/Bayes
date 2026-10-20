@@ -1,7 +1,9 @@
 export function readEnv(value: string | undefined): string | undefined {
-  if (!value) return undefined;
+  if (!value) {
+    return undefined;
+  }
   const trimmed = value.trim();
-  const unquoted = trimmed.replace(/^(['"])(.*)\1$/, '$2').trim();
+  const unquoted = trimmed.replace(/^(['"])(.*)\1$/, "$2").trim();
   const normalized = unquoted.length > 0 ? unquoted : trimmed;
   return normalized.length > 0 ? normalized : undefined;
 }

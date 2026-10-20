@@ -50,9 +50,9 @@ export function parseAuthTrustedOrigins(env: Bindings): string[] {
   return parsed.length > 0 ? parsed : DEFAULT_TRUSTED_ORIGINS;
 }
 
-export function resolveCookieAttributes(baseUrl: string | undefined):
-  | { sameSite: "none"; secure: true; httpOnly: true; partitioned: true }
-  | undefined {
+export function resolveCookieAttributes(
+  baseUrl: string | undefined,
+): { sameSite: "none"; secure: true; httpOnly: true; partitioned: true } | undefined {
   if (isLocalBaseUrl(baseUrl)) {
     return undefined;
   }
@@ -69,7 +69,9 @@ export function authCookieOptions(env: Pick<Bindings, "BETTER_AUTH_URL">) {
   return {
     baseURL: readEnv(env.BETTER_AUTH_URL) ?? DEFAULT_AUTH_BASE_URL,
     advanced: {
-      cookiePrefix: isLocalBaseUrl(env.BETTER_AUTH_URL) ? undefined : PARTITIONED_AUTH_COOKIE_PREFIX,
+      cookiePrefix: isLocalBaseUrl(env.BETTER_AUTH_URL)
+        ? undefined
+        : PARTITIONED_AUTH_COOKIE_PREFIX,
       defaultCookieAttributes: resolveCookieAttributes(env.BETTER_AUTH_URL),
     },
   };

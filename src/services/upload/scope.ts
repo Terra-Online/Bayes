@@ -1,7 +1,5 @@
 const TEST_UPLOAD_PREFIX = "_test";
-const BETA_FRONTEND_HOSTNAMES = new Set([
-  "beta.opendfieldmap.org"
-]);
+const BETA_FRONTEND_HOSTNAMES = new Set(["beta.opendfieldmap.org"]);
 
 function isLocalHostname(hostname: string): boolean {
   return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
@@ -38,7 +36,7 @@ export function resolveUploadPrefix(request: Request, configuredPrefix: string):
 export function resolveImageScope(
   request: Request,
   configuredPrefix: string,
-  scope: "test" | "prod" | undefined
+  scope: "test" | "prod" | undefined,
 ): { pathPrefix?: string; excludePathPrefix?: string } {
   if (new URL(request.url).searchParams.get("demoLocal") === "1") {
     return { excludePathPrefix: TEST_UPLOAD_PREFIX };

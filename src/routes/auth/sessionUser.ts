@@ -9,6 +9,6 @@ export function toSessionUser(user: AuthUser) {
     email: user.email,
     nickname: user.nickname,
     registeredAt: user.registeredAt,
-    needsProfileSetup: user.needsProfileSetup
+    needsProfileSetup: user.needsProfileSetup,
   };
 }

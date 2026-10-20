@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { Bindings } from "../../types/app";
+
 import { SqliteD1 } from "../../test/sqliteD1";
+import type { Bindings } from "../../types/app";
 
 const sendEmail = vi.hoisted(() => vi.fn());
 
@@ -30,14 +31,18 @@ describe("moderation warning service", () => {
   });
 
   it("sends a warning using the resolved account and moderation sender", async () => {
-    await expect(sendModerationWarning({ DB: database.db } as Bindings, { publicUid: "103427VA" }))
-      .resolves.toMatchObject({ publicUid: "103427VA" });
+    await expect(
+      sendModerationWarning({ DB: database.db } as Bindings, { publicUid: "103427VA" }),
+    ).resolves.toMatchObject({ publicUid: "103427VA" });
 
-    expect(sendEmail).toHaveBeenCalledWith(expect.objectContaining({
-      to: "user@example.test",
-      from: "OEM Moderation <moderation@opendfieldmap.org>",
-      subject: "[OEM Moderation] Warning: Repeated Link-Only Posts",
-    }), expect.objectContaining({ DB: database.db }));
+    expect(sendEmail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: "user@example.test",
+        from: "OEM Moderation <moderation@opendfieldmap.org>",
+        subject: "[OEM Moderation] Warning: Repeated Link-Only Posts",
+      }),
+      expect.objectContaining({ DB: database.db }),
+    );
     const payload = sendEmail.mock.calls[0]![0] as { text: string };
     expect(payload.text).toContain("Open Endfield Map account 103427VA.");
     expect(payload.text).toContain("https://blog.opendfieldmap.org/docs/community-guidelines");
@@ -46,8 +51,9 @@ describe("moderation warning service", () => {
   });
 
   it("does not send when the public UID does not resolve", async () => {
-    await expect(sendModerationWarning({ DB: database.db } as Bindings, { publicUid: "999999ZZ" }))
-      .resolves.toBeNull();
+    await expect(
+      sendModerationWarning({ DB: database.db } as Bindings, { publicUid: "999999ZZ" }),
+    ).resolves.toBeNull();
     expect(sendEmail).not.toHaveBeenCalled();
   });
 });

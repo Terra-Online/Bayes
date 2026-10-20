@@ -1,7 +1,30 @@
+import { sha256Hex } from "../../lib/crypto";
 import { ApiError } from "../../lib/errors";
 import { toApiError } from "../../middleware/error-handler";
 import { getUserByUid } from "../../repositories/users";
-import { sha256Hex } from "../../lib/crypto";
+import { loadArchiveProgressManifest, type RegisteredArchiveManifest } from "./archiveManifest";
+import {
+  buildArchiveSyncRequestHash,
+  handleArchiveProgressState,
+  handleArchiveProgressSync,
+  normalizeArchiveSyncPatch,
+} from "./archiveUserProgress";
+import {
+  checksumProgressBitmap,
+  diffOneBitBitmaps,
+  emptyBitmapBytes,
+  encodeBase64,
+  normalizeBitmapBytes,
+  setBitmapBit,
+} from "./bitmap";
+import {
+  isSha256Hex,
+  loadProgressManifest,
+  normalizePointIds,
+  pointIdsFromBitmap,
+  type ProgressDoEnv,
+  type RegisteredManifest,
+} from "./manifest";
 import {
   buildProgressRevision,
   isEmptyProgress,
@@ -15,37 +38,11 @@ import {
   type ProgressState,
   type ProgressStatsDelta,
   type ProgressSyncPayload,
-  type PublicProgressState
+  type PublicProgressState,
 } from "./model";
-import {
-  checksumProgressBitmap,
-  diffOneBitBitmaps,
-  emptyBitmapBytes,
-  encodeBase64,
-  normalizeBitmapBytes,
-  setBitmapBit
-} from "./bitmap";
-import {
-  isSha256Hex,
-  loadProgressManifest,
-  normalizePointIds,
-  pointIdsFromBitmap,
-  type ProgressDoEnv,
-  type RegisteredManifest
-} from "./manifest";
 import { drainUserProgressStatsOutbox } from "./outbox";
 import { commitProgressSync, getProgressSyncMutation } from "./repository";
 import { errorResponse, jsonResponse } from "./responses";
-import {
-  loadArchiveProgressManifest,
-  type RegisteredArchiveManifest
-} from "./archiveManifest";
-import {
-  buildArchiveSyncRequestHash,
-  handleArchiveProgressState,
-  handleArchiveProgressSync,
-  normalizeArchiveSyncPatch
-} from "./archiveUserProgress";
 
 type NormalizedSyncPatch = {
   baseRevision: string;
@@ -69,17 +66,26 @@ function normalizeSyncPatch(raw: unknown): NormalizedSyncPatch {
   }
 
   const payload = raw as ProgressSyncPayload;
-  const baseRevision = typeof payload.baseRevision === "string" ? payload.baseRevision.trim().toLowerCase() : "";
-  const clientMutationId = typeof payload.clientMutationId === "string" ? payload.clientMutationId.trim() : "";
-  const markerIndexHash = typeof payload.markerIndexHash === "string"
-    ? payload.markerIndexHash.trim().toLowerCase()
-    : "";
+  const baseRevision =
+    typeof payload.baseRevision === "string" ? payload.baseRevision.trim().toLowerCase() : "";
+  const clientMutationId =
+    typeof payload.clientMutationId === "string" ? payload.clientMutationId.trim() : "";
+  const markerIndexHash =
+    typeof payload.markerIndexHash === "string" ? payload.markerIndexHash.trim().toLowerCase() : "";
 
   if (baseRevision && !isSha256Hex(baseRevision)) {
-    throw new ApiError(422, "VALIDATION_ERROR", "baseRevision must be an opaque progress revision.");
+    throw new ApiError(
+      422,
+      "VALIDATION_ERROR",
+      "baseRevision must be an opaque progress revision.",
+    );
   }
   if (!clientMutationId || clientMutationId.length > 128) {
-    throw new ApiError(422, "VALIDATION_ERROR", "clientMutationId must contain between 1 and 128 characters.");
+    throw new ApiError(
+      422,
+      "VALIDATION_ERROR",
+      "clientMutationId must contain between 1 and 128 characters.",
+    );
   }
   if (!isSha256Hex(markerIndexHash)) {
     throw new ApiError(422, "VALIDATION_ERROR", "markerIndexHash must be a SHA-256 hash.");
@@ -91,7 +97,7 @@ function normalizeSyncPatch(raw: unknown): NormalizedSyncPatch {
     clearPointIds: normalizePointIds(payload.clearPointIds ?? [], "clearPointIds"),
     clientMutationId,
     markerIndexHash,
-    updatedAt: requireTimestampMs(payload.updatedAt, "updatedAt")
+    updatedAt: requireTimestampMs(payload.updatedAt, "updatedAt"),
   };
 }
 
@@ -105,11 +111,15 @@ function normalizeStateManifestHash(url: URL): string {
 
 async function requireProgressManifest(
   env: ProgressDoEnv,
-  markerIndexHash: string
+  markerIndexHash: string,
 ): Promise<RegisteredManifest> {
   const manifest = await loadProgressManifest(env, markerIndexHash);
   if (!manifest) {
-    throw new ApiError(409, "PROGRESS_MANIFEST_NOT_REGISTERED", "Progress manifest is not registered.");
+    throw new ApiError(
+      409,
+      "PROGRESS_MANIFEST_NOT_REGISTERED",
+      "Progress manifest is not registered.",
+    );
   }
   return manifest;
 }
@@ -124,27 +134,29 @@ function normalizeArchiveStateManifestHash(url: URL): string {
 
 async function requireArchiveProgressManifest(
   env: ProgressDoEnv,
-  archiveIndexHash: string
+  archiveIndexHash: string,
 ): Promise<RegisteredArchiveManifest> {
   const manifest = await loadArchiveProgressManifest(env, archiveIndexHash);
   if (!manifest) {
     throw new ApiError(
       409,
       "ARCHIVE_PROGRESS_MANIFEST_NOT_REGISTERED",
-      "Archive progress manifest is not registered."
+      "Archive progress manifest is not registered.",
     );
   }
   return manifest;
 }
 
 async function buildSyncRequestHash(incoming: NormalizedSyncPatch): Promise<string> {
-  return sha256Hex(JSON.stringify({
-    baseRevision: incoming.baseRevision,
-    markerIndexHash: incoming.markerIndexHash,
-    setPointIds: [...incoming.setPointIds].sort(),
-    clearPointIds: [...incoming.clearPointIds].sort(),
-    updatedAt: incoming.updatedAt
-  }));
+  return sha256Hex(
+    JSON.stringify({
+      baseRevision: incoming.baseRevision,
+      markerIndexHash: incoming.markerIndexHash,
+      setPointIds: [...incoming.setPointIds].sort(),
+      clearPointIds: [...incoming.clearPointIds].sort(),
+      updatedAt: incoming.updatedAt,
+    }),
+  );
 }
 
 function normalizeRetainedPointIds(pointIds: string[]): string[] {
@@ -152,31 +164,36 @@ function normalizeRetainedPointIds(pointIds: string[]): string[] {
 }
 
 function areStringArraysEqual(first: string[], second: string[]): boolean {
-  if (first.length !== second.length) return false;
+  if (first.length !== second.length) {
+    return false;
+  }
   const firstSet = new Set(first);
   return second.every((item) => firstSet.has(item));
 }
 
 function emptyPublicProgress(markerIndexHash = ""): PublicProgressState {
-  return publicProgressState({
-    version: 0,
-    revision: "",
-    marker: "",
-    checksum: "",
-    markerIndexHash,
-    formatVersion: PROGRESS_FORMAT_VERSION,
-    bitsPerPoint: PROGRESS_BITS_PER_POINT,
-    pointCount: 0,
-    updatedAt: null,
-    format: PROGRESS_MARKER_FORMAT
-  }, []);
+  return publicProgressState(
+    {
+      version: 0,
+      revision: "",
+      marker: "",
+      checksum: "",
+      markerIndexHash,
+      formatVersion: PROGRESS_FORMAT_VERSION,
+      bitsPerPoint: PROGRESS_BITS_PER_POINT,
+      pointCount: 0,
+      updatedAt: null,
+      format: PROGRESS_MARKER_FORMAT,
+    },
+    [],
+  );
 }
 
 function logProgressRequest(
   startedAt: number,
   operation: string,
   stage: string,
-  response: Response
+  response: Response,
 ): void {
   const latencyMs = Date.now() - startedAt;
   // Keep one low-cardinality completion event per operation. Invocation
@@ -186,7 +203,7 @@ function logProgressRequest(
     operation,
     status: response.status,
     stage,
-    latencyMs
+    latencyMs,
   });
 }
 
@@ -195,7 +212,7 @@ export class OEMUserDO {
 
   constructor(
     private readonly state: DurableObjectState,
-    private readonly env: ProgressDoEnv
+    private readonly env: ProgressDoEnv,
   ) {}
 
   async fetch(request: Request): Promise<Response> {
@@ -209,7 +226,7 @@ export class OEMUserDO {
         throw new ApiError(
           500,
           "PROGRESS_DO_IDENTITY_MISSING",
-          "Progress Durable Object must be addressed by a named user id."
+          "Progress Durable Object must be addressed by a named user id.",
         );
       }
 
@@ -229,11 +246,11 @@ export class OEMUserDO {
         const [manifest, requestHash, eventId] = await Promise.all([
           requireProgressManifest(this.env, incoming.markerIndexHash),
           buildSyncRequestHash(incoming),
-          sha256Hex(`${uid}${incoming.clientMutationId}`)
+          sha256Hex(`${uid}${incoming.clientMutationId}`),
         ]);
         stage = "sync_critical";
-        const response = await this.runExclusive(
-          () => this.handleSync(uid, incoming, requestHash, eventId, manifest)
+        const response = await this.runExclusive(() =>
+          this.handleSync(uid, incoming, requestHash, eventId, manifest),
         );
         logProgressRequest(startedAt, "sync", stage, response);
         return response;
@@ -243,10 +260,12 @@ export class OEMUserDO {
         stage = "archive_state_manifest";
         const manifest = await requireArchiveProgressManifest(
           this.env,
-          normalizeArchiveStateManifestHash(url)
+          normalizeArchiveStateManifestHash(url),
         );
         stage = "archive_state_read";
-        const response = await this.runExclusive(() => handleArchiveProgressState(this.env, uid, manifest));
+        const response = await this.runExclusive(() =>
+          handleArchiveProgressState(this.env, uid, manifest),
+        );
         logProgressRequest(startedAt, "archive-state", stage, response);
         return response;
       }
@@ -257,29 +276,37 @@ export class OEMUserDO {
         stage = "archive_sync_prepare";
         const [manifest, requestHash] = await Promise.all([
           requireArchiveProgressManifest(this.env, incoming.archiveIndexHash),
-          buildArchiveSyncRequestHash(incoming)
+          buildArchiveSyncRequestHash(incoming),
         ]);
         stage = "archive_sync_critical";
-        const response = await this.runExclusive(
-          () => handleArchiveProgressSync(this.env, uid, incoming, requestHash, manifest)
+        const response = await this.runExclusive(() =>
+          handleArchiveProgressSync(this.env, uid, incoming, requestHash, manifest),
         );
         logProgressRequest(startedAt, "archive-sync", stage, response);
         return response;
       }
 
-      return jsonResponse({ code: "NOT_FOUND", message: "Progress DO route not found." }, { status: 404 });
+      return jsonResponse(
+        { code: "NOT_FOUND", message: "Progress DO route not found." },
+        { status: 404 },
+      );
     } catch (error) {
       const apiError = toApiError(error);
       const log = apiError.status >= 500 ? console.error : console.warn;
-      log(apiError.status >= 500 ? "[progress][sync] request failed" : "[progress][sync] request rejected", {
-        path: url.pathname,
-        stage,
-        status: apiError.status,
-        code: apiError.code,
-        requestId: request.headers.get("x-request-id"),
-        latencyMs: Date.now() - startedAt,
-        error: error instanceof Error ? error.message : String(error)
-      });
+      log(
+        apiError.status >= 500
+          ? "[progress][sync] request failed"
+          : "[progress][sync] request rejected",
+        {
+          path: url.pathname,
+          stage,
+          status: apiError.status,
+          code: apiError.code,
+          requestId: request.headers.get("x-request-id"),
+          latencyMs: Date.now() - startedAt,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      );
       return errorResponse(error);
     }
   }
@@ -301,22 +328,30 @@ export class OEMUserDO {
   private async publicProgress(
     progress: ProgressState,
     activeManifest?: RegisteredManifest,
-    retainedPointIds: string[] = []
+    retainedPointIds: string[] = [],
   ): Promise<PublicProgressState> {
-    const retained = new Set(normalizeRetainedPointIds(retainedPointIds)
-      .filter((pointId) => !activeManifest?.indexById.has(pointId)));
+    const retained = new Set(
+      normalizeRetainedPointIds(retainedPointIds).filter(
+        (pointId) => !activeManifest?.indexById.has(pointId),
+      ),
+    );
     if (isEmptyProgress(progress)) {
       return {
         ...emptyPublicProgress(activeManifest?.markerIndexHash ?? progress.markerIndexHash),
-        retainedPointIds: [...retained]
+        retainedPointIds: [...retained],
       };
     }
 
-    const manifest = activeManifest?.markerIndexHash === progress.markerIndexHash
-      ? activeManifest
-      : await loadProgressManifest(this.env, progress.markerIndexHash);
+    const manifest =
+      activeManifest?.markerIndexHash === progress.markerIndexHash
+        ? activeManifest
+        : await loadProgressManifest(this.env, progress.markerIndexHash);
     if (!manifest) {
-      throw new ApiError(409, "PROGRESS_MANIFEST_NOT_REGISTERED", "Progress manifest is not registered.");
+      throw new ApiError(
+        409,
+        "PROGRESS_MANIFEST_NOT_REGISTERED",
+        "Progress manifest is not registered.",
+      );
     }
 
     const bytes = normalizeBitmapBytes(progress.marker, manifest.pointCount, manifest.bitsPerPoint);
@@ -326,13 +361,15 @@ export class OEMUserDO {
     }
 
     for (const pointId of pointIds) {
-      if (!activeManifest.indexById.has(pointId)) retained.add(pointId);
+      if (!activeManifest.indexById.has(pointId)) {
+        retained.add(pointId);
+      }
     }
 
     return publicProgressState(
       progress,
       pointIds.filter((pointId) => activeManifest.indexById.has(pointId)),
-      [...retained]
+      [...retained],
     );
   }
 
@@ -340,14 +377,14 @@ export class OEMUserDO {
     const user = await this.runExclusive(() => getUserByUid(this.env.DB, uid));
     const progress = progressStateFromUser(user);
     return jsonResponse({
-      progress: await this.publicProgress(progress, manifest, user?.progressRetainedPointIds)
+      progress: await this.publicProgress(progress, manifest, user?.progressRetainedPointIds),
     });
   }
 
   private async prepareProgressForManifest(
     progress: ProgressState,
     retainedPointIds: string[],
-    targetManifest: RegisteredManifest
+    targetManifest: RegisteredManifest,
   ): Promise<PreparedProgress> {
     const retained = new Set(normalizeRetainedPointIds(retainedPointIds));
 
@@ -356,21 +393,26 @@ export class OEMUserDO {
         progress,
         bytes: emptyBitmapBytes(targetManifest.pointCount, targetManifest.bitsPerPoint),
         retainedPointIds: [...retained],
-        migrated: false
+        migrated: false,
       };
     }
 
-    const sameManifest = progress.markerIndexHash === targetManifest.markerIndexHash
-      && progress.formatVersion === targetManifest.formatVersion
-      && progress.bitsPerPoint === targetManifest.bitsPerPoint
-      && progress.pointCount === targetManifest.pointCount;
+    const sameManifest =
+      progress.markerIndexHash === targetManifest.markerIndexHash &&
+      progress.formatVersion === targetManifest.formatVersion &&
+      progress.bitsPerPoint === targetManifest.bitsPerPoint &&
+      progress.pointCount === targetManifest.pointCount;
 
     if (sameManifest) {
       return {
         progress,
-        bytes: normalizeBitmapBytes(progress.marker, targetManifest.pointCount, targetManifest.bitsPerPoint),
+        bytes: normalizeBitmapBytes(
+          progress.marker,
+          targetManifest.pointCount,
+          targetManifest.bitsPerPoint,
+        ),
         retainedPointIds: [...retained],
-        migrated: false
+        migrated: false,
       };
     }
 
@@ -379,11 +421,15 @@ export class OEMUserDO {
       throw new ApiError(
         409,
         "PROGRESS_MANIFEST_NOT_REGISTERED",
-        "Current cloud progress manifest is not registered."
+        "Current cloud progress manifest is not registered.",
       );
     }
 
-    const sourceBytes = normalizeBitmapBytes(progress.marker, sourceManifest.pointCount, sourceManifest.bitsPerPoint);
+    const sourceBytes = normalizeBitmapBytes(
+      progress.marker,
+      sourceManifest.pointCount,
+      sourceManifest.bitsPerPoint,
+    );
     const nextBytes = emptyBitmapBytes(targetManifest.pointCount, targetManifest.bitsPerPoint);
     for (const pointId of pointIdsFromBitmap(sourceBytes, sourceManifest)) {
       const nextIndex = targetManifest.indexById.get(pointId);
@@ -398,7 +444,7 @@ export class OEMUserDO {
       markerIndexHash: targetManifest.markerIndexHash,
       formatVersion: targetManifest.formatVersion,
       bitsPerPoint: targetManifest.bitsPerPoint,
-      pointCount: targetManifest.pointCount
+      pointCount: targetManifest.pointCount,
     });
 
     return {
@@ -410,11 +456,11 @@ export class OEMUserDO {
         markerIndexHash: targetManifest.markerIndexHash,
         formatVersion: targetManifest.formatVersion,
         bitsPerPoint: targetManifest.bitsPerPoint,
-        pointCount: targetManifest.pointCount
+        pointCount: targetManifest.pointCount,
       },
       bytes: nextBytes,
       retainedPointIds: [...retained],
-      migrated: true
+      migrated: true,
     };
   }
 
@@ -423,26 +469,26 @@ export class OEMUserDO {
     incoming: NormalizedSyncPatch,
     requestHash: string,
     eventId: string,
-    manifest: RegisteredManifest
+    manifest: RegisteredManifest,
   ): Promise<Response> {
     const existingMutation = await getProgressSyncMutation(
       this.env.DB,
       uid,
-      incoming.clientMutationId
+      incoming.clientMutationId,
     );
     if (existingMutation) {
       if (existingMutation.requestHash !== requestHash) {
         throw new ApiError(
           409,
           "IDEMPOTENCY_KEY_REUSED",
-          "clientMutationId was already used for a different progress payload."
+          "clientMutationId was already used for a different progress payload.",
         );
       }
       return new Response(existingMutation.responseJson, {
         headers: {
           "content-type": "application/json; charset=utf-8",
-          "x-progress-idempotent": "true"
-        }
+          "x-progress-idempotent": "true",
+        },
       });
     }
 
@@ -455,18 +501,24 @@ export class OEMUserDO {
     const prepared = await this.prepareProgressForManifest(
       current,
       user.progressRetainedPointIds,
-      manifest
+      manifest,
     );
 
     if (
-      incoming.baseRevision !== current.revision
-      && incoming.baseRevision !== prepared.progress.revision
+      incoming.baseRevision !== current.revision &&
+      incoming.baseRevision !== prepared.progress.revision
     ) {
       throw new ApiError(
         409,
         "PROGRESS_REVISION_CONFLICT",
         "Incoming patch is based on an older cloud revision.",
-        { current: await this.publicProgress(prepared.progress, manifest, prepared.retainedPointIds) }
+        {
+          current: await this.publicProgress(
+            prepared.progress,
+            manifest,
+            prepared.retainedPointIds,
+          ),
+        },
       );
     }
 
@@ -476,7 +528,9 @@ export class OEMUserDO {
 
     for (const pointId of incoming.clearPointIds) {
       const index = manifest.indexById.get(pointId);
-      if (index === undefined) continue;
+      if (index === undefined) {
+        continue;
+      }
       setBitmapBit(nextBytes, index, false);
     }
     for (const pointId of incoming.setPointIds) {
@@ -492,13 +546,13 @@ export class OEMUserDO {
       markerIndexHash: manifest.markerIndexHash,
       formatVersion: manifest.formatVersion,
       bitsPerPoint: manifest.bitsPerPoint,
-      pointCount: manifest.pointCount
+      pointCount: manifest.pointCount,
     });
 
     const nextRetainedPointIds = normalizeRetainedPointIds([...retainedPointIds]);
     const retainedChanged = !areStringArraysEqual(
       normalizeRetainedPointIds(user.progressRetainedPointIds),
-      nextRetainedPointIds
+      nextRetainedPointIds,
     );
     const progressChanged = prepared.migrated || prepared.progress.checksum !== computedChecksum;
 
@@ -506,7 +560,7 @@ export class OEMUserDO {
       const responseJson = JSON.stringify({
         ok: true,
         progress: await this.publicProgress(prepared.progress, manifest, nextRetainedPointIds),
-        unchanged: true
+        unchanged: true,
       });
       const now = nowTimestampMs();
       await commitProgressSync(this.env.DB, {
@@ -515,20 +569,20 @@ export class OEMUserDO {
         requestHash,
         responseJson,
         resultVersion: current.version,
-        createdAt: now
+        createdAt: now,
       });
       this.state.waitUntil(drainUserProgressStatsOutbox(this.env, uid));
       return new Response(responseJson, {
-        headers: { "content-type": "application/json; charset=utf-8" }
+        headers: { "content-type": "application/json; charset=utf-8" },
       });
     }
 
     const diff = prepared.migrated
       ? diffOneBitBitmaps(
-        emptyBitmapBytes(manifest.pointCount, manifest.bitsPerPoint),
-        nextBytes,
-        manifest.pointCount
-      )
+          emptyBitmapBytes(manifest.pointCount, manifest.bitsPerPoint),
+          nextBytes,
+          manifest.pointCount,
+        )
       : diffOneBitBitmaps(currentBytes, nextBytes, manifest.pointCount);
     const now = nowTimestampMs();
     const nextProgress: ProgressState = {
@@ -541,7 +595,7 @@ export class OEMUserDO {
       bitsPerPoint: manifest.bitsPerPoint,
       pointCount: manifest.pointCount,
       updatedAt: incoming.updatedAt ?? now,
-      format: current.format
+      format: current.format,
     };
     const firstSync = !user.progressCloudSynced;
 
@@ -551,22 +605,22 @@ export class OEMUserDO {
         revision: nextProgress.revision,
         markerIndexHash: nextProgress.markerIndexHash,
         updatedAt: nextProgress.updatedAt,
-        retainedPointIds: nextRetainedPointIds.filter((pointId) => !manifest.indexById.has(pointId))
-      }
+        retainedPointIds: nextRetainedPointIds.filter(
+          (pointId) => !manifest.indexById.has(pointId),
+        ),
+      },
     });
-    const statsEvent: ProgressStatsDelta | undefined = firstSync
-      || prepared.migrated
-      || diff.increments.length > 0
-      || diff.decrements.length > 0
-      ? {
-        eventId,
-        markerIndexHash: manifest.markerIndexHash,
-        pointCount: manifest.pointCount,
-        increments: diff.increments,
-        decrements: diff.decrements,
-        firstSync: firstSync || prepared.migrated
-      }
-      : undefined;
+    const statsEvent: ProgressStatsDelta | undefined =
+      firstSync || prepared.migrated || diff.increments.length > 0 || diff.decrements.length > 0
+        ? {
+            eventId,
+            markerIndexHash: manifest.markerIndexHash,
+            pointCount: manifest.pointCount,
+            increments: diff.increments,
+            decrements: diff.decrements,
+            firstSync: firstSync || prepared.migrated,
+          }
+        : undefined;
 
     await commitProgressSync(this.env.DB, {
       uid,
@@ -587,13 +641,13 @@ export class OEMUserDO {
         updatedAt: nextProgress.updatedAt ?? now,
         clientMutationId: incoming.clientMutationId,
         cloudSynced: true,
-        syncedAt: firstSync ? now : null
+        syncedAt: firstSync ? now : null,
       },
-      statsEvent
+      statsEvent,
     });
     this.state.waitUntil(drainUserProgressStatsOutbox(this.env, uid));
     return new Response(responseJson, {
-      headers: { "content-type": "application/json; charset=utf-8" }
+      headers: { "content-type": "application/json; charset=utf-8" },
     });
   }
 }

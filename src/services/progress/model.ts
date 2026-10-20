@@ -72,7 +72,7 @@ export function progressStateFromUser(user: UserRecord | null): ProgressState {
     bitsPerPoint: normalizeNonNegativeInt(user.progressBitsPerPoint, PROGRESS_BITS_PER_POINT),
     pointCount: normalizeNonNegativeInt(user.progressPointCount, 0),
     updatedAt: user.progressUpdatedAt || null,
-    format: PROGRESS_MARKER_FORMAT
+    format: PROGRESS_MARKER_FORMAT,
   };
 }
 
@@ -87,7 +87,7 @@ export function emptyProgressState(): ProgressState {
     bitsPerPoint: PROGRESS_BITS_PER_POINT,
     pointCount: 0,
     updatedAt: null,
-    format: PROGRESS_MARKER_FORMAT
+    format: PROGRESS_MARKER_FORMAT,
   };
 }
 
@@ -102,14 +102,14 @@ export function buildProgressRevision(checksum: string): string {
 export function publicProgressState(
   progress: ProgressState,
   pointIds: string[] = [],
-  retainedPointIds: string[] = []
+  retainedPointIds: string[] = [],
 ): PublicProgressState {
   return {
     revision: progress.revision,
     markerIndexHash: progress.markerIndexHash,
     updatedAt: progress.updatedAt,
     pointIds,
-    retainedPointIds
+    retainedPointIds,
   };
 }
 
@@ -123,7 +123,11 @@ export function normalizeNonNegativeInt(value: unknown, fallback: number): numbe
 
 export function requireTimestampMs(value: unknown, fieldName: string): number {
   if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
-    throw new ApiError(422, "VALIDATION_ERROR", `${fieldName} must be an epoch milliseconds timestamp.`);
+    throw new ApiError(
+      422,
+      "VALIDATION_ERROR",
+      `${fieldName} must be an epoch milliseconds timestamp.`,
+    );
   }
   return Math.floor(value);
 }

@@ -12,7 +12,10 @@ export type PublicMarkerListResponse<T> = {
   partial?: boolean;
 };
 
-export function resolvePublicImageCacheNamespace(scope: { pathPrefix?: string; excludePathPrefix?: string }): PublicImageCacheNamespace {
+export function resolvePublicImageCacheNamespace(scope: {
+  pathPrefix?: string;
+  excludePathPrefix?: string;
+}): PublicImageCacheNamespace {
   if (scope.pathPrefix === "_test") {
     return "test";
   }
@@ -22,7 +25,10 @@ export function resolvePublicImageCacheNamespace(scope: { pathPrefix?: string; e
   return "default";
 }
 
-export function resolvePublicCommentCacheNamespace(scope: { pathPrefix?: string; excludePathPrefix?: string }): PublicCommentCacheNamespace {
+export function resolvePublicCommentCacheNamespace(scope: {
+  pathPrefix?: string;
+  excludePathPrefix?: string;
+}): PublicCommentCacheNamespace {
   if (scope.pathPrefix === "_test") {
     return "test";
   }

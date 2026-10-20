@@ -1,6 +1,4 @@
-import {
-  buildImageScopeFilters,
-} from "./submission/listImages";
+import { buildImageScopeFilters } from "./submission/listImages";
 import { imageStatusListSql, publicImageFromRow, toCount } from "./submission/mapper";
 import type { PublicSubmissionImage, SubmissionStatus } from "./submission/types";
 
@@ -29,7 +27,7 @@ const REVIEWABLE_IMAGE_STATUSES: SubmissionStatus[] = [
   "pending_audit",
   "active",
   "flagged",
-  "remove_request"
+  "remove_request",
 ];
 const PUBLIC_IMAGE_STATUS_SQL = imageStatusListSql(PUBLIC_IMAGE_STATUSES);
 const REVIEWABLE_IMAGE_STATUS_SQL = imageStatusListSql(REVIEWABLE_IMAGE_STATUSES);
@@ -40,18 +38,14 @@ export async function getDuplicateImageMarkerSummary(
     markerId: string;
     pathPrefix?: string;
     excludePathPrefix?: string;
-  }
+  },
 ): Promise<{ markerId: string; imageCount: number } | null> {
   const markerId = payload.markerId.trim();
   if (!markerId) {
     return null;
   }
 
-  const filters = [
-    "poi_id = ?1",
-    "kind = 'image'",
-    `status IN (${REVIEWABLE_IMAGE_STATUS_SQL})`
-  ];
+  const filters = ["poi_id = ?1", "kind = 'image'", `status IN (${REVIEWABLE_IMAGE_STATUS_SQL})`];
   const scope = buildImageScopeFilters(payload, 1);
   filters.push(...scope.clauses);
 
@@ -62,7 +56,7 @@ export async function getDuplicateImageMarkerSummary(
        WHERE ${filters.join(" AND ")}
        GROUP BY poi_id
        HAVING COUNT(*) > 1
-       LIMIT 1`
+       LIMIT 1`,
     )
     .bind(markerId, ...scope.bindings)
     .first<{ poi_id: string; image_count: number | string }>();
@@ -70,7 +64,7 @@ export async function getDuplicateImageMarkerSummary(
   return row
     ? {
         markerId: String(row.poi_id),
-        imageCount: toCount(row.image_count)
+        imageCount: toCount(row.image_count),
       }
     : null;
 }
@@ -83,14 +77,11 @@ export async function listDuplicateImageMarkers(
     offset?: number;
     pathPrefix?: string;
     excludePathPrefix?: string;
-  }
+  },
 ): Promise<DuplicateImageMarkerList> {
   const limit = Math.min(Math.max(payload.limit ?? 50, 1), 100);
   const offset = Math.max(payload.offset ?? 0, 0);
-  const baseFilters = [
-    "kind = 'image'",
-    `status IN (${PUBLIC_IMAGE_STATUS_SQL})`
-  ];
+  const baseFilters = ["kind = 'image'", `status IN (${PUBLIC_IMAGE_STATUS_SQL})`];
   const scope = buildImageScopeFilters(payload);
   baseFilters.push(...scope.clauses);
   const baseWhere = baseFilters.join(" AND ");
@@ -160,7 +151,7 @@ export async function listDuplicateImageMarkers(
          LEFT JOIN upvote_counts v ON v.submission_id = li.id
          LEFT JOIN flag_counts f ON f.submission_id = li.id
          LEFT JOIN users u ON u.uid = li.user_id
-         ORDER BY dm.latest_created_at DESC, dm.poi_id ASC`
+         ORDER BY dm.latest_created_at DESC, dm.poi_id ASC`,
       )
       .bind(...scope.bindings, limit, offset)
       .all<Record<string, unknown>>(),
@@ -173,27 +164,28 @@ export async function listDuplicateImageMarkers(
            WHERE ${baseWhere}
            GROUP BY poi_id
            HAVING COUNT(*) > 1
-         ) duplicate_markers`
+         ) duplicate_markers`,
       )
       .bind(...scope.bindings)
-      .first<{ count: number | string }>()
+      .first<{ count: number | string }>(),
   ]);
 
   return {
     items: (rowsResult.results ?? []).map((row) => {
-      const latestImage = row.id === null || row.id === undefined
-        ? null
-        : publicImageFromRow(row, payload.assetBaseUrl);
+      const latestImage =
+        row.id === null || row.id === undefined
+          ? null
+          : publicImageFromRow(row, payload.assetBaseUrl);
       return {
         markerId: String(row.duplicate_poi_id ?? row.poi_id),
         poiHash: row.poi_hash === null || row.poi_hash === undefined ? "" : String(row.poi_hash),
         poiType: row.poi_type === null || row.poi_type === undefined ? "" : String(row.poi_type),
         imageCount: toCount(row.image_count),
         latestCreatedAt: String(row.latest_created_at),
-        latestImage
+        latestImage,
       };
     }),
-    total: toCount(totalRow?.count)
+    total: toCount(totalRow?.count),
   };
 }
 
@@ -207,7 +199,7 @@ export async function listDuplicateMarkerImages(
     pathPrefix?: string;
     excludePathPrefix?: string;
     viewerUserId?: string;
-  }
+  },
 ): Promise<DuplicateMarkerImages> {
   const markerId = payload.markerId.trim();
   if (!markerId) {
@@ -216,11 +208,7 @@ export async function listDuplicateMarkerImages(
 
   const limit = Math.min(Math.max(payload.limit ?? 100, 1), 200);
   const offset = Math.max(payload.offset ?? 0, 0);
-  const filters = [
-    "s.poi_id = ?1",
-    "s.kind = 'image'",
-    `s.status IN (${PUBLIC_IMAGE_STATUS_SQL})`
-  ];
+  const filters = ["s.poi_id = ?1", "s.kind = 'image'", `s.status IN (${PUBLIC_IMAGE_STATUS_SQL})`];
   const scope = buildImageScopeFilters(payload, 1);
   const scopedClauses = scope.clauses.map((clause) => `s.${clause}`);
   filters.push(...scopedClauses);
@@ -279,7 +267,7 @@ export async function listDuplicateMarkerImages(
          LEFT JOIN flag_counts f ON f.submission_id = s.id
          ${viewerJoin}
          LEFT JOIN users u ON u.uid = s.user_id
-         ORDER BY s.created_at DESC, s.id DESC`
+         ORDER BY s.created_at DESC, s.id DESC`,
       )
       .bind(markerId, ...scope.bindings, ...viewerBindings, limit, offset)
       .all<Record<string, unknown>>(),
@@ -287,10 +275,10 @@ export async function listDuplicateMarkerImages(
       .prepare(
         `SELECT COUNT(*) AS count
          FROM ugc_submissions s
-         WHERE ${filters.join(" AND ")}`
+         WHERE ${filters.join(" AND ")}`,
       )
       .bind(markerId, ...scope.bindings)
-      .first<{ count: number | string }>()
+      .first<{ count: number | string }>(),
   ]);
 
   const total = toCount(totalRow?.count);
@@ -299,7 +287,9 @@ export async function listDuplicateMarkerImages(
   }
 
   return {
-    items: (rowsResult.results ?? []).map((row) => publicImageFromRow(row, payload.assetBaseUrl, payload.viewerUserId)),
-    total
+    items: (rowsResult.results ?? []).map((row) =>
+      publicImageFromRow(row, payload.assetBaseUrl, payload.viewerUserId),
+    ),
+    total,
   };
 }

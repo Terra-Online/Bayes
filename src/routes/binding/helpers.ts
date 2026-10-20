@@ -28,7 +28,7 @@ export function serializeLocatorError(error: unknown, requestId?: string) {
       code: error.code,
       message: error.message,
       details: error.details,
-      ...(requestId ? { requestId } : {})
+      ...(requestId ? { requestId } : {}),
     };
   }
 
@@ -36,6 +36,6 @@ export function serializeLocatorError(error: unknown, requestId?: string) {
     status: 500,
     code: "LOCATOR_STREAM_ERROR",
     message: error instanceof Error ? error.message : "Locator stream failed.",
-    ...(requestId ? { requestId } : {})
+    ...(requestId ? { requestId } : {}),
   };
 }

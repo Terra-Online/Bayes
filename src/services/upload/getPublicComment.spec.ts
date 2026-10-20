@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
 import { ApiError } from "../../lib/errors";
 import type { PublicCommentContext } from "../../repositories/submission/getPublicComment";
 import type { PublicSubmissionComment } from "../../repositories/submission/types";
@@ -7,14 +8,14 @@ import type { AppEnv } from "../../types/app";
 
 const mocks = vi.hoisted(() => ({
   getPublicCommentContextById: vi.fn(),
-  getOptionalAuthIdentity: vi.fn()
+  getOptionalAuthIdentity: vi.fn(),
 }));
 
 vi.mock("../../repositories/submission/getPublicComment", () => ({
-  getPublicCommentContextById: mocks.getPublicCommentContextById
+  getPublicCommentContextById: mocks.getPublicCommentContextById,
 }));
 vi.mock("./helpers", () => ({
-  getOptionalAuthIdentity: mocks.getOptionalAuthIdentity
+  getOptionalAuthIdentity: mocks.getOptionalAuthIdentity,
 }));
 
 import { handleGetPublicComment } from "./getPublicComment";
@@ -33,14 +34,14 @@ const target: PublicSubmissionComment = {
   score: 2,
   replyCount: 0,
   replies: [],
-  createdAt: "2026-09-10T00:00:00.000Z"
+  createdAt: "2026-09-10T00:00:00.000Z",
 };
 
 const context: PublicCommentContext = {
   targetId: "target",
   path: [target],
   replies: [],
-  repliesTruncated: false
+  repliesTruncated: false,
 };
 
 beforeEach(() => {
@@ -57,11 +58,9 @@ function request(path: string, headers?: HeadersInit) {
     throw error;
   });
   app.get("/comments/:id", handleGetPublicComment);
-  return app.request(
-    "https://api.example.com" + path,
-    { headers },
-    { DB: {} as D1Database } as AppEnv["Bindings"]
-  );
+  return app.request("https://api.example.com" + path, { headers }, {
+    DB: {} as D1Database,
+  } as AppEnv["Bindings"]);
 }
 
 describe("handleGetPublicComment", () => {
@@ -73,10 +72,10 @@ describe("handleGetPublicComment", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("Cache-Control")).toBe("private, no-store");
     expect(await response.json()).toEqual({ item: context });
-    expect(mocks.getPublicCommentContextById).toHaveBeenCalledWith(
-      expect.anything(),
-      { id: "target", markerId: "42" }
-    );
+    expect(mocks.getPublicCommentContextById).toHaveBeenCalledWith(expect.anything(), {
+      id: "target",
+      markerId: "42",
+    });
   });
 
   it("passes the optional viewer identity to the context query", async () => {
@@ -84,14 +83,15 @@ describe("handleGetPublicComment", () => {
     mocks.getPublicCommentContextById.mockResolvedValue(context);
 
     const response = await request("/comments/target?markerId=42", {
-      cookie: "session=test"
+      cookie: "session=test",
     });
 
     expect(response.status).toBe(200);
-    expect(mocks.getPublicCommentContextById).toHaveBeenCalledWith(
-      expect.anything(),
-      { id: "target", markerId: "42", viewerUserId: "viewer" }
-    );
+    expect(mocks.getPublicCommentContextById).toHaveBeenCalledWith(expect.anything(), {
+      id: "target",
+      markerId: "42",
+      viewerUserId: "viewer",
+    });
   });
 
   it("returns the same comment not-found error for every unavailable target", async () => {
@@ -106,7 +106,7 @@ describe("handleGetPublicComment", () => {
   it.each([
     "/comments/target",
     "/comments/target?markerId=",
-    "/comments/target?markerId=" + "x".repeat(129)
+    "/comments/target?markerId=" + "x".repeat(129),
   ])("rejects an invalid markerId in %s", async (path) => {
     const response = await request(path);
 

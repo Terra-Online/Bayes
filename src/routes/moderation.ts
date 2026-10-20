@@ -1,82 +1,90 @@
 import { Hono, type Context } from "hono";
 import { z } from "zod";
+
 import { getRuntimeConfig } from "../lib/config";
 import { ApiError } from "../lib/errors";
-import {
-  isCommentEditModerationNote,
-  RECALL_MODERATION_NOTE_PREFIX
-} from "../lib/moderation";
+import { isCommentEditModerationNote, RECALL_MODERATION_NOTE_PREFIX } from "../lib/moderation";
+import { prewarmPublicUgcAsset } from "../lib/publicUgcAssets";
 import { createRedisClient } from "../lib/redis";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { rateLimit } from "../middleware/rate-limit";
+import { invalidateUploadCaches } from "../publicRead/client/invalidate";
+import type { NotificationRecord } from "../repositories/notifications";
 import {
   listDuplicateImageMarkers,
-  listDuplicateMarkerImages
+  listDuplicateMarkerImages,
 } from "../repositories/submission-duplicates";
 import {
   getReviewSubmissionStats,
   getReviewSubmissions,
-  markImageSubmissionsStaleByFilePathPrefix
+  markImageSubmissionsStaleByFilePathPrefix,
 } from "../repositories/submission-review";
+import {
+  getSubmissionById,
+  transitionSubmissionStatusWithNotifications,
+} from "../repositories/submission/statusSubmission";
 import {
   ALL_STATUSES,
   type SubmissionRecord,
-  type SubmissionStatus
+  type SubmissionStatus,
 } from "../repositories/submission/types";
-import {
-  getSubmissionById,
-  transitionSubmissionStatusWithNotifications
-} from "../repositories/submission/statusSubmission";
 import { applyUserPointsDelta } from "../repositories/users";
-import { prewarmPublicUgcAsset } from "../lib/publicUgcAssets";
-import { invalidateUploadCaches } from "../publicRead/client/invalidate";
 import { evaluateKarmaBatch } from "../services/karma/evaluation";
 import { getModerationPointsDeltaWithDailyBackoff } from "../services/karma/moderationPoints";
 import { moderateSubmissionIds } from "../services/moderation/core";
-import { ensureModerationBackfill, enqueueApprovedCommentTransPrewarm } from "../services/moderation/queue";
-import { notifySubmissionModerationResult } from "../services/moderation/notifications";
-import { publishNotificationsCreated } from "../services/notify/live";
-import type { NotificationRecord } from "../repositories/notifications";
 import { getImageCoverage } from "../services/moderation/imageCoverage";
+import { notifySubmissionModerationResult } from "../services/moderation/notifications";
 import { getOrphanImages } from "../services/moderation/orphanImages";
+import {
+  ensureModerationBackfill,
+  enqueueApprovedCommentTransPrewarm,
+} from "../services/moderation/queue";
 import { sendModerationWarning } from "../services/moderation/warnings";
+import { publishNotificationsCreated } from "../services/notify/live";
 import type { AppEnv } from "../types/app";
 
 const updateSchema = z.object({
-  status: z.enum(["pending_openai", "pending_audit", "active", "flagged", "remove_request", "stale"]),
-  moderationNote: z.string().max(500).optional()
+  status: z.enum([
+    "pending_openai",
+    "pending_audit",
+    "active",
+    "flagged",
+    "remove_request",
+    "stale",
+  ]),
+  moderationNote: z.string().max(500).optional(),
 });
 
 const listSchema = z.object({
   status: z.string().max(200).optional(),
   from: z.iso.datetime({ offset: true }).optional(),
   to: z.iso.datetime({ offset: true }).optional(),
-  limit: z.coerce.number().int().min(1).max(10000).optional()
+  limit: z.coerce.number().int().min(1).max(10000).optional(),
 });
 
 const duplicateImagesQuerySchema = z.object({
   scope: z.enum(["test", "prod"]).optional(),
   limit: z.coerce.number().int().min(1).max(100).optional(),
-  offset: z.coerce.number().int().min(0).max(100000).optional()
+  offset: z.coerce.number().int().min(0).max(100000).optional(),
 });
 
 const imageCoverageQuerySchema = z.object({
-  scope: z.enum(["test", "prod"]).optional()
+  scope: z.enum(["test", "prod"]).optional(),
 });
 
 const duplicateMarkerImagesQuerySchema = z.object({
   scope: z.enum(["test", "prod"]).optional(),
   limit: z.coerce.number().int().min(1).max(200).optional(),
-  offset: z.coerce.number().int().min(0).max(100000).optional()
+  offset: z.coerce.number().int().min(0).max(100000).optional(),
 });
 
 const runSchema = z.object({
   ids: z.array(z.string().min(1).max(64)).min(1).max(500).optional(),
-  limit: z.coerce.number().int().min(1).max(20).optional()
+  limit: z.coerce.number().int().min(1).max(20).optional(),
 });
 
 const warningSchema = z.object({
-  publicUid: z.string().trim().min(1).max(32)
+  publicUid: z.string().trim().min(1).max(32),
 });
 
 const STATUS_TRANSITIONS: Record<SubmissionStatus, SubmissionStatus[]> = {
@@ -85,7 +93,7 @@ const STATUS_TRANSITIONS: Record<SubmissionStatus, SubmissionStatus[]> = {
   active: ["stale"],
   flagged: ["active", "stale"],
   remove_request: ["active", "stale"],
-  stale: ["active"]
+  stale: ["active"],
 };
 
 function isModerationLocked(flag: string | undefined): boolean {
@@ -124,7 +132,7 @@ function resolvePublicAssetBaseUrl(requestUrl: string, configuredBaseUrl: string
 
 function resolveImageScope(
   configuredPrefix: string,
-  scope: "test" | "prod" | undefined
+  scope: "test" | "prod" | undefined,
 ): { pathPrefix?: string; excludePathPrefix?: string } {
   if (configuredPrefix === "_test") {
     return { pathPrefix: "_test" };
@@ -147,18 +155,23 @@ function assertStatusTransition(from: SubmissionStatus, to: SubmissionStatus): v
   }
 
   if (!STATUS_TRANSITIONS[from].includes(to)) {
-    throw new ApiError(409, "INVALID_STATUS_TRANSITION", `Cannot move submission from ${from} to ${to}.`, {
-      from,
-      to,
-      allowed: STATUS_TRANSITIONS[from]
-    });
+    throw new ApiError(
+      409,
+      "INVALID_STATUS_TRANSITION",
+      `Cannot move submission from ${from} to ${to}.`,
+      {
+        from,
+        to,
+        allowed: STATUS_TRANSITIONS[from],
+      },
+    );
   }
 }
 
 function shouldApplyModerationPoints(
   currentStatus: SubmissionStatus,
   nextStatus: SubmissionStatus,
-  moderationNote: string | null
+  moderationNote: string | null,
 ): boolean {
   if (currentStatus === nextStatus || (nextStatus !== "active" && nextStatus !== "stale")) {
     return false;
@@ -176,7 +189,7 @@ async function runModeration(
   payload: {
     ids?: string[];
     limit?: number;
-  }
+  },
 ) {
   const config = getRuntimeConfig(c.env);
   const redis = createRedisClient(c.env);
@@ -195,25 +208,20 @@ async function runModeration(
     enqueueSubmissionModerationNotice: (
       submission: SubmissionRecord,
       previousStatus: SubmissionStatus,
-      nextStatus: "active" | "pending_audit"
+      nextStatus: "active" | "pending_audit",
     ) =>
       notifySubmissionModerationResult(c.env, {
         submission,
         previousStatus,
         nextStatus,
-        source: "auto_moderation"
+        source: "auto_moderation",
       }),
     publishNotifications: (notifications: NotificationRecord[]) =>
-      publishNotificationsCreated(c.env, notifications)
+      publishNotificationsCreated(c.env, notifications),
   };
 
   if (payload.ids && payload.ids.length > 0) {
-    const processed = await moderateSubmissionIds(
-      c.env.DB,
-      options,
-      payload.ids,
-      25_000
-    );
+    const processed = await moderateSubmissionIds(c.env.DB, options, payload.ids, 25_000);
 
     return {
       ok: true,
@@ -222,7 +230,7 @@ async function runModeration(
       processed: processed.processed,
       active: processed.stats.active,
       pendingAudit: processed.stats.pendingAudit,
-      stale: processed.stats.stale
+      stale: processed.stats.stale,
     };
   }
 
@@ -237,7 +245,7 @@ async function runModeration(
     processed: 0,
     active: 0,
     pendingAudit: 0,
-    stale: 0
+    stale: 0,
   };
 }
 
@@ -249,7 +257,7 @@ export function createModerationRoutes() {
       throw new ApiError(
         503,
         "MODERATION_TEMPORARILY_DISABLED",
-        "Moderation endpoints are temporarily disabled during stabilization."
+        "Moderation endpoints are temporarily disabled during stabilization.",
       );
     }
     await next();
@@ -258,7 +266,12 @@ export function createModerationRoutes() {
   app.post("/warnings", requireAuth, requireRole(["a"]), rateLimit("auth"), async (c) => {
     const parsed = warningSchema.safeParse(await c.req.json().catch(() => ({})));
     if (!parsed.success) {
-      throw new ApiError(422, "VALIDATION_ERROR", "Invalid moderation warning payload.", parsed.error.flatten());
+      throw new ApiError(
+        422,
+        "VALIDATION_ERROR",
+        "Invalid moderation warning payload.",
+        parsed.error.flatten(),
+      );
     }
 
     const result = await sendModerationWarning(c.env, parsed.data);
@@ -270,7 +283,7 @@ export function createModerationRoutes() {
       ok: true,
       publicUid: result.publicUid,
       provider: result.delivery.provider,
-      messageId: result.delivery.id ?? null
+      messageId: result.delivery.id ?? null,
     });
   });
 
@@ -279,128 +292,164 @@ export function createModerationRoutes() {
       status: c.req.query("status"),
       from: c.req.query("from"),
       to: c.req.query("to"),
-      limit: c.req.query("limit")
+      limit: c.req.query("limit"),
     });
     if (!parsed.success) {
-      throw new ApiError(422, "VALIDATION_ERROR", "Invalid moderation query.", parsed.error.flatten());
+      throw new ApiError(
+        422,
+        "VALIDATION_ERROR",
+        "Invalid moderation query.",
+        parsed.error.flatten(),
+      );
     }
     const fromDate = parsed.data.from ? new Date(parsed.data.from) : null;
     const toDate = parsed.data.to ? new Date(parsed.data.to) : null;
     if (fromDate && toDate && fromDate.getTime() > toDate.getTime()) {
       throw new ApiError(422, "VALIDATION_ERROR", "Invalid moderation query date range.", {
         from: parsed.data.from,
-        to: parsed.data.to
+        to: parsed.data.to,
       });
     }
 
     const filters = {
       statuses: parseStatuses(parsed.data.status),
       createdFrom: fromDate ? toSqlTimestamp(fromDate) : undefined,
-      createdTo: toDate ? toSqlTimestamp(toDate) : undefined
+      createdTo: toDate ? toSqlTimestamp(toDate) : undefined,
     };
     const limit = parsed.data.limit ?? 1000;
     const [rows, stats] = await Promise.all([
       getReviewSubmissions(c.env.DB, {
         ...filters,
-        limit
+        limit,
       }),
-      getReviewSubmissionStats(c.env.DB, filters)
+      getReviewSubmissionStats(c.env.DB, filters),
     ]);
     return c.json({
       items: rows,
       stats,
-      limit
+      limit,
     });
   });
 
   app.get("/images/coverage", requireAuth, requireRole(["a"]), rateLimit("auth"), async (c) => {
     const parsed = imageCoverageQuerySchema.safeParse({
-      scope: c.req.query("scope")
+      scope: c.req.query("scope"),
     });
     if (!parsed.success) {
-      throw new ApiError(422, "VALIDATION_ERROR", "Invalid image coverage query.", parsed.error.flatten());
+      throw new ApiError(
+        422,
+        "VALIDATION_ERROR",
+        "Invalid image coverage query.",
+        parsed.error.flatten(),
+      );
     }
 
     const requestedScope = parsed.data.scope ?? "prod";
-    return c.json(await getImageCoverage(c.env.DB, {
-      scope: requestedScope,
-      imageScope: resolveImageScope("", requestedScope)
-    }));
+    return c.json(
+      await getImageCoverage(c.env.DB, {
+        scope: requestedScope,
+        imageScope: resolveImageScope("", requestedScope),
+      }),
+    );
   });
 
   app.get("/images/orphans", requireAuth, requireRole(["a"]), rateLimit("auth"), async (c) => {
     const config = getRuntimeConfig(c.env);
-    return c.json(await getOrphanImages({
-      db: c.env.DB,
-      bucket: c.env.UGC_BUCKET,
-      assetBaseUrl: config.ugcAssetBaseUrl
-    }));
+    return c.json(
+      await getOrphanImages({
+        db: c.env.DB,
+        bucket: c.env.UGC_BUCKET,
+        assetBaseUrl: config.ugcAssetBaseUrl,
+      }),
+    );
   });
 
-  app.get("/images/duplicates", requireAuth, requireRole(["p", "a"]), rateLimit("auth"), async (c) => {
-    const parsed = duplicateImagesQuerySchema.safeParse({
-      scope: c.req.query("scope"),
-      limit: c.req.query("limit"),
-      offset: c.req.query("offset")
-    });
-    if (!parsed.success) {
-      throw new ApiError(422, "VALIDATION_ERROR", "Invalid duplicate image query.", parsed.error.flatten());
-    }
+  app.get(
+    "/images/duplicates",
+    requireAuth,
+    requireRole(["p", "a"]),
+    rateLimit("auth"),
+    async (c) => {
+      const parsed = duplicateImagesQuerySchema.safeParse({
+        scope: c.req.query("scope"),
+        limit: c.req.query("limit"),
+        offset: c.req.query("offset"),
+      });
+      if (!parsed.success) {
+        throw new ApiError(
+          422,
+          "VALIDATION_ERROR",
+          "Invalid duplicate image query.",
+          parsed.error.flatten(),
+        );
+      }
 
-    const config = getRuntimeConfig(c.env);
-    const scope = resolveImageScope(config.ugcUploadPathPrefix, parsed.data.scope);
-    const result = await listDuplicateImageMarkers(c.env.DB, {
-      assetBaseUrl: resolvePublicAssetBaseUrl(c.req.url, config.ugcAssetBaseUrl),
-      pathPrefix: scope.pathPrefix,
-      excludePathPrefix: scope.excludePathPrefix,
-      limit: parsed.data.limit ?? 50,
-      offset: parsed.data.offset ?? 0
-    });
+      const config = getRuntimeConfig(c.env);
+      const scope = resolveImageScope(config.ugcUploadPathPrefix, parsed.data.scope);
+      const result = await listDuplicateImageMarkers(c.env.DB, {
+        assetBaseUrl: resolvePublicAssetBaseUrl(c.req.url, config.ugcAssetBaseUrl),
+        pathPrefix: scope.pathPrefix,
+        excludePathPrefix: scope.excludePathPrefix,
+        limit: parsed.data.limit ?? 50,
+        offset: parsed.data.offset ?? 0,
+      });
 
-    return c.json({
-      items: result.items,
-      total: result.total,
-      limit: parsed.data.limit ?? 50,
-      offset: parsed.data.offset ?? 0
-    });
-  });
+      return c.json({
+        items: result.items,
+        total: result.total,
+        limit: parsed.data.limit ?? 50,
+        offset: parsed.data.offset ?? 0,
+      });
+    },
+  );
 
-  app.get("/images/duplicates/:markerId", requireAuth, requireRole(["p", "a"]), rateLimit("auth"), async (c) => {
-    const markerId = c.req.param("markerId")?.trim();
-    if (!markerId) {
-      throw new ApiError(422, "VALIDATION_ERROR", "markerId is required.");
-    }
+  app.get(
+    "/images/duplicates/:markerId",
+    requireAuth,
+    requireRole(["p", "a"]),
+    rateLimit("auth"),
+    async (c) => {
+      const markerId = c.req.param("markerId")?.trim();
+      if (!markerId) {
+        throw new ApiError(422, "VALIDATION_ERROR", "markerId is required.");
+      }
 
-    const parsed = duplicateMarkerImagesQuerySchema.safeParse({
-      scope: c.req.query("scope"),
-      limit: c.req.query("limit"),
-      offset: c.req.query("offset")
-    });
-    if (!parsed.success) {
-      throw new ApiError(422, "VALIDATION_ERROR", "Invalid duplicate image query.", parsed.error.flatten());
-    }
+      const parsed = duplicateMarkerImagesQuerySchema.safeParse({
+        scope: c.req.query("scope"),
+        limit: c.req.query("limit"),
+        offset: c.req.query("offset"),
+      });
+      if (!parsed.success) {
+        throw new ApiError(
+          422,
+          "VALIDATION_ERROR",
+          "Invalid duplicate image query.",
+          parsed.error.flatten(),
+        );
+      }
 
-    const config = getRuntimeConfig(c.env);
-    const scope = resolveImageScope(config.ugcUploadPathPrefix, parsed.data.scope);
-    const user = c.get("authUser");
-    const result = await listDuplicateMarkerImages(c.env.DB, {
-      markerId,
-      assetBaseUrl: resolvePublicAssetBaseUrl(c.req.url, config.ugcAssetBaseUrl),
-      pathPrefix: scope.pathPrefix,
-      excludePathPrefix: scope.excludePathPrefix,
-      limit: parsed.data.limit ?? 100,
-      offset: parsed.data.offset ?? 0,
-      viewerUserId: user?.uid
-    });
+      const config = getRuntimeConfig(c.env);
+      const scope = resolveImageScope(config.ugcUploadPathPrefix, parsed.data.scope);
+      const user = c.get("authUser");
+      const result = await listDuplicateMarkerImages(c.env.DB, {
+        markerId,
+        assetBaseUrl: resolvePublicAssetBaseUrl(c.req.url, config.ugcAssetBaseUrl),
+        pathPrefix: scope.pathPrefix,
+        excludePathPrefix: scope.excludePathPrefix,
+        limit: parsed.data.limit ?? 100,
+        offset: parsed.data.offset ?? 0,
+        viewerUserId: user?.uid,
+      });
 
-    return c.json({
-      markerId,
-      items: result.items,
-      total: result.total,
-      limit: parsed.data.limit ?? 100,
-      offset: parsed.data.offset ?? 0
-    });
-  });
+      return c.json({
+        markerId,
+        items: result.items,
+        total: result.total,
+        limit: parsed.data.limit ?? 100,
+        offset: parsed.data.offset ?? 0,
+      });
+    },
+  );
 
   app.patch("/:id/status", requireAuth, requireRole(["p", "a"]), rateLimit("auth"), async (c) => {
     const submissionId = c.req.param("id");
@@ -410,7 +459,12 @@ export function createModerationRoutes() {
 
     const parsed = updateSchema.safeParse(await c.req.json());
     if (!parsed.success) {
-      throw new ApiError(422, "VALIDATION_ERROR", "Invalid moderation payload.", parsed.error.flatten());
+      throw new ApiError(
+        422,
+        "VALIDATION_ERROR",
+        "Invalid moderation payload.",
+        parsed.error.flatten(),
+      );
     }
 
     const current = await getSubmissionById(c.env.DB, submissionId);
@@ -424,10 +478,14 @@ export function createModerationRoutes() {
       status: parsed.data.status,
       moderationNote: parsed.data.moderationNote,
       source: "manual_moderation",
-      clearFlags: current.status === "flagged" && parsed.data.status === "active"
+      clearFlags: current.status === "flagged" && parsed.data.status === "active",
     });
     if (!transition.updated) {
-      throw new ApiError(409, "MODERATION_CONFLICT", "Submission changed while it was being moderated.");
+      throw new ApiError(
+        409,
+        "MODERATION_CONFLICT",
+        "Submission changed while it was being moderated.",
+      );
     }
     if (transition.notifications.length > 0) {
       c.executionCtx.waitUntil(publishNotificationsCreated(c.env, transition.notifications));
@@ -441,32 +499,37 @@ export function createModerationRoutes() {
           submission: current,
           previousStatus: current.status,
           nextStatus: parsed.data.status,
-          source: "manual_moderation"
-        })
+          source: "manual_moderation",
+        }),
       );
     }
-    if (current.status !== "active" && parsed.data.status === "active" && current.kind === "image") {
+    if (
+      current.status !== "active" &&
+      parsed.data.status === "active" &&
+      current.kind === "image"
+    ) {
       const config = getRuntimeConfig(c.env);
       c.executionCtx.waitUntil(prewarmPublicUgcAsset(config.ugcAssetBaseUrl, current.filePath));
     }
-    c.executionCtx.waitUntil(invalidateUploadCaches({
-      kv: c.env.OEM_KV,
-      kind: current.kind,
-      markerId: current.markerId
-    }));
+    c.executionCtx.waitUntil(
+      invalidateUploadCaches({
+        kv: c.env.OEM_KV,
+        kind: current.kind,
+        markerId: current.markerId,
+      }),
+    );
     if (current.kind === "comment") {
       if (current.status !== "active" && parsed.data.status === "active") {
         c.executionCtx.waitUntil(
-          enqueueApprovedCommentTransPrewarm(c.env, submissionId, "manual_moderation")
+          enqueueApprovedCommentTransPrewarm(c.env, submissionId, "manual_moderation"),
         );
       }
     }
     const effectiveModerationNote = parsed.data.moderationNote ?? current.moderationNote;
-    const isPreviouslyApprovedEdit = (
+    const isPreviouslyApprovedEdit =
       isCommentEditModerationNote(current.moderationNote) &&
       current.editOriginalStatus !== "pending_openai" &&
-      current.editOriginalStatus !== "pending_audit"
-    );
+      current.editOriginalStatus !== "pending_audit";
     if (
       !isPreviouslyApprovedEdit &&
       shouldApplyModerationPoints(current.status, parsed.data.status, effectiveModerationNote)
@@ -483,8 +546,8 @@ export function createModerationRoutes() {
           status: reviewStatus,
           role: current.submitter?.role,
           surgeModeEnabled: config.surgeModeEnabled,
-          surgeBackoffMultiplier: config.surgeBackoffMultiplier
-        })
+          surgeBackoffMultiplier: config.surgeBackoffMultiplier,
+        }),
       );
     }
 
@@ -494,7 +557,12 @@ export function createModerationRoutes() {
   app.post("/run", requireAuth, requireRole(["a"]), rateLimit("auth"), async (c) => {
     const parsed = runSchema.safeParse(await c.req.json().catch(() => ({})));
     if (!parsed.success) {
-      throw new ApiError(422, "VALIDATION_ERROR", "Invalid moderation run payload.", parsed.error.flatten());
+      throw new ApiError(
+        422,
+        "VALIDATION_ERROR",
+        "Invalid moderation run payload.",
+        parsed.error.flatten(),
+      );
     }
 
     return c.json(await runModeration(c, parsed.data));
@@ -512,13 +580,13 @@ export function createModerationRoutes() {
     } catch (error) {
       throw new ApiError(500, "KARMA_EVALUATION_FAILED", "Karma evaluation failed.", {
         name: error instanceof Error ? error.name : undefined,
-        message: error instanceof Error ? error.message : String(error)
+        message: error instanceof Error ? error.message : String(error),
       });
     }
 
     return c.json({
       ok: true,
-      ...result
+      ...result,
     });
   });
 
@@ -526,19 +594,29 @@ export function createModerationRoutes() {
     const config = getRuntimeConfig(c.env);
     const prefix = config.ugcUploadPathPrefix || "_test";
     if (prefix !== "_test") {
-      throw new ApiError(409, "TEST_PREFIX_DISABLED", "Test image cleanup is only available for the _test prefix.");
+      throw new ApiError(
+        409,
+        "TEST_PREFIX_DISABLED",
+        "Test image cleanup is only available for the _test prefix.",
+      );
     }
 
     const archived = await markImageSubmissionsStaleByFilePathPrefix(
       c.env.DB,
       prefix,
-      "Archived from the test namespace; object retained by append-only policy."
+      "Archived from the test namespace; object retained by append-only policy.",
     );
-    c.executionCtx.waitUntil(Promise.all(archived.markerIds.map((markerId) => invalidateUploadCaches({
-      kv: c.env.OEM_KV,
-      kind: "image",
-      markerId
-    }))));
+    c.executionCtx.waitUntil(
+      Promise.all(
+        archived.markerIds.map((markerId) =>
+          invalidateUploadCaches({
+            kv: c.env.OEM_KV,
+            kind: "image",
+            markerId,
+          }),
+        ),
+      ),
+    );
 
     return c.json({
       ok: true,
@@ -546,7 +624,7 @@ export function createModerationRoutes() {
       archivedRows: archived.changedRows,
       retainedObjects: true,
       deletedObjects: 0,
-      deletedRows: 0
+      deletedRows: 0,
     });
   });
 
@@ -554,7 +632,7 @@ export function createModerationRoutes() {
     throw new ApiError(
       409,
       "APPEND_ONLY_RETENTION",
-      "Stale submissions and their R2 objects are retained. Update status instead of deleting records."
+      "Stale submissions and their R2 objects are retained. Update status instead of deleting records.",
     );
   });
 
