@@ -1,5 +1,5 @@
 import { ApiError } from "../../lib/errors";
-import { sha256Hex } from "../../middleware/cache/kvJson";
+import { sha256Hex } from "../../lib/crypto";
 import { getUserByUid } from "../../repositories/users";
 import type { Bindings } from "../../types/app";
 import {

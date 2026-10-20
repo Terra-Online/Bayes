@@ -1,5 +1,6 @@
 import { getRuntimeConfig, type RuntimeConfig } from "../../lib/config";
-import { getJsonFromKv, putJsonToKv, sha256Hex } from "../../middleware/cache/kvJson";
+import { getJsonFromKv, putJsonToKv } from "../../lib/kvJson";
+import { sha256Hex } from "../../lib/crypto";
 import { getVisibleCommentsByIds } from "../../repositories/submission/statusSubmission";
 import {
   getTextTranslation,

@@ -1,5 +1,5 @@
 import { ApiError } from "../../lib/errors";
-import { UGC_PUBLIC_IMAGE_CACHE_CONTROL } from "../../middleware/cache/publicUgcAssets";
+import { UGC_PUBLIC_IMAGE_CACHE_CONTROL } from "./imageDeliveryPolicy";
 import { getImageSubmissionByFilePath, getPublicSubmissionByFilePath } from "../../repositories/submission/statusSubmission";
 import type { AppEnv } from "../../types/app";
 import { parseObjectKeyFromRequestPath } from "./helpers";

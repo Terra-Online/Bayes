@@ -28,7 +28,7 @@ import {
   transitionSubmissionStatusWithNotifications
 } from "../repositories/submission/statusSubmission";
 import { applyUserPointsDelta } from "../repositories/users";
-import { prewarmPublicUgcAsset } from "../middleware/cache/publicUgcAssets";
+import { prewarmPublicUgcAsset } from "../lib/publicUgcAssets";
 import { invalidateUploadCaches } from "../publicRead/client/invalidate";
 import { evaluateKarmaBatch } from "../services/karma/evaluation";
 import { getModerationPointsDeltaWithDailyBackoff } from "../services/karma/moderationPoints";

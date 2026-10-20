@@ -1,9 +1,9 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import { toApiError } from "../../middleware/error-handler";
 import {
-  UGC_PUBLIC_EMPTY_LIST_CACHE_CONTROL,
-  UGC_PUBLIC_LIST_CACHE_CONTROL
-} from "../../middleware/cache/publicUgcAssets";
+  PUBLIC_EMPTY_IMAGE_LIST_CACHE_CONTROL,
+  PUBLIC_IMAGE_LIST_CACHE_CONTROL
+} from "../contract/cachePolicy";
 import { isSha256Hex } from "../../services/progress/manifest";
 import type { Bindings } from "../../types/app";
 import { buildPublicReadMarkerTag } from "../contract/cacheKeys";
@@ -121,8 +121,8 @@ export class PublicReadCache extends WorkerEntrypoint<Bindings> {
       headers: {
         "content-type": "application/json; charset=utf-8",
         "Cache-Control": items.length > 0
-          ? UGC_PUBLIC_LIST_CACHE_CONTROL
-          : UGC_PUBLIC_EMPTY_LIST_CACHE_CONTROL,
+          ? PUBLIC_IMAGE_LIST_CACHE_CONTROL
+          : PUBLIC_EMPTY_IMAGE_LIST_CACHE_CONTROL,
         "Cloudflare-CDN-Cache-Control": `public, max-age=${items.length > 0
           ? PUBLIC_MARKER_IMAGE_POSITIVE_TTL_SECONDS
           : PUBLIC_MARKER_IMAGE_EMPTY_TTL_SECONDS}`,
