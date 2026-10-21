@@ -1,14 +1,4 @@
-import type { Context } from "hono";
+import type { forwardToAuthJsonPath, forwardToAuthRawRequest } from "./forwarding";
 
-import type { AppEnv } from "@/types/app";
-
-export type AuthRouteContext = Context<AppEnv>;
-
-export type ForwardToAuthJsonPath = (
-  c: AuthRouteContext,
-  path: string,
-  body: Record<string, unknown>,
-  options?: { headers?: Record<string, string> },
-) => Response | Promise<Response>;
-
-export type ForwardToAuthRawRequest = (c: AuthRouteContext) => Response | Promise<Response>;
+export type ForwardToAuthJsonPath = typeof forwardToAuthJsonPath;
+export type ForwardToAuthRawRequest = typeof forwardToAuthRawRequest;

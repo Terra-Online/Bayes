@@ -2,10 +2,10 @@ import type { Context } from "hono";
 
 import { withAutoRefreshedBinding } from "@/routes/binding/credentials";
 import { getOfficialMarks, officialMarkedPointIds } from "@/services/sync/officialMarks";
-import type { AppEnv } from "@/types/app";
+import type { AppEnv, AuthUser } from "@/types/app";
 
-export async function handleOfficialMarks(c: Context<AppEnv>) {
-  const user = c.get("authUser")!;
+export async function handleOfficialMarks<E extends AppEnv<{ authUser: AuthUser }>>(c: Context<E>) {
+  const user = c.get("authUser");
   return withAutoRefreshedBinding(c, user.uid, async (binding) => {
     const result = await getOfficialMarks(binding);
     const markedIds = [

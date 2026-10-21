@@ -20,7 +20,7 @@ describe("Better Auth 1.7 with the production D1 table layout", () => {
   let database: ReturnType<typeof createAuthDatabase>;
   let env: Bindings;
   let auth: ReturnType<typeof createAuth>;
-  let app: Hono<AppEnv>;
+  let app: Hono<AppEnv<{ requestId: string }>>;
   const email = "otp@example.com";
   let testNumber = 0;
   let testIp: string;
@@ -42,7 +42,7 @@ describe("Better Auth 1.7 with the production D1 table layout", () => {
       DISCORD_CLIENT_SECRET: "test-secret",
     } as Bindings;
     auth = createAuth(env);
-    app = new Hono<AppEnv>();
+    app = new Hono<AppEnv<{ requestId: string }>>();
     app.onError(onAppError);
     registerEmailAuthRoutes(app, { forwardToAuthJsonPath, forwardToAuthRawRequest });
     registerPasswordResetRoutes(app, { forwardToAuthJsonPath });

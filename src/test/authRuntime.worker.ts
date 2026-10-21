@@ -94,9 +94,9 @@ function observe(database: D1Database): D1Database {
   return observed;
 }
 
-const app = new Hono<AppEnv>();
+const app = new Hono<AppEnv<{ requestId: string }>>();
 app.onError(onAppError);
-const sessions = new Hono<AppEnv>();
+const sessions = new Hono<AppEnv<{ requestId: string }>>();
 registerSessionAuthRoutes(sessions);
 app.route("/auth/v1", sessions);
 

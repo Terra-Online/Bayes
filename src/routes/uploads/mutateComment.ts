@@ -30,9 +30,9 @@ import {
 } from "@/services/moderation/notifications";
 import { enqueueModeration } from "@/services/moderation/queue";
 import { publishNotificationsCreated } from "@/services/notify/live";
-import type { AppEnv } from "@/types/app";
+import type { AppEnv, AuthUser } from "@/types/app";
 
-function requireUserAndSubmissionId(c: Context<AppEnv>) {
+function requireUserAndSubmissionId<E extends AppEnv<{ authUser: AuthUser }>>(c: Context<E>) {
   const user = c.get("authUser");
   const submissionId = c.req.param("id");
   if (!user) {
@@ -44,7 +44,10 @@ function requireUserAndSubmissionId(c: Context<AppEnv>) {
   return { user, submissionId };
 }
 
-function invalidateCommentCache(c: Context<AppEnv>, markerId: string): void {
+function invalidateCommentCache<E extends AppEnv<{ authUser: AuthUser }>>(
+  c: Context<E>,
+  markerId: string,
+): void {
   c.executionCtx.waitUntil(
     invalidateUploadCaches({
       kv: c.env.OEM_KV,
@@ -54,7 +57,10 @@ function invalidateCommentCache(c: Context<AppEnv>, markerId: string): void {
   );
 }
 
-export async function handleCommentVote(c: Context<AppEnv>, value: 1 | -1) {
+export async function handleCommentVote<E extends AppEnv<{ authUser: AuthUser }>>(
+  c: Context<E>,
+  value: 1 | -1,
+) {
   const { user, submissionId } = requireUserAndSubmissionId(c);
   const submission = await getSubmissionById(c.env.DB, submissionId);
   if (!submission || submission.kind !== "comment") {
@@ -80,7 +86,7 @@ export async function handleCommentVote(c: Context<AppEnv>, value: 1 | -1) {
   return c.json({ ok: true, vote: vote.currentVote, previousVote: vote.previousVote, score });
 }
 
-export async function handleFlagComment(c: Context<AppEnv>) {
+export async function handleFlagComment<E extends AppEnv<{ authUser: AuthUser }>>(c: Context<E>) {
   const { user, submissionId } = requireUserAndSubmissionId(c);
   const submission = await getSubmissionById(c.env.DB, submissionId);
   if (!submission || submission.kind !== "comment") {
@@ -128,7 +134,7 @@ export async function handleFlagComment(c: Context<AppEnv>) {
   return c.json({ ok: true, created, status: "flagged", flagCount });
 }
 
-export async function handleUnflagComment(c: Context<AppEnv>) {
+export async function handleUnflagComment<E extends AppEnv<{ authUser: AuthUser }>>(c: Context<E>) {
   const { user, submissionId } = requireUserAndSubmissionId(c);
   const submission = await getSubmissionById(c.env.DB, submissionId);
   if (!submission || submission.kind !== "comment") {
@@ -177,7 +183,9 @@ export async function handleUnflagComment(c: Context<AppEnv>) {
   return c.json({ ok: true, deleted, status, flagCount });
 }
 
-export async function handleCommentRemoveRequest(c: Context<AppEnv>) {
+export async function handleCommentRemoveRequest<E extends AppEnv<{ authUser: AuthUser }>>(
+  c: Context<E>,
+) {
   const { user, submissionId } = requireUserAndSubmissionId(c);
   const submission = await getSubmissionById(c.env.DB, submissionId);
   if (!submission || submission.kind !== "comment") {
@@ -220,7 +228,7 @@ export async function handleCommentRemoveRequest(c: Context<AppEnv>) {
   return c.json({ ok: true, status: "remove_request" });
 }
 
-export async function handleEditComment(c: Context<AppEnv>) {
+export async function handleEditComment<E extends AppEnv<{ authUser: AuthUser }>>(c: Context<E>) {
   const { user, submissionId } = requireUserAndSubmissionId(c);
   const parsed = commentEditSchema.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) {
@@ -308,7 +316,7 @@ export async function handleEditComment(c: Context<AppEnv>) {
   });
 }
 
-export async function handleRecallComment(c: Context<AppEnv>) {
+export async function handleRecallComment<E extends AppEnv<{ authUser: AuthUser }>>(c: Context<E>) {
   const { user, submissionId } = requireUserAndSubmissionId(c);
   const submission = await getSubmissionById(c.env.DB, submissionId);
   if (!submission || submission.kind !== "comment") {

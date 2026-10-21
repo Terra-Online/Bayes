@@ -47,7 +47,7 @@ describe("authentication conflict boundaries", () => {
               },
             }) as unknown as ReturnType<typeof createAuth>,
         );
-        const app = new Hono<AppEnv>();
+        const app = new Hono<AppEnv<{ requestId: string }>>();
         app.onError(onAppError);
         app.post(publicPath, (c) => forwardToAuthJsonPath(c, authPath, {}));
         const response = await app.request(publicPath, { method: "POST" }, {} as Bindings);
@@ -72,7 +72,7 @@ describe("authentication conflict boundaries", () => {
           },
         }) as unknown as ReturnType<typeof createAuth>,
     );
-    const app = new Hono<AppEnv>();
+    const app = new Hono<AppEnv<{ requestId: string }>>();
     app.post("/register", (c) => forwardToAuthJsonPath(c, "/sign-in/email-otp", {}));
     const response = await app.request("/register", { method: "POST" }, {} as Bindings);
     expect(response.status).toBe(500);
@@ -91,7 +91,7 @@ describe("authentication conflict boundaries", () => {
           },
         }) as unknown as ReturnType<typeof createAuth>,
     );
-    const app = new Hono<AppEnv>();
+    const app = new Hono<AppEnv<{ requestId: string }>>();
     app.post("/register", (c) => forwardToAuthJsonPath(c, "/sign-in/email-otp", {}));
     expect((await app.request("/register", { method: "POST" }, {} as Bindings)).status).toBe(409);
     expect((await app.request("/register", { method: "POST" }, {} as Bindings)).status).toBe(500);

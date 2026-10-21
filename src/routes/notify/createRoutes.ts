@@ -25,7 +25,7 @@ function noStore(response: Response): Response {
 
 function addCategoryRoutes(app: Hono<AppEnv>, category: NotificationCategory): void {
   app.get(`/${category}/messages`, requireAuth, rateLimit("auth"), async (c) => {
-    const user = c.get("authUser")!;
+    const user = c.get("authUser");
     const parsed = listQuerySchema.safeParse({
       cursor: c.req.query("cursor"),
       limit: c.req.query("limit"),
@@ -60,7 +60,7 @@ function addCategoryRoutes(app: Hono<AppEnv>, category: NotificationCategory): v
   });
 
   app.patch(`/${category}/messages/:id/read`, requireAuth, rateLimit("auth"), async (c) => {
-    const user = c.get("authUser")!;
+    const user = c.get("authUser");
     const notificationId = c.req.param("id")?.trim();
     if (!notificationId) {
       throw new ApiError(422, "VALIDATION_ERROR", "Notification id is required.");
@@ -75,7 +75,7 @@ function addCategoryRoutes(app: Hono<AppEnv>, category: NotificationCategory): v
   });
 
   app.post(`/${category}/messages/read`, requireAuth, rateLimit("auth"), async (c) => {
-    const user = c.get("authUser")!;
+    const user = c.get("authUser");
     const parsed = readManySchema.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) {
       throw new ApiError(
@@ -95,7 +95,7 @@ function addCategoryRoutes(app: Hono<AppEnv>, category: NotificationCategory): v
   });
 
   app.post(`/${category}/read-all`, requireAuth, rateLimit("auth"), async (c) => {
-    const user = c.get("authUser")!;
+    const user = c.get("authUser");
     const changed = await markAllNotificationsRead(c.env.DB, {
       userId: user.uid,
       category,
@@ -112,13 +112,13 @@ export function createRoutes() {
   addCategoryRoutes(app, "community");
 
   app.get("/unread-count", requireAuth, rateLimit("auth"), async (c) => {
-    const user = c.get("authUser")!;
+    const user = c.get("authUser");
     const unread = await getNotificationUnreadCounts(c.env.DB, user.uid);
     return noStore(c.json({ unread }));
   });
 
   app.get("/live", requireAuth, rateLimit("auth"), async (c) => {
-    const user = c.get("authUser")!;
+    const user = c.get("authUser");
     if (c.req.header("upgrade")?.toLowerCase() !== "websocket") {
       throw new ApiError(
         426,

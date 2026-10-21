@@ -22,14 +22,14 @@ vi.mock("@/repositories/submission-duplicates", () => ({
 describe("upload side effects after preparation", () => {
   const fetch = vi.fn();
   const put = vi.fn();
-  let app: Hono<AppEnv>;
+  let app: Hono<AppEnv<{ authUser?: AuthUser; requestId?: string }>>;
   beforeEach(() => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     vi.clearAllMocks();
     fetch.mockReset();
     vi.mocked(getRandom).mockResolvedValue({ fetch } as unknown as DurableObjectStub<oem_imgTrans>);
-    app = new Hono<AppEnv>();
+    app = new Hono<AppEnv<{ authUser?: AuthUser; requestId?: string }>>();
     app.onError(onAppError);
     app.use("*", async (c, next) => {
       c.set("authUser", { uid: "u" } as AuthUser);

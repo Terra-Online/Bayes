@@ -1,4 +1,6 @@
-import type { AuthRouteContext } from "./types";
+import type { Context } from "hono";
+
+import type { AppEnv } from "@/types/app";
 
 const DEFAULT_TRUSTED_FRONTEND_ORIGINS = [
   "https://opendfieldmap.org",
@@ -45,7 +47,9 @@ export function readOriginFromUrl(raw: string | null): string | null {
   }
 }
 
-export function parseTrustedFrontendOrigins(c: AuthRouteContext): string[] {
+export function parseTrustedFrontendOrigins<E extends AppEnv<{ requestId: string }>>(
+  c: Context<E>,
+): string[] {
   const raw = c.env.TRUSTED_ORIGINS ?? c.env.CORS_ORIGINS;
   const backendOrigins = new Set(
     [DEFAULT_AUTH_ORIGIN, CN_AUTH_ORIGIN, readOriginFromUrl(c.env.BETTER_AUTH_URL ?? null)].filter(
@@ -67,7 +71,9 @@ export function parseTrustedFrontendOrigins(c: AuthRouteContext): string[] {
   return parsed.length > 0 ? parsed : DEFAULT_TRUSTED_FRONTEND_ORIGINS;
 }
 
-export function resolveTrustedRequestOrigin(c: AuthRouteContext): string | null {
+export function resolveTrustedRequestOrigin<E extends AppEnv<{ requestId: string }>>(
+  c: Context<E>,
+): string | null {
   const trustedOrigins = parseTrustedFrontendOrigins(c);
   const candidates = [
     c.req.header("origin")?.trim() || null,
@@ -77,8 +83,8 @@ export function resolveTrustedRequestOrigin(c: AuthRouteContext): string | null 
   return candidates.find((origin) => origin !== null && trustedOrigins.includes(origin)) ?? null;
 }
 
-export function resolveTrustedCallbackUrl(
-  c: AuthRouteContext,
+export function resolveTrustedCallbackUrl<E extends AppEnv<{ requestId: string }>>(
+  c: Context<E>,
   raw: unknown,
   baseOrigin: string,
 ): string | null {
@@ -99,7 +105,10 @@ export function resolveTrustedCallbackUrl(
   }
 }
 
-export function isTrustedCallbackUrlForResponse(c: AuthRouteContext, raw: string): boolean {
+export function isTrustedCallbackUrlForResponse<E extends AppEnv<{ requestId: string }>>(
+  c: Context<E>,
+  raw: string,
+): boolean {
   try {
     const url = new URL(raw);
     return parseTrustedFrontendOrigins(c).includes(url.origin);

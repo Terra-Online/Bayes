@@ -11,14 +11,16 @@ import {
 } from "@/repositories/submission/listImages";
 import { imagesQuerySchema } from "@/routes/schema/uploads";
 import { applyImageViewerReactions } from "@/services/upload/viewerOverlay";
-import type { AppEnv } from "@/types/app";
+import type { AppEnv, AuthUser } from "@/types/app";
 
 import { requireMarkerIds } from "./helpers";
 import { resolveImageScope, resolvePrivateAssetBaseUrl, resolvePublicAssetBaseUrl } from "./scope";
 
 // Both sections share authentication, but keep independent failure semantics.
 // Only the public section's source data crosses the public-cache boundary.
-export async function handleListPointImages(c: Context<AppEnv>) {
+export async function handleListPointImages<
+  E extends AppEnv<{ authUser?: AuthUser; requestId: string }>,
+>(c: Context<E>) {
   const user = c.get("authUser");
   if (!user) {
     throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");

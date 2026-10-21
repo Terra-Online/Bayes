@@ -27,9 +27,9 @@ import {
   notifyRemoveRequestCreated,
 } from "@/services/moderation/notifications";
 import { publishNotificationsCreated } from "@/services/notify/live";
-import type { AppEnv } from "@/types/app";
+import type { AppEnv, AuthUser } from "@/types/app";
 
-function requireUserAndSubmissionId(c: Context<AppEnv>) {
+function requireUserAndSubmissionId<E extends AppEnv<{ authUser: AuthUser }>>(c: Context<E>) {
   const user = c.get("authUser");
   const submissionId = c.req.param("id");
   if (!user) {
@@ -41,7 +41,10 @@ function requireUserAndSubmissionId(c: Context<AppEnv>) {
   return { user, submissionId };
 }
 
-function invalidateImageCache(c: Context<AppEnv>, markerId: string): void {
+function invalidateImageCache<E extends AppEnv<{ authUser: AuthUser }>>(
+  c: Context<E>,
+  markerId: string,
+): void {
   c.executionCtx.waitUntil(
     invalidateUploadCaches({
       kv: c.env.OEM_KV,
@@ -51,7 +54,11 @@ function invalidateImageCache(c: Context<AppEnv>, markerId: string): void {
   );
 }
 
-function prewarmIfActive(c: Context<AppEnv>, status: string, filePath: string | null): void {
+function prewarmIfActive<E extends AppEnv<{ authUser: AuthUser }>>(
+  c: Context<E>,
+  status: string,
+  filePath: string | null,
+): void {
   if (status !== "active") {
     return;
   }
@@ -59,7 +66,7 @@ function prewarmIfActive(c: Context<AppEnv>, status: string, filePath: string | 
   c.executionCtx.waitUntil(prewarmPublicUgcAsset(config.ugcAssetBaseUrl, filePath));
 }
 
-export async function handleImageUpvote(c: Context<AppEnv>) {
+export async function handleImageUpvote<E extends AppEnv<{ authUser: AuthUser }>>(c: Context<E>) {
   const { user, submissionId } = requireUserAndSubmissionId(c);
   const submission = await getSubmissionById(c.env.DB, submissionId);
   if (!submission || submission.kind !== "image") {
@@ -84,7 +91,7 @@ export async function handleImageUpvote(c: Context<AppEnv>) {
   return c.json({ ok: true, created: created.created, upvoteCount });
 }
 
-export async function handleImageUnvote(c: Context<AppEnv>) {
+export async function handleImageUnvote<E extends AppEnv<{ authUser: AuthUser }>>(c: Context<E>) {
   const { user, submissionId } = requireUserAndSubmissionId(c);
   const submission = await getSubmissionById(c.env.DB, submissionId);
   if (!submission || submission.kind !== "image") {
@@ -106,7 +113,7 @@ export async function handleImageUnvote(c: Context<AppEnv>) {
   return c.json({ ok: true, deleted, upvoteCount });
 }
 
-export async function handleFlagImage(c: Context<AppEnv>) {
+export async function handleFlagImage<E extends AppEnv<{ authUser: AuthUser }>>(c: Context<E>) {
   const { user, submissionId } = requireUserAndSubmissionId(c);
   const submission = await getSubmissionById(c.env.DB, submissionId);
   if (!submission || submission.kind !== "image") {
@@ -154,7 +161,7 @@ export async function handleFlagImage(c: Context<AppEnv>) {
   return c.json({ ok: true, created, status: "flagged", flagCount });
 }
 
-export async function handleUnflagImage(c: Context<AppEnv>) {
+export async function handleUnflagImage<E extends AppEnv<{ authUser: AuthUser }>>(c: Context<E>) {
   const { user, submissionId } = requireUserAndSubmissionId(c);
   const submission = await getSubmissionById(c.env.DB, submissionId);
   if (!submission || submission.kind !== "image") {
@@ -204,7 +211,9 @@ export async function handleUnflagImage(c: Context<AppEnv>) {
   return c.json({ ok: true, deleted, status, flagCount });
 }
 
-export async function handleImageRemoveRequest(c: Context<AppEnv>) {
+export async function handleImageRemoveRequest<E extends AppEnv<{ authUser: AuthUser }>>(
+  c: Context<E>,
+) {
   const { user, submissionId } = requireUserAndSubmissionId(c);
   const submission = await getSubmissionById(c.env.DB, submissionId);
   if (!submission) {
@@ -247,7 +256,7 @@ export async function handleImageRemoveRequest(c: Context<AppEnv>) {
   return c.json({ ok: true, status: "remove_request" });
 }
 
-export async function handleUnrecallImage(c: Context<AppEnv>) {
+export async function handleUnrecallImage<E extends AppEnv<{ authUser: AuthUser }>>(c: Context<E>) {
   const { user, submissionId } = requireUserAndSubmissionId(c);
   const submission = await getSubmissionById(c.env.DB, submissionId);
   if (!submission || submission.kind !== "image") {
@@ -284,7 +293,7 @@ export async function handleUnrecallImage(c: Context<AppEnv>) {
   return c.json({ ok: true, status, flagCount });
 }
 
-export async function handleRecallImage(c: Context<AppEnv>) {
+export async function handleRecallImage<E extends AppEnv<{ authUser: AuthUser }>>(c: Context<E>) {
   const { user, submissionId } = requireUserAndSubmissionId(c);
   const submission = await getSubmissionById(c.env.DB, submissionId);
   if (!submission || submission.kind !== "image") {

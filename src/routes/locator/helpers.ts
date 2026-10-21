@@ -3,7 +3,7 @@ import type { Context } from "hono";
 import { ApiError } from "@/lib/errors";
 import type { AppEnv } from "@/types/app";
 
-export function shouldIncludeBinding(c: Context<AppEnv>): boolean {
+export function shouldIncludeBinding<E extends AppEnv>(c: Context<E>): boolean {
   const value = c.req.query("binding") ?? c.req.query("includeBinding");
   return value === "1" || value === "true";
 }

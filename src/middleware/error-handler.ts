@@ -4,8 +4,8 @@ import { toSerializableError } from "@/lib/auth/errors";
 import { ApiError, isApiError, transientDependencyError } from "@/lib/errors";
 import type { AppEnv } from "@/types/app";
 
-function errorJson(
-  c: Context<AppEnv>,
+function errorJson<E extends AppEnv<{ requestId?: string }>>(
+  c: Context<E>,
   status: number,
   code: string,
   message: string,
@@ -44,7 +44,10 @@ export function toApiError(error: unknown): ApiError {
   );
 }
 
-export function onAppError(error: unknown, c: Context<AppEnv>) {
+export function onAppError<E extends AppEnv<{ requestId?: string }>>(
+  error: unknown,
+  c: Context<E>,
+) {
   const apiError = toApiError(error);
   if (apiError.status >= 500) {
     console.error("request failed", {

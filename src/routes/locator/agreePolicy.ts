@@ -10,10 +10,10 @@ import {
 } from "@/repositories/binding/repository";
 import { getCredentialSecret } from "@/routes/binding/credentials";
 import { agreeSchema } from "@/routes/schema/locator";
-import type { AppEnv } from "@/types/app";
+import type { AppEnv, AuthUser } from "@/types/app";
 
-export async function handleAgree(c: Context<AppEnv>) {
-  const user = c.get("authUser")!;
+export async function handleAgree<E extends AppEnv<{ authUser: AuthUser }>>(c: Context<E>) {
+  const user = c.get("authUser");
   const binding = await getBinding(c.env.DB, user.uid);
   if (!binding) {
     throw new ApiError(404, "ENDFIELD_BINDING_NOT_FOUND", "Endfield binding is not configured.");

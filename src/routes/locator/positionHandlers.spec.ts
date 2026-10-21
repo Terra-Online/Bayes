@@ -39,7 +39,7 @@ class TestSocket extends EventTarget {
 
 describe("locator reconnection lifecycle", () => {
   let server: TestSocket;
-  let context: Context<AppEnv>;
+  let context: Context<AppEnv<{ requestId: string }>>;
   let waits: Promise<unknown>[];
   const callbacks: Array<{
     onClose: (termination?: EndfieldPositionTermination) => void;
@@ -89,7 +89,7 @@ describe("locator reconnection lifecycle", () => {
       env: {},
       get: () => "request-1",
       executionCtx: { waitUntil: (promise: Promise<unknown>) => waits.push(promise) },
-    } as unknown as Context<AppEnv>;
+    } as unknown as Context<AppEnv<{ requestId: string }>>;
   });
   afterEach(() => {
     vi.useRealTimers();

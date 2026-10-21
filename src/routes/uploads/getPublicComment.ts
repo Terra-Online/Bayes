@@ -7,7 +7,7 @@ import type { AppEnv } from "@/types/app";
 
 import { getOptionalAuthIdentity } from "./helpers";
 
-export async function handleGetPublicComment(c: Context<AppEnv, "/comments/:id">) {
+export async function handleGetPublicComment<E extends AppEnv>(c: Context<E, "/comments/:id">) {
   const parsed = commentQuerySchema.safeParse({
     markerId: c.req.query("markerId"),
   });

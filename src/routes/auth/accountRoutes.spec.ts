@@ -16,7 +16,7 @@ vi.mock("@/middleware/rate-limit", () => ({
 
 describe("provider-based unlink compatibility", () => {
   let database: ReturnType<typeof createAuthDatabase>;
-  let app: Hono<AppEnv>;
+  let app: Hono<AppEnv<{ authUser?: AuthUser; requestId: string }>>;
   const forward = vi.fn(async () => new Response("{}"));
   beforeEach(() => {
     forward.mockClear();
@@ -24,7 +24,7 @@ describe("provider-based unlink compatibility", () => {
     database.sqlite.exec(
       "INSERT INTO auth_users(id,name,email) VALUES ('owner','Owner','owner@example.com'),('other','Other','other@example.com')",
     );
-    app = new Hono<AppEnv>();
+    app = new Hono<AppEnv<{ authUser?: AuthUser; requestId: string }>>();
     app.onError(onAppError);
     app.use("*", async (c, next) => {
       c.set("authUser", { uid: "owner" } as AuthUser);

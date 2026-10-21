@@ -1,4 +1,4 @@
-import type { Hono } from "hono";
+import type { Context, Hono } from "hono";
 
 import { ApiError } from "@/lib/errors";
 import { rateLimit } from "@/middleware/rate-limit";
@@ -10,10 +10,10 @@ import {
 import type { AppEnv } from "@/types/app";
 
 import { normalizeEmail } from "./emailUtils";
-import type { AuthRouteContext, ForwardToAuthJsonPath } from "./types";
+import type { ForwardToAuthJsonPath } from "./types";
 
-function forwardPasswordResetRequest(
-  c: AuthRouteContext,
+function forwardPasswordResetRequest<E extends AppEnv<{ requestId: string }>>(
+  c: Context<E>,
   forwardToAuthJsonPath: ForwardToAuthJsonPath,
   payload: {
     email: string;
@@ -42,8 +42,8 @@ function forwardPasswordResetRequest(
   );
 }
 
-async function handlePasswordResetRequest(
-  c: AuthRouteContext,
+async function handlePasswordResetRequest<E extends AppEnv<{ requestId: string }>>(
+  c: Context<E>,
   forwardToAuthJsonPath: ForwardToAuthJsonPath,
 ) {
   let body: unknown;
@@ -62,7 +62,7 @@ async function handlePasswordResetRequest(
 }
 
 export function registerPasswordResetRoutes(
-  app: Hono<AppEnv>,
+  app: Hono<AppEnv<{ requestId: string }>>,
   deps: {
     forwardToAuthJsonPath: ForwardToAuthJsonPath;
   },

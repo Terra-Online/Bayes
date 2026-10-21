@@ -1,10 +1,12 @@
+import type { Context } from "hono";
+
 import { resolveBrowserSessionHeaders } from "@/lib/auth/browserSession";
 import { createAuth } from "@/lib/auth/createAuth";
+import type { AppEnv } from "@/types/app";
 
 import { authConflictResponse } from "./conflicts";
-import type { AuthRouteContext } from "./types";
 
-function authInvocation(c: AuthRouteContext, path: string) {
+function authInvocation<E extends AppEnv<{ requestId: string }>>(c: Context<E>, path: string) {
   const errors: unknown[] = [];
   const auth = createAuth(c.env, { onError: (error) => errors.push(error) });
   return {
@@ -92,8 +94,8 @@ function buildForwardHeaders(
   return forwardedHeaders;
 }
 
-export function forwardToAuthJsonPath(
-  c: AuthRouteContext,
+export function forwardToAuthJsonPath<E extends AppEnv<{ requestId: string }>>(
+  c: Context<E>,
   path: string,
   body: Record<string, unknown>,
   options?: { headers?: Record<string, string> },
@@ -117,7 +119,7 @@ export function forwardToAuthJsonPath(
   return invocation.handle(request);
 }
 
-export function forwardToAuthRawRequest(c: AuthRouteContext) {
+export function forwardToAuthRawRequest<E extends AppEnv<{ requestId: string }>>(c: Context<E>) {
   const targetUrl = new URL(c.req.url);
   const invocation = authInvocation(c, targetUrl.pathname.replace(/^\/auth\/v1/, ""));
   const { auth } = invocation;

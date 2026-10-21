@@ -56,7 +56,7 @@ describe("CHIPS OAuth exchange", () => {
   let sqlite: DatabaseSync;
   let auth: ReturnType<typeof createAuth>;
   let env: Bindings;
-  let app: Hono<AppEnv>;
+  let app: Hono<AppEnv<{ requestId: string }>>;
   let authDatabase: Record<string, Record<string, unknown>[]>;
   let proofCookie: string;
   let callbackUrl: string;
@@ -105,7 +105,7 @@ describe("CHIPS OAuth exchange", () => {
     authDatabase = { auth_users: [], auth_sessions: [], auth_accounts: [], auth_verifications: [] };
     auth = realCreateAuth({ ...env, DB: memoryAdapter(authDatabase) as unknown as D1Database });
     vi.mocked(createAuth).mockReturnValue(auth);
-    app = new Hono<AppEnv>();
+    app = new Hono<AppEnv<{ requestId: string }>>();
     app.onError(onAppError);
     app.get("/test-callback", (context) =>
       attachSessionExchangeCode(

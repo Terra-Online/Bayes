@@ -52,8 +52,7 @@ const privateHeaders = (maxAge: number) => ({
 });
 
 export function createRoutes() {
-  const app = new Hono<AppEnv>();
-  app.use("*", requireAuth);
+  const app = new Hono<AppEnv>().use("*", requireAuth);
   app.use("/overview", rateLimit("auth"));
   app.use("/contributions", rateLimit("auth"));
   app.use("/contributions/:id/preview", rateLimit("preview"));

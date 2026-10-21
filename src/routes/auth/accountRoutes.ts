@@ -19,7 +19,7 @@ function publicProvider(providerId: string): string {
 }
 
 export function registerAccountAuthRoutes(
-  app: Hono<AppEnv>,
+  app: Hono<AppEnv<{ requestId: string }>>,
   deps: { forwardToAuthJsonPath: ForwardToAuthJsonPath },
 ) {
   app.get("/list-accounts", requireAuth, rateLimit("auth"), async (c) => {
