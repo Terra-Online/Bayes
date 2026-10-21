@@ -3,6 +3,13 @@
 Cloudflare Workers + Hono backend for Open Endfield Map. The service provides
 authentication, progress sync, UGC uploads, moderation, and related API routes.
 
+## Coding Standards
+
+When writing or reviewing code, follow [CODING_STANDARDS.md](CODING_STANDARDS.md)
+and the applicable module rules: [routes](src/routes/README.md),
+[public reads](src/publicRead/README.md). Reviews must identify violations with
+their location and the applicable rule.
+
 ## Requirements
 
 - Node.js 22.12.0 or later
@@ -145,17 +152,7 @@ permissions returns `401` or `403`.
 - `src/lib/`: authentication, email, configuration, and shared utilities
 - `migrations/`: D1 schema migrations
 
-Binding, locator, and official-mark sync have separate route topics. Binding
-queries live in `repositories/binding`, locator cache and ticket logic in
-`services/locator`, and official-mark conversion in `services/sync`. The ignored
-marker lookup remains at `src/routes/binding/officialMarkerHashToPointId.json`
-because its path is shared across local worktrees.
-
-This layout migration preserves existing business workflows inside handlers.
-Binding credential refresh and pending-session helpers still use Hono context
-under `routes/binding`; separating those interfaces is follow-up work. Internal
-storage and protocol validators remain with their owning modules. WAF generation
-reads the mounts in `routes/route.ts` and excludes the local demo route.
+See [route conventions](src/routes/README.md) for ownership and migration notes.
 
 ## Performance and Runtime Checks
 
