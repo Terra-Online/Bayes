@@ -3,8 +3,7 @@ import { Hono, type MiddlewareHandler } from "hono";
 import { createMiddleware } from "hono/factory";
 import { nanoid } from "nanoid";
 
-import { getRuntimeConfig } from "@/lib/config";
-import { getUgcReadConfig } from "@/lib/config";
+import { getRuntimeConfig, getUgcReadConfig } from "@/lib/config";
 import { ApiError } from "@/lib/errors";
 import {
   COMMENT_ADMIN_EDIT_MODERATION_NOTE_PREFIX,
@@ -143,7 +142,7 @@ const requireUploadsEnabled: MiddlewareHandler<AppEnv> = async (c, next) => {
   await next();
 };
 
-function requireImageUserAndSubmissionId<E extends AppEnv<{ authUser: AuthUser }>>(c: Context<E>) {
+function requireUserAndSubmissionId<E extends AppEnv<{ authUser: AuthUser }>>(c: Context<E>) {
   const user = c.get("authUser");
   const submissionId = c.req.param("id");
   if (!user) {
@@ -178,20 +177,6 @@ function prewarmIfActive<E extends AppEnv<{ authUser: AuthUser }>>(
   }
   const config = getRuntimeConfig(c.env);
   c.executionCtx.waitUntil(prewarmPublicUgcAsset(config.ugcAssetBaseUrl, filePath));
-}
-
-function requireCommentUserAndSubmissionId<E extends AppEnv<{ authUser: AuthUser }>>(
-  c: Context<E>,
-) {
-  const user = c.get("authUser");
-  const submissionId = c.req.param("id");
-  if (!user) {
-    throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
-  }
-  if (!submissionId) {
-    throw new ApiError(422, "VALIDATION_ERROR", "Submission id is required.");
-  }
-  return { user, submissionId };
 }
 
 function invalidateCommentCache<E extends AppEnv<{ authUser: AuthUser }>>(
@@ -610,7 +595,7 @@ export function createRoutes() {
     ["/comments/:id/downvote", -1],
   ] as const) {
     app.post(path, requireActiveUser, requireUploadsEnabled, rateLimit("auth"), async (c) => {
-      const { user, submissionId } = requireCommentUserAndSubmissionId(c);
+      const { user, submissionId } = requireUserAndSubmissionId(c);
       const submission = await getSubmissionById(c.env.DB, submissionId);
       if (!submission || submission.kind !== "comment") {
         throw new ApiError(404, "SUBMISSION_NOT_FOUND", "Comment submission was not found.");
@@ -646,7 +631,7 @@ export function createRoutes() {
     requireUploadsEnabled,
     rateLimit("auth"),
     async (c) => {
-      const { user, submissionId } = requireCommentUserAndSubmissionId(c);
+      const { user, submissionId } = requireUserAndSubmissionId(c);
       const submission = await getSubmissionById(c.env.DB, submissionId);
       if (!submission || submission.kind !== "comment") {
         throw new ApiError(404, "SUBMISSION_NOT_FOUND", "Comment submission was not found.");
@@ -699,7 +684,7 @@ export function createRoutes() {
     requireUploadsEnabled,
     rateLimit("auth"),
     async (c) => {
-      const { user, submissionId } = requireCommentUserAndSubmissionId(c);
+      const { user, submissionId } = requireUserAndSubmissionId(c);
       const submission = await getSubmissionById(c.env.DB, submissionId);
       if (!submission || submission.kind !== "comment") {
         throw new ApiError(404, "SUBMISSION_NOT_FOUND", "Comment submission was not found.");
@@ -757,7 +742,7 @@ export function createRoutes() {
     requireUploadsEnabled,
     rateLimit("upload"),
     async (c) => {
-      const { user, submissionId } = requireCommentUserAndSubmissionId(c);
+      const { user, submissionId } = requireUserAndSubmissionId(c);
       const parsed = commentEditSchema.safeParse(await c.req.json().catch(() => null));
       if (!parsed.success) {
         throw new ApiError(
@@ -850,7 +835,7 @@ export function createRoutes() {
     requireUploadsEnabled,
     rateLimit("auth"),
     async (c) => {
-      const { user, submissionId } = requireCommentUserAndSubmissionId(c);
+      const { user, submissionId } = requireUserAndSubmissionId(c);
       const submission = await getSubmissionById(c.env.DB, submissionId);
       if (!submission || submission.kind !== "comment") {
         throw new ApiError(404, "SUBMISSION_NOT_FOUND", "Comment submission was not found.");
@@ -898,7 +883,7 @@ export function createRoutes() {
     requireUploadsEnabled,
     rateLimit("auth"),
     async (c) => {
-      const { user, submissionId } = requireCommentUserAndSubmissionId(c);
+      const { user, submissionId } = requireUserAndSubmissionId(c);
       const submission = await getSubmissionById(c.env.DB, submissionId);
       if (!submission || submission.kind !== "comment") {
         throw new ApiError(404, "SUBMISSION_NOT_FOUND", "Comment submission was not found.");
@@ -1095,7 +1080,7 @@ export function createRoutes() {
     requireUploadsEnabled,
     rateLimit("auth"),
     async (c) => {
-      const { user, submissionId } = requireImageUserAndSubmissionId(c);
+      const { user, submissionId } = requireUserAndSubmissionId(c);
       const submission = await getSubmissionById(c.env.DB, submissionId);
       if (!submission || submission.kind !== "image") {
         throw new ApiError(404, "SUBMISSION_NOT_FOUND", "Image submission was not found.");
@@ -1130,7 +1115,7 @@ export function createRoutes() {
     requireUploadsEnabled,
     rateLimit("auth"),
     async (c) => {
-      const { user, submissionId } = requireImageUserAndSubmissionId(c);
+      const { user, submissionId } = requireUserAndSubmissionId(c);
       const submission = await getSubmissionById(c.env.DB, submissionId);
       if (!submission || submission.kind !== "image") {
         throw new ApiError(404, "SUBMISSION_NOT_FOUND", "Image submission was not found.");
@@ -1162,7 +1147,7 @@ export function createRoutes() {
     requireUploadsEnabled,
     rateLimit("auth"),
     async (c) => {
-      const { user, submissionId } = requireImageUserAndSubmissionId(c);
+      const { user, submissionId } = requireUserAndSubmissionId(c);
       const submission = await getSubmissionById(c.env.DB, submissionId);
       if (!submission || submission.kind !== "image") {
         throw new ApiError(404, "SUBMISSION_NOT_FOUND", "Image submission was not found.");
@@ -1215,7 +1200,7 @@ export function createRoutes() {
     requireUploadsEnabled,
     rateLimit("auth"),
     async (c) => {
-      const { user, submissionId } = requireImageUserAndSubmissionId(c);
+      const { user, submissionId } = requireUserAndSubmissionId(c);
       const submission = await getSubmissionById(c.env.DB, submissionId);
       if (!submission || submission.kind !== "image") {
         throw new ApiError(404, "SUBMISSION_NOT_FOUND", "Image submission was not found.");
@@ -1274,7 +1259,7 @@ export function createRoutes() {
     requireUploadsEnabled,
     rateLimit("auth"),
     async (c) => {
-      const { user, submissionId } = requireImageUserAndSubmissionId(c);
+      const { user, submissionId } = requireUserAndSubmissionId(c);
       const submission = await getSubmissionById(c.env.DB, submissionId);
       if (!submission) {
         throw new ApiError(404, "SUBMISSION_NOT_FOUND", "Submission was not found.");
@@ -1322,7 +1307,7 @@ export function createRoutes() {
     requireUploadsEnabled,
     rateLimit("auth"),
     async (c) => {
-      const { user, submissionId } = requireImageUserAndSubmissionId(c);
+      const { user, submissionId } = requireUserAndSubmissionId(c);
       const submission = await getSubmissionById(c.env.DB, submissionId);
       if (!submission || submission.kind !== "image") {
         throw new ApiError(404, "SUBMISSION_NOT_FOUND", "Image submission was not found.");
@@ -1369,7 +1354,7 @@ export function createRoutes() {
     requireUploadsEnabled,
     rateLimit("auth"),
     async (c) => {
-      const { user, submissionId } = requireImageUserAndSubmissionId(c);
+      const { user, submissionId } = requireUserAndSubmissionId(c);
       const submission = await getSubmissionById(c.env.DB, submissionId);
       if (!submission || submission.kind !== "image") {
         throw new ApiError(404, "SUBMISSION_NOT_FOUND", "Image submission was not found.");
