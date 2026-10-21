@@ -15,15 +15,19 @@ import {
   isEndfieldDeviceErrorCode,
 } from "@/lib/endfieldClient/positionParser";
 import { ApiError } from "@/lib/errors";
-
+import {
+  getBindingWithDeviceProfile,
+  publicBinding,
+  updateBindingCredentials,
+} from "@/repositories/binding/repository";
+import type { AppContext } from "@/routes/binding/types";
+import type { DecryptedBinding } from "@/services/binding/types";
 import {
   deleteLocatorCaches,
   getLocatorCache,
   readDecryptedBindingCache,
   writeDecryptedBindingCache,
-} from "./locatorCache";
-import { getBindingWithDeviceProfile, publicBinding, updateBindingCredentials } from "./repository";
-import type { AppContext, DecryptedBinding } from "./types";
+} from "@/services/locator/cache";
 
 const credentialRequests = new WeakMap<AppContext, Map<string, Promise<DecryptedBinding>>>();
 

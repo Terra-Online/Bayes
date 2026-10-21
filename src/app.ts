@@ -1,19 +1,10 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 
+import { isLocalBackendUrl } from "./lib/isLocalBackendUrl";
 import { onAppError } from "./middleware/error-handler";
 import { requestIdMiddleware } from "./middleware/request-id";
-import { createAdminReportRoutes } from "./routes/admin-reports";
-import { createAuthRoutes } from "./routes/auth/createAuthRoutes";
-import { createBindingRoutes } from "./routes/binding/createBindingRoutes";
-import { createLocatorRoutes } from "./routes/binding/createLocatorRoutes";
-import { createSyncRoutes } from "./routes/binding/createSyncRoutes";
-import { createHealthRoutes } from "./routes/health";
-import { createMeRoutes } from "./routes/me";
-import { createModerationRoutes } from "./routes/moderation";
-import { createNotifyRoutes } from "./routes/notify";
-import { createProgressRoutes } from "./routes/progress/createProgressRoutes";
-import { createUploadRoutes } from "./routes/uploads";
+import { mountRoutes } from "./routes/route";
 import type { AppEnv } from "./types/app";
 
 const DEFAULT_CORS_ORIGINS = [
@@ -32,19 +23,6 @@ const LOCAL_CORS_ORIGINS = [
   "http://localhost:5429",
   "http://127.0.0.1:5429",
 ];
-
-function isLocalBackendUrl(raw: string | undefined): boolean {
-  if (!raw || raw.trim().length === 0) {
-    return false;
-  }
-
-  try {
-    const url = new URL(raw.trim());
-    return url.hostname === "localhost" || url.hostname === "127.0.0.1";
-  } catch {
-    return false;
-  }
-}
 
 function parseAllowedOrigins(raw: string | undefined, backendUrl: string | undefined): string[] {
   if (!raw || raw.trim().length === 0) {
@@ -85,40 +63,7 @@ export function createApp() {
 
   app.onError(onAppError);
 
-  // @waf-ignore: local/demo-only helper; keep this path out of the production allowlist.
-  app.put("/__demo/r2", async (c) => {
-    const requestUrl = new URL(c.req.url);
-    if (
-      !isLocalBackendUrl(c.env.BETTER_AUTH_URL) ||
-      !isLocalBackendUrl(c.req.url) ||
-      c.req.header("x-demo-local-sync") !== "1"
-    ) {
-      return c.json({ error: "not_found" }, 404);
-    }
-    const objectKey = requestUrl.searchParams.get("key")?.trim();
-    if (!objectKey) {
-      return c.json({ error: "missing_key" }, 400);
-    }
-    const contentType = c.req.header("content-type") ?? "application/octet-stream";
-    await c.env.UGC_BUCKET.put(objectKey, await c.req.arrayBuffer(), {
-      httpMetadata: { contentType },
-    });
-    return c.json({ ok: true, key: objectKey });
-  });
-
-  app.route("/health/v1", createHealthRoutes());
-  app.route("/admin/v1/reports", createAdminReportRoutes());
-  app.route("/auth/v1", createAuthRoutes());
-  app.route("/binding/v1", createBindingRoutes());
-  app.route("/locator", createLocatorRoutes());
-  app.route("/progress/v1", createProgressRoutes());
-  app.route("/sync/v1", createSyncRoutes());
-  app.route("/uploads/v1", createUploadRoutes());
-  app.route("/moderation/v1", createModerationRoutes());
-  app.route("/notify/v1", createNotifyRoutes());
-  app.route("/me/v1", createMeRoutes());
-
-  app.get("/", (c) => c.json({ status: "ok", message: "OEM backend is running." }));
+  mountRoutes(app);
 
   return app;
 }

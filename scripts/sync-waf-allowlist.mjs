@@ -8,7 +8,7 @@ import ts from "typescript";
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = resolve(scriptDirectory, "..");
-const sourcePath = resolve(repositoryRoot, "src/app.ts");
+const sourcePath = resolve(repositoryRoot, "src/routes/route.ts");
 const outputPath = resolve(repositoryRoot, "config/waf-allowlist.json");
 const phase = "http_request_firewall_custom";
 const ruleDescription = "oem-backend: deny unknown API paths";
@@ -56,7 +56,8 @@ function literalText(node) {
 }
 
 function isIgnored(source, node) {
-  const nearby = source.slice(Math.max(0, node.getFullStart() - 180), node.getStart());
+  // Scope the annotation to this mount's leading comments, not adjacent mounts.
+  const nearby = source.slice(node.getFullStart(), node.getStart());
   return nearby.includes("@waf-ignore");
 }
 
@@ -75,7 +76,7 @@ function normalizePath(raw, sourceName) {
 
 function extractPrefixes(source) {
   const file = ts.createSourceFile(
-    "src/app.ts",
+    "src/routes/route.ts",
     source,
     ts.ScriptTarget.Latest,
     true,
@@ -240,7 +241,7 @@ try {
   const source = await readFile(sourcePath, "utf8");
   const paths = extractPrefixes(source);
   if (paths.length === 0) {
-    throw new Error("no WAF prefixes found in src/app.ts");
+    throw new Error("no WAF prefixes found in src/routes/route.ts");
   }
 
   const host = process.env.WAF_HOST || "api.opendfieldmap.org";
@@ -259,7 +260,7 @@ try {
     if (existing !== serialized) {
       throw new Error(`${outputPath} is out of date; run pnpm run waf:sync`);
     }
-    console.log(`[waf] ${outputPath} matches src/app.ts`);
+    console.log(`[waf] ${outputPath} matches src/routes/route.ts`);
     process.exit(0);
   }
 

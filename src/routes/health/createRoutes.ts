@@ -1,0 +1,18 @@
+import { Hono } from "hono";
+
+import type { AppEnv } from "@/types/app";
+
+export function createRoutes() {
+  const app = new Hono<AppEnv>();
+
+  app.get("/status", (c) => {
+    return c.json({
+      status: "ok",
+      service: "oem-backend",
+      now: new Date().toISOString(),
+      requestId: c.get("requestId"),
+    });
+  });
+
+  return app;
+}

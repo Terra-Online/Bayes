@@ -8,6 +8,7 @@ import {
 import { createAuth } from "@/lib/auth/createAuth";
 import { ApiError } from "@/lib/errors";
 import { ensureUserProfile, formatPublicUid } from "@/repositories/users";
+import { sessionExchangeSchema } from "@/routes/schema/auth";
 
 import { parseTrustedFrontendOrigins } from "./frontendOrigins";
 import { toSessionUser } from "./sessionUser";
@@ -19,10 +20,6 @@ const exchangeValueSchema = z.object({
   token: z.string().min(1),
   origin: z.string().url(),
   challenge: z.string().regex(/^[a-f0-9]{64}$/),
-});
-
-export const sessionExchangeSchema = z.object({
-  code: z.string().trim().min(16, "Code is required."),
 });
 
 function classifyBrowser(

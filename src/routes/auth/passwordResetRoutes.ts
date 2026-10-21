@@ -1,38 +1,16 @@
 import type { Hono } from "hono";
-import { z } from "zod";
 
 import { ApiError } from "@/lib/errors";
 import { rateLimit } from "@/middleware/rate-limit";
+import {
+  requestPasswordResetSchema,
+  resetPasswordSchema,
+  resetPasswordPreviewSchema,
+} from "@/routes/schema/auth";
 import type { AppEnv } from "@/types/app";
 
 import { normalizeEmail } from "./emailUtils";
 import type { AuthRouteContext, ForwardToAuthJsonPath } from "./types";
-
-const requestPasswordResetSchema = z.object({
-  email: z.string().email("Invalid email address."),
-  redirectTo: z.string().url("Invalid redirect URL."),
-  locale: z.string().trim().min(1).optional(),
-});
-
-const resetPasswordSchema = z.object({
-  token: z.string().trim().min(1, "Token is required."),
-  newPassword: z
-    .string()
-    .min(8, "Password must be at least 8 characters.")
-    .max(20, "Password must be 20 characters or fewer.")
-    .regex(/[A-Z]/, "Password must include at least one uppercase letter.")
-    .regex(/^\S+$/, "Password cannot contain spaces."),
-  repeatPassword: z
-    .string()
-    .min(8, "Password must be at least 8 characters.")
-    .max(20, "Password must be 20 characters or fewer.")
-    .regex(/[A-Z]/, "Password must include at least one uppercase letter.")
-    .regex(/^\S+$/, "Password cannot contain spaces."),
-});
-
-const resetPasswordPreviewSchema = z.object({
-  token: z.string().trim().min(1, "Token is required."),
-});
 
 function forwardPasswordResetRequest(
   c: AuthRouteContext,

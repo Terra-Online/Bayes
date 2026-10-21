@@ -131,13 +131,31 @@ permissions returns `401` or `403`.
 ## Project Layout
 
 - `src/index.ts`: Worker entry point and scheduled/queue handlers
-- `src/app.ts`: Hono application and route mounting
-- `src/routes/`: HTTP route modules
+- `src/app.ts`: Hono initialization, global middleware, and error handling
+- `src/routes/route.ts`: route prefixes and mounting order
+- `src/routes/<topic>/createRoutes.ts`: each topic's Hono routes, with handlers
+  and HTTP tests in the same topic directory
+- `src/routes/schema/`: HTTP input schemas, composed from business contracts
+  where needed
+- `src/routes/notify/liveUpgrade.ts`: raw notification WebSocket upgrade entry,
+  called by the Worker before Hono to preserve the upgrade response
 - `src/services/`: moderation, upload, progress, and notification logic
 - `src/publicRead/`: public read client, cache origin loaders, and shared contracts
 - `src/repositories/`: D1 data access
 - `src/lib/`: authentication, email, configuration, and shared utilities
 - `migrations/`: D1 schema migrations
+
+Binding, locator, and official-mark sync have separate route topics. Binding
+queries live in `repositories/binding`, locator cache and ticket logic in
+`services/locator`, and official-mark conversion in `services/sync`. The ignored
+marker lookup remains at `src/routes/binding/officialMarkerHashToPointId.json`
+because its path is shared across local worktrees.
+
+This layout migration preserves existing business workflows inside handlers.
+Binding credential refresh and pending-session helpers still use Hono context
+under `routes/binding`; separating those interfaces is follow-up work. Internal
+storage and protocol validators remain with their owning modules. WAF generation
+reads the mounts in `routes/route.ts` and excludes the local demo route.
 
 ## Performance and Runtime Checks
 

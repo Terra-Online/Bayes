@@ -2,10 +2,10 @@ import { createToken } from "@/lib/crypto";
 import { ApiError } from "@/lib/errors";
 import { createRedisClient } from "@/lib/redis";
 import { hmacServiceIdentifier } from "@/lib/serviceIdentity";
+import type { AppContext } from "@/routes/binding/types";
+import { pendingSessionSchema } from "@/services/binding/contract/schemas";
+import type { PendingEndfieldSession } from "@/services/binding/types";
 import type { Bindings } from "@/types/app";
-
-import { pendingSessionSchema } from "./schemas";
-import type { AppContext, PendingEndfieldSession } from "./types";
 
 const PENDING_TTL_SECONDS = 10 * 60;
 
