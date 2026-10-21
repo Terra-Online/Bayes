@@ -1,5 +1,6 @@
-import { resolveBrowserSessionHeaders } from "../../lib/auth/browserSession";
-import { createAuth } from "../../lib/auth/createAuth";
+import { resolveBrowserSessionHeaders } from "@/lib/auth/browserSession";
+import { createAuth } from "@/lib/auth/createAuth";
+
 import { authConflictResponse } from "./conflicts";
 import type { AuthRouteContext } from "./types";
 

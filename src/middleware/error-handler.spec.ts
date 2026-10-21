@@ -1,9 +1,10 @@
 import { Hono } from "hono";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ApiError } from "../lib/errors";
-import { errorResponse } from "../services/progress/responses";
-import type { AppEnv } from "../types/app";
+import { ApiError } from "@/lib/errors";
+import { errorResponse } from "@/services/progress/responses";
+import type { AppEnv } from "@/types/app";
+
 import { onAppError, toApiError } from "./error-handler";
 
 afterEach(() => vi.restoreAllMocks());

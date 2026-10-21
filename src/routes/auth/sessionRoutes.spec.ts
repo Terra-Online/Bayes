@@ -3,19 +3,20 @@ import { getCookies } from "better-auth/cookies";
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createAuth } from "../../lib/auth/createAuth";
-import { resolveAuthIdentity } from "../../middleware/auth";
-import { onAppError } from "../../middleware/error-handler";
-import type { AppEnv, Bindings } from "../../types/app";
+import { createAuth } from "@/lib/auth/createAuth";
+import { resolveAuthIdentity } from "@/middleware/auth";
+import { onAppError } from "@/middleware/error-handler";
+import type { AppEnv, Bindings } from "@/types/app";
+
 import { registerSessionAuthRoutes } from "./sessionRoutes";
 
-vi.mock("../../lib/auth/createAuth", () => ({ createAuth: vi.fn() }));
-vi.mock("../../lib/email/sender", () => ({ sendEmail: vi.fn() }));
-vi.mock("../../lib/auth/providers", () => ({ createAuthSocialProviders: () => ({}) }));
-vi.mock("../../middleware/rate-limit", () => ({
+vi.mock("@/lib/auth/createAuth", () => ({ createAuth: vi.fn() }));
+vi.mock("@/lib/email/sender", () => ({ sendEmail: vi.fn() }));
+vi.mock("@/lib/auth/providers", () => ({ createAuthSocialProviders: () => ({}) }));
+vi.mock("@/middleware/rate-limit", () => ({
   rateLimit: () => async (_context: unknown, next: () => Promise<void>) => next(),
 }));
-vi.mock("../../repositories/users", () => ({
+vi.mock("@/repositories/users", () => ({
   ensureUserProfile: vi.fn(
     async (_database: unknown, identity: { uid: string; email: string }) => ({
       ...identity,
@@ -35,7 +36,7 @@ vi.mock("../../repositories/users", () => ({
 }));
 
 const realCreateAuth = (
-  await vi.importActual<typeof import("../../lib/auth/createAuth")>("../../lib/auth/createAuth")
+  await vi.importActual<typeof import("@/lib/auth/createAuth")>("@/lib/auth/createAuth")
 ).createAuth;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const START_MS = Date.parse("2026-09-05T00:00:00.000Z");

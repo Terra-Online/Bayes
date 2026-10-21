@@ -1,10 +1,11 @@
 import type { Hono } from "hono";
 import { z } from "zod";
 
-import { ApiError } from "../../lib/errors";
-import { requireAuth } from "../../middleware/auth";
-import { rateLimit } from "../../middleware/rate-limit";
-import type { AppEnv } from "../../types/app";
+import { ApiError } from "@/lib/errors";
+import { requireAuth } from "@/middleware/auth";
+import { rateLimit } from "@/middleware/rate-limit";
+import type { AppEnv } from "@/types/app";
+
 import { applyDefaultSocialCallbackUrls } from "./callbacks";
 import type { ForwardToAuthJsonPath } from "./types";
 

@@ -1,5 +1,5 @@
-import type { Bindings } from "../../types/app";
-import { envOrThrow } from "../utils";
+import { envOrThrow } from "@/lib/utils";
+import type { Bindings } from "@/types/app";
 
 function createSocialProviderConfig<TExtra extends Record<string, unknown> = Record<string, never>>(
   env: Bindings,

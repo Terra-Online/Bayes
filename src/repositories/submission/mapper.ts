@@ -1,4 +1,5 @@
-import { formatPublicUid } from "../users";
+import { formatPublicUid } from "@/repositories/users";
+
 import type {
   PublicSubmissionComment,
   PublicSubmissionImage,

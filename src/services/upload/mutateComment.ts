@@ -1,38 +1,36 @@
 import type { Context } from "hono";
 import { nanoid } from "nanoid";
 
-import { ApiError } from "../../lib/errors";
+import { ApiError } from "@/lib/errors";
 import {
   COMMENT_ADMIN_EDIT_MODERATION_NOTE_PREFIX,
   COMMENT_EDIT_MODERATION_NOTE_PREFIX,
   RECALL_MODERATION_NOTE_PREFIX,
-} from "../../lib/moderation";
-import { invalidateUploadCaches } from "../../publicRead/client/invalidate";
+} from "@/lib/moderation";
+import { invalidateUploadCaches } from "@/publicRead/client/invalidate";
 import {
   countSubmissionFlags,
   clearSubmissionFlags,
   createSubmissionFlag,
   deleteSubmissionFlag,
-} from "../../repositories/submission/flagSubmission";
+} from "@/repositories/submission/flagSubmission";
 import {
   getSubmissionById,
   revertCommentEdit,
   transitionSubmissionStatusWithNotifications,
   updateCommentContentForModeration,
   updateSubmissionStatus,
-} from "../../repositories/submission/statusSubmission";
-import {
-  getSubmissionScore,
-  setSubmissionVote,
-} from "../../repositories/submission/voteSubmission";
-import type { AppEnv } from "../../types/app";
+} from "@/repositories/submission/statusSubmission";
+import { getSubmissionScore, setSubmissionVote } from "@/repositories/submission/voteSubmission";
 import {
   notifyFlagCreated,
   notifyFlagRemoved,
   notifyRemoveRequestCreated,
-} from "../moderation/notifications";
-import { enqueueModeration } from "../moderation/queue";
-import { publishNotificationsCreated } from "../notify/live";
+} from "@/services/moderation/notifications";
+import { enqueueModeration } from "@/services/moderation/queue";
+import { publishNotificationsCreated } from "@/services/notify/live";
+import type { AppEnv } from "@/types/app";
+
 import { commentEditSchema } from "./schemas";
 
 function requireUserAndSubmissionId(c: Context<AppEnv>) {

@@ -1,13 +1,14 @@
 import type { Context } from "hono";
 
-import type { getEndfieldPosition } from "../../lib/endfieldClient/positionSocket";
+import type { getEndfieldPosition } from "@/lib/endfieldClient/positionSocket";
 import type {
   EndfieldDeviceProfile,
   EndfieldMapMarkListEnvelope,
   EndfieldProvider,
   EndfieldRoleOption,
-} from "../../lib/endfieldClient/types";
-import type { AppEnv } from "../../types/app";
+} from "@/lib/endfieldClient/types";
+import type { AppEnv } from "@/types/app";
+
 import type { publicBinding } from "./repository";
 
 export type BindingStatus = "enabled" | "disabled";

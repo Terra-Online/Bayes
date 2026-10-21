@@ -6,7 +6,7 @@ import {
   getModerationPointsDelta,
   type KarmaModerationKind,
   type KarmaModerationStatus,
-} from "../../lib/karma/rules";
+} from "@/lib/karma/rules";
 
 const DAILY_APPROVED_SUBMISSION_KEY_PREFIX = "karma:approved-submissions:";
 

@@ -1,5 +1,5 @@
-import { ApiError } from "../../lib/errors";
-import type { UserRecord } from "../../repositories/users";
+import { ApiError } from "@/lib/errors";
+import type { UserRecord } from "@/repositories/users";
 
 export const PROGRESS_BITS_PER_POINT = 1;
 export const PROGRESS_FORMAT_VERSION = 1;

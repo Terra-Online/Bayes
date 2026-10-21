@@ -1,14 +1,14 @@
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { ApiError } from "../lib/errors";
-import { onAppError } from "../middleware/error-handler";
-import { createUGCImageDatabase } from "../test/ugcImageDatabase";
-import type { AppEnv, AuthUser } from "../types/app";
+import { ApiError } from "@/lib/errors";
+import { onAppError } from "@/middleware/error-handler";
+import { createUGCImageDatabase } from "@/test/ugcImageDatabase";
+import type { AppEnv, AuthUser } from "@/types/app";
 
 vi.mock("cloudflare:workers", () => ({ DurableObject: class {}, exports: {} }));
 vi.mock("@cloudflare/containers", () => ({ getRandom: vi.fn() }));
-vi.mock("../lib/auth/createAuth", () => ({
+vi.mock("@/lib/auth/createAuth", () => ({
   createAuth: () => ({
     api: {
       getSession: async ({ headers }: { headers: Headers }) =>
@@ -18,8 +18,8 @@ vi.mock("../lib/auth/createAuth", () => ({
     },
   }),
 }));
-vi.mock("../middleware/auth", async () => {
-  const { ApiError } = await import("../lib/errors");
+vi.mock("@/middleware/auth", async () => {
+  const { ApiError } = await import("@/lib/errors");
   return {
     resolveContextAuthUser: async (c: { get: (key: string) => unknown }) => {
       const user = c.get("authUser") as AuthUser | undefined;
@@ -30,7 +30,7 @@ vi.mock("../middleware/auth", async () => {
     },
   };
 });
-vi.mock("../services/upload/commentTranslation", () => ({
+vi.mock("@/services/upload/commentTranslation", () => ({
   translateVisibleComments: vi.fn(async () => ({ items: [] })),
 }));
 

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { SqliteD1 } from "../test/sqliteD1";
+import { SqliteD1 } from "@/test/sqliteD1";
+
 import { ensureUserProfile, getUserByPublicUid } from "./users";
 
 describe("profile activity write throttling", () => {

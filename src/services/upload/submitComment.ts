@@ -1,11 +1,12 @@
 import type { Context } from "hono";
 import { nanoid } from "nanoid";
 
-import { ApiError } from "../../lib/errors";
-import { createPendingSubmission } from "../../repositories/submission/createSubmission";
-import { getSubmissionById } from "../../repositories/submission/statusSubmission";
-import type { AppEnv } from "../../types/app";
-import { enqueueModeration } from "../moderation/queue";
+import { ApiError } from "@/lib/errors";
+import { createPendingSubmission } from "@/repositories/submission/createSubmission";
+import { getSubmissionById } from "@/repositories/submission/statusSubmission";
+import { enqueueModeration } from "@/services/moderation/queue";
+import type { AppEnv } from "@/types/app";
+
 import { commentSubmissionSchema } from "./schemas";
 import { normalizePathPart } from "./storage";
 

@@ -1,9 +1,10 @@
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { onAppError } from "../../middleware/error-handler";
-import { SqliteD1 } from "../../test/sqliteD1";
-import type { AppEnv } from "../../types/app";
+import { onAppError } from "@/middleware/error-handler";
+import { SqliteD1 } from "@/test/sqliteD1";
+import type { AppEnv } from "@/types/app";
+
 import { handleGetPublicComment } from "./getPublicComment";
 
 let database: SqliteD1;

@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { SqliteD1 } from "../../test/sqliteD1";
-import type { Bindings } from "../../types/app";
+import { SqliteD1 } from "@/test/sqliteD1";
+import type { Bindings } from "@/types/app";
 
 const sendEmail = vi.hoisted(() => vi.fn());
 
-vi.mock("../../lib/email/sender", () => ({
+vi.mock("@/lib/email/sender", () => ({
   sendEmail,
 }));
 

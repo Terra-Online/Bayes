@@ -5,11 +5,8 @@ import {
   getKarmaEvaluationBatchSize,
   getKarmaEvaluationIntervalSeconds,
   pointsToKarma,
-} from "../../lib/karma/rules";
-import {
-  AI_STALE_MODERATION_NOTE_PREFIX,
-  RECALL_MODERATION_NOTE_PREFIX,
-} from "../../lib/moderation";
+} from "@/lib/karma/rules";
+import { AI_STALE_MODERATION_NOTE_PREFIX, RECALL_MODERATION_NOTE_PREFIX } from "@/lib/moderation";
 
 const KARMA_EVALUATION_LEASE_KEY = "karma:evaluation:v2:lease";
 const KARMA_EVALUATION_CYCLE_KEY = "karma:evaluation:v2:cycle";

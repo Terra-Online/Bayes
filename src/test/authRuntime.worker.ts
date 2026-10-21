@@ -3,11 +3,11 @@ import { AsyncLocalStorage } from "node:async_hooks";
 
 import { Hono } from "hono";
 
-import { createAuth, runWithAuthRequest } from "../lib/auth/createAuth";
-import { resolveAuthIdentity } from "../middleware/auth";
-import { onAppError } from "../middleware/error-handler";
-import { registerSessionAuthRoutes } from "../routes/auth/sessionRoutes";
-import type { AppEnv, Bindings } from "../types/app";
+import { createAuth, runWithAuthRequest } from "@/lib/auth/createAuth";
+import { resolveAuthIdentity } from "@/middleware/auth";
+import { onAppError } from "@/middleware/error-handler";
+import { registerSessionAuthRoutes } from "@/routes/auth/sessionRoutes";
+import type { AppEnv, Bindings } from "@/types/app";
 
 type TestEnv = Bindings & { DB_SECOND: D1Database; TEST_GATE: Fetcher };
 type Invocation = { sql: string[]; block?: boolean; blockSchema?: boolean; gate: Fetcher };

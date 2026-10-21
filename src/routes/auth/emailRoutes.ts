@@ -1,13 +1,14 @@
 import type { Hono } from "hono";
 import { z } from "zod";
 
-import { createAuth } from "../../lib/auth/createAuth";
-import { toSerializableError } from "../../lib/auth/errors";
-import { isDisposableEmail } from "../../lib/email/disposable";
-import { ApiError } from "../../lib/errors";
-import { toApiError } from "../../middleware/error-handler";
-import { rateLimit } from "../../middleware/rate-limit";
-import type { AppEnv } from "../../types/app";
+import { createAuth } from "@/lib/auth/createAuth";
+import { toSerializableError } from "@/lib/auth/errors";
+import { isDisposableEmail } from "@/lib/email/disposable";
+import { ApiError } from "@/lib/errors";
+import { toApiError } from "@/middleware/error-handler";
+import { rateLimit } from "@/middleware/rate-limit";
+import type { AppEnv } from "@/types/app";
+
 import { deriveDisplayName, normalizeEmail } from "./emailUtils";
 import type { ForwardToAuthJsonPath, ForwardToAuthRawRequest } from "./types";
 

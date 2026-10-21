@@ -1,12 +1,12 @@
 import type { Context, MiddlewareHandler } from "hono";
 
-import { resolveBrowserSessionHeaders } from "../lib/auth/browserSession";
-import { createAuth } from "../lib/auth/createAuth";
-import { sameAuthCacheEnvironment } from "../lib/auth/environment";
-import { hasSessionCredentials } from "../lib/auth/sessionCredentials";
-import { ApiError } from "../lib/errors";
-import { ensureUserProfile, formatPublicUid } from "../repositories/users";
-import type { AppEnv, AuthUser, Role } from "../types/app";
+import { resolveBrowserSessionHeaders } from "@/lib/auth/browserSession";
+import { createAuth } from "@/lib/auth/createAuth";
+import { sameAuthCacheEnvironment } from "@/lib/auth/environment";
+import { hasSessionCredentials } from "@/lib/auth/sessionCredentials";
+import { ApiError } from "@/lib/errors";
+import { ensureUserProfile, formatPublicUid } from "@/repositories/users";
+import type { AppEnv, AuthUser, Role } from "@/types/app";
 
 const AUTH_USER_CACHE_TTL_MS = 10_000;
 const AUTH_USER_CACHE_MAX_ENTRIES = 1000;

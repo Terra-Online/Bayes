@@ -1,12 +1,13 @@
 import type { Context } from "hono";
 import { nanoid } from "nanoid";
 
-import { getRuntimeConfig } from "../../lib/config";
-import { ApiError } from "../../lib/errors";
-import { getDuplicateImageMarkerSummary } from "../../repositories/submission-duplicates";
-import { createPendingSubmission } from "../../repositories/submission/createSubmission";
-import type { AppEnv } from "../../types/app";
-import { enqueueModeration } from "../moderation/queue";
+import { getRuntimeConfig } from "@/lib/config";
+import { ApiError } from "@/lib/errors";
+import { getDuplicateImageMarkerSummary } from "@/repositories/submission-duplicates";
+import { createPendingSubmission } from "@/repositories/submission/createSubmission";
+import { enqueueModeration } from "@/services/moderation/queue";
+import type { AppEnv } from "@/types/app";
+
 import { pickFile, pickString, normalizeUploadMime } from "./helpers";
 import { UGC_PUBLIC_IMAGE_CACHE_CONTROL } from "./imageDeliveryPolicy";
 import { imageUploadFieldsSchema } from "./schemas";

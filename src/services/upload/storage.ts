@@ -1,7 +1,8 @@
 import { getRandom } from "@cloudflare/containers";
 
-import { toSerializableError } from "../../lib/auth/errors";
-import { ApiError, transientDependencyError } from "../../lib/errors";
+import { toSerializableError } from "@/lib/auth/errors";
+import { ApiError, transientDependencyError } from "@/lib/errors";
+
 import type { oem_imgTrans } from "./imageTranscoderContainer";
 
 const IMAGE_TRANSFORM_CONTAINER_INSTANCES = 3;

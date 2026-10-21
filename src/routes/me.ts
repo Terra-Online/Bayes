@@ -1,16 +1,17 @@
 import { Hono } from "hono";
 import { z } from "zod";
 
-import { ApiError } from "../lib/errors";
-import { requireAuth } from "../middleware/auth";
-import { rateLimit } from "../middleware/rate-limit";
+import { ApiError } from "@/lib/errors";
+import { requireAuth } from "@/middleware/auth";
+import { rateLimit } from "@/middleware/rate-limit";
 import {
   decodeContributionCursor,
   getContributionCounts,
   getContributionImage,
   listContributions,
-} from "../repositories/me";
-import type { AppEnv } from "../types/app";
+} from "@/repositories/me";
+import type { AppEnv } from "@/types/app";
+
 import { toSessionUser } from "./auth/sessionUser";
 
 const contributionQuerySchema = z.object({

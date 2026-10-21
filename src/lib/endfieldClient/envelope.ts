@@ -1,4 +1,5 @@
-import { ApiError } from "../errors";
+import { ApiError } from "@/lib/errors";
+
 import type {
   ApiEnvelope,
   ApiEnvelopeOptions,

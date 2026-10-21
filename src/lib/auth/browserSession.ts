@@ -2,7 +2,8 @@ import { createCookieGetter, getCookies, parseCookies } from "better-auth/cookie
 import { makeSignature } from "better-auth/crypto";
 import { generateCookie } from "hono/cookie";
 
-import { ApiError } from "../errors";
+import { ApiError } from "@/lib/errors";
+
 import type { createAuth } from "./createAuth";
 
 type Auth = ReturnType<typeof createAuth>;

@@ -1,6 +1,7 @@
 import { nanoid } from "nanoid";
 
-import type { AuthUser } from "../types/app";
+import type { AuthUser } from "@/types/app";
+
 import type {
   SubmissionKind,
   SubmissionRecord,

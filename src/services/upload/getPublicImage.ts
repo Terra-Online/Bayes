@@ -1,9 +1,10 @@
 import type { Context } from "hono";
 
-import { getRuntimeConfig } from "../../lib/config";
-import { ApiError } from "../../lib/errors";
-import { getPublicImageById } from "../../repositories/submission/getPublicImage";
-import type { AppEnv } from "../../types/app";
+import { getRuntimeConfig } from "@/lib/config";
+import { ApiError } from "@/lib/errors";
+import { getPublicImageById } from "@/repositories/submission/getPublicImage";
+import type { AppEnv } from "@/types/app";
+
 import { getOptionalAuthIdentity } from "./helpers";
 import { imagesQuerySchema } from "./schemas";
 import { resolveImageScope, resolvePublicAssetBaseUrl } from "./scope";

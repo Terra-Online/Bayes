@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { Bindings } from "../../types/app";
+import type { Bindings } from "@/types/app";
+
 import { drainUserProgressStatsOutbox } from "./outbox";
 import type { ProgressStatsOutboxRecord } from "./repository";
 

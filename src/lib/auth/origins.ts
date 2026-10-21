@@ -1,5 +1,5 @@
-import type { Bindings } from "../../types/app";
-import { readEnv } from "../utils";
+import { readEnv } from "@/lib/utils";
+import type { Bindings } from "@/types/app";
 
 const DEFAULT_TRUSTED_ORIGINS = [
   "https://opendfieldmap.org",

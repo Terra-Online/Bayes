@@ -1,16 +1,16 @@
 import { Hono } from "hono";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { ApiError } from "../../lib/errors";
-import type { PublicSubmissionImage } from "../../repositories/submission/types";
-import type { AppEnv } from "../../types/app";
+import { ApiError } from "@/lib/errors";
+import type { PublicSubmissionImage } from "@/repositories/submission/types";
+import type { AppEnv } from "@/types/app";
 
 const mocks = vi.hoisted(() => ({
   getPublicImageById: vi.fn(),
   getOptionalAuthIdentity: vi.fn(),
 }));
 
-vi.mock("../../repositories/submission/getPublicImage", () => ({
+vi.mock("@/repositories/submission/getPublicImage", () => ({
   getPublicImageById: mocks.getPublicImageById,
 }));
 vi.mock("./helpers", () => ({

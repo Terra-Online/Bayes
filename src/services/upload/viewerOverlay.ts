@@ -1,9 +1,9 @@
-import type { CommentViewerReaction } from "../../repositories/submission/listComments";
-import type { ImageViewerReaction } from "../../repositories/submission/listImages";
+import type { CommentViewerReaction } from "@/repositories/submission/listComments";
+import type { ImageViewerReaction } from "@/repositories/submission/listImages";
 import type {
   PublicSubmissionComment,
   PublicSubmissionImage,
-} from "../../repositories/submission/types";
+} from "@/repositories/submission/types";
 
 export function applyCommentViewerReactions(
   comments: PublicSubmissionComment[],

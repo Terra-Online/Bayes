@@ -1,7 +1,8 @@
 import { getCookies } from "better-auth/cookies";
 
-import { AUTH_EXCHANGE_CHALLENGE_PARAM } from "../../lib/auth/browserSession";
-import { createAuth } from "../../lib/auth/createAuth";
+import { AUTH_EXCHANGE_CHALLENGE_PARAM } from "@/lib/auth/browserSession";
+import { createAuth } from "@/lib/auth/createAuth";
+
 import {
   isTrustedCallbackUrlForResponse,
   resolveTrustedCallbackUrl,

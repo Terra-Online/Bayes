@@ -1,12 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { Bindings } from "../types/app";
+import type { Bindings } from "@/types/app";
 
 const mocks = vi.hoisted(() => ({ auth: vi.fn(), fetch: vi.fn() }));
-vi.mock("../middleware/auth", () => ({ resolveRequestAuthUser: mocks.auth, requireAuth: vi.fn() }));
-import { hmacServiceIdentifier } from "../lib/serviceIdentity";
+vi.mock("@/middleware/auth", () => ({ resolveRequestAuthUser: mocks.auth, requireAuth: vi.fn() }));
+import { hmacServiceIdentifier } from "@/lib/serviceIdentity";
+
 import { handleNotificationLiveUpgrade } from "./notify";
-vi.mock("../lib/serviceIdentity", () => ({ hmacServiceIdentifier: vi.fn(async () => "rate-key") }));
+vi.mock("@/lib/serviceIdentity", () => ({ hmacServiceIdentifier: vi.fn(async () => "rate-key") }));
 
 describe("notification WebSocket upgrade failures", () => {
   const env = {

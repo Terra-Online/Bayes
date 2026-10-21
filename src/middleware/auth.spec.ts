@@ -1,9 +1,10 @@
 import { Hono } from "hono";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createAuth } from "../lib/auth/createAuth";
-import { ensureUserProfile } from "../repositories/users";
-import type { AppEnv, Bindings } from "../types/app";
+import { createAuth } from "@/lib/auth/createAuth";
+import { ensureUserProfile } from "@/repositories/users";
+import type { AppEnv, Bindings } from "@/types/app";
+
 import {
   invalidateAuthUserCache,
   resolveAuthIdentity,
@@ -11,11 +12,11 @@ import {
   resolveContextAuthUser,
 } from "./auth";
 
-vi.mock("../lib/auth/createAuth", () => ({ createAuth: vi.fn() }));
-vi.mock("../lib/auth/browserSession", () => ({
+vi.mock("@/lib/auth/createAuth", () => ({ createAuth: vi.fn() }));
+vi.mock("@/lib/auth/browserSession", () => ({
   resolveBrowserSessionHeaders: (_auth: unknown, headers: Headers) => ({ headers }),
 }));
-vi.mock("../repositories/users", () => ({
+vi.mock("@/repositories/users", () => ({
   ensureUserProfile: vi.fn(),
   formatPublicUid: () => "100001AA",
 }));

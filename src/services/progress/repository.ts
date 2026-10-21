@@ -1,4 +1,5 @@
-import type { UserProgressWrite } from "../../repositories/users";
+import type { UserProgressWrite } from "@/repositories/users";
+
 import type { ProgressStatsDelta } from "./model";
 
 export type ProgressSyncMutationRecord = {

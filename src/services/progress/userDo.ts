@@ -1,7 +1,8 @@
-import { sha256Hex } from "../../lib/crypto";
-import { ApiError } from "../../lib/errors";
-import { toApiError } from "../../middleware/error-handler";
-import { getUserByUid } from "../../repositories/users";
+import { sha256Hex } from "@/lib/crypto";
+import { ApiError } from "@/lib/errors";
+import { toApiError } from "@/middleware/error-handler";
+import { getUserByUid } from "@/repositories/users";
+
 import { loadArchiveProgressManifest, type RegisteredArchiveManifest } from "./archiveManifest";
 import {
   buildArchiveSyncRequestHash,

@@ -6,19 +6,20 @@ import {
   getLegacyCookieExpirations,
   resolveBrowserSessionHeaders,
   serializeBrowserSessionCookie,
-} from "../../lib/auth/browserSession";
-import { createAuth } from "../../lib/auth/createAuth";
-import { hasSessionCredentials } from "../../lib/auth/sessionCredentials";
-import { ApiError } from "../../lib/errors";
+} from "@/lib/auth/browserSession";
+import { createAuth } from "@/lib/auth/createAuth";
+import { hasSessionCredentials } from "@/lib/auth/sessionCredentials";
+import { ApiError } from "@/lib/errors";
 import {
   getRequestAuthHeaders,
   invalidateAuthUserCache,
   requireAuth,
   resolveAuthUser,
-} from "../../middleware/auth";
-import { rateLimit } from "../../middleware/rate-limit";
-import { formatPublicUid, getErrorMessage, updateUserNickname } from "../../repositories/users";
-import type { AppEnv } from "../../types/app";
+} from "@/middleware/auth";
+import { rateLimit } from "@/middleware/rate-limit";
+import { formatPublicUid, getErrorMessage, updateUserNickname } from "@/repositories/users";
+import type { AppEnv } from "@/types/app";
+
 import { toSessionUser } from "./sessionUser";
 
 const profileUpdateSchema = z.object({

@@ -1,13 +1,14 @@
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createAuth } from "../../lib/auth/createAuth";
-import { onAppError } from "../../middleware/error-handler";
-import type { AppEnv, Bindings } from "../../types/app";
+import { createAuth } from "@/lib/auth/createAuth";
+import { onAppError } from "@/middleware/error-handler";
+import type { AppEnv, Bindings } from "@/types/app";
+
 import { forwardToAuthJsonPath } from "./forwarding";
 
-vi.mock("../../lib/auth/createAuth", () => ({ createAuth: vi.fn() }));
-vi.mock("../../lib/auth/browserSession", () => ({
+vi.mock("@/lib/auth/createAuth", () => ({ createAuth: vi.fn() }));
+vi.mock("@/lib/auth/browserSession", () => ({
   resolveBrowserSessionHeaders: (_auth: unknown, headers: Headers) => ({ headers }),
 }));
 

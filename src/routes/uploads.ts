@@ -1,17 +1,17 @@
 import { Hono, type MiddlewareHandler } from "hono";
 
-import { ApiError } from "../lib/errors";
-import { resolveContextAuthUser } from "../middleware/auth";
-import { rateLimit } from "../middleware/rate-limit";
-import { translateVisibleComments } from "../services/upload/commentTranslation";
-import { handleGetPublicComment } from "../services/upload/getPublicComment";
-import { handleGetPublicImage } from "../services/upload/getPublicImage";
-import { handleListPointImages } from "../services/upload/listPointImages";
+import { ApiError } from "@/lib/errors";
+import { resolveContextAuthUser } from "@/middleware/auth";
+import { rateLimit } from "@/middleware/rate-limit";
+import { translateVisibleComments } from "@/services/upload/commentTranslation";
+import { handleGetPublicComment } from "@/services/upload/getPublicComment";
+import { handleGetPublicImage } from "@/services/upload/getPublicImage";
+import { handleListPointImages } from "@/services/upload/listPointImages";
 import {
   handleListMyComments,
   handleListPublicComments,
-} from "../services/upload/listPublicComments";
-import { handleListMyImages, handleListPublicImages } from "../services/upload/listPublicImages";
+} from "@/services/upload/listPublicComments";
+import { handleListMyImages, handleListPublicImages } from "@/services/upload/listPublicImages";
 import {
   handleEditComment,
   handleCommentRemoveRequest,
@@ -19,7 +19,7 @@ import {
   handleFlagComment,
   handleRecallComment,
   handleUnflagComment,
-} from "../services/upload/mutateComment";
+} from "@/services/upload/mutateComment";
 import {
   handleFlagImage,
   handleImageRemoveRequest,
@@ -28,15 +28,15 @@ import {
   handleRecallImage,
   handleUnflagImage,
   handleUnrecallImage,
-} from "../services/upload/mutateImage";
-import { commentTranslationSchema } from "../services/upload/schemas";
+} from "@/services/upload/mutateImage";
+import { commentTranslationSchema } from "@/services/upload/schemas";
 import {
   handleServePrivateImageFile,
   handleServePublicImageFile,
-} from "../services/upload/serveImageFile";
-import { handleSubmitComment } from "../services/upload/submitComment";
-import { handleSubmitImage } from "../services/upload/submitImage";
-import type { AppEnv } from "../types/app";
+} from "@/services/upload/serveImageFile";
+import { handleSubmitComment } from "@/services/upload/submitComment";
+import { handleSubmitImage } from "@/services/upload/submitImage";
+import type { AppEnv } from "@/types/app";
 
 function isUploadsLocked(flag: string | undefined): boolean {
   const normalized = (flag ?? "true").trim().toLowerCase();

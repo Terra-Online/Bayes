@@ -1,5 +1,5 @@
-import type { SubmissionRecord, SubmissionStatus } from "../../repositories/submission/types";
-import type { AuthUser } from "../../types/app";
+import type { SubmissionRecord, SubmissionStatus } from "@/repositories/submission/types";
+import type { AuthUser } from "@/types/app";
 
 export type ModerationQueueSource = "upload" | "manual" | "scheduled_backfill";
 

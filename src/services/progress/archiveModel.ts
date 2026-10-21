@@ -1,4 +1,4 @@
-import { ApiError } from "../../lib/errors";
+import { ApiError } from "@/lib/errors";
 
 export const ARCHIVE_PROGRESS_BITS_PER_ARCHIVE = 1;
 export const ARCHIVE_PROGRESS_FORMAT_VERSION = 1;

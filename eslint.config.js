@@ -17,6 +17,34 @@ export default [
       "no-var": "error",
       "no-nested-ternary": "error",
       "prefer-const": ["error", { ignoreReadBeforeAssign: true }],
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              regex: "(^|/)\\.\\.(/|$)",
+              message: "Use @/ for imports across directories instead of parent-relative paths.",
+            },
+          ],
+        },
+      ],
+      // no-restricted-imports only checks static imports and re-exports.
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: "ImportExpression > Literal[value=/(^|\\u002f)\\.\\.(\\u002f|$)/]",
+          message: "Use @/ for dynamic imports across directories.",
+        },
+        {
+          selector: "TSImportType > Literal[value=/(^|\\u002f)\\.\\.(\\u002f|$)/]",
+          message: "Use @/ for import types across directories.",
+        },
+        {
+          selector:
+            'CallExpression[callee.object.name="vi"][callee.property.name=/^(mock|doMock|unmock|doUnmock|importActual|importMock)$/] > Literal.arguments[value=/(^|\\u002f)\\.\\.(\\u002f|$)/]:first-child',
+          message: "Use @/ for test module paths across directories.",
+        },
+      ],
     },
   },
   {

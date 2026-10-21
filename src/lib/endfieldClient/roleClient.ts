@@ -1,4 +1,5 @@
-import { ApiError } from "../errors";
+import { ApiError } from "@/lib/errors";
+
 import { parseApiEnvelope } from "./envelope";
 import { buildDeviceHeaders, buildUrl, getEndfieldHosts } from "./hosts";
 import { getEndfieldTimestamp, getSignature } from "./signature";

@@ -1,4 +1,4 @@
-import type { Bindings } from "../types/app";
+import type { Bindings } from "@/types/app";
 
 const encoder = new TextEncoder();
 

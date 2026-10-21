@@ -1,4 +1,4 @@
-import type { Bindings } from "../types/app";
+import type { Bindings } from "@/types/app";
 
 export interface RuntimeConfig {
   sessionTtlSeconds: number;

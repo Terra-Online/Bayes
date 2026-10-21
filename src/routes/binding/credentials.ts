@@ -1,20 +1,21 @@
-import { decryptSecret, encryptSecret } from "../../lib/crypto";
+import { decryptSecret, encryptSecret } from "@/lib/crypto";
 import {
   generateEndfieldCredByCode,
   grantEndfieldOAuthCode,
   refreshEndfieldAuth,
-} from "../../lib/endfieldClient/authClient";
+} from "@/lib/endfieldClient/authClient";
 import {
   createEndfieldDeviceId,
   createEndfieldDeviceProfile,
   SKLAND_DEVICE_PROFILE_USER_AGENT,
-} from "../../lib/endfieldClient/deviceProfile";
+} from "@/lib/endfieldClient/deviceProfile";
 import {
   isEndfieldCredentialErrorCode,
   isEndfieldCredentialExpiredErrorCode,
   isEndfieldDeviceErrorCode,
-} from "../../lib/endfieldClient/positionParser";
-import { ApiError } from "../../lib/errors";
+} from "@/lib/endfieldClient/positionParser";
+import { ApiError } from "@/lib/errors";
+
 import {
   deleteLocatorCaches,
   getLocatorCache,

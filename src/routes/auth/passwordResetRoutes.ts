@@ -1,9 +1,10 @@
 import type { Hono } from "hono";
 import { z } from "zod";
 
-import { ApiError } from "../../lib/errors";
-import { rateLimit } from "../../middleware/rate-limit";
-import type { AppEnv } from "../../types/app";
+import { ApiError } from "@/lib/errors";
+import { rateLimit } from "@/middleware/rate-limit";
+import type { AppEnv } from "@/types/app";
+
 import { normalizeEmail } from "./emailUtils";
 import type { AuthRouteContext, ForwardToAuthJsonPath } from "./types";
 

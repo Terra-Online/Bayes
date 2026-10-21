@@ -4,11 +4,15 @@ import { betterAuth, type BetterAuthOptions } from "better-auth";
 import { getSchema } from "better-auth/db";
 import { bearer, emailOTP } from "better-auth/plugins";
 
-import type { Bindings } from "../../types/app";
-import { getSessionTtlSeconds } from "../config";
-import { sendEmail } from "../email/sender";
-import { createOtpEmailTemplate, createResetPasswordMagicLinkTemplate } from "../email/templates";
-import { envOrThrow } from "../utils";
+import { getSessionTtlSeconds } from "@/lib/config";
+import { sendEmail } from "@/lib/email/sender";
+import {
+  createOtpEmailTemplate,
+  createResetPasswordMagicLinkTemplate,
+} from "@/lib/email/templates";
+import { envOrThrow } from "@/lib/utils";
+import type { Bindings } from "@/types/app";
+
 import { sameAuthEnvironment } from "./environment";
 import { toSerializableError } from "./errors";
 import { pickRequestFromCtx, resolvePreferredEmailLocale } from "./locale";

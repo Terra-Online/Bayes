@@ -4,12 +4,13 @@ import {
   parseEndfieldDeviceProfile,
   serializeEndfieldDeviceProfile,
   SKLAND_DEVICE_PROFILE_USER_AGENT,
-} from "../../lib/endfieldClient/deviceProfile";
+} from "@/lib/endfieldClient/deviceProfile";
 import type {
   EndfieldDeviceProfile,
   EndfieldProvider,
   EndfieldRoleOption,
-} from "../../lib/endfieldClient/types";
+} from "@/lib/endfieldClient/types";
+
 import type {
   EndfieldBindingRow,
   EndfieldBindingWithDeviceProfileRow,

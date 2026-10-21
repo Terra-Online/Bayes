@@ -3,7 +3,8 @@ import type { StatementSync } from "node:sqlite";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { SqliteD1 } from "../../test/sqliteD1";
+import { SqliteD1 } from "@/test/sqliteD1";
+
 import {
   cleanupProgressConsistencyRecords,
   getProgressStatsOutboxHealth,

@@ -1,33 +1,33 @@
 import type { Context } from "hono";
 
-import { getRuntimeConfig } from "../../lib/config";
-import { ApiError } from "../../lib/errors";
-import { RECALL_MODERATION_NOTE_PREFIX } from "../../lib/moderation";
-import { prewarmPublicUgcAsset } from "../../lib/publicUgcAssets";
-import { invalidateUploadCaches } from "../../publicRead/client/invalidate";
+import { getRuntimeConfig } from "@/lib/config";
+import { ApiError } from "@/lib/errors";
+import { RECALL_MODERATION_NOTE_PREFIX } from "@/lib/moderation";
+import { prewarmPublicUgcAsset } from "@/lib/publicUgcAssets";
+import { invalidateUploadCaches } from "@/publicRead/client/invalidate";
 import {
   countSubmissionFlags,
   createSubmissionFlag,
   deleteSubmissionFlag,
-} from "../../repositories/submission/flagSubmission";
+} from "@/repositories/submission/flagSubmission";
 import {
   getSubmissionById,
   transitionSubmissionStatusWithNotifications,
   updateSubmissionStatus,
-} from "../../repositories/submission/statusSubmission";
+} from "@/repositories/submission/statusSubmission";
 import {
   countSubmissionUpvotes,
   createSubmissionUpvote,
   deleteSubmissionUpvote,
-} from "../../repositories/submission/voteSubmission";
-import type { AppEnv } from "../../types/app";
+} from "@/repositories/submission/voteSubmission";
 import {
   notifyFlagCreated,
   notifyFlagRemoved,
   notifyRemoveRequestCancelled,
   notifyRemoveRequestCreated,
-} from "../moderation/notifications";
-import { publishNotificationsCreated } from "../notify/live";
+} from "@/services/moderation/notifications";
+import { publishNotificationsCreated } from "@/services/notify/live";
+import type { AppEnv } from "@/types/app";
 
 function requireUserAndSubmissionId(c: Context<AppEnv>) {
   const user = c.get("authUser");

@@ -3,15 +3,16 @@ import {
   isEndfieldCredentialExpiredErrorCode,
   parseEndfieldPositionSocketError,
   parseEndfieldPositionSocketMessage,
-} from "../../lib/endfieldClient/positionParser";
+} from "@/lib/endfieldClient/positionParser";
 import {
   connectEndfieldPositionSocket,
   type EndfieldPositionConnection,
   type EndfieldPositionTermination,
-} from "../../lib/endfieldClient/positionSocket";
-import { ApiError } from "../../lib/errors";
-import { resolveAuthIdentity } from "../../middleware/auth";
-import { ensureUserProfile } from "../../repositories/users";
+} from "@/lib/endfieldClient/positionSocket";
+import { ApiError } from "@/lib/errors";
+import { resolveAuthIdentity } from "@/middleware/auth";
+import { ensureUserProfile } from "@/repositories/users";
+
 import {
   getDecryptedBinding,
   isAutoRefreshableEndfieldError,

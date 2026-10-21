@@ -1,23 +1,24 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { ApiError } from "../../lib/errors";
-import { SqliteD1 } from "../../test/sqliteD1";
-import type { Bindings } from "../../types/app";
+import { ApiError } from "@/lib/errors";
+import { SqliteD1 } from "@/test/sqliteD1";
+import type { Bindings } from "@/types/app";
+
 import { getDecryptedBinding, refreshBindingCredentials } from "./credentials";
 import { deleteLocatorCaches, readDecryptedBindingCache } from "./locatorCache";
 import type { AppContext, EndfieldBindingRow } from "./types";
 
 const mocks = vi.hoisted(() => ({ refresh: vi.fn() }));
-vi.mock("../../lib/crypto", () => ({
+vi.mock("@/lib/crypto", () => ({
   encryptSecret: async (value: string) => `sealed:${value}`,
   decryptSecret: async (value: string) => value.replace("sealed:", ""),
 }));
-vi.mock("../../lib/endfieldClient/authClient", () => ({
+vi.mock("@/lib/endfieldClient/authClient", () => ({
   refreshEndfieldAuth: mocks.refresh,
   grantEndfieldOAuthCode: vi.fn(),
   generateEndfieldCredByCode: vi.fn(),
 }));
-vi.mock("../../lib/endfieldClient/deviceProfile", () => ({
+vi.mock("@/lib/endfieldClient/deviceProfile", () => ({
   createEndfieldDeviceId: async () => "new-device",
   createEndfieldDeviceProfile: () => ({ deviceId: "new-device" }),
   serializeEndfieldDeviceProfile: JSON.stringify,

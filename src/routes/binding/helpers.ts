@@ -1,4 +1,5 @@
-import { ApiError } from "../../lib/errors";
+import { ApiError } from "@/lib/errors";
+
 import type { AppContext } from "./types";
 
 export const POSITION_STREAM_RECONNECT_MS = 1_000;

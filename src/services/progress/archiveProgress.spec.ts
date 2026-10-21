@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { sha256Hex } from "../../lib/crypto";
+import { sha256Hex } from "@/lib/crypto";
+
 import {
   archiveIdsFromBitmap,
   buildCanonicalArchiveManifest,

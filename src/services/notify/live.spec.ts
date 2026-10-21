@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { NotificationRecord } from "../../repositories/notifications";
-import type { Bindings } from "../../types/app";
+import type { NotificationRecord } from "@/repositories/notifications";
+import type { Bindings } from "@/types/app";
 
 const mocks = vi.hoisted(() => ({ unread: vi.fn(), notification: vi.fn(), fanout: vi.fn() }));
 vi.mock("cloudflare:workers", () => ({
@@ -12,7 +12,7 @@ vi.mock("cloudflare:workers", () => ({
     ) {}
   },
 }));
-vi.mock("../../repositories/notifications", () => ({
+vi.mock("@/repositories/notifications", () => ({
   getNotificationUnreadCounts: mocks.unread,
   getNotificationById: mocks.notification,
   serializeNotificationItem: (notification: unknown) => notification,

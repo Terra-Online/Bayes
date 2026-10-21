@@ -2,19 +2,20 @@ import { getRandom } from "@cloudflare/containers";
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { onAppError } from "../../middleware/error-handler";
-import { createPendingSubmission } from "../../repositories/submission/createSubmission";
-import type { AppEnv, AuthUser, Bindings } from "../../types/app";
-import { enqueueModeration } from "../moderation/queue";
+import { onAppError } from "@/middleware/error-handler";
+import { createPendingSubmission } from "@/repositories/submission/createSubmission";
+import { enqueueModeration } from "@/services/moderation/queue";
+import type { AppEnv, AuthUser, Bindings } from "@/types/app";
+
 import type { oem_imgTrans } from "./imageTranscoderContainer";
 import { handleSubmitImage } from "./submitImage";
 
 vi.mock("@cloudflare/containers", () => ({ getRandom: vi.fn() }));
-vi.mock("../../repositories/submission/createSubmission", () => ({
+vi.mock("@/repositories/submission/createSubmission", () => ({
   createPendingSubmission: vi.fn(),
 }));
-vi.mock("../moderation/queue", () => ({ enqueueModeration: vi.fn() }));
-vi.mock("../../repositories/submission-duplicates", () => ({
+vi.mock("@/services/moderation/queue", () => ({ enqueueModeration: vi.fn() }));
+vi.mock("@/repositories/submission-duplicates", () => ({
   getDuplicateImageMarkerSummary: async () => null,
 }));
 

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { Bindings } from "../types/app";
+import type { Bindings } from "@/types/app";
 
 const mocks = vi.hoisted(() => ({ fetch: vi.fn(), images: vi.fn(), comments: vi.fn() }));
 vi.mock("cloudflare:workers", () => ({

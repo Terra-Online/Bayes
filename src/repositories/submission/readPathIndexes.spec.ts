@@ -2,7 +2,8 @@ import { readFileSync, readdirSync } from "node:fs";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { SqliteD1 } from "../../test/sqliteD1";
+import { SqliteD1 } from "@/test/sqliteD1";
+
 import { getImageSubmissionByFilePath, getPublicSubmissionByFilePath } from "./statusSubmission";
 import { countSubmissionUpvotes } from "./voteSubmission";
 

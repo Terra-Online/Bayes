@@ -1,8 +1,8 @@
 import { Resend } from "resend";
 
-import type { Bindings } from "../../types/app";
-import { createRedisClient } from "../redis";
-import { envOrThrow, readEnv } from "../utils";
+import { createRedisClient } from "@/lib/redis";
+import { envOrThrow, readEnv } from "@/lib/utils";
+import type { Bindings } from "@/types/app";
 
 const DEFAULT_FROM_ADDRESS = "noreply@opendfieldmap.org";
 const DEFAULT_RESEND_DAILY_LIMIT = 100;

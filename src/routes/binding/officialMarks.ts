@@ -1,4 +1,5 @@
-import { getEndfieldMapMarkList } from "../../lib/endfieldClient/mapClient";
+import { getEndfieldMapMarkList } from "@/lib/endfieldClient/mapClient";
+
 import officialMarkerHashToPointId from "./officialMarkerHashToPointId.json";
 import type { DecryptedBinding, OfficialMapMark, OfficialMarksResult } from "./types";
 

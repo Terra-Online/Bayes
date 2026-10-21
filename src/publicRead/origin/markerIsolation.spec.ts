@@ -1,12 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({ images: vi.fn(), comments: vi.fn() }));
-vi.mock("../../repositories/submission/listImages", () => ({
+vi.mock("@/repositories/submission/listImages", () => ({
   listActiveImagesByMarker: mocks.images,
   listImageViewerReactionsByMarker: vi.fn(),
   listUserImagesByMarker: vi.fn(),
 }));
-vi.mock("../../repositories/submission/listComments", () => ({
+vi.mock("@/repositories/submission/listComments", () => ({
   listActiveCommentsByMarker: mocks.comments,
   listCommentViewerStateByMarker: vi.fn(),
   listUserCommentsByMarker: vi.fn(),

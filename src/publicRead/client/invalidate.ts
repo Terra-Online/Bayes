@@ -1,1 +1,1 @@
-export { invalidateUploadCaches, type UploadCacheKind } from "../invalidate";
+export { invalidateUploadCaches, type UploadCacheKind } from "@/publicRead/invalidate";

@@ -1,17 +1,17 @@
 import { Hono } from "hono";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { ApiError } from "../../lib/errors";
-import type { PublicCommentContext } from "../../repositories/submission/getPublicComment";
-import type { PublicSubmissionComment } from "../../repositories/submission/types";
-import type { AppEnv } from "../../types/app";
+import { ApiError } from "@/lib/errors";
+import type { PublicCommentContext } from "@/repositories/submission/getPublicComment";
+import type { PublicSubmissionComment } from "@/repositories/submission/types";
+import type { AppEnv } from "@/types/app";
 
 const mocks = vi.hoisted(() => ({
   getPublicCommentContextById: vi.fn(),
   getOptionalAuthIdentity: vi.fn(),
 }));
 
-vi.mock("../../repositories/submission/getPublicComment", () => ({
+vi.mock("@/repositories/submission/getPublicComment", () => ({
   getPublicCommentContextById: mocks.getPublicCommentContextById,
 }));
 vi.mock("./helpers", () => ({

@@ -1,5 +1,5 @@
-import { getJsonFromKv, MIN_KV_EXPIRATION_TTL_SECONDS, putJsonToKv } from "../../lib/kvJson";
-import type { Bindings } from "../../types/app";
+import { getJsonFromKv, MIN_KV_EXPIRATION_TTL_SECONDS, putJsonToKv } from "@/lib/kvJson";
+import type { Bindings } from "@/types/app";
 
 export const PROGRESS_STATS_HTTP_MAX_AGE_SECONDS = 10;
 export const PROGRESS_STATS_KV_TTL_SECONDS = MIN_KV_EXPIRATION_TTL_SECONDS;

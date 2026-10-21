@@ -1,15 +1,16 @@
-import { getRuntimeConfig, type RuntimeConfig } from "../../lib/config";
-import { sha256Hex } from "../../lib/crypto";
-import { getJsonFromKv, putJsonToKv } from "../../lib/kvJson";
-import { getVisibleCommentsByIds } from "../../repositories/submission/statusSubmission";
+import { getRuntimeConfig, type RuntimeConfig } from "@/lib/config";
+import { sha256Hex } from "@/lib/crypto";
+import { getJsonFromKv, putJsonToKv } from "@/lib/kvJson";
+import { getVisibleCommentsByIds } from "@/repositories/submission/statusSubmission";
 import {
   getTextTranslation,
   getTextTranslationByTarget,
   upsertTextTranslation,
-} from "../../repositories/submission/textTranslationCache";
-import type { TextTranslationRecord } from "../../repositories/submission/types";
-import type { Bindings } from "../../types/app";
-import type { TransPrewarmTarget } from "../moderation/messages";
+} from "@/repositories/submission/textTranslationCache";
+import type { TextTranslationRecord } from "@/repositories/submission/types";
+import type { TransPrewarmTarget } from "@/services/moderation/messages";
+import type { Bindings } from "@/types/app";
+
 import { buildCommentTranslationKeys } from "./commentTranslationKeys";
 
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";

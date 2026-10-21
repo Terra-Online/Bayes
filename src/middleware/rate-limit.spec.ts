@@ -1,8 +1,9 @@
 import { Hono } from "hono";
 import { expect, it } from "vitest";
 
-import { ApiError } from "../lib/errors";
-import type { AppEnv, AuthUser } from "../types/app";
+import { ApiError } from "@/lib/errors";
+import type { AppEnv, AuthUser } from "@/types/app";
+
 import { rateLimit } from "./rate-limit";
 
 it("keeps thumbnail traffic separate from auth reads and isolates authenticated users", async () => {

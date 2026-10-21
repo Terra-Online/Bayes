@@ -2,12 +2,12 @@ import type { Context } from "hono";
 import { Hono } from "hono";
 import { z } from "zod";
 
-import { toSerializableError } from "../lib/auth/errors";
-import { ApiError } from "../lib/errors";
-import { hmacServiceIdentifier } from "../lib/serviceIdentity";
-import { requireAuth, resolveRequestAuthUser } from "../middleware/auth";
-import { toApiError } from "../middleware/error-handler";
-import { rateLimit } from "../middleware/rate-limit";
+import { toSerializableError } from "@/lib/auth/errors";
+import { ApiError } from "@/lib/errors";
+import { hmacServiceIdentifier } from "@/lib/serviceIdentity";
+import { requireAuth, resolveRequestAuthUser } from "@/middleware/auth";
+import { toApiError } from "@/middleware/error-handler";
+import { rateLimit } from "@/middleware/rate-limit";
 import {
   decodeNotificationCursor,
   getNotificationUnreadCounts,
@@ -17,8 +17,8 @@ import {
   markNotificationsRead,
   serializeNotificationItem,
   type NotificationCategory,
-} from "../repositories/notifications";
-import type { AppEnv, Bindings } from "../types/app";
+} from "@/repositories/notifications";
+import type { AppEnv, Bindings } from "@/types/app";
 
 const NOTIFICATION_LIVE_PATH = "/notify/v1/live";
 

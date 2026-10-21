@@ -1,6 +1,6 @@
-import { ApiError } from "../../lib/errors";
-import { resolveAuthIdentity, type AuthIdentity } from "../../middleware/auth";
-import type { AppEnv } from "../../types/app";
+import { ApiError } from "@/lib/errors";
+import { resolveAuthIdentity, type AuthIdentity } from "@/middleware/auth";
+import type { AppEnv } from "@/types/app";
 
 export function pickString(
   value: FormDataEntryValue | FormDataEntryValue[] | undefined,

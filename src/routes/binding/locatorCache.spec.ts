@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { Bindings } from "../../types/app";
+import type { Bindings } from "@/types/app";
+
 import {
   deleteLocatorCaches,
   getLocatorCache,
@@ -11,7 +12,7 @@ import {
 import type { AppContext, DecryptedBinding } from "./types";
 
 const upstream = vi.hoisted(() => vi.fn());
-vi.mock("../../lib/endfieldClient/positionSocket", () => ({ getEndfieldPosition: upstream }));
+vi.mock("@/lib/endfieldClient/positionSocket", () => ({ getEndfieldPosition: upstream }));
 const binding = {
   binding: { provider: "skland", role_id: "role", server_id: 1 },
   cred: "cred",

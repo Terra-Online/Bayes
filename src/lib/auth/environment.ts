@@ -1,4 +1,4 @@
-import type { Bindings } from "../../types/app";
+import type { Bindings } from "@/types/app";
 
 // These are the bindings/configuration values captured by Better Auth or by its
 // email/social provider callbacks. Do not compare the whole Worker env: an

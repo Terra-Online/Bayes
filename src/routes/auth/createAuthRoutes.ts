@@ -1,11 +1,12 @@
 import { Hono } from "hono";
 
-import { getLegacyCookieExpirations } from "../../lib/auth/browserSession";
-import { createAuth } from "../../lib/auth/createAuth";
-import { ApiError } from "../../lib/errors";
-import { invalidateAuthUserCache } from "../../middleware/auth";
-import { rateLimit } from "../../middleware/rate-limit";
-import type { AppEnv } from "../../types/app";
+import { getLegacyCookieExpirations } from "@/lib/auth/browserSession";
+import { createAuth } from "@/lib/auth/createAuth";
+import { ApiError } from "@/lib/errors";
+import { invalidateAuthUserCache } from "@/middleware/auth";
+import { rateLimit } from "@/middleware/rate-limit";
+import type { AppEnv } from "@/types/app";
+
 import { registerAccountAuthRoutes } from "./accountRoutes";
 import { registerEmailAuthRoutes } from "./emailRoutes";
 import { forwardToAuthJsonPath, forwardToAuthRawRequest } from "./forwarding";

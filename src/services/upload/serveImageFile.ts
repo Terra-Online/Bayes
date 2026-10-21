@@ -1,11 +1,12 @@
 import type { Context } from "hono";
 
-import { ApiError } from "../../lib/errors";
+import { ApiError } from "@/lib/errors";
 import {
   getImageSubmissionByFilePath,
   getPublicSubmissionByFilePath,
-} from "../../repositories/submission/statusSubmission";
-import type { AppEnv } from "../../types/app";
+} from "@/repositories/submission/statusSubmission";
+import type { AppEnv } from "@/types/app";
+
 import { parseObjectKeyFromRequestPath } from "./helpers";
 import { UGC_PUBLIC_IMAGE_CACHE_CONTROL } from "./imageDeliveryPolicy";
 

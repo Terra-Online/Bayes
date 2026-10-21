@@ -1,17 +1,18 @@
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createAuth } from "../../lib/auth/createAuth";
-import { sendEmail } from "../../lib/email/sender";
-import { onAppError } from "../../middleware/error-handler";
-import { createAuthDatabase } from "../../test/authDatabase";
-import type { AppEnv, Bindings } from "../../types/app";
+import { createAuth } from "@/lib/auth/createAuth";
+import { sendEmail } from "@/lib/email/sender";
+import { onAppError } from "@/middleware/error-handler";
+import { createAuthDatabase } from "@/test/authDatabase";
+import type { AppEnv, Bindings } from "@/types/app";
+
 import { registerEmailAuthRoutes } from "./emailRoutes";
 import { forwardToAuthJsonPath, forwardToAuthRawRequest } from "./forwarding";
 import { registerPasswordResetRoutes } from "./passwordResetRoutes";
 
-vi.mock("../../lib/email/sender", () => ({ sendEmail: vi.fn() }));
-vi.mock("../../middleware/rate-limit", () => ({
+vi.mock("@/lib/email/sender", () => ({ sendEmail: vi.fn() }));
+vi.mock("@/middleware/rate-limit", () => ({
   rateLimit: () => async (_context: unknown, next: () => Promise<void>) => next(),
 }));
 

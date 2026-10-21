@@ -1,6 +1,6 @@
-import rawManifest from "../../data/imageCoverageManifest.json";
-import { buildPointShareUrlForMarker } from "../../lib/pointShare";
-import { listVisibleImageCountsByMarker } from "../../repositories/submission/imageCoverage";
+import rawManifest from "@/data/imageCoverageManifest.json";
+import { buildPointShareUrlForMarker } from "@/lib/pointShare";
+import { listVisibleImageCountsByMarker } from "@/repositories/submission/imageCoverage";
 
 export type ImageCoverageScope = {
   pathPrefix?: string;

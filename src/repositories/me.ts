@@ -3,8 +3,9 @@ import {
   AI_PENDING_AUDIT_MODERATION_NOTE_PREFIX,
   AI_STALE_MODERATION_NOTE_PREFIX,
   RECALL_MODERATION_NOTE_PREFIX,
-} from "../lib/moderation";
-import { buildPublicUgcAssetUrl } from "../lib/publicUgcAssets";
+} from "@/lib/moderation";
+import { buildPublicUgcAssetUrl } from "@/lib/publicUgcAssets";
+
 import type { SubmissionKind, SubmissionStatus } from "./submission/types";
 
 type ReviewKey = "uploaded" | "ai" | "manual" | "public" | "archived";

@@ -1,5 +1,5 @@
-import { ApiError } from "../../lib/errors";
-import { toApiError } from "../../middleware/error-handler";
+import { ApiError } from "@/lib/errors";
+import { toApiError } from "@/middleware/error-handler";
 
 export function jsonResponse(payload: unknown, init?: ResponseInit): Response {
   return new Response(JSON.stringify(payload), {

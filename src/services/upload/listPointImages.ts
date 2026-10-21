@@ -1,15 +1,16 @@
 import type { Context } from "hono";
 
-import { getUgcReadConfig } from "../../lib/config";
-import { ApiError } from "../../lib/errors";
-import { toApiError } from "../../middleware/error-handler";
-import { readPublicImagesFromWorkersCache } from "../../publicRead/client/client";
-import { resolvePublicImageCacheNamespace } from "../../publicRead/client/scope";
+import { getUgcReadConfig } from "@/lib/config";
+import { ApiError } from "@/lib/errors";
+import { toApiError } from "@/middleware/error-handler";
+import { readPublicImagesFromWorkersCache } from "@/publicRead/client/client";
+import { resolvePublicImageCacheNamespace } from "@/publicRead/client/scope";
 import {
   listImageViewerReactionsByMarker,
   listUserImagesByMarker,
-} from "../../repositories/submission/listImages";
-import type { AppEnv } from "../../types/app";
+} from "@/repositories/submission/listImages";
+import type { AppEnv } from "@/types/app";
+
 import { requireMarkerIds } from "./helpers";
 import { imagesQuerySchema } from "./schemas";
 import { resolveImageScope, resolvePrivateAssetBaseUrl, resolvePublicAssetBaseUrl } from "./scope";

@@ -4,10 +4,11 @@ import {
   expireOAuthExchangeProof,
   inspectOAuthExchangeProof,
   serializeBrowserSessionCookie,
-} from "../../lib/auth/browserSession";
-import { createAuth } from "../../lib/auth/createAuth";
-import { ApiError } from "../../lib/errors";
-import { ensureUserProfile, formatPublicUid } from "../../repositories/users";
+} from "@/lib/auth/browserSession";
+import { createAuth } from "@/lib/auth/createAuth";
+import { ApiError } from "@/lib/errors";
+import { ensureUserProfile, formatPublicUid } from "@/repositories/users";
+
 import { parseTrustedFrontendOrigins } from "./frontendOrigins";
 import { toSessionUser } from "./sessionUser";
 import type { AuthRouteContext } from "./types";

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, it } from "vitest";
 
-import { SqliteD1 } from "../../test/sqliteD1";
+import { SqliteD1 } from "@/test/sqliteD1";
+
 import { getBinding, saveBinding } from "./repository";
 
 let database: SqliteD1;

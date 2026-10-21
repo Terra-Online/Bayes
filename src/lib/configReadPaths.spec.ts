@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import type { Bindings } from "../types/app";
+import type { Bindings } from "@/types/app";
+
 import { getRuntimeConfig, getSessionTtlSeconds, getUgcReadConfig } from "./config";
 
 describe("read-path configuration", () => {

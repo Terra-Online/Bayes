@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { createAuthDatabase } from "../../test/authDatabase";
+import { createAuthDatabase } from "@/test/authDatabase";
+
 import { authSchemaDatabase } from "./schemaMetadata";
 
 describe("validated D1 metadata isolation", () => {

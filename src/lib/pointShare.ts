@@ -1,4 +1,4 @@
-import type { SubmissionRecord } from "../repositories/submission/types";
+import type { SubmissionRecord } from "@/repositories/submission/types";
 
 const POINT_SHARE_SHORT_ORIGIN = "https://oem.re";
 const BASE62_ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";

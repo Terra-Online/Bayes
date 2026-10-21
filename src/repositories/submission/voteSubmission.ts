@@ -1,11 +1,12 @@
-import type { AuthUser } from "../../types/app";
 import {
   notificationsFromResult,
   prepareCommentVoteNotificationWrite,
   prepareImageUpvoteNotificationWrite,
   type CommentVoteResult,
   type NotificationRecord,
-} from "../notifications";
+} from "@/repositories/notifications";
+import type { AuthUser } from "@/types/app";
+
 import { mapVoteValue, toCount } from "./mapper";
 import type { SubmissionVoteValue } from "./types";
 

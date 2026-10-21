@@ -1,6 +1,7 @@
 import { Buffer } from "node:buffer";
 
-import { ApiError } from "../../lib/errors";
+import { ApiError } from "@/lib/errors";
+
 import { PROGRESS_MARKER_FORMAT } from "./model";
 
 export function decodeBase64(value: string): Uint8Array {

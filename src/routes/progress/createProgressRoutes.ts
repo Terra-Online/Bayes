@@ -1,21 +1,21 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 
-import { ApiError } from "../../lib/errors";
-import { requireAuth } from "../../middleware/auth";
-import { rateLimit } from "../../middleware/rate-limit";
-import { fetchProgressStatsFromWorkersCache } from "../../publicRead/client/client";
+import { ApiError } from "@/lib/errors";
+import { requireAuth } from "@/middleware/auth";
+import { rateLimit } from "@/middleware/rate-limit";
+import { fetchProgressStatsFromWorkersCache } from "@/publicRead/client/client";
 import {
   normalizeArchiveManifestPayload,
   saveArchiveProgressManifest,
-} from "../../services/progress/archiveManifest";
+} from "@/services/progress/archiveManifest";
 import {
   isSha256Hex,
   normalizeManifestPayload,
   saveProgressManifest,
-} from "../../services/progress/manifest";
-import { jsonResponse } from "../../services/progress/responses";
-import type { AppEnv } from "../../types/app";
+} from "@/services/progress/manifest";
+import { jsonResponse } from "@/services/progress/responses";
+import type { AppEnv } from "@/types/app";
 
 function isProgressLocked(flag: string | undefined): boolean {
   const normalized = (flag ?? "true").trim().toLowerCase();

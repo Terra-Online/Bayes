@@ -1,6 +1,6 @@
 import { Redis } from "@upstash/redis";
 
-import type { Bindings } from "../types/app";
+import type { Bindings } from "@/types/app";
 
 export function createRedisClient(env: Bindings): Redis {
   return new Redis({

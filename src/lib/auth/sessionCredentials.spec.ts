@@ -1,7 +1,8 @@
 import { getCookies } from "better-auth/cookies";
 import { describe, expect, it } from "vitest";
 
-import type { Bindings } from "../../types/app";
+import type { Bindings } from "@/types/app";
+
 import { authCookieOptions } from "./origins";
 import { hasSessionCredentials } from "./sessionCredentials";
 

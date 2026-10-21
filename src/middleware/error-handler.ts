@@ -1,8 +1,8 @@
 import type { Context } from "hono";
 
-import { toSerializableError } from "../lib/auth/errors";
-import { ApiError, isApiError, transientDependencyError } from "../lib/errors";
-import type { AppEnv } from "../types/app";
+import { toSerializableError } from "@/lib/auth/errors";
+import { ApiError, isApiError, transientDependencyError } from "@/lib/errors";
+import type { AppEnv } from "@/types/app";
 
 function errorJson(
   c: Context<AppEnv>,

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { Bindings } from "../../types/app";
+import type { Bindings } from "@/types/app";
 
 const resendSend = vi.hoisted(() => vi.fn());
 const redisGet = vi.hoisted(() => vi.fn());
@@ -13,7 +13,7 @@ vi.mock("resend", () => ({
   Resend: vi.fn(() => ({ emails: { send: resendSend } })),
 }));
 
-vi.mock("../redis", () => ({
+vi.mock("@/lib/redis", () => ({
   createRedisClient: vi.fn(() => ({
     get: redisGet,
     incr: redisIncr,

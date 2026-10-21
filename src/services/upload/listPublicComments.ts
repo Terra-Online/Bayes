@@ -1,21 +1,19 @@
 import type { Context } from "hono";
 
-import { getUgcReadConfig } from "../../lib/config";
-import { ApiError } from "../../lib/errors";
-import {
-  readPublicCommentsFromWorkersCache,
-  publicReadResponse,
-} from "../../publicRead/client/client";
-import { resolvePublicCommentCacheNamespace } from "../../publicRead/client/scope";
+import { getUgcReadConfig } from "@/lib/config";
+import { ApiError } from "@/lib/errors";
+import { readPublicCommentsFromWorkersCache, publicReadResponse } from "@/publicRead/client/client";
+import { resolvePublicCommentCacheNamespace } from "@/publicRead/client/scope";
 import {
   listCommentViewerStateByMarker,
   listUserCommentsByMarker,
-} from "../../repositories/submission/listComments";
+} from "@/repositories/submission/listComments";
 import type {
   PublicSubmissionComment,
   UserSubmissionComment,
-} from "../../repositories/submission/types";
-import type { AppEnv } from "../../types/app";
+} from "@/repositories/submission/types";
+import type { AppEnv } from "@/types/app";
+
 import { getOptionalAuthIdentity, hasAuthHeaders, requireMarkerIds } from "./helpers";
 import { commentsQuerySchema } from "./schemas";
 import { resolveImageScope } from "./scope";

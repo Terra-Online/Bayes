@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { SubmissionRecord } from "../../repositories/submission/types";
-import type { Bindings } from "../../types/app";
+import type { SubmissionRecord } from "@/repositories/submission/types";
+import type { Bindings } from "@/types/app";
+
 import type { ModerationNotificationEvent, OemWebhookQueueMessage } from "./messages";
 import { processWebhookQueueBatch, sendModerationNotificationNow } from "./notifications";
 

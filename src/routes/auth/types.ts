@@ -1,6 +1,6 @@
 import type { Context } from "hono";
 
-import type { AppEnv } from "../../types/app";
+import type { AppEnv } from "@/types/app";
 
 export type AuthRouteContext = Context<AppEnv>;
 

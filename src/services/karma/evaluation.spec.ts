@@ -3,9 +3,10 @@ import { readFileSync } from "node:fs";
 import type { Redis } from "@upstash/redis";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import * as rules from "../../lib/karma/rules";
-import { SqliteD1 } from "../../test/sqliteD1";
-import { UGC_COMPETING_INDEXES_SQL } from "../../test/ugcIndexes";
+import * as rules from "@/lib/karma/rules";
+import { SqliteD1 } from "@/test/sqliteD1";
+import { UGC_COMPETING_INDEXES_SQL } from "@/test/ugcIndexes";
+
 import { evaluateKarmaBatch, evaluateKarmaIfDue } from "./evaluation";
 
 const LEASE_KEY = "karma:evaluation:v2:lease";

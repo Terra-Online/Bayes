@@ -1,6 +1,7 @@
 import { createCookieGetter } from "better-auth/cookies";
 
-import type { Bindings } from "../../types/app";
+import type { Bindings } from "@/types/app";
+
 import { authCookieOptions } from "./origins";
 
 // This is only a presence check. Better Auth still verifies every credential.

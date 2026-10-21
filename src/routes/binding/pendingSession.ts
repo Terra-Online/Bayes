@@ -1,8 +1,9 @@
-import { createToken } from "../../lib/crypto";
-import { ApiError } from "../../lib/errors";
-import { createRedisClient } from "../../lib/redis";
-import { hmacServiceIdentifier } from "../../lib/serviceIdentity";
-import type { Bindings } from "../../types/app";
+import { createToken } from "@/lib/crypto";
+import { ApiError } from "@/lib/errors";
+import { createRedisClient } from "@/lib/redis";
+import { hmacServiceIdentifier } from "@/lib/serviceIdentity";
+import type { Bindings } from "@/types/app";
+
 import { pendingSessionSchema } from "./schemas";
 import type { AppContext, PendingEndfieldSession } from "./types";
 

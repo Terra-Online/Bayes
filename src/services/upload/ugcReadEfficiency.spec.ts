@@ -1,8 +1,9 @@
 import { Hono } from "hono";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { PublicSubmissionComment } from "../../repositories/submission/types";
-import type { AppEnv, Bindings } from "../../types/app";
+import type { PublicSubmissionComment } from "@/repositories/submission/types";
+import type { AppEnv, Bindings } from "@/types/app";
+
 import { handleListPointImages } from "./listPointImages";
 import { handleListPublicComments } from "./listPublicComments";
 import { handleListPublicImages } from "./listPublicImages";
@@ -16,19 +17,19 @@ const mocks = vi.hoisted(() => ({
   commentState: vi.fn(),
 }));
 
-vi.mock("../../middleware/auth", () => ({ resolveAuthIdentity: mocks.identity }));
+vi.mock("@/middleware/auth", () => ({ resolveAuthIdentity: mocks.identity }));
 vi.mock("cloudflare:workers", () => ({ exports: {} }));
-vi.mock("../../publicRead/client/client", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../../publicRead/client/client")>()),
+vi.mock("@/publicRead/client/client", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/publicRead/client/client")>()),
   readPublicImagesFromWorkersCache: mocks.imagesCache,
   readPublicCommentsFromWorkersCache: mocks.commentsCache,
 }));
-vi.mock("../../repositories/submission/listImages", () => ({
+vi.mock("@/repositories/submission/listImages", () => ({
   listImageViewerReactionsByMarker: mocks.imageReactions,
   listActiveImagesByMarker: vi.fn(),
   listUserImagesByMarker: mocks.mine,
 }));
-vi.mock("../../repositories/submission/listComments", () => ({
+vi.mock("@/repositories/submission/listComments", () => ({
   listCommentViewerStateByMarker: mocks.commentState,
   listActiveCommentsByMarker: vi.fn(),
   listUserCommentsByMarker: vi.fn(),

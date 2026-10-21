@@ -1,8 +1,9 @@
 import type { Context } from "hono";
 
-import { ApiError } from "../../lib/errors";
-import { getPublicCommentContextById } from "../../repositories/submission/getPublicComment";
-import type { AppEnv } from "../../types/app";
+import { ApiError } from "@/lib/errors";
+import { getPublicCommentContextById } from "@/repositories/submission/getPublicComment";
+import type { AppEnv } from "@/types/app";
+
 import { getOptionalAuthIdentity } from "./helpers";
 import { commentsQuerySchema } from "./schemas";
 

@@ -9,23 +9,24 @@ import {
   AUTH_EXCHANGE_CHALLENGE_PARAM,
   createOAuthExchangeProof,
   getLegacyCookieExpirations,
-} from "../../lib/auth/browserSession";
-import { createAuth } from "../../lib/auth/createAuth";
-import { onAppError } from "../../middleware/error-handler";
-import type { AppEnv, Bindings } from "../../types/app";
+} from "@/lib/auth/browserSession";
+import { createAuth } from "@/lib/auth/createAuth";
+import { onAppError } from "@/middleware/error-handler";
+import type { AppEnv, Bindings } from "@/types/app";
+
 import { attachSessionExchangeCode } from "./callbacks";
 import { forwardToAuthRawRequest } from "./forwarding";
 import { handleSessionExchange } from "./sessionExchange";
 import { registerSessionAuthRoutes } from "./sessionRoutes";
 import { registerSocialAuthRoutes } from "./socialRoutes";
 
-vi.mock("../../lib/auth/createAuth", () => ({ createAuth: vi.fn() }));
-vi.mock("../../lib/email/sender", () => ({ sendEmail: vi.fn() }));
-vi.mock("../../lib/auth/providers", () => ({ createAuthSocialProviders: () => ({}) }));
-vi.mock("../../middleware/rate-limit", () => ({
+vi.mock("@/lib/auth/createAuth", () => ({ createAuth: vi.fn() }));
+vi.mock("@/lib/email/sender", () => ({ sendEmail: vi.fn() }));
+vi.mock("@/lib/auth/providers", () => ({ createAuthSocialProviders: () => ({}) }));
+vi.mock("@/middleware/rate-limit", () => ({
   rateLimit: () => async (_context: unknown, next: () => Promise<void>) => next(),
 }));
-vi.mock("../../repositories/users", () => ({
+vi.mock("@/repositories/users", () => ({
   ensureUserProfile: vi.fn(
     async (_database: unknown, identity: { uid: string; email: string }) => ({
       ...identity,
@@ -45,7 +46,7 @@ vi.mock("../../repositories/users", () => ({
 }));
 
 const realCreateAuth = (
-  await vi.importActual<typeof import("../../lib/auth/createAuth")>("../../lib/auth/createAuth")
+  await vi.importActual<typeof import("@/lib/auth/createAuth")>("@/lib/auth/createAuth")
 ).createAuth;
 const API_ORIGIN = "https://api.opendfieldmap.org";
 const CN_API_ORIGIN = "https://api.opendfieldmap.cn";

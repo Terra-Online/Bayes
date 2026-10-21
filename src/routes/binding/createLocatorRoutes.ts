@@ -1,7 +1,8 @@
 import { Hono } from "hono";
 
-import { requireAuth } from "../../middleware/auth";
-import type { AppEnv } from "../../types/app";
+import { requireAuth } from "@/middleware/auth";
+import type { AppEnv } from "@/types/app";
+
 import { handleAgree } from "./bindingHandlers";
 import { handleEndfieldPosition, handleEndfieldPositionSocket } from "./positionHandlers";
 

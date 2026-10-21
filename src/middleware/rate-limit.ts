@@ -1,10 +1,10 @@
 import type { MiddlewareHandler } from "hono";
 
-import { ApiError } from "../lib/errors";
-import { getUploadRateLimitForKarma } from "../lib/karma/rules";
-import { createRedisClient } from "../lib/redis";
-import { hmacServiceIdentifier } from "../lib/serviceIdentity";
-import type { AppEnv, Bindings } from "../types/app";
+import { ApiError } from "@/lib/errors";
+import { getUploadRateLimitForKarma } from "@/lib/karma/rules";
+import { createRedisClient } from "@/lib/redis";
+import { hmacServiceIdentifier } from "@/lib/serviceIdentity";
+import type { AppEnv, Bindings } from "@/types/app";
 
 const OTP_SEND_IP_LIMIT_PER_MINUTE = 20;
 const OTP_SEND_EMAIL_LIMIT_PER_HOUR = 8;

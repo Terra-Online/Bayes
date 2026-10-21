@@ -1,6 +1,7 @@
-import { buildPointShareUrl } from "../../lib/pointShare";
-import type { SubmissionRecord, SubmissionStatus } from "../../repositories/submission/types";
-import type { AuthUser, Bindings } from "../../types/app";
+import { buildPointShareUrl } from "@/lib/pointShare";
+import type { SubmissionRecord, SubmissionStatus } from "@/repositories/submission/types";
+import type { AuthUser, Bindings } from "@/types/app";
+
 import type {
   ModerationNotificationEvent,
   OemWebhookQueueMessage,

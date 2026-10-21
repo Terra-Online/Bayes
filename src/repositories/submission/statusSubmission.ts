@@ -1,10 +1,11 @@
-import type { AuthUser } from "../../types/app";
 import {
   notificationsFromResult,
   prepareApprovedReplyNotificationWrite,
   prepareSubmissionStatusNotificationWrite,
   type NotificationRecord,
-} from "../notifications";
+} from "@/repositories/notifications";
+import type { AuthUser } from "@/types/app";
+
 import { mapSubmission } from "./mapper";
 import type { SubmissionRecord, SubmissionStatus } from "./types";
 

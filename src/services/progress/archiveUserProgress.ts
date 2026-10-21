@@ -1,7 +1,8 @@
-import { sha256Hex } from "../../lib/crypto";
-import { ApiError } from "../../lib/errors";
-import { getUserByUid } from "../../repositories/users";
-import type { Bindings } from "../../types/app";
+import { sha256Hex } from "@/lib/crypto";
+import { ApiError } from "@/lib/errors";
+import { getUserByUid } from "@/repositories/users";
+import type { Bindings } from "@/types/app";
+
 import {
   archiveIdsFromBitmap,
   loadArchiveProgressManifest,

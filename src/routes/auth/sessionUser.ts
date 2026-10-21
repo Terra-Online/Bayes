@@ -1,4 +1,4 @@
-import type { AuthUser } from "../../types/app";
+import type { AuthUser } from "@/types/app";
 
 export function toSessionUser(user: AuthUser) {
   return {

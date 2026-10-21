@@ -3,11 +3,11 @@ import { readFileSync } from "node:fs";
 import { Hono } from "hono";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
-import { ApiError } from "../lib/errors";
-import { createUGCImageDatabase } from "../test/ugcImageDatabase";
-import type { AppEnv, AuthUser } from "../types/app";
+import { ApiError } from "@/lib/errors";
+import { createUGCImageDatabase } from "@/test/ugcImageDatabase";
+import type { AppEnv, AuthUser } from "@/types/app";
 
-vi.mock("../middleware/auth", () => ({
+vi.mock("@/middleware/auth", () => ({
   requireAuth: async (c: { get: (key: string) => unknown }, next: () => Promise<void>) => {
     if (!c.get("authUser")) {
       throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
@@ -15,7 +15,7 @@ vi.mock("../middleware/auth", () => ({
     await next();
   },
 }));
-vi.mock("../middleware/rate-limit", () => ({
+vi.mock("@/middleware/rate-limit", () => ({
   rateLimit: () => async (_c: unknown, next: () => Promise<void>) => next(),
 }));
 import { createMeRoutes } from "./me";

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { createUGCImageDatabase } from "../../test/ugcImageDatabase";
+import { createUGCImageDatabase } from "@/test/ugcImageDatabase";
+
 import { getPublicImageById } from "./getPublicImage";
 
 let sqlite: ReturnType<typeof createUGCImageDatabase>["sqlite"];

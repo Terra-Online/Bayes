@@ -3,10 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppContext, DecryptedBinding } from "./types";
 
 const mocks = vi.hoisted(() => ({ connect: vi.fn(), binding: vi.fn() }));
-vi.mock("../../lib/endfieldClient/positionSocket", () => ({
+vi.mock("@/lib/endfieldClient/positionSocket", () => ({
   connectEndfieldPositionSocket: mocks.connect,
 }));
-vi.mock("../../middleware/auth", () => ({ resolveAuthIdentity: vi.fn() }));
+vi.mock("@/middleware/auth", () => ({ resolveAuthIdentity: vi.fn() }));
 vi.mock("./credentials", () => ({
   getDecryptedBinding: mocks.binding,
   isAutoRefreshableEndfieldError: () => false,
@@ -23,8 +23,9 @@ vi.mock("./locatorCache", () => ({
   getPositionCacheKey: () => "key",
   refreshPositionCache: vi.fn(),
 }));
-import type { EndfieldPositionTermination } from "../../lib/endfieldClient/positionSocket";
-import { ApiError } from "../../lib/errors";
+import type { EndfieldPositionTermination } from "@/lib/endfieldClient/positionSocket";
+import { ApiError } from "@/lib/errors";
+
 import { positionReconnectDelay } from "./helpers";
 import { handleEndfieldPositionSocket } from "./positionHandlers";
 

@@ -1,13 +1,11 @@
 import type { Hono } from "hono";
 
-import {
-  AUTH_EXCHANGE_CHALLENGE_PARAM,
-  createOAuthExchangeProof,
-} from "../../lib/auth/browserSession";
-import { createAuth } from "../../lib/auth/createAuth";
-import { ApiError } from "../../lib/errors";
-import { rateLimit } from "../../middleware/rate-limit";
-import type { AppEnv } from "../../types/app";
+import { AUTH_EXCHANGE_CHALLENGE_PARAM, createOAuthExchangeProof } from "@/lib/auth/browserSession";
+import { createAuth } from "@/lib/auth/createAuth";
+import { ApiError } from "@/lib/errors";
+import { rateLimit } from "@/middleware/rate-limit";
+import type { AppEnv } from "@/types/app";
+
 import {
   applyDefaultSocialCallbackUrls,
   attachSessionExchangeCode,

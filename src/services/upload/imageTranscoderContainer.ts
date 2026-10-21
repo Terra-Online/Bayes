@@ -1,6 +1,6 @@
 import { Container } from "@cloudflare/containers";
 
-import type { Bindings } from "../../types/app";
+import type { Bindings } from "@/types/app";
 
 export class oem_imgTrans extends Container<Bindings> {
   defaultPort = 8080;

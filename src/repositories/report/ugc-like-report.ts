@@ -1,4 +1,4 @@
-import { buildPointShareUrlForMarker } from "../../lib/pointShare";
+import { buildPointShareUrlForMarker } from "@/lib/pointShare";
 
 export interface UgcLikeReport {
   generatedAt: string;

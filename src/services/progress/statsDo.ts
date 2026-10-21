@@ -1,4 +1,5 @@
-import { ApiError } from "../../lib/errors";
+import { ApiError } from "@/lib/errors";
+
 import { buildStatsCountsBase64, parseStatsCountsBase64 } from "./bitmap";
 import { isSha256Hex, type ProgressDoEnv } from "./manifest";
 import {

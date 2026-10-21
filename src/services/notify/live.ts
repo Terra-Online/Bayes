@@ -1,6 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 
-import { ApiError } from "../../lib/errors";
+import { ApiError } from "@/lib/errors";
 import {
   getNotificationById,
   getNotificationUnreadCounts,
@@ -8,8 +8,8 @@ import {
   type NotificationRecord,
   type SerializedNotificationItem,
   type NotificationUnreadCounts,
-} from "../../repositories/notifications";
-import type { Bindings } from "../../types/app";
+} from "@/repositories/notifications";
+import type { Bindings } from "@/types/app";
 
 export interface NotificationLiveEnvelope {
   event: "notification.upserted";

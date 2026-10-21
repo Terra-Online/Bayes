@@ -4,17 +4,18 @@ import {
   AI_ACTIVE_MODERATION_NOTE_PREFIX,
   AI_PENDING_AUDIT_MODERATION_NOTE_PREFIX,
   isCommentEditModerationNote,
-} from "../../lib/moderation";
-import { prewarmPublicUgcAsset } from "../../lib/publicUgcAssets";
-import { invalidateUploadCaches } from "../../publicRead/client/invalidate";
-import type { NotificationRecord } from "../../repositories/notifications";
+} from "@/lib/moderation";
+import { prewarmPublicUgcAsset } from "@/lib/publicUgcAssets";
+import { invalidateUploadCaches } from "@/publicRead/client/invalidate";
+import type { NotificationRecord } from "@/repositories/notifications";
 import {
   getSubmissionById,
   transitionSubmissionStatusWithNotifications,
-} from "../../repositories/submission/statusSubmission";
-import type { SubmissionRecord, SubmissionStatus } from "../../repositories/submission/types";
-import { applyUserPointsDelta } from "../../repositories/users";
-import { getModerationPointsDeltaWithDailyBackoff } from "../karma/moderationPoints";
+} from "@/repositories/submission/statusSubmission";
+import type { SubmissionRecord, SubmissionStatus } from "@/repositories/submission/types";
+import { applyUserPointsDelta } from "@/repositories/users";
+import { getModerationPointsDeltaWithDailyBackoff } from "@/services/karma/moderationPoints";
+
 import type { PendingOpenAICompletionStats } from "./messages";
 import {
   createEmptyPendingOpenAICompletionStats,

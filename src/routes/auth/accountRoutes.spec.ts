@@ -1,15 +1,16 @@
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { onAppError } from "../../middleware/error-handler";
-import { createAuthDatabase } from "../../test/authDatabase";
-import type { AppEnv, AuthUser, Bindings } from "../../types/app";
+import { onAppError } from "@/middleware/error-handler";
+import { createAuthDatabase } from "@/test/authDatabase";
+import type { AppEnv, AuthUser, Bindings } from "@/types/app";
+
 import { registerAccountAuthRoutes } from "./accountRoutes";
 
-vi.mock("../../middleware/auth", () => ({
+vi.mock("@/middleware/auth", () => ({
   requireAuth: async (_c: unknown, next: () => Promise<void>) => next(),
 }));
-vi.mock("../../middleware/rate-limit", () => ({
+vi.mock("@/middleware/rate-limit", () => ({
   rateLimit: () => async (_c: unknown, next: () => Promise<void>) => next(),
 }));
 

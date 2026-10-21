@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { parseEndfieldDeviceProfile } from "../../lib/endfieldClient/deviceProfile";
+import { parseEndfieldDeviceProfile } from "@/lib/endfieldClient/deviceProfile";
 
 export const providerSchema = z.enum(["skland", "skport"]);
 

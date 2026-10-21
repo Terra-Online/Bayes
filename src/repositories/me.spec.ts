@@ -2,7 +2,8 @@ import { readFileSync } from "node:fs";
 
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
-import { createUGCImageDatabase } from "../test/ugcImageDatabase";
+import { createUGCImageDatabase } from "@/test/ugcImageDatabase";
+
 import { getContributionImage, listContributions } from "./me";
 
 let database: ReturnType<typeof createUGCImageDatabase>;

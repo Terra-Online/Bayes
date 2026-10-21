@@ -1,12 +1,12 @@
-import { sha256Hex } from "../../lib/crypto";
-import { DEFAULT_KV_READ_CACHE_TTL_SECONDS, getJsonFromKv, putJsonToKv } from "../../lib/kvJson";
-import { listActiveCommentsByMarker } from "../../repositories/submission/listComments";
-import type { PublicSubmissionComment } from "../../repositories/submission/types";
+import { sha256Hex } from "@/lib/crypto";
+import { DEFAULT_KV_READ_CACHE_TTL_SECONDS, getJsonFromKv, putJsonToKv } from "@/lib/kvJson";
 import {
   PUBLIC_MARKER_COMMENT_CACHE_LIMIT,
   PUBLIC_MARKER_COMMENT_REPLY_CACHE_LIMIT,
   type PublicCommentCacheNamespace,
-} from "../contract/markers";
+} from "@/publicRead/contract/markers";
+import { listActiveCommentsByMarker } from "@/repositories/submission/listComments";
+import type { PublicSubmissionComment } from "@/repositories/submission/types";
 
 export const PUBLIC_MARKER_COMMENT_POSITIVE_TTL_SECONDS = 90 * 24 * 60 * 60;
 export const PUBLIC_MARKER_COMMENT_EMPTY_TTL_SECONDS = 10 * 60;

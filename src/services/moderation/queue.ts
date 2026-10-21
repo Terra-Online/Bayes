@@ -1,13 +1,14 @@
-import { getRuntimeConfig } from "../../lib/config";
-import { createRedisClient } from "../../lib/redis";
-import { getPendingOpenAISubmissions } from "../../repositories/submission/createSubmission";
+import { getRuntimeConfig } from "@/lib/config";
+import { createRedisClient } from "@/lib/redis";
+import { getPendingOpenAISubmissions } from "@/repositories/submission/createSubmission";
 import {
   getSubmissionById,
   markSubmissionModerationQueued,
-} from "../../repositories/submission/statusSubmission";
-import type { Bindings } from "../../types/app";
-import { publishNotificationsCreated } from "../notify/live";
-import { prewarmApprovedCommentTrans } from "../upload/commentTranslation";
+} from "@/repositories/submission/statusSubmission";
+import { publishNotificationsCreated } from "@/services/notify/live";
+import { prewarmApprovedCommentTrans } from "@/services/upload/commentTranslation";
+import type { Bindings } from "@/types/app";
+
 import { moderateSubmissionById } from "./core";
 import type {
   OemModerationQueueMessage,

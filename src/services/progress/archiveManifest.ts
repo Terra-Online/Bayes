@@ -1,7 +1,8 @@
-import { sha256Hex } from "../../lib/crypto";
-import { ApiError } from "../../lib/errors";
-import { getJsonFromKv, putJsonToKv } from "../../lib/kvJson";
-import type { Bindings } from "../../types/app";
+import { sha256Hex } from "@/lib/crypto";
+import { ApiError } from "@/lib/errors";
+import { getJsonFromKv, putJsonToKv } from "@/lib/kvJson";
+import type { Bindings } from "@/types/app";
+
 import {
   ARCHIVE_PROGRESS_BITS_PER_ARCHIVE,
   ARCHIVE_PROGRESS_FORMAT_VERSION,

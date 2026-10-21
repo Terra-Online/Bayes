@@ -1,5 +1,6 @@
-import { getEndfieldPosition } from "../../lib/endfieldClient/positionSocket";
-import type { Bindings } from "../../types/app";
+import { getEndfieldPosition } from "@/lib/endfieldClient/positionSocket";
+import type { Bindings } from "@/types/app";
+
 import type {
   AppContext,
   DecryptedBinding,

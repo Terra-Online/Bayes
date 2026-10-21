@@ -1,47 +1,47 @@
 import { Hono, type Context } from "hono";
 import { z } from "zod";
 
-import { getRuntimeConfig } from "../lib/config";
-import { ApiError } from "../lib/errors";
-import { isCommentEditModerationNote, RECALL_MODERATION_NOTE_PREFIX } from "../lib/moderation";
-import { prewarmPublicUgcAsset } from "../lib/publicUgcAssets";
-import { createRedisClient } from "../lib/redis";
-import { requireAuth, requireRole } from "../middleware/auth";
-import { rateLimit } from "../middleware/rate-limit";
-import { invalidateUploadCaches } from "../publicRead/client/invalidate";
-import type { NotificationRecord } from "../repositories/notifications";
+import { getRuntimeConfig } from "@/lib/config";
+import { ApiError } from "@/lib/errors";
+import { isCommentEditModerationNote, RECALL_MODERATION_NOTE_PREFIX } from "@/lib/moderation";
+import { prewarmPublicUgcAsset } from "@/lib/publicUgcAssets";
+import { createRedisClient } from "@/lib/redis";
+import { requireAuth, requireRole } from "@/middleware/auth";
+import { rateLimit } from "@/middleware/rate-limit";
+import { invalidateUploadCaches } from "@/publicRead/client/invalidate";
+import type { NotificationRecord } from "@/repositories/notifications";
 import {
   listDuplicateImageMarkers,
   listDuplicateMarkerImages,
-} from "../repositories/submission-duplicates";
+} from "@/repositories/submission-duplicates";
 import {
   getReviewSubmissionStats,
   getReviewSubmissions,
   markImageSubmissionsStaleByFilePathPrefix,
-} from "../repositories/submission-review";
+} from "@/repositories/submission-review";
 import {
   getSubmissionById,
   transitionSubmissionStatusWithNotifications,
-} from "../repositories/submission/statusSubmission";
+} from "@/repositories/submission/statusSubmission";
 import {
   ALL_STATUSES,
   type SubmissionRecord,
   type SubmissionStatus,
-} from "../repositories/submission/types";
-import { applyUserPointsDelta } from "../repositories/users";
-import { evaluateKarmaBatch } from "../services/karma/evaluation";
-import { getModerationPointsDeltaWithDailyBackoff } from "../services/karma/moderationPoints";
-import { moderateSubmissionIds } from "../services/moderation/core";
-import { getImageCoverage } from "../services/moderation/imageCoverage";
-import { notifySubmissionModerationResult } from "../services/moderation/notifications";
-import { getOrphanImages } from "../services/moderation/orphanImages";
+} from "@/repositories/submission/types";
+import { applyUserPointsDelta } from "@/repositories/users";
+import { evaluateKarmaBatch } from "@/services/karma/evaluation";
+import { getModerationPointsDeltaWithDailyBackoff } from "@/services/karma/moderationPoints";
+import { moderateSubmissionIds } from "@/services/moderation/core";
+import { getImageCoverage } from "@/services/moderation/imageCoverage";
+import { notifySubmissionModerationResult } from "@/services/moderation/notifications";
+import { getOrphanImages } from "@/services/moderation/orphanImages";
 import {
   ensureModerationBackfill,
   enqueueApprovedCommentTransPrewarm,
-} from "../services/moderation/queue";
-import { sendModerationWarning } from "../services/moderation/warnings";
-import { publishNotificationsCreated } from "../services/notify/live";
-import type { AppEnv } from "../types/app";
+} from "@/services/moderation/queue";
+import { sendModerationWarning } from "@/services/moderation/warnings";
+import { publishNotificationsCreated } from "@/services/notify/live";
+import type { AppEnv } from "@/types/app";
 
 const updateSchema = z.object({
   status: z.enum([

@@ -1,4 +1,5 @@
-import type { Bindings } from "../../types/app";
+import type { Bindings } from "@/types/app";
+
 import {
   listDispatchableProgressStatsEvents,
   markProgressStatsEventFailed,

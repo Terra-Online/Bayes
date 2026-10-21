@@ -3,8 +3,9 @@ import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { UGC_COMPETING_INDEXES_SQL } from "../../test/ugcIndexes";
-import { markNotificationsRead } from "../notifications";
+import { markNotificationsRead } from "@/repositories/notifications";
+import { UGC_COMPETING_INDEXES_SQL } from "@/test/ugcIndexes";
+
 import {
   listActiveCommentsByMarker,
   listCommentViewerStateByMarker,
