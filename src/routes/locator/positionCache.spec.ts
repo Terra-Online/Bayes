@@ -1,9 +1,9 @@
+import type { Context } from "hono";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { AppContext } from "@/routes/binding/types";
 import type { DecryptedBinding } from "@/services/binding/types";
 import { deleteLocatorCaches, readPositionCache } from "@/services/locator/cache";
-import type { Bindings } from "@/types/app";
+import type { AppEnv, Bindings } from "@/types/app";
 
 import { refreshPositionCache } from "./positionCache";
 
@@ -16,7 +16,7 @@ const binding = {
 } as DecryptedBinding;
 const position = { pos: { x: 1, y: 2, z: 3 }, isOnline: true, mapId: "map", levelId: "level" };
 const env = () => ({ DB: {}, ENDFIELD_CREDENTIAL_SECRET: "test-secret" }) as Bindings;
-const context = (bindings: Bindings) => ({ env: bindings }) as AppContext;
+const context = (bindings: Bindings) => ({ env: bindings }) as Context<AppEnv>;
 
 describe("request-owned position refreshes", () => {
   beforeEach(() => upstream.mockReset().mockResolvedValue(position));

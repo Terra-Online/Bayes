@@ -1,14 +1,16 @@
+import type { Context } from "hono";
+
 import { getEndfieldPosition } from "@/lib/endfieldClient/positionSocket";
-import type { AppContext } from "@/routes/binding/types";
 import type { DecryptedBinding } from "@/services/binding/types";
 import { getLocatorCache, writePositionCache } from "@/services/locator/cache";
 import type { PositionCacheEntry } from "@/services/locator/types";
+import type { AppEnv } from "@/types/app";
 
 // Pending refreshes belong to the Hono request; completed values live in the service cache.
-const positionRequests = new WeakMap<AppContext, Map<string, Promise<PositionCacheEntry>>>();
+const positionRequests = new WeakMap<Context<AppEnv>, Map<string, Promise<PositionCacheEntry>>>();
 
 export async function refreshPositionCache(
-  c: AppContext,
+  c: Context<AppEnv>,
   key: string,
   binding: DecryptedBinding,
 ): Promise<PositionCacheEntry> {

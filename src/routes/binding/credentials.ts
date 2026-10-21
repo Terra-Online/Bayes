@@ -1,3 +1,5 @@
+import type { Context } from "hono";
+
 import { decryptSecret, encryptSecret } from "@/lib/crypto";
 import {
   generateEndfieldCredByCode,
@@ -20,7 +22,6 @@ import {
   publicBinding,
   updateBindingCredentials,
 } from "@/repositories/binding/repository";
-import type { AppContext } from "@/routes/binding/types";
 import type { DecryptedBinding } from "@/services/binding/types";
 import {
   deleteLocatorCaches,
@@ -28,10 +29,11 @@ import {
   readDecryptedBindingCache,
   writeDecryptedBindingCache,
 } from "@/services/locator/cache";
+import type { AppEnv } from "@/types/app";
 
-const credentialRequests = new WeakMap<AppContext, Map<string, Promise<DecryptedBinding>>>();
+const credentialRequests = new WeakMap<Context<AppEnv>, Map<string, Promise<DecryptedBinding>>>();
 
-export function getCredentialSecret(c: AppContext): string {
+export function getCredentialSecret(c: Context<AppEnv>): string {
   const secret = c.env.ENDFIELD_CREDENTIAL_SECRET ?? c.env.BETTER_AUTH_SECRET;
   if (!secret || secret.trim().length < 16) {
     throw new ApiError(
@@ -44,7 +46,7 @@ export function getCredentialSecret(c: AppContext): string {
 }
 
 export async function getDecryptedBinding(
-  c: AppContext,
+  c: Context<AppEnv>,
   uid: string,
   options: { bypassCache?: boolean } = {},
 ): Promise<DecryptedBinding> {
@@ -107,7 +109,7 @@ export function isAutoRefreshableEndfieldError(error: unknown): boolean {
 }
 
 async function updateStoredCredential(
-  c: AppContext,
+  c: Context<AppEnv>,
   uid: string,
   binding: DecryptedBinding,
   generated: { cred: string; token: string },
@@ -150,7 +152,7 @@ async function updateStoredCredential(
 }
 
 async function performCredentialRefresh(
-  c: AppContext,
+  c: Context<AppEnv>,
   uid: string,
   binding: DecryptedBinding,
 ): Promise<DecryptedBinding> {
@@ -232,7 +234,7 @@ async function performCredentialRefresh(
 }
 
 export async function refreshBindingCredentials(
-  c: AppContext,
+  c: Context<AppEnv>,
   uid: string,
   binding: DecryptedBinding,
 ): Promise<DecryptedBinding> {
@@ -258,7 +260,7 @@ export async function refreshBindingCredentials(
 }
 
 export async function withAutoRefreshedBinding<T>(
-  c: AppContext,
+  c: Context<AppEnv>,
   uid: string,
   operation: (binding: DecryptedBinding) => Promise<T>,
   initialBinding?: DecryptedBinding,

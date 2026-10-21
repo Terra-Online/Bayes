@@ -1,7 +1,9 @@
-import { ApiError } from "@/lib/errors";
-import type { AppContext } from "@/routes/binding/types";
+import type { Context } from "hono";
 
-export function shouldIncludeBinding(c: AppContext): boolean {
+import { ApiError } from "@/lib/errors";
+import type { AppEnv } from "@/types/app";
+
+export function shouldIncludeBinding(c: Context<AppEnv>): boolean {
   const value = c.req.query("binding") ?? c.req.query("includeBinding");
   return value === "1" || value === "true";
 }

@@ -1,11 +1,11 @@
+import type { Context } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError } from "@/lib/errors";
 import type { EndfieldBindingRow } from "@/repositories/binding/types";
-import type { AppContext } from "@/routes/binding/types";
 import { deleteLocatorCaches, readDecryptedBindingCache } from "@/services/locator/cache";
 import { SqliteD1 } from "@/test/sqliteD1";
-import type { Bindings } from "@/types/app";
+import type { AppEnv, Bindings } from "@/types/app";
 
 import { getDecryptedBinding, refreshBindingCredentials } from "./credentials";
 
@@ -40,7 +40,7 @@ vi.mock("@/repositories/binding/repository", async (importOriginal) => ({
 describe("request-owned credential refresh and conditional persistence", () => {
   let database: SqliteD1;
   let env: Bindings;
-  const context = () => ({ env }) as AppContext;
+  const context = () => ({ env }) as Context<AppEnv>;
   beforeEach(() => {
     vi.clearAllMocks();
     database = new SqliteD1();

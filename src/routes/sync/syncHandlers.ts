@@ -1,10 +1,11 @@
-import { withAutoRefreshedBinding } from "@/routes/binding/credentials";
-import { requireUser } from "@/routes/binding/helpers";
-import type { AppContext } from "@/routes/binding/types";
-import { getOfficialMarks, officialMarkedPointIds } from "@/services/sync/officialMarks";
+import type { Context } from "hono";
 
-export async function handleOfficialMarks(c: AppContext) {
-  const user = requireUser(c);
+import { withAutoRefreshedBinding } from "@/routes/binding/credentials";
+import { getOfficialMarks, officialMarkedPointIds } from "@/services/sync/officialMarks";
+import type { AppEnv } from "@/types/app";
+
+export async function handleOfficialMarks(c: Context<AppEnv>) {
+  const user = c.get("authUser")!;
   return withAutoRefreshedBinding(c, user.uid, async (binding) => {
     const result = await getOfficialMarks(binding);
     const markedIds = [
