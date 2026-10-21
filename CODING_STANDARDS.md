@@ -4,6 +4,10 @@ This is the agent entrypoint for implementation and review. Apply these standard
 incrementally to touched code; report violations with the affected location and rule.
 `Partially adopted` marks agreed rules with known migration work remaining.
 
+Read source code, configuration, and co-located tests for implementation details.
+Human guides under `docs/` are not required agent reading; consult them only when
+the task explicitly concerns those documents.
+
 ## Code responsibilities
 
 - `routes/<topic>/`:
@@ -48,9 +52,11 @@ for cached public reads, follow [public read conventions](src/publicRead/README.
 
 Use Node.js 22.12.0+ and pnpm. Docker is needed for local container image conversion.
 Some local data files need initialization; follow [data templates](templates/README.md).
-See [local development](docs/development.md) for setup and WAF work,
-[architecture](docs/architecture.md) for context, and [operations](docs/operations.md)
-for deployment. A Cloudflare production account is not required for local checks.
+For runtime setup, inspect [wrangler.toml](wrangler.toml) and
+[.dev.vars.example](.dev.vars.example). For WAF work, read
+[sync-waf-allowlist.mjs](scripts/sync-waf-allowlist.mjs); for deployment, read
+[deploy-with-dev-vars.sh](scripts/deploy-with-dev-vars.sh).
+A Cloudflare production account is not required for local checks.
 
 ## Checks
 
@@ -86,4 +92,4 @@ guides, development may point to operations, and `docs/` may point to the logger
 README. Keep these directions one-way; leaves must not link back to an index.
 
 Use English for shared guides, matching Atlos. Update the owning document with a
-behavior change. Human guide destinations are listed in [docs/README.md](docs/README.md).
+behavior change.
