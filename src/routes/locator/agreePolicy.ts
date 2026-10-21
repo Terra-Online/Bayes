@@ -9,12 +9,11 @@ import {
   publicBinding,
 } from "@/repositories/binding/repository";
 import { getCredentialSecret } from "@/routes/binding/credentials";
-import { requireUser } from "@/routes/binding/helpers";
 import { agreeSchema } from "@/routes/schema/locator";
 import type { AppEnv } from "@/types/app";
 
 export async function handleAgree(c: Context<AppEnv>) {
-  const user = requireUser(c);
+  const user = c.get("authUser")!;
   const binding = await getBinding(c.env.DB, user.uid);
   if (!binding) {
     throw new ApiError(404, "ENDFIELD_BINDING_NOT_FOUND", "Endfield binding is not configured.");

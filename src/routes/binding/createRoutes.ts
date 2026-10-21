@@ -19,7 +19,6 @@ import { deleteLocatorCaches } from "@/services/locator/cache";
 import type { AppEnv } from "@/types/app";
 
 import { getCredentialSecret } from "./credentials";
-import { requireUser } from "./helpers";
 
 function bindingDependencies(c: Context<AppEnv>): BindingDependencies {
   return {
@@ -39,13 +38,13 @@ export function createRoutes() {
   app.use("/endfield/*", requireAuth, rateLimit("binding"));
 
   app.get("/endfield/status", async (c): Promise<Response> => {
-    const user = requireUser(c);
+    const user = c.get("authUser")!;
     const binding = await getBinding(c.env.DB, user.uid);
     return c.json({ binding: publicBinding(binding) });
   });
 
   app.post("/endfield/exchange-token", async (c): Promise<Response> => {
-    const user = requireUser(c);
+    const user = c.get("authUser")!;
     const payload = await c.req.json().catch(() => undefined);
     const parsed = exchangeTokenSchema.safeParse(payload);
     if (!parsed.success) {
@@ -78,7 +77,7 @@ export function createRoutes() {
   });
 
   app.post("/endfield/exchange-code", async (c): Promise<Response> => {
-    const user = requireUser(c);
+    const user = c.get("authUser")!;
     const parsed = exchangeCodeSchema.safeParse(await c.req.json());
     if (!parsed.success) {
       throw new ApiError(
@@ -97,7 +96,7 @@ export function createRoutes() {
   });
 
   app.post("/endfield/bind-role", async (c): Promise<Response> => {
-    const user = requireUser(c);
+    const user = c.get("authUser")!;
     const parsed = bindRoleSchema.safeParse(await c.req.json());
     if (!parsed.success) {
       throw new ApiError(422, "VALIDATION_ERROR", "Invalid role payload.", parsed.error.flatten());
@@ -108,13 +107,13 @@ export function createRoutes() {
   });
 
   app.post("/endfield/disable", async (c): Promise<Response> => {
-    const user = requireUser(c);
+    const user = c.get("authUser")!;
     const binding = await disableBinding({ uid: user.uid }, bindingDependencies(c));
     return c.json({ ok: true, binding: publicBinding(binding) });
   });
 
   app.post("/endfield/unlink", async (c): Promise<Response> => {
-    const user = requireUser(c);
+    const user = c.get("authUser")!;
     await unlinkBinding({ uid: user.uid }, bindingDependencies(c));
     return c.json({ ok: true, binding: publicBinding(null) });
   });
