@@ -16,7 +16,7 @@ import { parseTrustedFrontendOrigins, resolveTrustedRequestOrigin } from "./fron
 import type { ForwardToAuthJsonPath, ForwardToAuthRawRequest } from "./types";
 
 export function registerSocialAuthRoutes(
-  app: Hono<AppEnv>,
+  app: Hono<AppEnv<{ requestId: string }>>,
   deps: {
     forwardToAuthJsonPath: ForwardToAuthJsonPath;
     forwardToAuthRawRequest: ForwardToAuthRawRequest;

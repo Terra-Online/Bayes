@@ -14,7 +14,7 @@ import type {
 } from "@/repositories/submission/types";
 import { commentsQuerySchema } from "@/routes/schema/uploads";
 import { applyCommentViewerReactions } from "@/services/upload/viewerOverlay";
-import type { AppEnv } from "@/types/app";
+import type { AppEnv, AuthUser } from "@/types/app";
 
 import { getOptionalAuthIdentity, hasAuthHeaders, requireMarkerIds } from "./helpers";
 import { resolveImageScope } from "./scope";
@@ -65,7 +65,9 @@ function mergeViewerPendingComments(
   return pendingRoots.length > 0 ? [...pendingRoots, ...publicComments] : publicComments;
 }
 
-export async function handleListMyComments(c: Context<AppEnv>) {
+export async function handleListMyComments<E extends AppEnv<{ authUser: AuthUser }>>(
+  c: Context<E>,
+) {
   const user = c.get("authUser");
   if (!user) {
     throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
@@ -95,7 +97,7 @@ export async function handleListMyComments(c: Context<AppEnv>) {
   return response;
 }
 
-export async function handleListPublicComments(c: Context<AppEnv>) {
+export async function handleListPublicComments<E extends AppEnv>(c: Context<E>) {
   const parsed = commentsQuerySchema.safeParse({
     markerId: c.req.query("markerId"),
     markerIds: c.req.query("markerIds"),

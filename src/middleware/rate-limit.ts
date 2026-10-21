@@ -4,7 +4,7 @@ import { ApiError } from "@/lib/errors";
 import { getUploadRateLimitForKarma } from "@/lib/karma/rules";
 import { createRedisClient } from "@/lib/redis";
 import { hmacServiceIdentifier } from "@/lib/serviceIdentity";
-import type { AppEnv, Bindings } from "@/types/app";
+import type { AppEnv, AuthUser, Bindings } from "@/types/app";
 
 const OTP_SEND_IP_LIMIT_PER_MINUTE = 20;
 const OTP_SEND_EMAIL_LIMIT_PER_HOUR = 8;
@@ -76,7 +76,7 @@ function getScopeLimit(scope: RateLimitScope): number {
 
 function getLimitForRequest(
   scope: RateLimitScope,
-  c: Parameters<MiddlewareHandler<AppEnv>>[0],
+  c: Parameters<MiddlewareHandler<AppEnv<{ authUser?: AuthUser }>>>[0],
 ): number {
   if (scope === "upload") {
     const user = c.get("authUser");
@@ -139,7 +139,7 @@ function applyLocalFixedWindowLimit(
 
 function canUseLocalReadLimit(
   scope: RateLimitScope,
-  c: Parameters<MiddlewareHandler<AppEnv>>[0],
+  c: Parameters<MiddlewareHandler<AppEnv<{ authUser?: AuthUser }>>>[0],
 ): boolean {
   const method = c.req.method.toUpperCase();
   const readMethod = method === "GET" || method === "HEAD" || method === "OPTIONS";
@@ -151,7 +151,7 @@ function normalizeEmail(input: string): string {
 }
 
 async function tryExtractEmailFromJson(
-  c: Parameters<MiddlewareHandler<AppEnv>>[0],
+  c: Parameters<MiddlewareHandler<AppEnv<{ authUser?: AuthUser }>>>[0],
 ): Promise<string | null> {
   const contentType = c.req.header("content-type")?.toLowerCase() ?? "";
   if (!contentType.includes("application/json")) {
@@ -172,7 +172,9 @@ async function tryExtractEmailFromJson(
   }
 }
 
-function getRequestIp(c: Parameters<MiddlewareHandler<AppEnv>>[0]): string {
+function getRequestIp(
+  c: Parameters<MiddlewareHandler<AppEnv<{ authUser?: AuthUser }>>>[0],
+): string {
   return c.req.header("cf-connecting-ip") ?? "anonymous";
 }
 
@@ -188,7 +190,7 @@ function getCloudflareRateLimitBinding(env: Bindings, scope: RateLimitScope): Ra
 
 function getCloudflareRateLimitIdentity(
   scope: RateLimitScope,
-  c: Parameters<MiddlewareHandler<AppEnv>>[0],
+  c: Parameters<MiddlewareHandler<AppEnv<{ authUser?: AuthUser }>>>[0],
   requestIp: string,
 ): string {
   const user = c.get("authUser");
@@ -199,7 +201,7 @@ function getCloudflareRateLimitIdentity(
 }
 
 async function applyCloudflareRateLimit(
-  c: Parameters<MiddlewareHandler<AppEnv>>[0],
+  c: Parameters<MiddlewareHandler<AppEnv<{ authUser?: AuthUser }>>>[0],
   scope: RateLimitScope,
   requestIp: string,
 ): Promise<void> {
@@ -222,7 +224,7 @@ async function applyCloudflareRateLimit(
 }
 
 async function applySlidingWindowLimit(
-  c: Parameters<MiddlewareHandler<AppEnv>>[0],
+  c: Parameters<MiddlewareHandler<AppEnv<{ authUser?: AuthUser }>>>[0],
   redisKey: string,
   limit: number,
   windowMs: number,
@@ -270,7 +272,9 @@ async function buildRedisRateKey(
   return hmacServiceIdentifier(env, namespace, identity);
 }
 
-export function rateLimit(scope: RateLimitScope): MiddlewareHandler<AppEnv> {
+export function rateLimit(
+  scope: RateLimitScope,
+): MiddlewareHandler<AppEnv<{ authUser?: AuthUser }>> {
   return async (c, next) => {
     const requestIp = getRequestIp(c);
     const user = c.get("authUser");

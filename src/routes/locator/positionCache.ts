@@ -7,10 +7,10 @@ import type { PositionCacheEntry } from "@/services/locator/types";
 import type { AppEnv } from "@/types/app";
 
 // Pending refreshes belong to the Hono request; completed values live in the service cache.
-const positionRequests = new WeakMap<Context<AppEnv>, Map<string, Promise<PositionCacheEntry>>>();
+const positionRequests = new WeakMap<object, Map<string, Promise<PositionCacheEntry>>>();
 
-export async function refreshPositionCache(
-  c: Context<AppEnv>,
+export async function refreshPositionCache<E extends AppEnv>(
+  c: Context<E>,
   key: string,
   binding: DecryptedBinding,
 ): Promise<PositionCacheEntry> {

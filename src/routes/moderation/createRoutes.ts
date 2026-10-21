@@ -148,8 +148,8 @@ function shouldApplyModerationPoints(
   return true;
 }
 
-async function runModeration(
-  c: Context<AppEnv>,
+async function runModeration<E extends AppEnv>(
+  c: Context<E>,
   payload: {
     ids?: string[];
     limit?: number;

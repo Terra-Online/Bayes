@@ -1,7 +1,9 @@
 import { getCookies } from "better-auth/cookies";
+import type { Context } from "hono";
 
 import { AUTH_EXCHANGE_CHALLENGE_PARAM } from "@/lib/auth/browserSession";
 import { createAuth } from "@/lib/auth/createAuth";
+import type { AppEnv } from "@/types/app";
 
 import {
   isTrustedCallbackUrlForResponse,
@@ -9,7 +11,6 @@ import {
   resolveTrustedRequestOrigin,
 } from "./frontendOrigins";
 import { createSessionExchangeCode } from "./sessionExchange";
-import type { AuthRouteContext } from "./types";
 
 function splitSetCookieHeader(setCookie: string): string[] {
   const result: string[] = [];
@@ -88,7 +89,10 @@ function readSessionTokenFromSetCookie(
   return null;
 }
 
-function readSessionTokenFromResponse(c: AuthRouteContext, response: Response): string | null {
+function readSessionTokenFromResponse<E extends AppEnv<{ requestId: string }>>(
+  c: Context<E>,
+  response: Response,
+): string | null {
   const authToken = response.headers.get("set-auth-token")?.trim();
   if (authToken) {
     return authToken;
@@ -145,7 +149,10 @@ function toSafeUrlLog(raw: string | null): {
   }
 }
 
-export function toSafeTrustedUrlLog(c: AuthRouteContext, raw: string | null) {
+export function toSafeTrustedUrlLog<E extends AppEnv<{ requestId: string }>>(
+  c: Context<E>,
+  raw: string | null,
+) {
   const details = toSafeUrlLog(raw);
   if (!raw) {
     return details;
@@ -157,7 +164,10 @@ export function toSafeTrustedUrlLog(c: AuthRouteContext, raw: string | null) {
   };
 }
 
-export function applyDefaultSocialCallbackUrls(c: AuthRouteContext, body: Record<string, unknown>) {
+export function applyDefaultSocialCallbackUrls<E extends AppEnv<{ requestId: string }>>(
+  c: Context<E>,
+  body: Record<string, unknown>,
+) {
   const defaultOrigin = resolveTrustedRequestOrigin(c);
   if (!defaultOrigin) {
     return body;
@@ -175,8 +185,8 @@ export function applyDefaultSocialCallbackUrls(c: AuthRouteContext, body: Record
   return nextBody;
 }
 
-export async function attachSessionExchangeCode(
-  c: AuthRouteContext,
+export async function attachSessionExchangeCode<E extends AppEnv<{ requestId: string }>>(
+  c: Context<E>,
   response: Response,
 ): Promise<Response> {
   if (!response.status.toString().startsWith("3")) {

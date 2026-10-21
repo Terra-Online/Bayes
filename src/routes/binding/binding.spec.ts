@@ -75,7 +75,7 @@ afterEach(() => {
 });
 
 function request(path: string, payload?: unknown, uid: string | null = "user") {
-  const app = new Hono<AppEnv>();
+  const app = new Hono<AppEnv<{ authUser?: AuthUser; requestId: string }>>();
   app.onError((error, c) => {
     if (error instanceof ApiError) {
       return new Response(

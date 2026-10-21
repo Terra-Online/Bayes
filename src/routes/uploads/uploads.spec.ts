@@ -76,7 +76,7 @@ function request(
     productionErrors?: boolean;
   } = {},
 ) {
-  const app = new Hono<AppEnv>();
+  const app = new Hono<AppEnv<{ authUser?: AuthUser; requestId?: string }>>();
   app.onError(
     options.productionErrors
       ? onAppError

@@ -1,4 +1,6 @@
-import type { AuthRouteContext } from "./types";
+import type { Context } from "hono";
+
+import type { AppEnv } from "@/types/app";
 
 function uniqueConstraint(error: unknown): string | undefined {
   let current = error;
@@ -18,8 +20,8 @@ function uniqueConstraint(error: unknown): string | undefined {
   return undefined;
 }
 
-export function authConflictResponse(
-  c: AuthRouteContext,
+export function authConflictResponse<E extends AppEnv<{ requestId: string }>>(
+  c: Context<E>,
   path: string,
   error: unknown,
 ): Response | undefined {

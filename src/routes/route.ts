@@ -16,7 +16,7 @@ import { createRoutes as createRootRoutes } from "./root/createRoutes";
 import { createRoutes as createSyncRoutes } from "./sync/createRoutes";
 import { createRoutes as createUploadsRoutes } from "./uploads/createRoutes";
 
-export function mountRoutes(app: Hono<AppEnv>): void {
+export function mountRoutes<E extends AppEnv<{ requestId: string }>>(app: Hono<E>): void {
   // @waf-ignore: local/demo-only helper; keep this path out of the production allowlist.
   app.route("/__demo", createDemoRoutes());
   app.route("/health/v1", createHealthRoutes());

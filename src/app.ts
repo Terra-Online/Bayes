@@ -38,9 +38,7 @@ function parseAllowedOrigins(raw: string | undefined, backendUrl: string | undef
 }
 
 export function createApp() {
-  const app = new Hono<AppEnv>();
-
-  app.use("*", requestIdMiddleware);
+  const app = new Hono<AppEnv>().use("*", requestIdMiddleware);
   app.use(
     "*",
     cors({

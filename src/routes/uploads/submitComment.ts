@@ -7,9 +7,9 @@ import { getSubmissionById } from "@/repositories/submission/statusSubmission";
 import { commentSubmissionSchema } from "@/routes/schema/uploads";
 import { enqueueModeration } from "@/services/moderation/queue";
 import { normalizePathPart } from "@/services/upload/storage";
-import type { AppEnv } from "@/types/app";
+import type { AppEnv, AuthUser } from "@/types/app";
 
-export async function handleSubmitComment(c: Context<AppEnv>) {
+export async function handleSubmitComment<E extends AppEnv<{ authUser: AuthUser }>>(c: Context<E>) {
   const user = c.get("authUser");
   if (!user) {
     throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");

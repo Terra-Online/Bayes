@@ -88,7 +88,7 @@ async function revokeRegistrationSession(input: { env: AppEnv["Bindings"]; sessi
 }
 
 export function registerEmailAuthRoutes(
-  app: Hono<AppEnv>,
+  app: Hono<AppEnv<{ requestId: string }>>,
   deps: {
     forwardToAuthJsonPath: ForwardToAuthJsonPath;
     forwardToAuthRawRequest: ForwardToAuthRawRequest;

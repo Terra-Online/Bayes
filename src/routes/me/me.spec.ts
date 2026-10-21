@@ -50,7 +50,7 @@ function request(id: string, uid?: string, headers?: HeadersInit) {
   return requestPath(`/contributions/${id}/preview`, uid, headers);
 }
 function requestPath(path: string, uid?: string, headers?: HeadersInit) {
-  const app = new Hono<AppEnv>();
+  const app = new Hono<AppEnv<{ authUser?: AuthUser }>>();
   app.onError((error) => {
     if (error instanceof ApiError) {
       return new Response(error.code, { status: error.status });

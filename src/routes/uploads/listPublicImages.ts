@@ -10,12 +10,12 @@ import {
 } from "@/repositories/submission/listImages";
 import { imagesQuerySchema } from "@/routes/schema/uploads";
 import { applyImageViewerReactions } from "@/services/upload/viewerOverlay";
-import type { AppEnv } from "@/types/app";
+import type { AppEnv, AuthUser } from "@/types/app";
 
 import { getOptionalAuthIdentity, hasAuthHeaders, requireMarkerIds } from "./helpers";
 import { resolveImageScope, resolvePrivateAssetBaseUrl, resolvePublicAssetBaseUrl } from "./scope";
 
-export async function handleListMyImages(c: Context<AppEnv>) {
+export async function handleListMyImages<E extends AppEnv<{ authUser: AuthUser }>>(c: Context<E>) {
   const user = c.get("authUser");
   if (!user) {
     throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
@@ -50,7 +50,7 @@ export async function handleListMyImages(c: Context<AppEnv>) {
   return response;
 }
 
-export async function handleListPublicImages(c: Context<AppEnv>) {
+export async function handleListPublicImages<E extends AppEnv>(c: Context<E>) {
   const parsed = imagesQuerySchema.safeParse({
     markerId: c.req.query("markerId"),
     markerIds: c.req.query("markerIds"),

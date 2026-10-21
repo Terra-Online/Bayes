@@ -3,7 +3,7 @@ import { Hono } from "hono";
 import type { AppEnv } from "@/types/app";
 
 export function createRoutes() {
-  const app = new Hono<AppEnv>();
+  const app = new Hono<AppEnv<{ requestId: string }>>();
 
   app.get("/status", (c) => {
     return c.json({

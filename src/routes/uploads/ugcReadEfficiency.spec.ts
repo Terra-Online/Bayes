@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { PublicSubmissionComment } from "@/repositories/submission/types";
-import type { AppEnv, Bindings } from "@/types/app";
+import type { AppEnv, AuthUser, Bindings } from "@/types/app";
 
 import { handleListPointImages } from "./listPointImages";
 import { handleListPublicComments } from "./listPublicComments";
@@ -40,12 +40,12 @@ function cached(payload: unknown, options?: { headers: Record<string, string> })
 }
 
 const env = { DB: {} } as Bindings;
-const app = new Hono<AppEnv>();
+const app = new Hono<AppEnv<{ authUser?: AuthUser; requestId: string }>>();
 app.get("/images", async (c, next) => {
   if (c.req.query("includeMine") !== "1") {
     return next();
   }
-  c.set("authUser", { uid: "viewer", role: "n" } as AppEnv["Variables"]["authUser"] & {});
+  c.set("authUser", { uid: "viewer", role: "n" } as AuthUser);
   return handleListPointImages(c);
 });
 app.get("/images", handleListPublicImages);

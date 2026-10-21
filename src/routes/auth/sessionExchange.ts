@@ -1,3 +1,4 @@
+import type { Context } from "hono";
 import { z } from "zod";
 
 import {
@@ -9,10 +10,10 @@ import { createAuth } from "@/lib/auth/createAuth";
 import { ApiError } from "@/lib/errors";
 import { ensureUserProfile, formatPublicUid } from "@/repositories/users";
 import { sessionExchangeSchema } from "@/routes/schema/auth";
+import type { AppEnv } from "@/types/app";
 
 import { parseTrustedFrontendOrigins } from "./frontendOrigins";
 import { toSessionUser } from "./sessionUser";
-import type { AuthRouteContext } from "./types";
 
 const SESSION_EXCHANGE_CODE_PREFIX = "auth-session-exchange:";
 const SESSION_EXCHANGE_CODE_TTL_SECONDS = 120;
@@ -40,8 +41,8 @@ function classifyBrowser(
   return "other";
 }
 
-function logExchangeFailure(
-  c: AuthRouteContext,
+function logExchangeFailure<E extends AppEnv<{ requestId: string }>>(
+  c: Context<E>,
   phase: "code_lookup" | "proof_missing" | "proof_mismatch" | "session_lookup" | "consume_conflict",
 ) {
   console.error("[auth][session-exchange] rejected", {
@@ -53,8 +54,8 @@ function logExchangeFailure(
   });
 }
 
-export async function createSessionExchangeCode(
-  c: AuthRouteContext,
+export async function createSessionExchangeCode<E extends AppEnv<{ requestId: string }>>(
+  c: Context<E>,
   sessionToken: string,
   origin: string,
   challenge: string,
@@ -75,7 +76,9 @@ export async function createSessionExchangeCode(
   return code;
 }
 
-export async function handleSessionExchange(c: AuthRouteContext) {
+export async function handleSessionExchange<E extends AppEnv<{ requestId: string }>>(
+  c: Context<E>,
+) {
   const origin = c.req.header("origin");
   if (!origin || !parseTrustedFrontendOrigins(c).includes(origin)) {
     throw new ApiError(403, "ORIGIN_NOT_ALLOWED", "A trusted frontend origin is required.");

@@ -1,4 +1,5 @@
 import type { Context, MiddlewareHandler } from "hono";
+import { createMiddleware } from "hono/factory";
 
 import { resolveBrowserSessionHeaders } from "@/lib/auth/browserSession";
 import { createAuth } from "@/lib/auth/createAuth";
@@ -237,7 +238,9 @@ export function getRequestAuthHeaders(request: Request): Headers {
   return buildAuthHeaders(request.headers, url.searchParams.get("access_token"));
 }
 
-export async function resolveContextAuthUser(c: Context<AppEnv>): Promise<AuthUser> {
+export async function resolveContextAuthUser<
+  E extends AppEnv<{ authUser?: AuthUser; authUserPromise?: Promise<AuthUser> }>,
+>(c: Context<E>): Promise<AuthUser> {
   const existing = c.get("authUser");
   if (existing) {
     return existing;
@@ -258,12 +261,14 @@ export async function resolveContextAuthUser(c: Context<AppEnv>): Promise<AuthUs
   }
 }
 
-export const requireAuth: MiddlewareHandler<AppEnv> = async (c, next) => {
+export const requireAuth = createMiddleware<
+  AppEnv<{ authUser: AuthUser; authUserPromise?: Promise<AuthUser> }>
+>(async (c, next) => {
   await resolveContextAuthUser(c);
   await next();
-};
+});
 
-export function requireRole(roles: Role[]): MiddlewareHandler<AppEnv> {
+export function requireRole(roles: Role[]): MiddlewareHandler<AppEnv<{ authUser: AuthUser }>> {
   return async (c, next) => {
     const user = c.get("authUser");
     const effectiveRole = user?.role === "r" ? "a" : user?.role;

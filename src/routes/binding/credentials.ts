@@ -31,9 +31,9 @@ import {
 } from "@/services/locator/cache";
 import type { AppEnv } from "@/types/app";
 
-const credentialRequests = new WeakMap<Context<AppEnv>, Map<string, Promise<DecryptedBinding>>>();
+const credentialRequests = new WeakMap<object, Map<string, Promise<DecryptedBinding>>>();
 
-export function getCredentialSecret(c: Context<AppEnv>): string {
+export function getCredentialSecret<E extends AppEnv>(c: Context<E>): string {
   const secret = c.env.ENDFIELD_CREDENTIAL_SECRET ?? c.env.BETTER_AUTH_SECRET;
   if (!secret || secret.trim().length < 16) {
     throw new ApiError(
@@ -45,8 +45,8 @@ export function getCredentialSecret(c: Context<AppEnv>): string {
   return secret;
 }
 
-export async function getDecryptedBinding(
-  c: Context<AppEnv>,
+export async function getDecryptedBinding<E extends AppEnv>(
+  c: Context<E>,
   uid: string,
   options: { bypassCache?: boolean } = {},
 ): Promise<DecryptedBinding> {
@@ -108,8 +108,8 @@ export function isAutoRefreshableEndfieldError(error: unknown): boolean {
   );
 }
 
-async function updateStoredCredential(
-  c: Context<AppEnv>,
+async function updateStoredCredential<E extends AppEnv>(
+  c: Context<E>,
   uid: string,
   binding: DecryptedBinding,
   generated: { cred: string; token: string },
@@ -151,8 +151,8 @@ async function updateStoredCredential(
   return refreshed;
 }
 
-async function performCredentialRefresh(
-  c: Context<AppEnv>,
+async function performCredentialRefresh<E extends AppEnv>(
+  c: Context<E>,
   uid: string,
   binding: DecryptedBinding,
 ): Promise<DecryptedBinding> {
@@ -233,8 +233,8 @@ async function performCredentialRefresh(
   }
 }
 
-export async function refreshBindingCredentials(
-  c: Context<AppEnv>,
+export async function refreshBindingCredentials<E extends AppEnv>(
+  c: Context<E>,
   uid: string,
   binding: DecryptedBinding,
 ): Promise<DecryptedBinding> {
@@ -259,8 +259,8 @@ export async function refreshBindingCredentials(
   }
 }
 
-export async function withAutoRefreshedBinding<T>(
-  c: Context<AppEnv>,
+export async function withAutoRefreshedBinding<T, E extends AppEnv>(
+  c: Context<E>,
   uid: string,
   operation: (binding: DecryptedBinding) => Promise<T>,
   initialBinding?: DecryptedBinding,

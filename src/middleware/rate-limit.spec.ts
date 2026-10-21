@@ -7,7 +7,7 @@ import type { AppEnv, AuthUser } from "@/types/app";
 import { rateLimit } from "./rate-limit";
 
 it("keeps thumbnail traffic separate from auth reads and isolates authenticated users", async () => {
-  const app = new Hono<AppEnv>();
+  const app = new Hono<AppEnv<{ authUser?: AuthUser }>>();
   app.onError((error) => {
     if (error instanceof ApiError) {
       return new Response(error.code, { status: error.status });

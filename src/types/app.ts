@@ -89,14 +89,7 @@ export interface AuthUser {
   needsProfileSetup: boolean;
 }
 
-export interface Variables {
-  requestId: string;
-  authUser?: AuthUser;
-  authUserPromise?: Promise<AuthUser>;
-  authSessionMigrating?: boolean;
-}
-
-export type AppEnv = {
+export type AppEnv<V extends object = {}> = {
   Bindings: Bindings;
-  Variables: Variables;
+  Variables: V;
 };

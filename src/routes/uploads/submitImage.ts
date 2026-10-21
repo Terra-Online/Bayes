@@ -14,13 +14,15 @@ import {
   normalizePathPart,
   prepareUploadImageForStorage,
 } from "@/services/upload/storage";
-import type { AppEnv } from "@/types/app";
+import type { AppEnv, AuthUser } from "@/types/app";
 
 import { pickFile, pickString } from "./helpers";
 import { UGC_PUBLIC_IMAGE_CACHE_CONTROL } from "./imageDeliveryPolicy";
 import { resolveImageScope, resolveUploadPrefix } from "./scope";
 
-export async function handleSubmitImage(c: Context<AppEnv>) {
+export async function handleSubmitImage<
+  E extends AppEnv<{ authUser: AuthUser; requestId: string }>,
+>(c: Context<E>) {
   const user = c.get("authUser");
   if (!user) {
     throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");

@@ -5,12 +5,12 @@ import {
   getImageSubmissionByFilePath,
   getPublicSubmissionByFilePath,
 } from "@/repositories/submission/statusSubmission";
-import type { AppEnv } from "@/types/app";
+import type { AppEnv, AuthUser } from "@/types/app";
 
 import { parseObjectKeyFromRequestPath } from "./helpers";
 import { UGC_PUBLIC_IMAGE_CACHE_CONTROL } from "./imageDeliveryPolicy";
 
-export async function handleServePublicImageFile(c: Context<AppEnv>) {
+export async function handleServePublicImageFile<E extends AppEnv>(c: Context<E>) {
   const objectKey = parseObjectKeyFromRequestPath(c.req.path);
   const submission = await getPublicSubmissionByFilePath(c.env.DB, objectKey);
   if (!submission) {
@@ -37,7 +37,9 @@ export async function handleServePublicImageFile(c: Context<AppEnv>) {
   });
 }
 
-export async function handleServePrivateImageFile(c: Context<AppEnv>) {
+export async function handleServePrivateImageFile<E extends AppEnv<{ authUser: AuthUser }>>(
+  c: Context<E>,
+) {
   const user = c.get("authUser");
   if (!user) {
     throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");

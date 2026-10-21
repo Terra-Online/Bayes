@@ -69,8 +69,8 @@ function classifyClientClose(event: CloseEvent): PositionStreamCloseReason {
   return "client-closed";
 }
 
-async function resolvePositionBinding(
-  c: Context<AppEnv>,
+async function resolvePositionBinding<E extends AppEnv<{ requestId: string }>>(
+  c: Context<E>,
   ticketUid?: string,
 ): Promise<{ uid: string; binding: DecryptedBinding }> {
   if (ticketUid) {
@@ -98,12 +98,18 @@ async function resolvePositionBinding(
   return { uid: identity.uid, binding };
 }
 
-function schedulePositionRefresh(c: Context<AppEnv>, key: string, binding: DecryptedBinding): void {
+function schedulePositionRefresh<E extends AppEnv<{ requestId: string }>>(
+  c: Context<E>,
+  key: string,
+  binding: DecryptedBinding,
+): void {
   const refresh = refreshPositionCache(c, key, binding).catch(() => undefined);
   c.executionCtx.waitUntil(refresh);
 }
 
-export async function handleEndfieldPositionSocket(c: Context<AppEnv>) {
+export async function handleEndfieldPositionSocket<E extends AppEnv<{ requestId: string }>>(
+  c: Context<E>,
+) {
   if (c.req.header("upgrade")?.toLowerCase() !== "websocket") {
     throw new ApiError(426, "WEBSOCKET_REQUIRED", "Use a WebSocket connection for this endpoint.");
   }
@@ -463,7 +469,9 @@ export async function handleEndfieldPositionSocket(c: Context<AppEnv>) {
   });
 }
 
-export async function handleEndfieldPosition(c: Context<AppEnv>) {
+export async function handleEndfieldPosition<E extends AppEnv<{ requestId: string }>>(
+  c: Context<E>,
+) {
   const resolved = await resolvePositionBinding(c);
   const includeBinding = shouldIncludeBinding(c);
   const includeSocketTicket = c.req.query("socket_ticket") === "1";

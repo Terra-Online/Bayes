@@ -15,14 +15,17 @@ import {
   saveProgressManifest,
 } from "@/services/progress/manifest";
 import { jsonResponse } from "@/services/progress/responses";
-import type { AppEnv } from "@/types/app";
+import type { AppEnv, AuthUser } from "@/types/app";
 
 function isProgressLocked(flag: string | undefined): boolean {
   const normalized = (flag ?? "true").trim().toLowerCase();
   return !["0", "false", "off", "no"].includes(normalized);
 }
 
-async function proxyUserProgress(c: Context<AppEnv>, path: "state" | "sync"): Promise<Response> {
+async function proxyUserProgress<E extends AppEnv<{ authUser: AuthUser; requestId: string }>>(
+  c: Context<E>,
+  path: "state" | "sync",
+): Promise<Response> {
   const user = c.get("authUser");
   if (!user) {
     throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
@@ -47,10 +50,9 @@ async function proxyUserProgress(c: Context<AppEnv>, path: "state" | "sync"): Pr
   return stub.fetch(request);
 }
 
-async function proxyUserArchiveProgress(
-  c: Context<AppEnv>,
-  path: "state" | "sync",
-): Promise<Response> {
+async function proxyUserArchiveProgress<
+  E extends AppEnv<{ authUser: AuthUser; requestId: string }>,
+>(c: Context<E>, path: "state" | "sync"): Promise<Response> {
   const user = c.get("authUser");
   if (!user) {
     throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
@@ -73,7 +75,7 @@ async function proxyUserArchiveProgress(
   );
 }
 
-async function registerManifest(c: Context<AppEnv>): Promise<Response> {
+async function registerManifest<E extends AppEnv>(c: Context<E>): Promise<Response> {
   const manifest = await normalizeManifestPayload(await c.req.json().catch(() => null));
   await saveProgressManifest(c.env, manifest);
   return jsonResponse({
@@ -82,7 +84,7 @@ async function registerManifest(c: Context<AppEnv>): Promise<Response> {
   });
 }
 
-async function registerArchiveManifest(c: Context<AppEnv>): Promise<Response> {
+async function registerArchiveManifest<E extends AppEnv>(c: Context<E>): Promise<Response> {
   const manifest = await normalizeArchiveManifestPayload(await c.req.json().catch(() => null));
   await saveArchiveProgressManifest(c.env, manifest);
   return jsonResponse({
@@ -91,7 +93,7 @@ async function registerArchiveManifest(c: Context<AppEnv>): Promise<Response> {
   });
 }
 
-async function proxyStats(c: Context<AppEnv>): Promise<Response> {
+async function proxyStats<E extends AppEnv>(c: Context<E>): Promise<Response> {
   const markerIndexHash = c.req.query("markerIndexHash")?.trim().toLowerCase();
   if (!markerIndexHash || !isSha256Hex(markerIndexHash)) {
     throw new ApiError(422, "VALIDATION_ERROR", "markerIndexHash must be a SHA-256 hash.");
@@ -100,7 +102,7 @@ async function proxyStats(c: Context<AppEnv>): Promise<Response> {
 }
 
 export function createRoutes() {
-  const app = new Hono<AppEnv>();
+  const app = new Hono<AppEnv<{ requestId: string }>>();
 
   app.use("*", async (c, next) => {
     if (isProgressLocked(c.env.LOCK_PROGRESS_ENDPOINTS)) {

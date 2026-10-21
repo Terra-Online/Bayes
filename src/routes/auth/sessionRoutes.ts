@@ -1,5 +1,6 @@
 import type { Hono } from "hono";
 import type { Context } from "hono";
+import { createMiddleware } from "hono/factory";
 
 import {
   getLegacyCookieExpirations,
@@ -18,11 +19,11 @@ import {
 import { rateLimit } from "@/middleware/rate-limit";
 import { formatPublicUid, getErrorMessage, updateUserNickname } from "@/repositories/users";
 import { profileUpdateSchema } from "@/routes/schema/auth";
-import type { AppEnv } from "@/types/app";
+import type { AppEnv, AuthUser } from "@/types/app";
 
 import { toSessionUser } from "./sessionUser";
 
-async function readProfileUpdateBody(c: Context<AppEnv>): Promise<unknown> {
+async function readProfileUpdateBody<E extends AppEnv>(c: Context<E>): Promise<unknown> {
   const contentType = c.req.header("content-type")?.toLowerCase() ?? "";
 
   if (contentType.includes("application/json") || contentType.length === 0) {
@@ -82,61 +83,63 @@ function mapProfileUpdateError(error: unknown): never {
   throw new ApiError(500, "PROFILE_UPDATE_FAILED", message);
 }
 
-export function registerSessionAuthRoutes(app: Hono<AppEnv>) {
+export function registerSessionAuthRoutes(app: Hono<AppEnv<{ requestId: string }>>) {
   app.get(
     "/session",
     async (c, next) => {
       await next();
       c.header("Cache-Control", "private, no-store");
     },
-    async (c, next) => {
-      const authHeaders = getRequestAuthHeaders(c.req.raw);
-      if (!hasSessionCredentials(c.env, authHeaders)) {
-        throw new ApiError(401, "SESSION_REQUIRED", "Session is required.");
-      }
-      const auth = createAuth(c.env);
-      const browserSession = resolveBrowserSessionHeaders(auth, authHeaders);
-      const { response: session, headers } = await auth.api.getSession({
-        headers: browserSession.headers,
-        returnHeaders: true,
-      });
-      for (const cookie of headers.getSetCookie()) {
-        c.header("Set-Cookie", cookie, { append: true });
-      }
-      if (!session) {
-        invalidateAuthUserCache(authHeaders, c.env);
-        if (authHeaders.get("authorization")?.trim().toLowerCase().startsWith("bearer ")) {
-          throw new ApiError(401, "TOKEN_EXPIRED", "Token is expired, missing, or invalid.");
+    createMiddleware<AppEnv<{ authUser: AuthUser; authSessionMigrating: boolean }>>(
+      async (c, next) => {
+        const authHeaders = getRequestAuthHeaders(c.req.raw);
+        if (!hasSessionCredentials(c.env, authHeaders)) {
+          throw new ApiError(401, "SESSION_REQUIRED", "Session is required.");
         }
-        throw new ApiError(401, "SESSION_REQUIRED", "Session is required.");
-      }
-
-      // This fresh, renewing session check also authenticates the middleware.
-      // A cached identity with disableRefresh must never replace it.
-      c.set(
-        "authUser",
-        await resolveAuthUser(c.env, authHeaders, {
-          uid: session.user.id,
-          email: session.user.email,
-          displayName: session.user.name,
-        }),
-      );
-
-      if (browserSession.migrating) {
-        c.header("Set-Cookie", await serializeBrowserSessionCookie(auth, session.session), {
-          append: true,
+        const auth = createAuth(c.env);
+        const browserSession = resolveBrowserSessionHeaders(auth, authHeaders);
+        const { response: session, headers } = await auth.api.getSession({
+          headers: browserSession.headers,
+          returnHeaders: true,
         });
-      } else if (c.req.header("cookie")?.includes("better-auth.")) {
-        for (const cookie of getLegacyCookieExpirations(auth)) {
+        for (const cookie of headers.getSetCookie()) {
           c.header("Set-Cookie", cookie, { append: true });
         }
-      }
-      c.set("authSessionMigrating", browserSession.migrating);
-      await next();
-    },
+        if (!session) {
+          invalidateAuthUserCache(authHeaders, c.env);
+          if (authHeaders.get("authorization")?.trim().toLowerCase().startsWith("bearer ")) {
+            throw new ApiError(401, "TOKEN_EXPIRED", "Token is expired, missing, or invalid.");
+          }
+          throw new ApiError(401, "SESSION_REQUIRED", "Session is required.");
+        }
+
+        // This fresh, renewing session check also authenticates the middleware.
+        // A cached identity with disableRefresh must never replace it.
+        c.set(
+          "authUser",
+          await resolveAuthUser(c.env, authHeaders, {
+            uid: session.user.id,
+            email: session.user.email,
+            displayName: session.user.name,
+          }),
+        );
+
+        if (browserSession.migrating) {
+          c.header("Set-Cookie", await serializeBrowserSessionCookie(auth, session.session), {
+            append: true,
+          });
+        } else if (c.req.header("cookie")?.includes("better-auth.")) {
+          for (const cookie of getLegacyCookieExpirations(auth)) {
+            c.header("Set-Cookie", cookie, { append: true });
+          }
+        }
+        c.set("authSessionMigrating", browserSession.migrating);
+        await next();
+      },
+    ),
     rateLimit("auth"),
     (c) => {
-      const user = c.get("authUser")!;
+      const user = c.get("authUser");
       const response = c.json({
         user: toSessionUser(user),
         ...(c.get("authSessionMigrating") ? { requiresCookieConfirmation: true } : {}),

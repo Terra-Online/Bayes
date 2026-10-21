@@ -9,7 +9,7 @@ import type { AppEnv } from "@/types/app";
 import { getOptionalAuthIdentity } from "./helpers";
 import { resolveImageScope, resolvePublicAssetBaseUrl } from "./scope";
 
-export async function handleGetPublicImage(c: Context<AppEnv, "/images/:id">) {
+export async function handleGetPublicImage<E extends AppEnv>(c: Context<E, "/images/:id">) {
   const parsed = imageQuerySchema.safeParse({
     markerId: c.req.query("markerId"),
     scope: c.req.query("scope"),

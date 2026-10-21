@@ -16,7 +16,7 @@ import { registerSessionAuthRoutes } from "./sessionRoutes";
 import { registerSocialAuthRoutes } from "./socialRoutes";
 
 export function createRoutes() {
-  const app = new Hono<AppEnv>();
+  const app = new Hono<AppEnv<{ requestId: string }>>();
 
   registerEmailAuthRoutes(app, {
     forwardToAuthJsonPath,

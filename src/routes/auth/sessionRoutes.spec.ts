@@ -47,7 +47,7 @@ describe.each(["http://localhost:8787", "https://api.opendfieldmap.org"])(
     let database: Record<string, Record<string, unknown>[]>;
     let env: Bindings;
     let auth: ReturnType<typeof createAuth>;
-    let app: Hono<AppEnv>;
+    let app: Hono<AppEnv<{ requestId: string }>>;
 
     beforeEach(() => {
       vi.useFakeTimers({ toFake: ["Date"] });
@@ -60,7 +60,7 @@ describe.each(["http://localhost:8787", "https://api.opendfieldmap.org"])(
       } as Bindings;
       auth = realCreateAuth(env);
       vi.mocked(createAuth).mockReturnValue(auth);
-      app = new Hono<AppEnv>();
+      app = new Hono<AppEnv<{ requestId: string }>>();
       app.onError(onAppError);
       registerSessionAuthRoutes(app);
     });
