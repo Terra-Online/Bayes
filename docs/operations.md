@@ -2,7 +2,7 @@
 
 These commands are for maintainers or contributors operating their own installation.
 See [development](development.md) for local work and
-[contribution checks](../CONTRIBUTING.md#checks) before pushing. Repository
+[contribution checks](../CONTRIBUTING.md#preparing-a-contribution) before pushing. Repository
 configuration names existing OEM resources; provision and configure your own
 resources before deploying a fork.
 

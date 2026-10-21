@@ -1,36 +1,52 @@
 # Contributing to Bayes
 
-Keep changes focused and explain compatibility changes and verification in the
-pull request. Follow [coding standards](CODING_STANDARDS.md),
-[route conventions](src/routes/README.md), and
-[public read conventions](src/publicRead/README.md).
+Thank you for helping improve Open Endfield Map. Bayes owns the backend API and
+background services; [Atlos](https://github.com/Terra-Online/Atlos) owns the web client.
+This guide is for human contributors.
 
-## Setup
+## Project scope and principles
+
+We value explicit contracts, reliable data writes, efficient public reads, and
+changes that another contributor can understand and verify. Preserve existing
+API shapes, permissions, concurrency behavior, and data formats unless the task
+explicitly changes them. Describe any compatibility change in the pull request.
+
+## Environment setup
 
 Use Node.js 22.12.0+ and pnpm. Docker is needed for local container image conversion.
 Some local data files need initialization; follow [data templates](templates/README.md).
-See [local development](docs/development.md) for setup and WAF work,
-[architecture](docs/architecture.md) for context, and [operations](docs/operations.md)
-for deployment. A Cloudflare production account is not required for local checks.
+Then follow [local development](docs/development.md) to configure and run the backend.
+A Cloudflare production account is not required for local checks.
 
-## Checks
+If you are new to the project, [architecture](docs/architecture.md) introduces the
+runtime data flow, and the [API guide](docs/api.md) helps you explore the endpoints.
+Deployment is covered separately in [operations](docs/operations.md).
 
-- During development, run the affected tests with `pnpm exec vitest run <test-file>`
-  and use `pnpm run typecheck` as code changes.
-- Before committing, run `pnpm run format:check` and `pnpm run lint`.
-- Before pushing, run `pnpm run check`.
-- For container changes, also follow the [container checks](containers/oem_imgTrans/README.md#container-regression-checks).
+## Preparing a contribution
 
-Command definitions live in [package.json](package.json). Review formatter and
-lint autofixes before committing; investigate failures before changing expectations.
+Run focused checks while developing; use the complete check before pushing:
 
-## Documentation
+```sh
+pnpm exec vitest run <test-file>
+pnpm run typecheck
+pnpm run format:check
+pnpm run lint
+pnpm run check
+```
 
-Do not repeat the same information across documents; keep a single source of truth
-and link to it.
-Do not restate what code already defines; document decisions, non-obvious reasons,
-and conventions that agents might overlook, with code as the source of truth.
+Review any formatter or lint autofix diff so unrelated changes stay out of the PR.
+Investigate failing tests before changing expectations or mocks.
 
-Use English for shared guides, matching [Atlos](https://github.com/Terra-Online/Atlos).
-Update the owning document with a behavior change. See the
-[documentation index](docs/README.md) for destinations.
+Open a pull request against `main`, link the relevant issue, and explain the
+problem, resulting behavior, and actual verification. Include setup requirements
+or limitations that affect another contributor's ability to reproduce the result.
+
+## Documentation and support
+
+The [documentation index](docs/README.md) points to the guide for each task.
+The guides in `docs/` are written for people: they can take time to explain the
+steps and the context needed to carry them out.
+
+Questions and implementation discussions are welcome in
+[Discord](https://discord.gg/BFMAKZSUG7). Contributions are accepted under the
+GNU AGPL v3 license.

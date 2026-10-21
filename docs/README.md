@@ -1,7 +1,10 @@
 # Bayes documentation
 
-These guides describe the checked-in backend implementation. Start with the task
-you want to do; use source contracts and co-located tests for exact field rules.
+`docs/` is for human readers. These guides may explain context and walk through
+steps in detail, including requirements also stated in agent guidance when useful.
+Agent instructions live in `CODING_STANDARDS.md` at the repository root.
+
+Start with the task you want to do:
 
 | Task | Guide |
 | --- | --- |
@@ -12,7 +15,6 @@ you want to do; use source contracts and co-located tests for exact field rules.
 | Call or change an endpoint | [API guide](api.md) |
 | Operate or deploy your own installation | [Operations](operations.md) |
 | Set up local data files | [Data templates](../templates/README.md) |
-| Review code against repository rules | [Coding standards](../CODING_STANDARDS.md) |
 | Work on HTTP modules | [Route conventions](../src/routes/README.md) |
 | Work on cached public reads | [Public read conventions](../src/publicRead/README.md) |
 | Work on error logging | [Tail Worker](../oem-logger/README.md) |

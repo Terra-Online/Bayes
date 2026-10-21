@@ -5,8 +5,7 @@ It serves the [Atlos web client](https://github.com/Terra-Online/Atlos), providi
 accounts, progress sync, community images and comments, moderation, notifications,
 and Endfield account integration.
 
-[Contributing](CONTRIBUTING.md) · [Documentation](docs/README.md) ·
-[API guide](docs/api.md) · [Discord](https://discord.gg/BFMAKZSUG7)
+[Discord](https://discord.gg/BFMAKZSUG7)
 
 ## What is in this repository?
 
@@ -17,9 +16,10 @@ and Endfield account integration.
 - **Live features**: notification and locator WebSockets.
 - **Error logging**: a separate Tail Worker in [`oem-logger/`](oem-logger/README.md).
 
-## Contributing
+## Where to start
 
-Start with [CONTRIBUTING.md](CONTRIBUTING.md) to set up the project and prepare a contribution.
+- **Human contributors:** read [CONTRIBUTING.md](CONTRIBUTING.md).
+- **Agents:** read [CODING_STANDARDS.md](CODING_STANDARDS.md) before implementing or reviewing changes.
 
 ## License
 

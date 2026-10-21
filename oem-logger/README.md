@@ -23,7 +23,7 @@ The logger runs a daily Cron Trigger at 03:17 UTC and deletes rows older than
 ## Deployment and investigation
 
 See [operations](../docs/operations.md#logger-deployment) for deployment and
-[contribution checks](../CONTRIBUTING.md#checks) during development.
+[contribution checks](../CONTRIBUTING.md#preparing-a-contribution) during development.
 
 Query recent errors:
 

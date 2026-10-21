@@ -1,8 +1,10 @@
-# Coding standards
+# Coding standards for agents
 
-Follow these standards when writing or reviewing code. Reviews must identify
-violations with the affected location and rule. Apply incrementally to touched code.
+This is the agent entrypoint for implementation and review. Apply these standards
+incrementally to touched code; report violations with the affected location and rule.
 `Partially adopted` marks agreed rules with known migration work remaining.
+
+## Code responsibilities
 
 - `routes/<topic>/`:
   - Responsible for: Hono handlers, HTTP input validation, middleware composition,
@@ -35,3 +37,47 @@ violations with the affected location and rule. Apply incrementally to touched c
   - Responsible for: preserving API/compatibility behavior, concurrency, and
     atomicity; identifying historical workarounds; keeping business types with owners.
   - Not responsible for: combining responsibility extraction with behavior changes.
+
+## Working guidance
+
+Keep changes focused and explain compatibility changes and verification in the
+pull request. For HTTP work, follow [route conventions](src/routes/README.md);
+for cached public reads, follow [public read conventions](src/publicRead/README.md).
+
+## Setup
+
+Use Node.js 22.12.0+ and pnpm. Docker is needed for local container image conversion.
+Some local data files need initialization; follow [data templates](templates/README.md).
+See [local development](docs/development.md) for setup and WAF work,
+[architecture](docs/architecture.md) for context, and [operations](docs/operations.md)
+for deployment. A Cloudflare production account is not required for local checks.
+
+## Checks
+
+- During development, run the affected tests with `pnpm exec vitest run <test-file>`
+  and use `pnpm run typecheck` as code changes.
+- Before committing, run `pnpm run format:check` and `pnpm run lint`.
+- Before pushing, run `pnpm run check`.
+- For container changes, also follow the [container checks](containers/oem_imgTrans/README.md#container-regression-checks).
+
+Command definitions live in [package.json](package.json). Review formatter and
+lint autofixes before committing; investigate failures before changing expectations.
+
+## Documentation
+
+Keep one authoritative source for each piece of agent guidance and link to it
+from directory documents. Code owns implementation facts and command definitions;
+document decisions, non-obvious reasons, and conventions agents might overlook.
+
+`CONTRIBUTING.md` and `docs/` are for human readers. They may explain steps at
+length and repeat agent requirements when that helps a contributor complete a task.
+This audience-specific overlap is permitted; avoid competing sources within the
+agent guidance.
+
+Use a small number of directory documents for navigation. Most documents should
+be self-contained leaves with no outbound links to other files, including source
+files. Keep the documentation graph acyclic; a leaf should not link back to an
+index or send the reader to another leaf.
+
+Use English for shared guides, matching Atlos. Update the owning document with a
+behavior change. Human guide destinations are listed in [docs/README.md](docs/README.md).

@@ -1,6 +1,6 @@
 # Local development
 
-Run commands from the repository root. Check [setup requirements](../CONTRIBUTING.md#setup)
+Run commands from the repository root. Check [setup requirements](../CONTRIBUTING.md#environment-setup)
 first.
 
 ## Install dependencies
@@ -142,4 +142,4 @@ Generating the allowlist is local. To apply it remotely, prepare `.waf.vars` fro
 `.waf.vars.example` and run `pnpm run waf:sync:apply`. For deployment integration,
 use `WAF_SYNC=1 pnpm run deploy` with the setup in [operations](operations.md).
 
-See [contribution checks](../CONTRIBUTING.md#checks) before committing or pushing.
+See [contribution checks](../CONTRIBUTING.md#preparing-a-contribution) before committing or pushing.
