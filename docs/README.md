@@ -8,7 +8,7 @@ you want to do; use source contracts and co-located tests for exact field rules.
 | Understand the project | [Repository README](../README.md) |
 | Make your first contribution | [Contributing](../CONTRIBUTING.md) |
 | Configure and run a public checkout | [Local development](development.md) |
-| Understand data flow and module ownership | [Architecture](architecture.md) |
+| Understand runtime data flow | [Architecture](architecture.md) |
 | Call or change an endpoint | [API guide](api.md) |
 | Operate or deploy your own installation | [Operations](operations.md) |
 | Set up local data files | [Data templates](../templates/README.md) |
@@ -19,10 +19,6 @@ you want to do; use source contracts and co-located tests for exact field rules.
 | Work on image processing | [Transcoder](../containers/oem_imgTrans/README.md) |
 
 ## Maintaining these guides
-
-Route mounting lives in `src/routes/route.ts`; each topic has a `createRoutes.ts`.
-HTTP schemas, domain contracts, and tests define the detailed behavior. Update
-the relevant guide in the same pull request when those contracts change.
 
 Keep maintained guides directly under `docs/`. Put temporary reports, migration
 plans, and measurement evidence in a subdirectory such as `docs/local/`.

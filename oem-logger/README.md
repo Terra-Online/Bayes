@@ -20,29 +20,10 @@ serialized and do not access D1.
 The logger runs a daily Cron Trigger at 03:17 UTC and deletes rows older than
 120 days based on `event_timestamp_ms`.
 
-## Commands
+## Deployment and investigation
 
-The root deployment runs all checks, applies both databases' migrations,
-deploys `oem-errogger`, and then deploys `oem-backend`:
-
-```sh
-pnpm run deploy
-```
-
-Logger-only commands:
-
-```sh
-pnpm run deploy -- --logger-only
-pnpm run deploy:logger
-pnpm run logger:check
-pnpm run logger:db:migrate:local
-pnpm run logger:db:migrate:remote
-pnpm run logger:deploy:raw
-```
-
-The two logger-only deployment commands run logger checks and migrations, then
-deploy `oem-errogger` without reading backend secrets or deploying
-`oem-backend`. The raw command skips checks and migrations.
+See [operations](../docs/operations.md#logger-deployment) for deployment and
+[contribution checks](../CONTRIBUTING.md#checks) during development.
 
 Query recent errors:
 

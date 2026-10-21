@@ -27,13 +27,6 @@ preserved. Ordinary requests enter `src/app.ts`, which installs request IDs, COR
 and error handling, then mounts the topic routers through `src/routes/route.ts`.
 Locator streams have their own upgrade handler in the locator route module.
 
-## Module ownership
-
-See [the repository layout](../README.md#repository-layout) for source locations
-and [coding standards](../CODING_STANDARDS.md) for responsibility boundaries.
-Some boundaries are partially adopted: progress repositories still live under
-`services/progress/`, and some handlers contain SQL or business orchestration.
-
 ## Accounts and identity
 
 Better Auth stores accounts, sessions, and verifications in D1. The public auth
@@ -68,19 +61,8 @@ processes the image, stores the object in R2, creates a pending D1 submission,
 and enqueues moderation. Comments use JSON and the shared comment content
 contract. Queue consumers process moderation, translation, and webhook work.
 
-Public image/comment reads use the `PublicReadCache` internal entrypoint.
-Workers Cache stores per-marker responses; origin loaders use KV and D1.
-Missing markers are deduplicated within the invocation and queried in batches
-of at most 100. The client reads up to eight marker responses concurrently,
-preserves requested order, and applies list limits. Partial results identify
-`failedMarkerIds` and use `private, no-store`.
-
-Viewer reactions and private contributions must stay outside shared public
-cache values. Mutations invalidate affected content caches. See
-[`src/publicRead/README.md`](../src/publicRead/README.md).
-
-Submission status changes retain historical records and stored objects. The
-moderation cleanup routes do not provide general hard deletion.
+See [public read conventions](../src/publicRead/README.md) for the cache interface
+and [the API guide](api.md#images-and-comments) for caller behavior.
 
 ## Live services and external dependencies
 
@@ -95,7 +77,5 @@ moderation cleanup routes do not provide general hard deletion.
 
 ## Observability
 
-HTTP requests expose `x-request-id`. Cloudflare observability is configured in
-Wrangler; the separate `oem-errogger` Tail Worker records failed invocations in its
-own D1 database. A successful health request establishes HTTP reachability only.
-See [operations](operations.md) for validation and deployment boundaries.
+See [operations](operations.md#runtime-validation) for release validation and
+[the logger guide](../oem-logger/README.md) for error investigation.

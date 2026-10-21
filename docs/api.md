@@ -304,9 +304,6 @@ identity/ticket resolution even though the position routes precede the shared
 socket ticket. Follow the binding and policy workflow before requesting position
 updates. Do not infer access solely from route mounting order.
 
-The local official-marker template is empty. It permits the module to load but
-does not establish a working official-to-OEM point mapping.
-
 Sources: [`schema/binding.ts`](../src/routes/schema/binding.ts),
 [`binding/createRoutes.ts`](../src/routes/binding/createRoutes.ts),
 [`locator/positionRoutes.ts`](../src/routes/locator/positionRoutes.ts), and
