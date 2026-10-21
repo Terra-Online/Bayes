@@ -1,6 +1,13 @@
-import { getEndfieldPosition } from "../../lib/endfieldClient/positionSocket";
-import type { Bindings } from "../../types/app";
-import type { AppContext, DecryptedBinding, DecryptedBindingCacheEntry, EndfieldBindingRow, PositionCacheEntry } from "./types";
+import { getEndfieldPosition } from "@/lib/endfieldClient/positionSocket";
+import type { Bindings } from "@/types/app";
+
+import type {
+  AppContext,
+  DecryptedBinding,
+  DecryptedBindingCacheEntry,
+  EndfieldBindingRow,
+  PositionCacheEntry,
+} from "./types";
 
 const DECRYPTED_BINDING_CACHE_TTL_MS = 10_000;
 const MAX_CACHE_ENTRIES = 1000;
@@ -21,7 +28,13 @@ export function getLocatorCache(env: Bindings): LocatorCache {
   const secret = env.ENDFIELD_CREDENTIAL_SECRET ?? env.BETTER_AUTH_SECRET;
   let cache = caches.get(env.DB);
   if (!cache || cache.secret !== secret || cache.wsBaseUrl !== env.ENDFIELD_WS_BASE_URL) {
-    cache = { secret, wsBaseUrl: env.ENDFIELD_WS_BASE_URL, revision: 0, bindings: new Map(), positions: new Map() };
+    cache = {
+      secret,
+      wsBaseUrl: env.ENDFIELD_WS_BASE_URL,
+      revision: 0,
+      bindings: new Map(),
+      positions: new Map(),
+    };
     caches.set(env.DB, cache);
   }
   return cache;
@@ -30,19 +43,34 @@ export function getLocatorCache(env: Bindings): LocatorCache {
 function cacheValue<T>(cache: Map<string, T>, key: string, value: T): void {
   cache.delete(key);
   cache.set(key, value);
-  if (cache.size > MAX_CACHE_ENTRIES) cache.delete(cache.keys().next().value!);
+  if (cache.size > MAX_CACHE_ENTRIES) {
+    cache.delete(cache.keys().next().value!);
+  }
 }
 
-export function readDecryptedBindingCache(env: Bindings, uid: string, now = Date.now()): DecryptedBinding | null {
+export function readDecryptedBindingCache(
+  env: Bindings,
+  uid: string,
+  now = Date.now(),
+): DecryptedBinding | null {
   const cache = getLocatorCache(env).bindings;
   const cached = cache.get(uid);
-  if (cached && cached.expiresAt > now) return cached;
+  if (cached && cached.expiresAt > now) {
+    return cached;
+  }
   cache.delete(uid);
   return null;
 }
 
-export function writeDecryptedBindingCache(env: Bindings, uid: string, binding: DecryptedBinding): void {
-  cacheValue(getLocatorCache(env).bindings, uid, { ...binding, expiresAt: Date.now() + DECRYPTED_BINDING_CACHE_TTL_MS });
+export function writeDecryptedBindingCache(
+  env: Bindings,
+  uid: string,
+  binding: DecryptedBinding,
+): void {
+  cacheValue(getLocatorCache(env).bindings, uid, {
+    ...binding,
+    expiresAt: Date.now() + DECRYPTED_BINDING_CACHE_TTL_MS,
+  });
 }
 
 export function deleteLocatorCaches(env: Bindings, uid: string): void {
@@ -50,7 +78,9 @@ export function deleteLocatorCaches(env: Bindings, uid: string): void {
   cache.revision += 1;
   cache.bindings.delete(uid);
   for (const key of cache.positions.keys()) {
-    if (key.startsWith(`${uid}:`)) cache.positions.delete(key);
+    if (key.startsWith(`${uid}:`)) {
+      cache.positions.delete(key);
+    }
   }
 }
 
@@ -66,23 +96,43 @@ export function getPositionCacheKey(uid: string, binding: EndfieldBindingRow): s
   return [uid, binding.provider, binding.server_id, binding.role_id, binding.updated_at].join(":");
 }
 
-export async function refreshPositionCache(c: AppContext, key: string, binding: DecryptedBinding): Promise<PositionCacheEntry> {
+export async function refreshPositionCache(
+  c: AppContext,
+  key: string,
+  binding: DecryptedBinding,
+): Promise<PositionCacheEntry> {
   let requests = positionRequests.get(c);
-  if (!requests) { requests = new Map(); positionRequests.set(c, requests); }
+  if (!requests) {
+    requests = new Map();
+    positionRequests.set(c, requests);
+  }
   const pending = requests.get(key);
-  if (pending) return pending;
+  if (pending) {
+    return pending;
+  }
   const cache = getLocatorCache(c.env);
   const revision = cache.revision;
   const promise = getEndfieldPosition({
-    provider: binding.binding.provider, roleId: binding.binding.role_id,
-    serverId: Number(binding.binding.server_id), cred: binding.cred, token: binding.token,
-    wsBaseUrl: binding.wsBaseUrl, deviceProfile: binding.deviceProfile
+    provider: binding.binding.provider,
+    roleId: binding.binding.role_id,
+    serverId: Number(binding.binding.server_id),
+    cred: binding.cred,
+    token: binding.token,
+    wsBaseUrl: binding.wsBaseUrl,
+    deviceProfile: binding.deviceProfile,
   }).then((data) => {
     const entry = { data, refreshedAt: Date.now() };
-    if (getLocatorCache(c.env) === cache && cache.revision === revision) writePositionCache(c.env, key, entry);
+    if (getLocatorCache(c.env) === cache && cache.revision === revision) {
+      writePositionCache(c.env, key, entry);
+    }
     return entry;
   });
   requests.set(key, promise);
-  try { return await promise; }
-  finally { if (requests.get(key) === promise) requests.delete(key); }
+  try {
+    return await promise;
+  } finally {
+    if (requests.get(key) === promise) {
+      requests.delete(key);
+    }
+  }
 }

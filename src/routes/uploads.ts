@@ -1,17 +1,25 @@
-import { handleListPointImages } from "../services/upload/listPointImages";
 import { Hono, type MiddlewareHandler } from "hono";
-import { ApiError } from "../lib/errors";
-import { resolveContextAuthUser } from "../middleware/auth";
-import { rateLimit } from "../middleware/rate-limit";
-import { translateVisibleComments } from "../services/upload/commentTranslation";
+
+import { ApiError } from "@/lib/errors";
+import { resolveContextAuthUser } from "@/middleware/auth";
+import { rateLimit } from "@/middleware/rate-limit";
+import { translateVisibleComments } from "@/services/upload/commentTranslation";
+import { handleGetPublicComment } from "@/services/upload/getPublicComment";
+import { handleGetPublicImage } from "@/services/upload/getPublicImage";
+import { handleListPointImages } from "@/services/upload/listPointImages";
+import {
+  handleListMyComments,
+  handleListPublicComments,
+} from "@/services/upload/listPublicComments";
+import { handleListMyImages, handleListPublicImages } from "@/services/upload/listPublicImages";
 import {
   handleEditComment,
   handleCommentRemoveRequest,
   handleCommentVote,
   handleFlagComment,
   handleRecallComment,
-  handleUnflagComment
-} from "../services/upload/mutateComment";
+  handleUnflagComment,
+} from "@/services/upload/mutateComment";
 import {
   handleFlagImage,
   handleImageRemoveRequest,
@@ -19,17 +27,16 @@ import {
   handleImageUpvote,
   handleRecallImage,
   handleUnflagImage,
-  handleUnrecallImage
-} from "../services/upload/mutateImage";
-import { handleListMyComments, handleListPublicComments } from "../services/upload/listPublicComments";
-import { handleListMyImages, handleListPublicImages } from "../services/upload/listPublicImages";
-import { handleGetPublicComment } from "../services/upload/getPublicComment";
-import { handleGetPublicImage } from "../services/upload/getPublicImage";
-import { handleServePrivateImageFile, handleServePublicImageFile } from "../services/upload/serveImageFile";
-import { commentTranslationSchema } from "../services/upload/schemas";
-import { handleSubmitComment } from "../services/upload/submitComment";
-import { handleSubmitImage } from "../services/upload/submitImage";
-import type { AppEnv } from "../types/app";
+  handleUnrecallImage,
+} from "@/services/upload/mutateImage";
+import { commentTranslationSchema } from "@/services/upload/schemas";
+import {
+  handleServePrivateImageFile,
+  handleServePublicImageFile,
+} from "@/services/upload/serveImageFile";
+import { handleSubmitComment } from "@/services/upload/submitComment";
+import { handleSubmitImage } from "@/services/upload/submitImage";
+import type { AppEnv } from "@/types/app";
 
 function isUploadsLocked(flag: string | undefined): boolean {
   const normalized = (flag ?? "true").trim().toLowerCase();
@@ -39,11 +46,7 @@ function isUploadsLocked(flag: string | undefined): boolean {
 async function assertActiveUser(c: Parameters<MiddlewareHandler<AppEnv>>[0]): Promise<void> {
   const user = await resolveContextAuthUser(c);
   if (user.role === "s") {
-    throw new ApiError(
-      403,
-      "ACCESS_DENIED",
-      "Suspended users cannot access upload endpoints."
-    );
+    throw new ApiError(403, "ACCESS_DENIED", "Suspended users cannot access upload endpoints.");
   }
 }
 
@@ -57,7 +60,7 @@ const requireUploadsEnabled: MiddlewareHandler<AppEnv> = async (c, next) => {
     throw new ApiError(
       503,
       "UPLOADS_TEMPORARILY_DISABLED",
-      "Upload endpoints are temporarily disabled during stabilization."
+      "Upload endpoints are temporarily disabled during stabilization.",
     );
   }
   await next();
@@ -66,12 +69,29 @@ const requireUploadsEnabled: MiddlewareHandler<AppEnv> = async (c, next) => {
 export function createUploadRoutes() {
   const app = new Hono<AppEnv>();
 
-  app.post("/images", requireActiveUser, requireUploadsEnabled, rateLimit("upload"), handleSubmitImage);
-  app.post("/comments", requireActiveUser, requireUploadsEnabled, rateLimit("upload"), handleSubmitComment);
+  app.post(
+    "/images",
+    requireActiveUser,
+    requireUploadsEnabled,
+    rateLimit("upload"),
+    handleSubmitImage,
+  );
+  app.post(
+    "/comments",
+    requireActiveUser,
+    requireUploadsEnabled,
+    rateLimit("upload"),
+    handleSubmitComment,
+  );
   app.post("/comments/translations", rateLimit("public"), async (c) => {
     const parsed = commentTranslationSchema.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) {
-      throw new ApiError(422, "VALIDATION_ERROR", "Invalid translation payload.", parsed.error.flatten());
+      throw new ApiError(
+        422,
+        "VALIDATION_ERROR",
+        "Invalid translation payload.",
+        parsed.error.flatten(),
+      );
     }
 
     if (parsed.data.cachedOnly !== true) {
@@ -85,44 +105,135 @@ export function createUploadRoutes() {
   app.get("/comments", rateLimit("public"), handleListPublicComments);
   // Keep after /comments/mine so "mine" is not treated as a comment ID.
   app.get("/comments/:id", rateLimit("public"), handleGetPublicComment);
-  app.post("/comments/:id/upvote", requireActiveUser, requireUploadsEnabled, rateLimit("auth"), (c) => handleCommentVote(c, 1));
-  app.post("/comments/:id/downvote", requireActiveUser, requireUploadsEnabled, rateLimit("auth"), (c) => handleCommentVote(c, -1));
-  app.post("/comments/:id/flag", requireActiveUser, requireUploadsEnabled, rateLimit("auth"), handleFlagComment);
-  app.post("/comments/:id/unflag", requireActiveUser, requireUploadsEnabled, rateLimit("auth"), handleUnflagComment);
-  app.post("/comments/:id/edit", requireActiveUser, requireUploadsEnabled, rateLimit("upload"), handleEditComment);
-  app.post("/comments/:id/remove-request", requireActiveUser, requireUploadsEnabled, rateLimit("auth"), handleCommentRemoveRequest);
-  app.post("/comments/:id/recall", requireActiveUser, requireUploadsEnabled, rateLimit("auth"), handleRecallComment);
+  app.post(
+    "/comments/:id/upvote",
+    requireActiveUser,
+    requireUploadsEnabled,
+    rateLimit("auth"),
+    (c) => handleCommentVote(c, 1),
+  );
+  app.post(
+    "/comments/:id/downvote",
+    requireActiveUser,
+    requireUploadsEnabled,
+    rateLimit("auth"),
+    (c) => handleCommentVote(c, -1),
+  );
+  app.post(
+    "/comments/:id/flag",
+    requireActiveUser,
+    requireUploadsEnabled,
+    rateLimit("auth"),
+    handleFlagComment,
+  );
+  app.post(
+    "/comments/:id/unflag",
+    requireActiveUser,
+    requireUploadsEnabled,
+    rateLimit("auth"),
+    handleUnflagComment,
+  );
+  app.post(
+    "/comments/:id/edit",
+    requireActiveUser,
+    requireUploadsEnabled,
+    rateLimit("upload"),
+    handleEditComment,
+  );
+  app.post(
+    "/comments/:id/remove-request",
+    requireActiveUser,
+    requireUploadsEnabled,
+    rateLimit("auth"),
+    handleCommentRemoveRequest,
+  );
+  app.post(
+    "/comments/:id/recall",
+    requireActiveUser,
+    requireUploadsEnabled,
+    rateLimit("auth"),
+    handleRecallComment,
+  );
 
   app.get("/public-file/*", rateLimit("public"), handleServePublicImageFile);
   app.get("/images/mine", requireActiveUser, rateLimit("auth"), handleListMyImages);
   // Keep after /images/mine so "mine" is not treated as an image ID.
   app.get("/images/:id", rateLimit("public"), handleGetPublicImage);
   app.get("/file/*", requireActiveUser, rateLimit("auth"), handleServePrivateImageFile);
-  app.post("/images/:id/upvote", requireActiveUser, requireUploadsEnabled, rateLimit("auth"), handleImageUpvote);
-  app.post("/images/:id/unvote", requireActiveUser, requireUploadsEnabled, rateLimit("auth"), handleImageUnvote);
-  app.post("/images/:id/flag", requireActiveUser, requireUploadsEnabled, rateLimit("auth"), handleFlagImage);
-  app.post("/images/:id/unflag", requireActiveUser, requireUploadsEnabled, rateLimit("auth"), handleUnflagImage);
-  app.post("/images/:id/remove-request", requireActiveUser, requireUploadsEnabled, rateLimit("auth"), handleImageRemoveRequest);
-  app.post("/images/:id/unrecall", requireActiveUser, requireUploadsEnabled, rateLimit("auth"), handleUnrecallImage);
-  app.post("/images/:id/recall", requireActiveUser, requireUploadsEnabled, rateLimit("auth"), handleRecallImage);
+  app.post(
+    "/images/:id/upvote",
+    requireActiveUser,
+    requireUploadsEnabled,
+    rateLimit("auth"),
+    handleImageUpvote,
+  );
+  app.post(
+    "/images/:id/unvote",
+    requireActiveUser,
+    requireUploadsEnabled,
+    rateLimit("auth"),
+    handleImageUnvote,
+  );
+  app.post(
+    "/images/:id/flag",
+    requireActiveUser,
+    requireUploadsEnabled,
+    rateLimit("auth"),
+    handleFlagImage,
+  );
+  app.post(
+    "/images/:id/unflag",
+    requireActiveUser,
+    requireUploadsEnabled,
+    rateLimit("auth"),
+    handleUnflagImage,
+  );
+  app.post(
+    "/images/:id/remove-request",
+    requireActiveUser,
+    requireUploadsEnabled,
+    rateLimit("auth"),
+    handleImageRemoveRequest,
+  );
+  app.post(
+    "/images/:id/unrecall",
+    requireActiveUser,
+    requireUploadsEnabled,
+    rateLimit("auth"),
+    handleUnrecallImage,
+  );
+  app.post(
+    "/images/:id/recall",
+    requireActiveUser,
+    requireUploadsEnabled,
+    rateLimit("auth"),
+    handleRecallImage,
+  );
   const publicImageLimit = rateLimit("public");
   const privateImageLimit = rateLimit("auth");
-  app.get("/images", async (c, next) => {
-    const includeMine = c.req.query("includeMine");
-    if (includeMine !== undefined && includeMine !== "1") {
-      throw new ApiError(422, "VALIDATION_ERROR", "includeMine must be 1 when supplied.");
-    }
-    if (includeMine === "1") {
-      if (c.req.query("publicOnly") === "1") {
-        throw new ApiError(422, "VALIDATION_ERROR", "includeMine and publicOnly cannot be combined.");
+  app.get(
+    "/images",
+    async (c, next) => {
+      const includeMine = c.req.query("includeMine");
+      if (includeMine !== undefined && includeMine !== "1") {
+        throw new ApiError(422, "VALIDATION_ERROR", "includeMine must be 1 when supplied.");
       }
-      await assertActiveUser(c);
-      return privateImageLimit(c, next);
-    }
-    return publicImageLimit(c, next);
-  }, (c) => c.req.query("includeMine") === "1"
-    ? handleListPointImages(c)
-    : handleListPublicImages(c));
+      if (includeMine === "1") {
+        if (c.req.query("publicOnly") === "1") {
+          throw new ApiError(
+            422,
+            "VALIDATION_ERROR",
+            "includeMine and publicOnly cannot be combined.",
+          );
+        }
+        await assertActiveUser(c);
+        return privateImageLimit(c, next);
+      }
+      return publicImageLimit(c, next);
+    },
+    (c) =>
+      c.req.query("includeMine") === "1" ? handleListPointImages(c) : handleListPublicImages(c),
+  );
 
   return app;
 }

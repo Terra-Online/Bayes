@@ -1,4 +1,4 @@
-import { ApiError } from "../../lib/errors";
+import { ApiError } from "@/lib/errors";
 
 export const ARCHIVE_PROGRESS_BITS_PER_ARCHIVE = 1;
 export const ARCHIVE_PROGRESS_FORMAT_VERSION = 1;
@@ -48,7 +48,7 @@ export function emptyArchiveProgressState(): ArchiveProgressState {
     bitsPerArchive: ARCHIVE_PROGRESS_BITS_PER_ARCHIVE,
     archiveCount: 0,
     retainedArchiveIds: [],
-    updatedAt: null
+    updatedAt: null,
   };
 }
 
@@ -58,19 +58,23 @@ export function isEmptyArchiveProgress(progress: ArchiveProgressState): boolean 
 
 export function publicArchiveProgressState(
   progress: ArchiveProgressState,
-  archiveIds: string[] = []
+  archiveIds: string[] = [],
 ): PublicArchiveProgressState {
   return {
     revision: progress.revision,
     archiveIndexHash: progress.archiveIndexHash,
     updatedAt: progress.updatedAt,
-    archiveIds
+    archiveIds,
   };
 }
 
 export function requireArchiveTimestampMs(value: unknown): number {
   if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
-    throw new ApiError(422, "VALIDATION_ERROR", "updatedAt must be an epoch milliseconds timestamp.");
+    throw new ApiError(
+      422,
+      "VALIDATION_ERROR",
+      "updatedAt must be an epoch milliseconds timestamp.",
+    );
   }
   return Math.floor(value);
 }

@@ -1,10 +1,11 @@
 import { Hono } from "hono";
-import { requireAuth, requireRole } from "../middleware/auth";
-import { rateLimit } from "../middleware/rate-limit";
-import { getTranslationReport } from "../repositories/report/translation-report";
-import { getUgcLikeReport } from "../repositories/report/ugc-like-report";
-import { getUserRegistrationReport } from "../repositories/report/user-registration-report";
-import type { AppEnv } from "../types/app";
+
+import { requireAuth, requireRole } from "@/middleware/auth";
+import { rateLimit } from "@/middleware/rate-limit";
+import { getTranslationReport } from "@/repositories/report/translation-report";
+import { getUgcLikeReport } from "@/repositories/report/ugc-like-report";
+import { getUserRegistrationReport } from "@/repositories/report/user-registration-report";
+import type { AppEnv } from "@/types/app";
 
 export function createAdminReportRoutes() {
   const app = new Hono<AppEnv>();

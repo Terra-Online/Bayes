@@ -22,7 +22,7 @@ const DEFAULT_LANGUAGE_CODES = [
   "ru",
   "th",
   "vi",
-  "id"
+  "id",
 ];
 
 function readArg(name, fallback) {
@@ -34,7 +34,7 @@ function readArg(name, fallback) {
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
     encoding: "utf8",
-    stdio: options.capture ? ["ignore", "pipe", "pipe"] : "inherit"
+    stdio: options.capture ? ["ignore", "pipe", "pipe"] : "inherit",
   });
   if (result.status !== 0) {
     const stderr = result.stderr?.trim();
@@ -55,7 +55,7 @@ function curlJson({ method, url, token, projectId, body }) {
     "-H",
     `x-goog-user-project: ${projectId}`,
     "-H",
-    "Content-Type: application/json"
+    "Content-Type: application/json",
   ];
   const proxy = process.env.GOOGLE_API_PROXY || process.env.HTTPS_PROXY || process.env.https_proxy;
   if (proxy) {
@@ -94,12 +94,18 @@ async function waitForOperation({ operationName, token, projectId }) {
 }
 
 async function main() {
-  const projectId = readArg("project", process.env.GOOGLE_TRANSLATE_PROJECT_ID || DEFAULT_PROJECT_ID);
+  const projectId = readArg(
+    "project",
+    process.env.GOOGLE_TRANSLATE_PROJECT_ID || DEFAULT_PROJECT_ID,
+  );
   const location = readArg("location", process.env.GOOGLE_TRANSLATE_LOCATION || DEFAULT_LOCATION);
   const glossaryId = readArg("glossary", DEFAULT_GLOSSARY_ID);
   const localFile = readArg("file", DEFAULT_LOCAL_FILE);
   const gcsUri = readArg("gcs-uri", DEFAULT_GCS_URI);
-  const languageCodes = readArg("languages", process.env.GOOGLE_TRANSLATE_GLOSSARY_LANGUAGES || DEFAULT_LANGUAGE_CODES.join(","))
+  const languageCodes = readArg(
+    "languages",
+    process.env.GOOGLE_TRANSLATE_GLOSSARY_LANGUAGES || DEFAULT_LANGUAGE_CODES.join(","),
+  )
     .split(",")
     .map((language) => language.trim())
     .filter(Boolean);
@@ -119,13 +125,13 @@ async function main() {
   const glossaryBody = {
     name: glossaryName,
     languageCodesSet: {
-      languageCodes
+      languageCodes,
     },
     inputConfig: {
       gcsSource: {
-        inputUri: gcsUri
-      }
-    }
+        inputUri: gcsUri,
+      },
+    },
   };
 
   let existing = null;
@@ -144,7 +150,7 @@ async function main() {
       url: createUrl,
       token,
       projectId,
-      body: glossaryBody
+      body: glossaryBody,
     });
     await waitForOperation({ operationName: operation.name, token, projectId });
   } else {
@@ -156,8 +162,8 @@ async function main() {
       projectId,
       body: {
         name: glossaryName,
-        inputConfig: glossaryBody.inputConfig
-      }
+        inputConfig: glossaryBody.inputConfig,
+      },
     });
     await waitForOperation({ operationName: operation.name, token, projectId });
   }
@@ -165,7 +171,9 @@ async function main() {
   const updated = curlJson({ method: "GET", url: glossaryUrl, token, projectId });
   console.log(`[glossary] Ready: ${updated.name}`);
   console.log(`[glossary] Entry count: ${updated.entryCount ?? "unknown"}`);
-  console.log("[glossary] Bump GOOGLE_TRANSLATE_GLOSSARY_VERSION before deploying to cut a new translation cache version.");
+  console.log(
+    "[glossary] Bump GOOGLE_TRANSLATE_GLOSSARY_VERSION before deploying to cut a new translation cache version.",
+  );
 }
 
 main().catch((error) => {

@@ -1,7 +1,8 @@
-import { createAuth } from "../../lib/auth/createAuth";
-import { resolveBrowserSessionHeaders } from "../../lib/auth/browserSession";
-import type { AuthRouteContext } from "./types";
+import { resolveBrowserSessionHeaders } from "@/lib/auth/browserSession";
+import { createAuth } from "@/lib/auth/createAuth";
+
 import { authConflictResponse } from "./conflicts";
+import type { AuthRouteContext } from "./types";
 
 function authInvocation(c: AuthRouteContext, path: string) {
   const errors: unknown[] = [];
@@ -14,14 +15,18 @@ function authInvocation(c: AuthRouteContext, path: string) {
         if (response.status >= 500) {
           for (const error of errors) {
             const conflict = authConflictResponse(c, path, error);
-            if (conflict) return conflict;
+            if (conflict) {
+              return conflict;
+            }
           }
         }
         return response;
       } catch (error) {
         for (const original of [error, ...errors]) {
           const conflict = authConflictResponse(c, path, original);
-          if (conflict) return conflict;
+          if (conflict) {
+            return conflict;
+          }
         }
         throw error;
       }
@@ -58,7 +63,7 @@ const FORWARDED_HEADER_ALLOWLIST = [
 
 function buildForwardHeaders(
   source: Headers,
-  options?: { forceJson?: boolean; headers?: Record<string, string> }
+  options?: { forceJson?: boolean; headers?: Record<string, string> },
 ): Headers {
   const forwardedHeaders = new Headers();
 
@@ -91,7 +96,7 @@ export function forwardToAuthJsonPath(
   c: AuthRouteContext,
   path: string,
   body: Record<string, unknown>,
-  options?: { headers?: Record<string, string> }
+  options?: { headers?: Record<string, string> },
 ) {
   const invocation = authInvocation(c, path);
   const { auth } = invocation;

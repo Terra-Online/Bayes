@@ -1,19 +1,31 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
 import type { Bindings } from "./types/app";
 
 const mocks = vi.hoisted(() => ({
-  drain: vi.fn(), health: vi.fn(), cleanup: vi.fn(), karma: vi.fn(), moderation: vi.fn()
+  drain: vi.fn(),
+  health: vi.fn(),
+  cleanup: vi.fn(),
+  karma: vi.fn(),
+  moderation: vi.fn(),
 }));
-vi.mock("cloudflare:workers", () => ({ WorkerEntrypoint: class {}, DurableObject: class {}, exports: {} }));
+vi.mock("cloudflare:workers", () => ({
+  WorkerEntrypoint: class {},
+  DurableObject: class {},
+  exports: {},
+}));
 vi.mock("@cloudflare/containers", () => ({ Container: class {} }));
 vi.mock("./app", () => ({ createApp: () => ({ fetch: vi.fn() }) }));
 vi.mock("./lib/redis", () => ({ createRedisClient: () => ({}) }));
-vi.mock("./lib/config", () => ({ getRuntimeConfig: () => ({ scheduledModerationEnabled: false }) }));
+vi.mock("./lib/config", () => ({
+  getRuntimeConfig: () => ({ scheduledModerationEnabled: false }),
+}));
 vi.mock("./lib/email/sender", () => ({}));
 vi.mock("./services/karma/evaluation", () => ({ evaluateKarmaIfDue: mocks.karma }));
 vi.mock("./services/progress/outbox", () => ({ drainProgressStatsOutbox: mocks.drain }));
 vi.mock("./services/progress/repository", () => ({
-  cleanupProgressConsistencyRecords: mocks.cleanup, getProgressStatsOutboxHealth: mocks.health
+  cleanupProgressConsistencyRecords: mocks.cleanup,
+  getProgressStatsOutboxHealth: mocks.health,
 }));
 vi.mock("./services/moderation/queue", () => ({ ensureModerationBackfill: mocks.moderation }));
 import worker from "./index";
@@ -28,14 +40,21 @@ describe("scheduled database work", () => {
     mocks.karma.mockResolvedValue({ evaluated: false });
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
   });
-  afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
 
   async function tick(time: string) {
     vi.setSystemTime(time);
     const waits: Promise<unknown>[] = [];
-    await worker.scheduled({} as ScheduledEvent, { DB: {} } as Bindings, {
-      waitUntil: (promise: Promise<unknown>) => waits.push(promise)
-    } as unknown as ExecutionContext);
+    await worker.scheduled(
+      {} as ScheduledEvent,
+      { DB: {} } as Bindings,
+      {
+        waitUntil: (promise: Promise<unknown>) => waits.push(promise),
+      } as unknown as ExecutionContext,
+    );
     await Promise.all(waits);
   }
 

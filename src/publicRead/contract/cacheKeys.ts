@@ -1,4 +1,5 @@
-import { sha256Hex } from "../../lib/crypto";
+import { sha256Hex } from "@/lib/crypto";
+
 import type { PublicReadMarkerKind } from "./markers";
 
 export function buildPublicReadCacheKey(path: string, searchParams: URLSearchParams): string {
@@ -10,7 +11,7 @@ export function buildPublicReadCacheKey(path: string, searchParams: URLSearchPar
 
 export async function buildPublicReadMarkerTag(
   kind: PublicReadMarkerKind,
-  markerId: string
+  markerId: string,
 ): Promise<string> {
   return `ugc-${kind}:${await sha256Hex(markerId)}`;
 }

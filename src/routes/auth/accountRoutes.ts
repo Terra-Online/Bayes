@@ -1,9 +1,11 @@
 import type { Hono } from "hono";
 import { z } from "zod";
-import { ApiError } from "../../lib/errors";
-import { requireAuth } from "../../middleware/auth";
-import { rateLimit } from "../../middleware/rate-limit";
-import type { AppEnv } from "../../types/app";
+
+import { ApiError } from "@/lib/errors";
+import { requireAuth } from "@/middleware/auth";
+import { rateLimit } from "@/middleware/rate-limit";
+import type { AppEnv } from "@/types/app";
+
 import { applyDefaultSocialCallbackUrls } from "./callbacks";
 import type { ForwardToAuthJsonPath } from "./types";
 
@@ -33,14 +35,18 @@ export function registerAccountAuthRoutes(
 ) {
   app.get("/list-accounts", requireAuth, rateLimit("auth"), async (c) => {
     const user = c.get("authUser");
-    if (!user) throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
+    if (!user) {
+      throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
+    }
 
     const result = await c.env.DB.prepare(
       `SELECT providerId, createdAt
        FROM auth_accounts
        WHERE userId = ?1
        ORDER BY createdAt ASC, providerId ASC`,
-    ).bind(user.uid).all<AccountRow>();
+    )
+      .bind(user.uid)
+      .all<AccountRow>();
 
     const accounts = (result.results ?? []).map((account) => ({
       provider: publicProvider(account.providerId),
@@ -62,7 +68,12 @@ export function registerAccountAuthRoutes(
   app.post("/link-social", requireAuth, rateLimit("auth"), async (c) => {
     const parsed = linkAccountSchema.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) {
-      throw new ApiError(422, "VALIDATION_ERROR", "Invalid account link payload.", parsed.error.flatten());
+      throw new ApiError(
+        422,
+        "VALIDATION_ERROR",
+        "Invalid account link payload.",
+        parsed.error.flatten(),
+      );
     }
 
     const body = applyDefaultSocialCallbackUrls(c, {
@@ -75,18 +86,31 @@ export function registerAccountAuthRoutes(
   app.post("/unlink-account", requireAuth, rateLimit("auth"), async (c) => {
     const parsed = unlinkAccountSchema.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) {
-      throw new ApiError(422, "VALIDATION_ERROR", "Invalid account unlink payload.", parsed.error.flatten());
+      throw new ApiError(
+        422,
+        "VALIDATION_ERROR",
+        "Invalid account unlink payload.",
+        parsed.error.flatten(),
+      );
     }
 
     const user = c.get("authUser");
-    if (!user) throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
+    if (!user) {
+      throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
+    }
     const providerId = parsed.data.provider === "email" ? "credential" : parsed.data.provider;
     const result = await c.env.DB.prepare(
       "SELECT id FROM auth_accounts WHERE userId = ?1 AND providerId = ?2 LIMIT 2",
-    ).bind(user.uid, providerId).all<{ id: string }>();
+    )
+      .bind(user.uid, providerId)
+      .all<{ id: string }>();
     const accounts = result.results ?? [];
     if (accounts.length === 0) {
-      throw new ApiError(400, "ACCOUNT_NOT_LINKED", "This login method is not linked to your account.");
+      throw new ApiError(
+        400,
+        "ACCOUNT_NOT_LINKED",
+        "This login method is not linked to your account.",
+      );
     }
     if (accounts.length > 1) {
       throw new ApiError(409, "PROVIDER_CONFLICT", "Multiple accounts use this login method.");

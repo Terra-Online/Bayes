@@ -1,12 +1,19 @@
 export function toSerializableError(error: unknown, depth = 0, seen = new Set<unknown>()): unknown {
-  if (depth >= 8 || seen.has(error)) return "[cause omitted]";
+  if (depth >= 8 || seen.has(error)) {
+    return "[cause omitted]";
+  }
   if (!error || typeof error !== "object") {
     return error;
   }
   seen.add(error);
   const withCause = error as Error & {
-    cause?: unknown; code?: unknown; status?: unknown; statusText?: unknown;
-    overloaded?: unknown; retryable?: unknown; durableObjectReset?: unknown;
+    cause?: unknown;
+    code?: unknown;
+    status?: unknown;
+    statusText?: unknown;
+    overloaded?: unknown;
+    retryable?: unknown;
+    durableObjectReset?: unknown;
   };
   return {
     name: withCause.name,

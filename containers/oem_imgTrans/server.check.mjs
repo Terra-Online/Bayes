@@ -4,6 +4,7 @@ import { once } from "node:events";
 import { readFile } from "node:fs/promises";
 import { after, before, test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
+
 import sharp from "sharp";
 
 let server;
@@ -12,16 +13,28 @@ const endpoint = "http://127.0.0.1:8080";
 
 before(async () => {
   server = spawn(process.execPath, [new URL("./server.js", import.meta.url).pathname], {
-    env: { ...process.env, PORT: "8080" }, stdio: ["ignore", "pipe", "pipe"],
+    env: { ...process.env, PORT: "8080" },
+    stdio: ["ignore", "pipe", "pipe"],
   });
-  server.stdout.on("data", (chunk) => { diagnostics += chunk; });
-  server.stderr.on("data", (chunk) => { diagnostics += chunk; });
+  server.stdout.on("data", (chunk) => {
+    diagnostics += chunk;
+  });
+  server.stderr.on("data", (chunk) => {
+    diagnostics += chunk;
+  });
   for (let attempt = 0; attempt < 100; attempt += 1) {
-    if (server.exitCode !== null) throw new Error(`Image server exited: ${diagnostics}`);
+    if (server.exitCode !== null) {
+      throw new Error(`Image server exited: ${diagnostics}`);
+    }
     try {
       const response = await fetch(`${endpoint}/health`);
-      if (response.ok) { assert.equal(await response.text(), "ok"); return; }
-    } catch { /* Wait for the local server to bind. */ }
+      if (response.ok) {
+        assert.equal(await response.text(), "ok");
+        return;
+      }
+    } catch {
+      /* Wait for the local server to bind. */
+    }
     await delay(50);
   }
   throw new Error(`Image server did not become healthy: ${diagnostics}`);
@@ -37,7 +50,9 @@ after(async () => {
 
 async function prepare(body, mimeType) {
   return fetch(`${endpoint}/prepare`, {
-    method: "POST", headers: { "content-type": mimeType, "x-source-mime": mimeType }, body,
+    method: "POST",
+    headers: { "content-type": mimeType, "x-source-mime": mimeType },
+    body,
   });
 }
 
@@ -47,15 +62,27 @@ function image(width = 32, height = 24) {
 
 test("uses the security-patched sharp and native dependencies", () => {
   assert.equal(sharp.versions.sharp, "0.35.5");
-  for (const [library, minimum] of [["vips", "8.18.3"], ["heif", "1.23.2"], ["rsvg", "2.63.2"]]) {
+  for (const [library, minimum] of [
+    ["vips", "8.18.3"],
+    ["heif", "1.23.2"],
+    ["rsvg", "2.63.2"],
+  ]) {
     const actual = sharp.versions[library].split(".").map(Number);
     const expected = minimum.split(".").map(Number);
     const firstDifference = actual.findIndex((value, index) => value !== expected[index]);
-    assert.ok(firstDifference === -1 || actual[firstDifference] > expected[firstDifference], `${library}: ${sharp.versions[library]}`);
+    assert.ok(
+      firstDifference === -1 || actual[firstDifference] > expected[firstDifference],
+      `${library}: ${sharp.versions[library]}`,
+    );
   }
 });
 
-for (const [format, mimeType] of [["png", "image/png"], ["jpeg", "image/jpeg"], ["webp", "image/webp"], ["avif", "image/avif"]]) {
+for (const [format, mimeType] of [
+  ["png", "image/png"],
+  ["jpeg", "image/jpeg"],
+  ["webp", "image/webp"],
+  ["avif", "image/avif"],
+]) {
   test(`preserves small ${format} images`, async () => {
     const input = await image().toFormat(format).toBuffer();
     const response = await prepare(input, mimeType);
@@ -119,7 +146,9 @@ for (const mimeType of ["image/heic", "image/heif"]) {
 }
 
 test("rejects SVG disguised as PNG", async () => {
-  const input = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="32" height="24"><rect width="32" height="24" fill="blue"/></svg>');
+  const input = Buffer.from(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="24"><rect width="32" height="24" fill="blue"/></svg>',
+  );
   assert.equal((await prepare(input, "image/png")).status, 422);
 });
 
@@ -150,6 +179,9 @@ test("handles simultaneous conversions", async () => {
   const responses = await Promise.all([prepare(input, "image/png"), prepare(input, "image/png")]);
   for (const response of responses) {
     assert.equal(response.status, 200);
-    assert.equal((await sharp(Buffer.from(await response.arrayBuffer())).metadata()).format, "webp");
+    assert.equal(
+      (await sharp(Buffer.from(await response.arrayBuffer())).metadata()).format,
+      "webp",
+    );
   }
 });

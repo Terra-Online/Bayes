@@ -1,17 +1,25 @@
+import type { Context } from "hono";
 import { nanoid } from "nanoid";
-import { getRuntimeConfig } from "../../lib/config";
-import { ApiError } from "../../lib/errors";
-import { UGC_PUBLIC_IMAGE_CACHE_CONTROL } from "./imageDeliveryPolicy";
-import { getDuplicateImageMarkerSummary } from "../../repositories/submission-duplicates";
-import { createPendingSubmission } from "../../repositories/submission/createSubmission";
-import { enqueueModeration } from "../moderation/queue";
-import type { AppEnv } from "../../types/app";
-import { pickFile, pickString, normalizeUploadMime } from "./helpers";
-import { imageUploadFieldsSchema } from "./schemas";
-import { buildUploadObjectKey, extensionFromMime, normalizePathPart, prepareUploadImageForStorage } from "./storage";
-import { resolveImageScope, resolveUploadPrefix } from "./scope";
 
-export async function handleSubmitImage(c: import("hono").Context<AppEnv>) {
+import { getRuntimeConfig } from "@/lib/config";
+import { ApiError } from "@/lib/errors";
+import { getDuplicateImageMarkerSummary } from "@/repositories/submission-duplicates";
+import { createPendingSubmission } from "@/repositories/submission/createSubmission";
+import { enqueueModeration } from "@/services/moderation/queue";
+import type { AppEnv } from "@/types/app";
+
+import { pickFile, pickString, normalizeUploadMime } from "./helpers";
+import { UGC_PUBLIC_IMAGE_CACHE_CONTROL } from "./imageDeliveryPolicy";
+import { imageUploadFieldsSchema } from "./schemas";
+import { resolveImageScope, resolveUploadPrefix } from "./scope";
+import {
+  buildUploadObjectKey,
+  extensionFromMime,
+  normalizePathPart,
+  prepareUploadImageForStorage,
+} from "./storage";
+
+export async function handleSubmitImage(c: Context<AppEnv>) {
   const user = c.get("authUser");
   if (!user) {
     throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
@@ -27,7 +35,7 @@ export async function handleSubmitImage(c: import("hono").Context<AppEnv>) {
     markerId: pickString(form.markerId),
     poiHash: pickString(form.poiHash),
     poiType: pickString(form.poiType),
-    content: pickString(form.content)
+    content: pickString(form.content),
   });
   if (!parsed.success) {
     throw new ApiError(422, "VALIDATION_ERROR", "Invalid upload payload.", parsed.error.flatten());
@@ -35,14 +43,17 @@ export async function handleSubmitImage(c: import("hono").Context<AppEnv>) {
 
   const config = getRuntimeConfig(c.env);
   const normalizedMime = normalizeUploadMime(file);
-  if (!config.allowedUploadMime.has(normalizedMime) || extensionFromMime(normalizedMime) === "bin") {
+  if (
+    !config.allowedUploadMime.has(normalizedMime) ||
+    extensionFromMime(normalizedMime) === "bin"
+  ) {
     throw new ApiError(422, "MIME_NOT_ALLOWED", "File MIME type is not allowed.");
   }
 
   const body = await file.arrayBuffer();
   if (body.byteLength <= 0 || body.byteLength > config.maxUploadBytes) {
     throw new ApiError(422, "UPLOAD_SIZE_INVALID", "Upload body size is invalid.", {
-      maxBytes: config.maxUploadBytes
+      maxBytes: config.maxUploadBytes,
     });
   }
 
@@ -54,9 +65,14 @@ export async function handleSubmitImage(c: import("hono").Context<AppEnv>) {
     requestId: c.get("requestId"),
   });
   if (preparedImage.sizeBytes <= 0 || preparedImage.sizeBytes > config.maxUploadBytes) {
-    throw new ApiError(422, "UPLOAD_SIZE_INVALID", "Upload body size is invalid after processing.", {
-      maxBytes: config.maxUploadBytes
-    });
+    throw new ApiError(
+      422,
+      "UPLOAD_SIZE_INVALID",
+      "Upload body size is invalid after processing.",
+      {
+        maxBytes: config.maxUploadBytes,
+      },
+    );
   }
 
   const submissionId = nanoid(18);
@@ -70,19 +86,19 @@ export async function handleSubmitImage(c: import("hono").Context<AppEnv>) {
     poiHash,
     snapshotId,
     mimeType: preparedImage.mimeType,
-    prefix: uploadPrefix
+    prefix: uploadPrefix,
   });
 
   c.req.raw.signal.throwIfAborted();
   await c.env.UGC_BUCKET.put(objectKey, preparedImage.body, {
     httpMetadata: {
       contentType: preparedImage.mimeType,
-      cacheControl: UGC_PUBLIC_IMAGE_CACHE_CONTROL
+      cacheControl: UGC_PUBLIC_IMAGE_CACHE_CONTROL,
     },
     customMetadata: {
       sourceMimeType: normalizedMime,
-      convertedToWebp: preparedImage.converted ? "true" : "false"
-    }
+      convertedToWebp: preparedImage.converted ? "true" : "false",
+    },
   });
 
   await createPendingSubmission(c.env.DB, {
@@ -97,13 +113,13 @@ export async function handleSubmitImage(c: import("hono").Context<AppEnv>) {
     filePath: objectKey,
     mimeType: preparedImage.mimeType,
     sizeBytes: preparedImage.sizeBytes,
-    status: "pending_openai"
+    status: "pending_openai",
   });
   await enqueueModeration(c.env, submissionId, snapshotId);
   const duplicatePoi = await getDuplicateImageMarkerSummary(c.env.DB, {
     markerId: parsed.data.markerId,
     pathPrefix: uploadScope.pathPrefix,
-    excludePathPrefix: uploadScope.excludePathPrefix
+    excludePathPrefix: uploadScope.excludePathPrefix,
   });
 
   return c.json({
@@ -113,14 +129,14 @@ export async function handleSubmitImage(c: import("hono").Context<AppEnv>) {
       markerId: parsed.data.markerId,
       status: "pending_openai",
       filePath: objectKey,
-      snapshotId
+      snapshotId,
     },
     duplicatePoi: duplicatePoi
       ? {
           markerId: duplicatePoi.markerId,
           imageCount: duplicatePoi.imageCount,
-          dashboardPath: `/ugc-review?duplicateMarker=${encodeURIComponent(duplicatePoi.markerId)}`
+          dashboardPath: `/ugc-review?duplicateMarker=${encodeURIComponent(duplicatePoi.markerId)}`,
         }
-      : null
+      : null,
   });
 }

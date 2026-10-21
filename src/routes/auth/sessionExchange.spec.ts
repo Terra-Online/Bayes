@@ -1,35 +1,53 @@
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
 import { memoryAdapter } from "better-auth/adapters/memory";
 import { getCookies } from "better-auth/cookies";
 import { Hono } from "hono";
-import { createAuth } from "../../lib/auth/createAuth";
-import { AUTH_EXCHANGE_CHALLENGE_PARAM, createOAuthExchangeProof, getLegacyCookieExpirations } from "../../lib/auth/browserSession";
-import { onAppError } from "../../middleware/error-handler";
-import type { AppEnv, Bindings } from "../../types/app";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import {
+  AUTH_EXCHANGE_CHALLENGE_PARAM,
+  createOAuthExchangeProof,
+  getLegacyCookieExpirations,
+} from "@/lib/auth/browserSession";
+import { createAuth } from "@/lib/auth/createAuth";
+import { onAppError } from "@/middleware/error-handler";
+import type { AppEnv, Bindings } from "@/types/app";
+
 import { attachSessionExchangeCode } from "./callbacks";
 import { forwardToAuthRawRequest } from "./forwarding";
 import { handleSessionExchange } from "./sessionExchange";
 import { registerSessionAuthRoutes } from "./sessionRoutes";
 import { registerSocialAuthRoutes } from "./socialRoutes";
 
-vi.mock("../../lib/auth/createAuth", () => ({ createAuth: vi.fn() }));
-vi.mock("../../lib/email/sender", () => ({ sendEmail: vi.fn() }));
-vi.mock("../../lib/auth/providers", () => ({ createAuthSocialProviders: () => ({}) }));
-vi.mock("../../middleware/rate-limit", () => ({
+vi.mock("@/lib/auth/createAuth", () => ({ createAuth: vi.fn() }));
+vi.mock("@/lib/email/sender", () => ({ sendEmail: vi.fn() }));
+vi.mock("@/lib/auth/providers", () => ({ createAuthSocialProviders: () => ({}) }));
+vi.mock("@/middleware/rate-limit", () => ({
   rateLimit: () => async (_context: unknown, next: () => Promise<void>) => next(),
 }));
-vi.mock("../../repositories/users", () => ({
-  ensureUserProfile: vi.fn(async (_database: unknown, identity: { uid: string; email: string }) => ({
-    ...identity, uidNumber: 1, uidSuffix: "test", role: "n", karma: 0, avt: 1,
-    nickname: "Tester", createdAt: "2026-09-05T00:00:00.000Z", nicknameCustomized: true,
-  })),
+vi.mock("@/repositories/users", () => ({
+  ensureUserProfile: vi.fn(
+    async (_database: unknown, identity: { uid: string; email: string }) => ({
+      ...identity,
+      uidNumber: 1,
+      uidSuffix: "test",
+      role: "n",
+      karma: 0,
+      avt: 1,
+      nickname: "Tester",
+      createdAt: "2026-09-05T00:00:00.000Z",
+      nicknameCustomized: true,
+    }),
+  ),
   formatPublicUid: () => "1-test",
   getErrorMessage: (error: Error) => error.message,
   updateUserNickname: vi.fn(),
 }));
 
-const realCreateAuth = (await vi.importActual<typeof import("../../lib/auth/createAuth")>("../../lib/auth/createAuth")).createAuth;
+const realCreateAuth = (
+  await vi.importActual<typeof import("@/lib/auth/createAuth")>("@/lib/auth/createAuth")
+).createAuth;
 const API_ORIGIN = "https://api.opendfieldmap.org";
 const CN_API_ORIGIN = "https://api.opendfieldmap.cn";
 const CN_ORIGIN = "https://opendfieldmap.cn";
@@ -46,25 +64,34 @@ describe("CHIPS OAuth exchange", () => {
 
   beforeEach(() => {
     const NativeRequest = Request;
-    vi.stubGlobal("Request", class extends NativeRequest {
-      constructor(input: RequestInfo | URL, init?: RequestInit) {
-        const options = { ...init, duplex: "half" };
-        super(input, options);
-      }
-    });
+    vi.stubGlobal(
+      "Request",
+      class extends NativeRequest {
+        constructor(input: RequestInfo | URL, init?: RequestInit) {
+          const options = { ...init, duplex: "half" };
+          super(input, options);
+        }
+      },
+    );
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-09-05T00:00:00.000Z"));
     sqlite = new DatabaseSync(":memory:");
-    sqlite.exec("CREATE TABLE auth_verifications (id TEXT PRIMARY KEY, identifier TEXT UNIQUE, value TEXT, expiresAt TEXT, createdAt TEXT, updatedAt TEXT)");
+    sqlite.exec(
+      "CREATE TABLE auth_verifications (id TEXT PRIMARY KEY, identifier TEXT UNIQUE, value TEXT, expiresAt TEXT, createdAt TEXT, updatedAt TEXT)",
+    );
     const database = {
       prepare(query: string) {
         return {
           bind(...values: SQLInputValue[]) {
             return {
-              async first() { return sqlite.prepare(query).get(...values) ?? null; },
-              async run() { return sqlite.prepare(query).run(...values); },
+              async first() {
+                return sqlite.prepare(query).get(...values) ?? null;
+              },
+              async run() {
+                return sqlite.prepare(query).run(...values);
+              },
             };
           },
         };
@@ -80,10 +107,15 @@ describe("CHIPS OAuth exchange", () => {
     vi.mocked(createAuth).mockReturnValue(auth);
     app = new Hono<AppEnv>();
     app.onError(onAppError);
-    app.get("/test-callback", (context) => attachSessionExchangeCode(context, new Response(null, {
-      status: 302,
-      headers: { location: callbackUrl, "set-cookie": callbackCookie },
-    })));
+    app.get("/test-callback", (context) =>
+      attachSessionExchangeCode(
+        context,
+        new Response(null, {
+          status: 302,
+          headers: { location: callbackUrl, "set-cookie": callbackCookie },
+        }),
+      ),
+    );
     app.post("/session/exchange", handleSessionExchange);
     registerSessionAuthRoutes(app);
     registerSocialAuthRoutes(app, {
@@ -99,7 +131,9 @@ describe("CHIPS OAuth exchange", () => {
     app.post("/auth/v1/sign-out", async (context) => {
       const response = await forwardToAuthRawRequest(context);
       if (response.ok) {
-        for (const cookie of getLegacyCookieExpirations(auth)) response.headers.append("Set-Cookie", cookie);
+        for (const cookie of getLegacyCookieExpirations(auth)) {
+          response.headers.append("Set-Cookie", cookie);
+        }
       }
       return response;
     });
@@ -113,22 +147,38 @@ describe("CHIPS OAuth exchange", () => {
   });
 
   async function issueCode(origin = CN_ORIGIN, apiOrigin = API_ORIGIN) {
-    const initiated = await app.request(`${apiOrigin}/sign-in/social`, {
-      method: "POST",
-      headers: { origin, "content-type": "application/json" },
-      body: JSON.stringify({ provider: "github", callbackURL: `${origin}/?test=1`, disableRedirect: true }),
-    }, env);
+    const initiated = await app.request(
+      `${apiOrigin}/sign-in/social`,
+      {
+        method: "POST",
+        headers: { origin, "content-type": "application/json" },
+        body: JSON.stringify({
+          provider: "github",
+          callbackURL: `${origin}/?test=1`,
+          disableRedirect: true,
+        }),
+      },
+      env,
+    );
     expect(initiated.status).toBe(200);
-    const proof = initiated.headers.getSetCookie().find((value) => value.includes(".oauth_exchange_proof="))!;
+    const proof = initiated.headers
+      .getSetCookie()
+      .find((value) => value.includes(".oauth_exchange_proof="))!;
     expect(proof).toContain("Partitioned");
     expect(proof).toContain("HttpOnly");
     proofCookie = proof.split(";")[0]!;
     const result = await auth.api.signUpEmail({
-      body: { email: `${crypto.randomUUID()}@example.com`, password: "test-password-12345", name: "Tester" },
+      body: {
+        email: `${crypto.randomUUID()}@example.com`,
+        password: "test-password-12345",
+        name: "Tester",
+      },
       returnHeaders: true,
     });
     const cookieName = getCookies(auth.options).sessionToken.name;
-    const cookie = result.headers.getSetCookie().find((value) => value.startsWith(`${cookieName}=`))!;
+    const cookie = result.headers
+      .getSetCookie()
+      .find((value) => value.startsWith(`${cookieName}=`))!;
     callbackCookie = cookie;
     const response = await app.request(`${API_ORIGIN}/test-callback`, {}, env);
     expect(response.status).toBe(302);
@@ -136,17 +186,29 @@ describe("CHIPS OAuth exchange", () => {
     expect(response.headers.get("referrer-policy")).toBe("no-referrer");
     const code = new URL(response.headers.get("location")!).searchParams.get("auth_code")!;
     expect(code).toBeTruthy();
-    expect(new URL(response.headers.get("location")!).searchParams.has(AUTH_EXCHANGE_CHALLENGE_PARAM)).toBe(false);
+    expect(
+      new URL(response.headers.get("location")!).searchParams.has(AUTH_EXCHANGE_CHALLENGE_PARAM),
+    ).toBe(false);
     return { code, cookie, token: result.response.token };
   }
 
   function exchange(code: string, origin: string | null = CN_ORIGIN, apiOrigin = API_ORIGIN) {
     const headers = new Headers({ "content-type": "application/json" });
-    if (proofCookie) headers.set("cookie", proofCookie);
-    if (origin) headers.set("origin", origin);
-    return app.request(`${apiOrigin}/session/exchange`, {
-      method: "POST", headers, body: JSON.stringify({ code }),
-    }, env);
+    if (proofCookie) {
+      headers.set("cookie", proofCookie);
+    }
+    if (origin) {
+      headers.set("origin", origin);
+    }
+    return app.request(
+      `${apiOrigin}/session/exchange`,
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ code }),
+      },
+      env,
+    );
   }
 
   it.each([CN_ORIGIN, "https://opendfieldmap.org", "https://www.opendfieldmap.cn"])(
@@ -156,18 +218,31 @@ describe("CHIPS OAuth exchange", () => {
       const response = await exchange(code, origin);
       expect(response.status).toBe(200);
       expect(response.headers.get("cache-control")).toBe("private, no-store");
-      const payload = await response.json() as { user: { uid: string }; token?: string };
+      const payload = (await response.json()) as { user: { uid: string }; token?: string };
       expect(payload.user.uid).toBe("1-test");
       expect(payload).not.toHaveProperty("token");
       expect(JSON.stringify(payload)).not.toContain(token!);
-      const cookie = response.headers.getSetCookie().find((value) => value.startsWith("__Secure-oem-chips.session_token="))!;
-      for (const attribute of ["Secure", "HttpOnly", "SameSite=None", "Partitioned", "Max-Age=15552000", "Path=/"]) {
+      const cookie = response.headers
+        .getSetCookie()
+        .find((value) => value.startsWith("__Secure-oem-chips.session_token="))!;
+      for (const attribute of [
+        "Secure",
+        "HttpOnly",
+        "SameSite=None",
+        "Partitioned",
+        "Max-Age=15552000",
+        "Path=/",
+      ]) {
         expect(cookie).toContain(attribute);
       }
       expect(cookie).not.toContain("Domain=");
-      const session = await app.request(`${API_ORIGIN}/session`, {
-        headers: { origin, cookie: cookie.split(";")[0]! },
-      }, env);
+      const session = await app.request(
+        `${API_ORIGIN}/session`,
+        {
+          headers: { origin, cookie: cookie.split(";")[0]! },
+        },
+        env,
+      );
       expect(session.status).toBe(200);
     },
   );
@@ -176,15 +251,19 @@ describe("CHIPS OAuth exchange", () => {
     const { code } = await issueCode(CN_ORIGIN, CN_API_ORIGIN);
     const established = await exchange(code, CN_ORIGIN, CN_API_ORIGIN);
     expect(established.status).toBe(200);
-    const cookie = established.headers.getSetCookie().find(
-      (value) => value.startsWith("__Secure-oem-chips.session_token="),
-    )!;
+    const cookie = established.headers
+      .getSetCookie()
+      .find((value) => value.startsWith("__Secure-oem-chips.session_token="))!;
     expect(cookie).toBeTruthy();
     expect(callbackUrl.startsWith(CN_ORIGIN + "/")).toBe(true);
 
-    const session = await app.request(CN_API_ORIGIN + "/session", {
-      headers: { origin: CN_ORIGIN, cookie: cookie.split(";")[0]! },
-    }, env);
+    const session = await app.request(
+      CN_API_ORIGIN + "/session",
+      {
+        headers: { origin: CN_ORIGIN, cookie: cookie.split(";")[0]! },
+      },
+      env,
+    );
     expect(session.status).toBe(200);
   });
 
@@ -195,16 +274,30 @@ describe("CHIPS OAuth exchange", () => {
     expect((await exchange(code)).status).toBe(400);
   });
 
-  it.each([null, "https://untrusted.example"])("does not seed a login proof for an untrusted origin %s", async (origin) => {
-    const headers = new Headers({ "content-type": "application/json", referer: `${CN_ORIGIN}/` });
-    if (origin) headers.set("origin", origin);
-    const response = await app.request(`${API_ORIGIN}/sign-in/social`, {
-      method: "POST", headers,
-      body: JSON.stringify({ provider: "github", callbackURL: CN_ORIGIN, disableRedirect: true }),
-    }, env);
-    expect(response.status).toBe(403);
-    expect(response.headers.getSetCookie()).toEqual([]);
-  });
+  it.each([null, "https://untrusted.example"])(
+    "does not seed a login proof for an untrusted origin %s",
+    async (origin) => {
+      const headers = new Headers({ "content-type": "application/json", referer: `${CN_ORIGIN}/` });
+      if (origin) {
+        headers.set("origin", origin);
+      }
+      const response = await app.request(
+        `${API_ORIGIN}/sign-in/social`,
+        {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            provider: "github",
+            callbackURL: CN_ORIGIN,
+            disableRedirect: true,
+          }),
+        },
+        env,
+      );
+      expect(response.status).toBe(403);
+      expect(response.headers.getSetCookie()).toEqual([]);
+    },
+  );
 
   it("rejects a stolen code without the initiating browser's partitioned proof cookie", async () => {
     const { code } = await issueCode();
@@ -230,11 +323,14 @@ describe("CHIPS OAuth exchange", () => {
     expect((await exchange(code)).status).toBe(200);
   });
 
-  it.each([null, "null", "https://untrusted.example"])("rejects origin %s before consuming the code", async (origin) => {
-    const { code } = await issueCode();
-    expect((await exchange(code, origin)).status).toBe(403);
-    expect((await exchange(code)).status).toBe(200);
-  });
+  it.each([null, "null", "https://untrusted.example"])(
+    "rejects origin %s before consuming the code",
+    async (origin) => {
+      const { code } = await issueCode();
+      expect((await exchange(code, origin)).status).toBe(403);
+      expect((await exchange(code)).status).toBe(200);
+    },
+  );
 
   it("does not exchange an expired code", async () => {
     const { code } = await issueCode();
@@ -270,22 +366,42 @@ describe("CHIPS OAuth exchange", () => {
     expect(response.headers.get("set-cookie")).toContain("Max-Age=3600");
   });
 
-  it.each([false, true])("signs out and clears both cookie generations (legacy-only: %s)", async (legacyOnly) => {
-    const { code, cookie: originalCookie } = await issueCode();
-    const established = await exchange(code);
-    const cookie = established.headers.getSetCookie()[0]!;
-    const legacyCookie = originalCookie.split(";")[0]!.replace("__Secure-oem-chips.", "__Secure-better-auth.");
-    const requestCookie = legacyOnly ? legacyCookie : `${legacyCookie}; ${cookie.split(";")[0]}`;
-    const response = await app.request(`${API_ORIGIN}/auth/v1/sign-out`, {
-      method: "POST", headers: { origin: CN_ORIGIN, cookie: requestCookie, "content-type": "application/json" }, body: "{}",
-    }, env);
-    expect(response.status).toBe(200);
-    const cleared = response.headers.getSetCookie();
-    expect(cleared.find((value) => value.startsWith("__Secure-oem-chips.session_token="))).toContain("Partitioned");
-    expect(cleared.find((value) => value.startsWith("__Secure-oem-chips.session_token="))).toContain("Max-Age=0");
-    const oldCookie = cleared.find((value) => value.startsWith("__Secure-better-auth.session_token="))!;
-    expect(oldCookie).toContain("Max-Age=0");
-    expect(oldCookie).not.toContain("Partitioned");
-    expect((await app.request(`${API_ORIGIN}/session`, { headers: { cookie: requestCookie } }, env)).status).toBe(401);
-  });
+  it.each([false, true])(
+    "signs out and clears both cookie generations (legacy-only: %s)",
+    async (legacyOnly) => {
+      const { code, cookie: originalCookie } = await issueCode();
+      const established = await exchange(code);
+      const cookie = established.headers.getSetCookie()[0]!;
+      const legacyCookie = originalCookie
+        .split(";")[0]!
+        .replace("__Secure-oem-chips.", "__Secure-better-auth.");
+      const requestCookie = legacyOnly ? legacyCookie : `${legacyCookie}; ${cookie.split(";")[0]}`;
+      const response = await app.request(
+        `${API_ORIGIN}/auth/v1/sign-out`,
+        {
+          method: "POST",
+          headers: { origin: CN_ORIGIN, cookie: requestCookie, "content-type": "application/json" },
+          body: "{}",
+        },
+        env,
+      );
+      expect(response.status).toBe(200);
+      const cleared = response.headers.getSetCookie();
+      expect(
+        cleared.find((value) => value.startsWith("__Secure-oem-chips.session_token=")),
+      ).toContain("Partitioned");
+      expect(
+        cleared.find((value) => value.startsWith("__Secure-oem-chips.session_token=")),
+      ).toContain("Max-Age=0");
+      const oldCookie = cleared.find((value) =>
+        value.startsWith("__Secure-better-auth.session_token="),
+      )!;
+      expect(oldCookie).toContain("Max-Age=0");
+      expect(oldCookie).not.toContain("Partitioned");
+      expect(
+        (await app.request(`${API_ORIGIN}/session`, { headers: { cookie: requestCookie } }, env))
+          .status,
+      ).toBe(401);
+    },
+  );
 });

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+
 import { toSerializableError } from "./errors";
 
 describe("runtime error diagnostics", () => {
@@ -6,7 +7,9 @@ describe("runtime error diagnostics", () => {
     const cause = Object.assign(new Error("reset"), { durableObjectReset: true, retryable: true });
     const error = Object.assign(new Error("busy", { cause }), { overloaded: true });
     expect(JSON.parse(JSON.stringify(toSerializableError(error)))).toMatchObject({
-      name: "Error", message: "busy", overloaded: true,
+      name: "Error",
+      message: "busy",
+      overloaded: true,
       cause: { name: "Error", message: "reset", durableObjectReset: true, retryable: true },
     });
   });

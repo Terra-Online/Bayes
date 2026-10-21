@@ -1,7 +1,9 @@
 import { createCookieGetter, getCookies, parseCookies } from "better-auth/cookies";
 import { makeSignature } from "better-auth/crypto";
 import { generateCookie } from "hono/cookie";
-import { ApiError } from "../errors";
+
+import { ApiError } from "@/lib/errors";
+
 import type { createAuth } from "./createAuth";
 
 type Auth = ReturnType<typeof createAuth>;
@@ -17,10 +19,15 @@ async function hashProof(proof: string): Promise<string> {
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-export async function createOAuthExchangeProof(auth: Auth): Promise<{ challenge: string; cookie: string }> {
+export async function createOAuthExchangeProof(
+  auth: Auth,
+): Promise<{ challenge: string; cookie: string }> {
   const proof = `${crypto.randomUUID()}${crypto.randomUUID()}`;
   const cookie = getExchangeProofCookie(auth);
-  return { challenge: await hashProof(proof), cookie: generateCookie(cookie.name, proof, cookie.attributes) };
+  return {
+    challenge: await hashProof(proof),
+    cookie: generateCookie(cookie.name, proof, cookie.attributes),
+  };
 }
 
 export async function inspectOAuthExchangeProof(
@@ -29,11 +36,20 @@ export async function inspectOAuthExchangeProof(
   challenge: string,
 ): Promise<OAuthExchangeProofResult> {
   const cookie = getExchangeProofCookie(auth);
-  const cookies = parseCookies((headers.get("cookie") ?? "").split(";").map((value) => value.trim()).join("; "));
+  const cookies = parseCookies(
+    (headers.get("cookie") ?? "")
+      .split(";")
+      .map((value) => value.trim())
+      .join("; "),
+  );
   const proof = cookies.get(cookie.name);
-  if (!proof) return "missing";
-  if (proof.length > 128) return "too_long";
-  return await hashProof(proof) === challenge ? "valid" : "mismatch";
+  if (!proof) {
+    return "missing";
+  }
+  if (proof.length > 128) {
+    return "too_long";
+  }
+  return (await hashProof(proof)) === challenge ? "valid" : "mismatch";
 }
 
 export function expireOAuthExchangeProof(auth: Auth): string {
@@ -48,36 +64,60 @@ function getLegacyCookies(auth: Auth) {
   });
 }
 
-export function resolveBrowserSessionHeaders(auth: Auth, headers: Headers): { headers: Headers; migrating: boolean } {
-  if (headers.has("authorization") || !headers.get("cookie")) return { headers, migrating: false };
+export function resolveBrowserSessionHeaders(
+  auth: Auth,
+  headers: Headers,
+): { headers: Headers; migrating: boolean } {
+  if (headers.has("authorization") || !headers.get("cookie")) {
+    return { headers, migrating: false };
+  }
   const currentName = getCookies(auth.options).sessionToken.name;
   const legacyName = getLegacyCookies(auth).sessionToken.name;
-  const cookies = parseCookies((headers.get("cookie") ?? "").split(";").map((cookie) => cookie.trim()).join("; "));
+  const cookies = parseCookies(
+    (headers.get("cookie") ?? "")
+      .split(";")
+      .map((cookie) => cookie.trim())
+      .join("; "),
+  );
   if (currentName === legacyName || cookies.has(currentName)) {
     return { headers, migrating: false };
   }
   const legacyToken = cookies.get(legacyName);
-  if (!legacyToken?.includes(".")) return { headers, migrating: false };
+  if (!legacyToken?.includes(".")) {
+    return { headers, migrating: false };
+  }
 
   const migratedHeaders = new Headers(headers);
   migratedHeaders.set("cookie", `${headers.get("cookie")}; ${currentName}=${legacyToken}`);
   return { headers: migratedHeaders, migrating: true };
 }
 
-export async function serializeBrowserSessionCookie(auth: Auth, session: { token: string; expiresAt: Date }): Promise<string> {
+export async function serializeBrowserSessionCookie(
+  auth: Auth,
+  session: { token: string; expiresAt: Date },
+): Promise<string> {
   const cookie = getCookies(auth.options).sessionToken;
   const maxAge = Math.floor((session.expiresAt.getTime() - Date.now()) / 1000);
-  if (maxAge <= 0) throw new ApiError(401, "SESSION_REQUIRED", "Session is required.");
+  if (maxAge <= 0) {
+    throw new ApiError(401, "SESSION_REQUIRED", "Session is required.");
+  }
   const signature = await makeSignature(session.token, (await auth.$context).secret);
-  return generateCookie(cookie.name, `${session.token}.${signature}`, { ...cookie.attributes, maxAge });
+  return generateCookie(cookie.name, `${session.token}.${signature}`, {
+    ...cookie.attributes,
+    maxAge,
+  });
 }
 
 export function getLegacyCookieExpirations(auth: Auth): string[] {
   const legacyCookies = getLegacyCookies(auth);
-  if (legacyCookies.sessionToken.name === getCookies(auth.options).sessionToken.name) return [];
-  return Object.values(legacyCookies).map((cookie) => generateCookie(cookie.name, "", {
-    ...cookie.attributes,
-    partitioned: false,
-    maxAge: 0,
-  }));
+  if (legacyCookies.sessionToken.name === getCookies(auth.options).sessionToken.name) {
+    return [];
+  }
+  return Object.values(legacyCookies).map((cookie) =>
+    generateCookie(cookie.name, "", {
+      ...cookie.attributes,
+      partitioned: false,
+      maxAge: 0,
+    }),
+  );
 }

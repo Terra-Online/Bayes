@@ -1,11 +1,13 @@
+import type { Context } from "hono";
 import { Hono } from "hono";
 import { z } from "zod";
-import { ApiError } from "../lib/errors";
-import { toSerializableError } from "../lib/auth/errors";
-import { hmacServiceIdentifier } from "../lib/serviceIdentity";
-import { requireAuth, resolveRequestAuthUser } from "../middleware/auth";
-import { toApiError } from "../middleware/error-handler";
-import { rateLimit } from "../middleware/rate-limit";
+
+import { toSerializableError } from "@/lib/auth/errors";
+import { ApiError } from "@/lib/errors";
+import { hmacServiceIdentifier } from "@/lib/serviceIdentity";
+import { requireAuth, resolveRequestAuthUser } from "@/middleware/auth";
+import { toApiError } from "@/middleware/error-handler";
+import { rateLimit } from "@/middleware/rate-limit";
 import {
   decodeNotificationCursor,
   getNotificationUnreadCounts,
@@ -15,22 +17,22 @@ import {
   markNotificationsRead,
   serializeNotificationItem,
   type NotificationCategory,
-} from "../repositories/notifications";
-import type { AppEnv, Bindings } from "../types/app";
+} from "@/repositories/notifications";
+import type { AppEnv, Bindings } from "@/types/app";
 
 const NOTIFICATION_LIVE_PATH = "/notify/v1/live";
 
 const listQuerySchema = z.object({
   cursor: z.string().max(512).optional(),
   limit: z.coerce.number().int().min(1).max(50).optional(),
-  unreadOnly: z.enum(["0", "1"]).optional()
+  unreadOnly: z.enum(["0", "1"]).optional(),
 });
 
 const readManySchema = z.object({
-  ids: z.array(z.string().min(1).max(64)).min(1).max(100)
+  ids: z.array(z.string().min(1).max(64)).min(1).max(100),
 });
 
-function requireUser(c: import("hono").Context<AppEnv>) {
+function requireUser(c: Context<AppEnv>) {
   const user = c.get("authUser");
   if (!user) {
     throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
@@ -47,7 +49,7 @@ async function proxyNotificationLive(
   env: Bindings,
   request: Request,
   uid: string,
-  clientId: string
+  clientId: string,
 ): Promise<Response> {
   const objectId = env.OEM_NOTIFICATION_DO.idFromName(uid);
   const stub = env.OEM_NOTIFICATION_DO.get(objectId);
@@ -57,14 +59,22 @@ async function proxyNotificationLive(
 
   return stub.fetch("https://notify.internal/connect", {
     method: "GET",
-    headers
+    headers,
   });
 }
 
 type LiveStage = "auth" | "rate_limit" | "notification_do";
-type LiveDiagnostics = { stage: LiveStage; elapsedMs: number; stageDurationsMs: Partial<Record<LiveStage, number>> };
+type LiveDiagnostics = {
+  stage: LiveStage;
+  elapsedMs: number;
+  stageDurationsMs: Partial<Record<LiveStage, number>>;
+};
 
-function liveUpgradeError(error: unknown, requestId: string, diagnostics: LiveDiagnostics): Response {
+function liveUpgradeError(
+  error: unknown,
+  requestId: string,
+  diagnostics: LiveDiagnostics,
+): Response {
   const apiError = toApiError(error);
   if (apiError.status >= 500) {
     console.error("notification live upgrade failed", {
@@ -74,20 +84,23 @@ function liveUpgradeError(error: unknown, requestId: string, diagnostics: LiveDi
       error: toSerializableError(error),
     });
   }
-  return new Response(JSON.stringify({
-    code: apiError.code,
-    message: apiError.message,
-    details: apiError.details,
-    requestId
-  }), {
-    status: apiError.status,
-    headers: {
-      "content-type": "application/json; charset=utf-8",
-      "x-request-id": requestId,
-      "cache-control": "private, no-store",
-      ...(apiError.status === 503 ? { "retry-after": "5" } : {})
-    }
-  });
+  return new Response(
+    JSON.stringify({
+      code: apiError.code,
+      message: apiError.message,
+      details: apiError.details,
+      requestId,
+    }),
+    {
+      status: apiError.status,
+      headers: {
+        "content-type": "application/json; charset=utf-8",
+        "x-request-id": requestId,
+        "cache-control": "private, no-store",
+        ...(apiError.status === 503 ? { "retry-after": "5" } : {}),
+      },
+    },
+  );
 }
 
 /**
@@ -97,13 +110,13 @@ function liveUpgradeError(error: unknown, requestId: string, diagnostics: LiveDi
  */
 export async function handleNotificationLiveUpgrade(
   request: Request,
-  env: Bindings
+  env: Bindings,
 ): Promise<Response | null> {
   const url = new URL(request.url);
   if (
-    request.method !== "GET"
-    || url.pathname !== NOTIFICATION_LIVE_PATH
-    || request.headers.get("upgrade")?.toLowerCase() !== "websocket"
+    request.method !== "GET" ||
+    url.pathname !== NOTIFICATION_LIVE_PATH ||
+    request.headers.get("upgrade")?.toLowerCase() !== "websocket"
   ) {
     return null;
   }
@@ -135,19 +148,26 @@ export async function handleNotificationLiveUpgrade(
       env,
       request,
       user.uid,
-      url.searchParams.get("clientId")?.trim() || crypto.randomUUID()
+      url.searchParams.get("clientId")?.trim() || crypto.randomUUID(),
     );
     stageDurationsMs[stage] = Date.now() - stageStartedAt;
     if (response.status >= 500) {
       console.error("notification live upgrade failed", {
-        requestId, stage, elapsedMs: Date.now() - startedAt, stageDurationsMs,
+        requestId,
+        stage,
+        elapsedMs: Date.now() - startedAt,
+        stageDurationsMs,
         upstreamStatus: response.status,
       });
     }
     return response;
   } catch (error) {
     stageDurationsMs[stage] = Date.now() - stageStartedAt;
-    return liveUpgradeError(error, requestId, { stage, elapsedMs: Date.now() - startedAt, stageDurationsMs });
+    return liveUpgradeError(error, requestId, {
+      stage,
+      elapsedMs: Date.now() - startedAt,
+      stageDurationsMs,
+    });
   }
 }
 
@@ -157,10 +177,15 @@ function addCategoryRoutes(app: Hono<AppEnv>, category: NotificationCategory): v
     const parsed = listQuerySchema.safeParse({
       cursor: c.req.query("cursor"),
       limit: c.req.query("limit"),
-      unreadOnly: c.req.query("unreadOnly")
+      unreadOnly: c.req.query("unreadOnly"),
     });
     if (!parsed.success) {
-      throw new ApiError(422, "VALIDATION_ERROR", "Invalid notification query.", parsed.error.flatten());
+      throw new ApiError(
+        422,
+        "VALIDATION_ERROR",
+        "Invalid notification query.",
+        parsed.error.flatten(),
+      );
     }
 
     const [result, unread] = await Promise.all([
@@ -169,15 +194,17 @@ function addCategoryRoutes(app: Hono<AppEnv>, category: NotificationCategory): v
         category,
         limit: parsed.data.limit ?? 20,
         cursor: decodeNotificationCursor(parsed.data.cursor),
-        unreadOnly: parsed.data.unreadOnly === "1"
+        unreadOnly: parsed.data.unreadOnly === "1",
       }),
-      getNotificationUnreadCounts(c.env.DB, user.uid)
+      getNotificationUnreadCounts(c.env.DB, user.uid),
     ]);
-    return noStore(c.json({
-      items: result.items.map((item) => serializeNotificationItem(item)),
-      nextCursor: result.nextCursor,
-      unread
-    }));
+    return noStore(
+      c.json({
+        items: result.items.map((item) => serializeNotificationItem(item)),
+        nextCursor: result.nextCursor,
+        unread,
+      }),
+    );
   });
 
   app.patch(`/${category}/messages/:id/read`, requireAuth, rateLimit("auth"), async (c) => {
@@ -189,7 +216,7 @@ function addCategoryRoutes(app: Hono<AppEnv>, category: NotificationCategory): v
     const changed = await markNotificationRead(c.env.DB, {
       userId: user.uid,
       category,
-      id: notificationId
+      id: notificationId,
     });
     const unread = await getNotificationUnreadCounts(c.env.DB, user.uid);
     return noStore(c.json({ ok: true, changed, unread }));
@@ -199,12 +226,17 @@ function addCategoryRoutes(app: Hono<AppEnv>, category: NotificationCategory): v
     const user = requireUser(c);
     const parsed = readManySchema.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) {
-      throw new ApiError(422, "VALIDATION_ERROR", "Invalid notification read payload.", parsed.error.flatten());
+      throw new ApiError(
+        422,
+        "VALIDATION_ERROR",
+        "Invalid notification read payload.",
+        parsed.error.flatten(),
+      );
     }
     const changed = await markNotificationsRead(c.env.DB, {
       userId: user.uid,
       category,
-      ids: parsed.data.ids
+      ids: parsed.data.ids,
     });
     const unread = await getNotificationUnreadCounts(c.env.DB, user.uid);
     return noStore(c.json({ ok: true, changed, unread }));
@@ -214,7 +246,7 @@ function addCategoryRoutes(app: Hono<AppEnv>, category: NotificationCategory): v
     const user = requireUser(c);
     const changed = await markAllNotificationsRead(c.env.DB, {
       userId: user.uid,
-      category
+      category,
     });
     const unread = await getNotificationUnreadCounts(c.env.DB, user.uid);
     return noStore(c.json({ ok: true, changed, unread }));
@@ -236,14 +268,18 @@ export function createNotifyRoutes() {
   app.get("/live", requireAuth, rateLimit("auth"), async (c) => {
     const user = requireUser(c);
     if (c.req.header("upgrade")?.toLowerCase() !== "websocket") {
-      throw new ApiError(426, "WEBSOCKET_REQUIRED", "Notification live endpoint requires a WebSocket upgrade.");
+      throw new ApiError(
+        426,
+        "WEBSOCKET_REQUIRED",
+        "Notification live endpoint requires a WebSocket upgrade.",
+      );
     }
 
     return proxyNotificationLive(
       c.env,
       c.req.raw,
       user.uid,
-      c.req.query("clientId")?.trim() || crypto.randomUUID()
+      c.req.query("clientId")?.trim() || crypto.randomUUID(),
     );
   });
 

@@ -2,7 +2,10 @@ export function buildPublicUgcAssetUrl(assetBaseUrl: string, filePath: string): 
   return `${assetBaseUrl.replace(/\/$/, "")}/${filePath.split("/").map(encodeURIComponent).join("/")}`;
 }
 
-export async function prewarmPublicUgcAsset(assetBaseUrl: string, filePath: string | null): Promise<void> {
+export async function prewarmPublicUgcAsset(
+  assetBaseUrl: string,
+  filePath: string | null,
+): Promise<void> {
   if (!filePath) {
     return;
   }
@@ -13,13 +16,13 @@ export async function prewarmPublicUgcAsset(assetBaseUrl: string, filePath: stri
       method: "GET",
       cf: {
         cacheTtl: 31536000,
-        cacheEverything: true
-      }
+        cacheEverything: true,
+      },
     });
   } catch (error) {
     console.warn("UGC public asset prewarm failed", {
       filePath,
-      error: error instanceof Error ? error.message : "unknown"
+      error: error instanceof Error ? error.message : "unknown",
     });
     return;
   }
@@ -27,7 +30,7 @@ export async function prewarmPublicUgcAsset(assetBaseUrl: string, filePath: stri
   if (!response.ok) {
     console.warn("UGC public asset prewarm failed", {
       filePath,
-      status: response.status
+      status: response.status,
     });
   }
 }

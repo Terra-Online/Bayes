@@ -1,9 +1,13 @@
-import { ApiError } from "../../lib/errors";
-import { PROGRESS_MARKER_FORMAT } from "./model";
 import { Buffer } from "node:buffer";
 
+import { ApiError } from "@/lib/errors";
+
+import { PROGRESS_MARKER_FORMAT } from "./model";
+
 export function decodeBase64(value: string): Uint8Array {
-  if (!value) return new Uint8Array(0);
+  if (!value) {
+    return new Uint8Array(0);
+  }
   try {
     const binary = atob(value);
     const bytes = new Uint8Array(binary.length);
@@ -12,7 +16,11 @@ export function decodeBase64(value: string): Uint8Array {
     }
     return bytes;
   } catch {
-    throw new ApiError(422, "INVALID_PROGRESS_MARKER", "Progress marker must be base64 encoded bitmap data.");
+    throw new ApiError(
+      422,
+      "INVALID_PROGRESS_MARKER",
+      "Progress marker must be base64 encoded bitmap data.",
+    );
   }
 }
 
@@ -26,7 +34,11 @@ export function expectedBitmapBytes(pointCount: number, bitsPerPoint: number): n
   return Math.ceil((pointCount * bitsPerPoint) / 8);
 }
 
-export function normalizeBitmapBytes(marker: string, pointCount: number, bitsPerPoint: number): Uint8Array {
+export function normalizeBitmapBytes(
+  marker: string,
+  pointCount: number,
+  bitsPerPoint: number,
+): Uint8Array {
   const expected = expectedBitmapBytes(pointCount, bitsPerPoint);
   const decoded = decodeBase64(marker);
 
@@ -66,7 +78,7 @@ export function setBitmapBit(bytes: Uint8Array, index: number, value: boolean): 
 export function diffOneBitBitmaps(
   before: Uint8Array,
   after: Uint8Array,
-  pointCount: number
+  pointCount: number,
 ): { increments: number[]; decrements: number[] } {
   const increments: number[] = [];
   const decrements: number[] = [];
@@ -75,12 +87,18 @@ export function diffOneBitBitmaps(
     const oldByte = before[byteIndex] ?? 0;
     const newByte = after[byteIndex] ?? 0;
     const changed = oldByte ^ newByte;
-    if (changed === 0) continue;
+    if (changed === 0) {
+      continue;
+    }
 
     for (let bitIndex = 0; bitIndex < 8; bitIndex += 1) {
       const pointIndex = byteIndex * 8 + bitIndex;
-      if (pointIndex >= pointCount) break;
-      if ((changed & (1 << bitIndex)) === 0) continue;
+      if (pointIndex >= pointCount) {
+        break;
+      }
+      if ((changed & (1 << bitIndex)) === 0) {
+        continue;
+      }
 
       if ((newByte & (1 << bitIndex)) !== 0) {
         increments.push(pointIndex);
@@ -100,23 +118,23 @@ export async function checksumProgressBitmap(
     formatVersion: number;
     bitsPerPoint: number;
     pointCount: number;
-  }
+  },
 ): Promise<string> {
   const encoder = new TextEncoder();
-  const prefix = encoder.encode([
-    PROGRESS_MARKER_FORMAT,
-    metadata.formatVersion,
-    metadata.markerIndexHash,
-    metadata.bitsPerPoint,
-    metadata.pointCount
-  ].join(":"));
+  const prefix = encoder.encode(
+    [
+      PROGRESS_MARKER_FORMAT,
+      metadata.formatVersion,
+      metadata.markerIndexHash,
+      metadata.bitsPerPoint,
+      metadata.pointCount,
+    ].join(":"),
+  );
   const input = new Uint8Array(prefix.length + bytes.length);
   input.set(prefix, 0);
   input.set(bytes, prefix.length);
   const digest = await crypto.subtle.digest("SHA-256", input as unknown as BufferSource);
-  return [...new Uint8Array(digest)]
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 export function buildStatsCountsBase64(counts: Uint32Array): string {
@@ -126,10 +144,11 @@ export function buildStatsCountsBase64(counts: Uint32Array): string {
 export function parseStatsCountsBase64(value: string, pointCount: number): Uint32Array {
   const bytes = decodeBase64(value);
   const expectedBytes = pointCount * Uint32Array.BYTES_PER_ELEMENT;
-  const normalized = bytes.length === expectedBytes ? bytes : normalizeStatsBytes(bytes, expectedBytes);
+  const normalized =
+    bytes.length === expectedBytes ? bytes : normalizeStatsBytes(bytes, expectedBytes);
   const buffer = normalized.buffer.slice(
     normalized.byteOffset,
-    normalized.byteOffset + normalized.byteLength
+    normalized.byteOffset + normalized.byteLength,
   );
   return new Uint32Array(buffer);
 }

@@ -1,5 +1,5 @@
-import type { Role } from "../types/app";
-import { pointsToKarma } from "../lib/karma/rules";
+import { pointsToKarma } from "@/lib/karma/rules";
+import type { Role } from "@/types/app";
 
 const UID_START = 100000;
 const NICKNAME_PATTERN = /^[A-Za-z0-9_-]{2,26}$/;
@@ -44,9 +44,7 @@ export interface EnsureUserProfilePayload {
 }
 
 function normalizeUidSuffix(raw: string | undefined): string {
-  const value = (raw ?? "")
-    .replace(/[^A-Za-z0-9]/g, "")
-    .toUpperCase();
+  const value = (raw ?? "").replace(/[^A-Za-z0-9]/g, "").toUpperCase();
 
   if (value.length >= 2) {
     return value.slice(-2);
@@ -72,9 +70,7 @@ function randomUpperLetters(count: number): string {
 }
 
 function buildUidSuffixFromNickname(nickname: string): string {
-  const letters = nickname
-    .replace(/[^A-Za-z]/g, "")
-    .toUpperCase();
+  const letters = nickname.replace(/[^A-Za-z]/g, "").toUpperCase();
 
   if (letters.length >= 2) {
     return letters.slice(-2);
@@ -205,37 +201,53 @@ function mapUser(row: Record<string, unknown>): UserRecord {
     progressBitsPerPoint: Number(row.progress_bits_per_point ?? 1),
     progressPointCount: Number(row.progress_point_count ?? 0),
     progressRetainedPointIds: parseStringArrayJson(row.progress_retained_point_ids),
-    progressUpdatedAt: row.progress_updated_at === null || row.progress_updated_at === undefined
-      ? null
-      : Number(row.progress_updated_at),
-    progressLastMutationId: row.progress_last_mutation_id === null ? null : String(row.progress_last_mutation_id ?? ""),
+    progressUpdatedAt:
+      row.progress_updated_at === null || row.progress_updated_at === undefined
+        ? null
+        : Number(row.progress_updated_at),
+    progressLastMutationId:
+      row.progress_last_mutation_id === null ? null : String(row.progress_last_mutation_id ?? ""),
     progressCloudSynced: Number(row.progress_cloud_synced ?? 0) === 1,
-    progressSyncedAt: row.progress_synced_at === null || row.progress_synced_at === undefined
-      ? null
-      : Number(row.progress_synced_at),
+    progressSyncedAt:
+      row.progress_synced_at === null || row.progress_synced_at === undefined
+        ? null
+        : Number(row.progress_synced_at),
     points,
     karma,
     createdAt: String(row.created_at),
-    lastActive: String(row.last_active)
+    lastActive: String(row.last_active),
   };
 }
 
 export async function getUserByEmail(db: D1Database, email: string): Promise<UserRecord | null> {
-  const row = await db.prepare("SELECT * FROM users WHERE email = ?1 LIMIT 1").bind(email).first<Record<string, unknown>>();
+  const row = await db
+    .prepare("SELECT * FROM users WHERE email = ?1 LIMIT 1")
+    .bind(email)
+    .first<Record<string, unknown>>();
   return row ? mapUser(row) : null;
 }
 
 export async function getUserByUid(db: D1Database, uid: string): Promise<UserRecord | null> {
-  const row = await db.prepare("SELECT * FROM users WHERE uid = ?1 LIMIT 1").bind(uid).first<Record<string, unknown>>();
+  const row = await db
+    .prepare("SELECT * FROM users WHERE uid = ?1 LIMIT 1")
+    .bind(uid)
+    .first<Record<string, unknown>>();
   return row ? mapUser(row) : null;
 }
 
-export async function getUserByPublicUid(db: D1Database, publicUid: string): Promise<UserRecord | null> {
+export async function getUserByPublicUid(
+  db: D1Database,
+  publicUid: string,
+): Promise<UserRecord | null> {
   const match = /^(\d+)([A-Za-z0-9]{2})$/.exec(publicUid.trim());
-  if (!match) return null;
+  if (!match) {
+    return null;
+  }
 
   const uidNumber = Number(match[1]);
-  if (!Number.isSafeInteger(uidNumber) || uidNumber <= 0) return null;
+  if (!Number.isSafeInteger(uidNumber) || uidNumber <= 0) {
+    return null;
+  }
 
   const row = await db
     .prepare("SELECT * FROM users WHERE uid_number = ?1 AND UPPER(uid_suffix) = ?2 LIMIT 1")
@@ -246,9 +258,7 @@ export async function getUserByPublicUid(db: D1Database, publicUid: string): Pro
 
 function normalizeNickname(raw: string | undefined, uid: string, email?: string): string[] {
   const source = (raw ?? "").replace(/[^A-Za-z0-9]/g, "").slice(0, 26);
-  const emailLocalPart = (email?.split("@")[0] ?? "")
-    .replace(/[^A-Za-z0-9]/g, "")
-    .slice(0, 26);
+  const emailLocalPart = (email?.split("@")[0] ?? "").replace(/[^A-Za-z0-9]/g, "").slice(0, 26);
   const compactUid = uid.replace(/[^A-Za-z0-9]/g, "");
   const fallback = `U${compactUid.slice(0, 7)}`;
 
@@ -258,13 +268,16 @@ function normalizeNickname(raw: string | undefined, uid: string, email?: string)
     emailLocalPart,
     emailLocalPart ? `${emailLocalPart.slice(0, 20)}${compactUid.slice(0, 6)}` : "",
     fallback,
-    `U${compactUid.slice(-7)}`
+    `U${compactUid.slice(-7)}`,
   ].filter((item) => item.length > 0 && item.length <= 26);
 
   return Array.from(new Set(candidates));
 }
 
-export async function ensureUserProfile(db: D1Database, payload: EnsureUserProfilePayload): Promise<UserRecord> {
+export async function ensureUserProfile(
+  db: D1Database,
+  payload: EnsureUserProfilePayload,
+): Promise<UserRecord> {
   const existing = await getUserByUid(db, payload.uid);
   if (existing) {
     return refreshUserActivity(db, existing, payload.email.toLowerCase());
@@ -276,9 +289,15 @@ export async function ensureUserProfile(db: D1Database, payload: EnsureUserProfi
   }
 
   const email = payload.email.toLowerCase();
-  const nicknameCandidates = normalizeNickname(payload.nickname ?? payload.displayName, payload.uid, email);
+  const nicknameCandidates = normalizeNickname(
+    payload.nickname ?? payload.displayName,
+    payload.uid,
+    email,
+  );
   const avt = Number.isFinite(payload.avt) ? Number(payload.avt) : 0;
-  const shouldMarkNicknameCustomized = Boolean(payload.nickname && payload.nickname.trim().length > 0);
+  const shouldMarkNicknameCustomized = Boolean(
+    payload.nickname && payload.nickname.trim().length > 0,
+  );
   const fallbackNickname = nicknameCandidates[0] ?? payload.uid;
   const initialUidSuffix = shouldMarkNicknameCustomized
     ? buildUidSuffixFromNickname(payload.nickname as string)
@@ -296,7 +315,7 @@ export async function ensureUserProfile(db: D1Database, payload: EnsureUserProfi
         await db
           .prepare(
             `INSERT INTO users (uid, uid_number, uid_suffix, email, password_hash, role, avt, nickname, nickname_customized, email_verified)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)`
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)`,
           )
           .bind(
             payload.uid,
@@ -308,7 +327,7 @@ export async function ensureUserProfile(db: D1Database, payload: EnsureUserProfi
             avt,
             nickname,
             shouldMarkNicknameCustomized ? 1 : 0,
-            "false"
+            "false",
           )
           .run();
 
@@ -359,21 +378,32 @@ export async function ensureUserProfile(db: D1Database, payload: EnsureUserProfi
   throw new Error("Unable to create profile for authenticated user.");
 }
 
-async function refreshUserActivity(db: D1Database, user: UserRecord, email: string): Promise<UserRecord> {
-  const lastActive = Date.parse(user.lastActive.includes("T")
-    ? user.lastActive
-    : `${user.lastActive.replace(" ", "T")}Z`);
-  if (user.email === email && Number.isFinite(lastActive) && Date.now() - lastActive < USER_ACTIVITY_UPDATE_INTERVAL_MS) {
+async function refreshUserActivity(
+  db: D1Database,
+  user: UserRecord,
+  email: string,
+): Promise<UserRecord> {
+  const lastActive = Date.parse(
+    user.lastActive.includes("T") ? user.lastActive : `${user.lastActive.replace(" ", "T")}Z`,
+  );
+  if (
+    user.email === email &&
+    Number.isFinite(lastActive) &&
+    Date.now() - lastActive < USER_ACTIVITY_UPDATE_INTERVAL_MS
+  ) {
     return user;
   }
 
-  const row = await db.prepare(
-    `UPDATE users
+  const row = await db
+    .prepare(
+      `UPDATE users
      SET email = ?2, last_active = CURRENT_TIMESTAMP
      WHERE uid = ?1
        AND (email <> ?2 OR datetime(last_active) IS NULL OR datetime(last_active) <= datetime('now', '-1 hour'))
-     RETURNING *`
-  ).bind(user.uid, email).first<Record<string, unknown>>();
+     RETURNING *`,
+    )
+    .bind(user.uid, email)
+    .first<Record<string, unknown>>();
   return row ? mapUser(row) : user;
 }
 
@@ -383,7 +413,7 @@ export async function updateUserNickname(
     uid: string;
     nickname: string;
     avatar?: number;
-  }
+  },
 ): Promise<UserRecord> {
   const current = await getUserByUid(db, payload.uid);
   if (!current) {
@@ -391,13 +421,15 @@ export async function updateUserNickname(
   }
 
   const normalizedNickname = normalizeEditableNickname(payload.nickname);
-  const normalizedAvatar = payload.avatar === undefined
-    ? undefined
-    : Number.isFinite(payload.avatar)
-      ? Math.floor(payload.avatar)
-      : NaN;
+  let normalizedAvatar: number | undefined;
+  if (payload.avatar !== undefined) {
+    normalizedAvatar = Number.isFinite(payload.avatar) ? Math.floor(payload.avatar) : NaN;
+  }
 
-  if (normalizedAvatar !== undefined && (!Number.isFinite(normalizedAvatar) || normalizedAvatar < 1 || normalizedAvatar > 99)) {
+  if (
+    normalizedAvatar !== undefined &&
+    (!Number.isFinite(normalizedAvatar) || normalizedAvatar < 1 || normalizedAvatar > 99)
+  ) {
     throw new Error("INVALID_AVATAR");
   }
 
@@ -414,9 +446,9 @@ export async function updateUserNickname(
            avt = COALESCE(?4, avt),
              nickname_customized = 1,
              last_active = CURRENT_TIMESTAMP
-         WHERE uid = ?1`
+         WHERE uid = ?1`,
       )
-        .bind(payload.uid, normalizedNickname, nextUidSuffix, normalizedAvatar ?? null)
+      .bind(payload.uid, normalizedNickname, nextUidSuffix, normalizedAvatar ?? null)
       .run();
   } catch (error) {
     const message = getErrorMessage(error);
@@ -451,7 +483,7 @@ export interface UserProgressWrite {
 export async function applyUserPointsDelta(
   db: D1Database,
   uid: string,
-  pointsDelta: number
+  pointsDelta: number,
 ): Promise<void> {
   if (!Number.isFinite(pointsDelta)) {
     return;
@@ -466,7 +498,7 @@ export async function applyUserPointsDelta(
     .prepare(
       `UPDATE users
        SET points = MAX(0, points + ?2)
-       WHERE uid = ?1`
+       WHERE uid = ?1`,
     )
     .bind(uid, delta)
     .run();

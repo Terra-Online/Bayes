@@ -8,6 +8,6 @@ export const COMMENT_ADMIN_EDIT_MODERATION_NOTE_PREFIX = "Edited by admin:";
 export function isCommentEditModerationNote(note: string | null | undefined): boolean {
   return Boolean(
     note?.startsWith(COMMENT_EDIT_MODERATION_NOTE_PREFIX) ||
-    note?.startsWith(COMMENT_ADMIN_EDIT_MODERATION_NOTE_PREFIX)
+    note?.startsWith(COMMENT_ADMIN_EDIT_MODERATION_NOTE_PREFIX),
   );
 }

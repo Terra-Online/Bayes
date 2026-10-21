@@ -1,6 +1,6 @@
+import { purgePublicMarkerResponseCache } from "./client/client";
 import { deletePublicMarkerCommentCache } from "./origin/markerComments";
 import { deletePublicMarkerImageCache } from "./origin/markerImages";
-import { purgePublicMarkerResponseCache } from "./client/client";
 
 export type UploadCacheKind = "comment" | "image";
 
@@ -12,13 +12,13 @@ export async function invalidateUploadCaches(payload: {
   if (payload.kind === "comment") {
     await Promise.all([
       deletePublicMarkerCommentCache(payload.kv, payload.markerId),
-      purgePublicMarkerResponseCache("comment", payload.markerId)
+      purgePublicMarkerResponseCache("comment", payload.markerId),
     ]);
     return;
   }
 
   await Promise.all([
     deletePublicMarkerImageCache(payload.kv, payload.markerId),
-    purgePublicMarkerResponseCache("image", payload.markerId)
+    purgePublicMarkerResponseCache("image", payload.markerId),
   ]);
 }

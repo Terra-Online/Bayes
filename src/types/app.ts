@@ -1,9 +1,9 @@
-import type { oem_imgTrans } from "../services/upload/imageTranscoderContainer";
 import type {
   OemModerationQueueMessage,
   OemTranslationQueueMessage,
-  OemWebhookQueueMessage
-} from "../services/moderation/messages";
+  OemWebhookQueueMessage,
+} from "@/services/moderation/messages";
+import type { oem_imgTrans } from "@/services/upload/imageTranscoderContainer";
 
 export type Role = "n" | "p" | "a" | "s" | "r";
 

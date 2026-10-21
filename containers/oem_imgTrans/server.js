@@ -1,15 +1,22 @@
-import http from "node:http";
 import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import http from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
+
 import sharp from "sharp";
 
 // MIME headers are caller-controlled. HEIC uses heif-convert; AVIF is passed through.
-sharp.block({ operation: [
-  "VipsForeignLoadSvg", "VipsForeignLoadNsgif", "VipsForeignLoadTiff", "VipsForeignLoadVips", "VipsForeignLoadHeif"
-] });
+sharp.block({
+  operation: [
+    "VipsForeignLoadSvg",
+    "VipsForeignLoadNsgif",
+    "VipsForeignLoadTiff",
+    "VipsForeignLoadVips",
+    "VipsForeignLoadHeif",
+  ],
+});
 
 const execFileAsync = promisify(execFile);
 const PORT = Number.parseInt(process.env.PORT ?? "8080", 10);
@@ -26,7 +33,7 @@ const supportedMimeTypes = new Set([
   "image/webp",
   "image/avif",
   "image/heic",
-  "image/heif"
+  "image/heif",
 ]);
 
 function normalizeMime(value) {
@@ -40,7 +47,7 @@ function isHeifMime(mimeType) {
 function sendText(response, status, text) {
   response.writeHead(status, {
     "Content-Type": "text/plain; charset=utf-8",
-    "Content-Length": Buffer.byteLength(text)
+    "Content-Length": Buffer.byteLength(text),
   });
   response.end(text);
 }
@@ -54,7 +61,7 @@ async function decodeHeifToPng(body) {
     await writeFile(inputPath, body);
     await execFileAsync("heif-convert", ["--quality", "100", inputPath, outputPath], {
       timeout: 30_000,
-      maxBuffer: 1024 * 1024
+      maxBuffer: 1024 * 1024,
     });
     return await readFile(outputPath);
   } finally {
@@ -90,26 +97,27 @@ async function prepareImage(body, sourceMimeType) {
     return {
       body,
       mimeType: sourceMimeType,
-      converted: false
+      converted: false,
     };
   }
 
   const imageBody = isHeifMime(sourceMimeType) ? await decodeHeifToPng(body) : body;
   const image = sharp(imageBody, {
     failOn: "error",
-    limitInputPixels: 64_000_000
+    limitInputPixels: 64_000_000,
   }).rotate();
   const metadata = await image.metadata();
   const longestEdge = Math.max(metadata.width ?? 0, metadata.height ?? 0);
-  const shouldConvert = isHeifMime(sourceMimeType)
-    || body.byteLength >= WEBP_CONVERSION_MIN_BYTES
-    || longestEdge >= WEBP_CONVERSION_MIN_EDGE;
+  const shouldConvert =
+    isHeifMime(sourceMimeType) ||
+    body.byteLength >= WEBP_CONVERSION_MIN_BYTES ||
+    longestEdge >= WEBP_CONVERSION_MIN_EDGE;
 
   if (!shouldConvert) {
     return {
       body,
       mimeType: sourceMimeType,
-      converted: false
+      converted: false,
     };
   }
 
@@ -118,7 +126,7 @@ async function prepareImage(body, sourceMimeType) {
       width: WEBP_RESIZE_EDGE,
       height: WEBP_RESIZE_EDGE,
       fit: "inside",
-      withoutEnlargement: true
+      withoutEnlargement: true,
     })
     .webp({ quality: WEBP_QUALITY })
     .toBuffer();
@@ -126,7 +134,7 @@ async function prepareImage(body, sourceMimeType) {
   return {
     body: transformed,
     mimeType: "image/webp",
-    converted: true
+    converted: true,
   };
 }
 
@@ -142,7 +150,9 @@ const server = http.createServer(async (request, response) => {
   }
 
   try {
-    const sourceMimeType = normalizeMime(request.headers["x-source-mime"] ?? request.headers["content-type"]);
+    const sourceMimeType = normalizeMime(
+      request.headers["x-source-mime"] ?? request.headers["content-type"],
+    );
     const body = await readBody(request);
     if (body.byteLength <= 0) {
       sendText(response, 422, "Image body is empty.");
@@ -153,11 +163,15 @@ const server = http.createServer(async (request, response) => {
     response.writeHead(200, {
       "Content-Type": prepared.mimeType,
       "Content-Length": prepared.body.byteLength,
-      "X-Converted-To-Webp": prepared.converted ? "true" : "false"
+      "X-Converted-To-Webp": prepared.converted ? "true" : "false",
     });
     response.end(prepared.body);
   } catch (error) {
-    sendText(response, 422, error instanceof Error ? error.message : "Image could not be processed.");
+    sendText(
+      response,
+      422,
+      error instanceof Error ? error.message : "Image could not be processed.",
+    );
   }
 });
 

@@ -1,33 +1,35 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
-import { toApiError } from "../../middleware/error-handler";
+
+import { toApiError } from "@/middleware/error-handler";
+import { buildPublicReadMarkerTag } from "@/publicRead/contract/cacheKeys";
 import {
   PUBLIC_EMPTY_IMAGE_LIST_CACHE_CONTROL,
-  PUBLIC_IMAGE_LIST_CACHE_CONTROL
-} from "../contract/cachePolicy";
-import { isSha256Hex } from "../../services/progress/manifest";
-import type { Bindings } from "../../types/app";
-import { buildPublicReadMarkerTag } from "../contract/cacheKeys";
+  PUBLIC_IMAGE_LIST_CACHE_CONTROL,
+} from "@/publicRead/contract/cachePolicy";
 import {
   parsePublicReadNamespace,
   resolveScopeFromPublicReadNamespace,
-  type PublicReadMarkerKind
-} from "../contract/markers";
+  type PublicReadMarkerKind,
+} from "@/publicRead/contract/markers";
 import {
   normalizePublicReadMarkerIds,
   PUBLIC_READ_COMMENTS_PATH,
   PUBLIC_READ_IMAGES_PATH,
   PUBLIC_READ_PROGRESS_STATS_PATH,
-  parsePublicReadInteger
-} from "../contract/requests";
+  parsePublicReadInteger,
+} from "@/publicRead/contract/requests";
+import { isSha256Hex } from "@/services/progress/manifest";
+import type { Bindings } from "@/types/app";
+
 import {
   listCachedPublicCommentsByMarker,
   PUBLIC_MARKER_COMMENT_EMPTY_TTL_SECONDS,
-  PUBLIC_MARKER_COMMENT_POSITIVE_TTL_SECONDS
+  PUBLIC_MARKER_COMMENT_POSITIVE_TTL_SECONDS,
 } from "./markerComments";
 import {
   listCachedPublicImagesByMarker,
   PUBLIC_MARKER_IMAGE_EMPTY_TTL_SECONDS,
-  PUBLIC_MARKER_IMAGE_POSITIVE_TTL_SECONDS
+  PUBLIC_MARKER_IMAGE_POSITIVE_TTL_SECONDS,
 } from "./markerImages";
 import { buildPublicProgressStatsResponse } from "./progressStats";
 
@@ -36,13 +38,15 @@ function noStoreError(status: number, message: string): Response {
     status,
     headers: {
       "content-type": "application/json; charset=utf-8",
-      "Cache-Control": "private, no-store"
-    }
+      "Cache-Control": "private, no-store",
+    },
   });
 }
 
 async function buildMarkerTags(kind: PublicReadMarkerKind, markerIds: string[]): Promise<string> {
-  return (await Promise.all(markerIds.map((markerId) => buildPublicReadMarkerTag(kind, markerId)))).join(",");
+  return (
+    await Promise.all(markerIds.map((markerId) => buildPublicReadMarkerTag(kind, markerId)))
+  ).join(",");
 }
 
 export class PublicReadCache extends WorkerEntrypoint<Bindings> {
@@ -67,15 +71,18 @@ export class PublicReadCache extends WorkerEntrypoint<Bindings> {
       console.error("[public-read] cache origin read failed", {
         path: url.pathname,
         code: apiError.code,
-        error: error instanceof Error ? error.message : String(error)
+        error: error instanceof Error ? error.message : String(error),
       });
-      return Response.json({ code: apiError.code, message: apiError.message }, {
-        status: apiError.status,
-        headers: {
-          "cache-control": "private, no-store",
-          ...(apiError.status === 503 ? { "retry-after": "5" } : {})
-        }
-      });
+      return Response.json(
+        { code: apiError.code, message: apiError.message },
+        {
+          status: apiError.status,
+          headers: {
+            "cache-control": "private, no-store",
+            ...(apiError.status === 503 ? { "retry-after": "5" } : {}),
+          },
+        },
+      );
     }
     return noStoreError(404, "Unknown public cache resource.");
   }
@@ -84,19 +91,22 @@ export class PublicReadCache extends WorkerEntrypoint<Bindings> {
     if ((kind !== "comment" && kind !== "image") || !markerId.trim()) {
       return {
         success: false,
-        errors: [{ code: 400, message: "Invalid marker cache purge request." }]
+        errors: [{ code: 400, message: "Invalid marker cache purge request." }],
       };
     }
     if (!this.ctx.cache) {
       return { success: true, errors: [] };
     }
     return this.ctx.cache.purge({
-      tags: [await buildPublicReadMarkerTag(kind, markerId)]
+      tags: [await buildPublicReadMarkerTag(kind, markerId)],
     });
   }
 
   private async fetchImages(url: URL): Promise<Response> {
-    const markerIds = normalizePublicReadMarkerIds(url.searchParams.getAll("markerId")).slice(0, 100);
+    const markerIds = normalizePublicReadMarkerIds(url.searchParams.getAll("markerId")).slice(
+      0,
+      100,
+    );
     const limit = parsePublicReadInteger(url.searchParams.get("limit"), 1, 24);
     const namespace = parsePublicReadNamespace(url.searchParams.get("namespace"));
     const assetBaseUrl = url.searchParams.get("assetBaseUrl")?.trim();
@@ -114,26 +124,32 @@ export class PublicReadCache extends WorkerEntrypoint<Bindings> {
       excludePathPrefix: scope.excludePathPrefix,
       limit,
       cacheNamespace: namespace,
-      waitUntil: (promise) => this.ctx.waitUntil(promise)
+      waitUntil: (promise) => this.ctx.waitUntil(promise),
     });
 
     return new Response(JSON.stringify({ items }), {
       headers: {
         "content-type": "application/json; charset=utf-8",
-        "Cache-Control": items.length > 0
-          ? PUBLIC_IMAGE_LIST_CACHE_CONTROL
-          : PUBLIC_EMPTY_IMAGE_LIST_CACHE_CONTROL,
-        "Cloudflare-CDN-Cache-Control": `public, max-age=${items.length > 0
-          ? PUBLIC_MARKER_IMAGE_POSITIVE_TTL_SECONDS
-          : PUBLIC_MARKER_IMAGE_EMPTY_TTL_SECONDS}`,
+        "Cache-Control":
+          items.length > 0
+            ? PUBLIC_IMAGE_LIST_CACHE_CONTROL
+            : PUBLIC_EMPTY_IMAGE_LIST_CACHE_CONTROL,
+        "Cloudflare-CDN-Cache-Control": `public, max-age=${
+          items.length > 0
+            ? PUBLIC_MARKER_IMAGE_POSITIVE_TTL_SECONDS
+            : PUBLIC_MARKER_IMAGE_EMPTY_TTL_SECONDS
+        }`,
         "Cache-Tag": await buildMarkerTags("image", markerIds),
-        "x-oem-marker-kv-cache": "enabled"
-      }
+        "x-oem-marker-kv-cache": "enabled",
+      },
     });
   }
 
   private async fetchComments(url: URL): Promise<Response> {
-    const markerIds = normalizePublicReadMarkerIds(url.searchParams.getAll("markerId")).slice(0, 100);
+    const markerIds = normalizePublicReadMarkerIds(url.searchParams.getAll("markerId")).slice(
+      0,
+      100,
+    );
     const limit = parsePublicReadInteger(url.searchParams.get("limit"), 1, 50);
     const replyLimit = parsePublicReadInteger(url.searchParams.get("replyLimit"), 0, 10);
     const namespace = parsePublicReadNamespace(url.searchParams.get("namespace"));
@@ -148,19 +164,21 @@ export class PublicReadCache extends WorkerEntrypoint<Bindings> {
       limit,
       replyLimit,
       cacheNamespace: namespace,
-      waitUntil: (promise) => this.ctx.waitUntil(promise)
+      waitUntil: (promise) => this.ctx.waitUntil(promise),
     });
 
     return new Response(JSON.stringify({ items }), {
       headers: {
         "content-type": "application/json; charset=utf-8",
         "Cache-Control": items.length > 0 ? "public, max-age=15" : "public, max-age=5",
-        "Cloudflare-CDN-Cache-Control": `public, max-age=${items.length > 0
-          ? PUBLIC_MARKER_COMMENT_POSITIVE_TTL_SECONDS
-          : PUBLIC_MARKER_COMMENT_EMPTY_TTL_SECONDS}`,
+        "Cloudflare-CDN-Cache-Control": `public, max-age=${
+          items.length > 0
+            ? PUBLIC_MARKER_COMMENT_POSITIVE_TTL_SECONDS
+            : PUBLIC_MARKER_COMMENT_EMPTY_TTL_SECONDS
+        }`,
         "Cache-Tag": await buildMarkerTags("comment", markerIds),
-        "x-oem-marker-comment-kv-cache": "enabled"
-      }
+        "x-oem-marker-comment-kv-cache": "enabled",
+      },
     });
   }
 

@@ -5,14 +5,14 @@ const HOSTS: Record<EndfieldProvider, EndfieldHostConfig> = {
     appCode: "4ca99fa6b56cc2ba",
     baseUrl: "https://zonai.skland.com",
     wsBaseUrl: "wss://ws.skland.com/",
-    authBaseUrl: "https://as.hypergryph.com"
+    authBaseUrl: "https://as.hypergryph.com",
   },
   skport: {
     appCode: "6eb76d4e13aa36e6",
     baseUrl: "https://zonai.skport.com",
     wsBaseUrl: "wss://ws.skport.com/",
-    authBaseUrl: "https://as.gryphline.com"
-  }
+    authBaseUrl: "https://as.gryphline.com",
+  },
 };
 
 export function getEndfieldHosts(provider: EndfieldProvider): EndfieldHostConfig {
@@ -32,8 +32,13 @@ export function buildWebSocketHttpUrl(baseUrl: string, path: string): string {
     .replace(/^ws:\/\//, "http://");
 }
 
-export function buildDeviceHeaders(profile?: EndfieldDeviceProfile, deviceId = profile?.deviceId): Record<string, string> {
-  if (!profile) return {};
+export function buildDeviceHeaders(
+  profile?: EndfieldDeviceProfile,
+  deviceId = profile?.deviceId,
+): Record<string, string> {
+  if (!profile) {
+    return {};
+  }
 
   return {
     "user-agent": profile.userAgent,
@@ -44,6 +49,6 @@ export function buildDeviceHeaders(profile?: EndfieldDeviceProfile, deviceId = p
     ...(deviceId ? { dId: `B${deviceId}` } : {}),
     "x-devicemodel": profile.deviceModel,
     "x-devicetype": profile.deviceType,
-    "x-osver": profile.osVersion
+    "x-osver": profile.osVersion,
   };
 }

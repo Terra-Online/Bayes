@@ -1,4 +1,4 @@
-import type { Bindings } from "../../types/app";
+import type { Bindings } from "@/types/app";
 
 // These are the bindings/configuration values captured by Better Auth or by its
 // email/social provider callbacks. Do not compare the whole Worker env: an
@@ -40,9 +40,11 @@ const AUTH_ENVIRONMENT_KEYS = [...AUTH_CACHE_ENVIRONMENT_KEYS, "OEM_ID_MAILS"] a
 function sameEnvironment(
   snapshot: Bindings,
   env: Bindings,
-  keys: readonly (keyof Bindings)[]
+  keys: readonly (keyof Bindings)[],
 ): boolean {
-  if (snapshot.DB !== env.DB) return false;
+  if (snapshot.DB !== env.DB) {
+    return false;
+  }
   return keys.every((key) => snapshot[key] === env[key]);
 }
 

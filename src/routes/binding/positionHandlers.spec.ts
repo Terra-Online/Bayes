@@ -1,21 +1,33 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
 import type { AppContext, DecryptedBinding } from "./types";
 
 const mocks = vi.hoisted(() => ({ connect: vi.fn(), binding: vi.fn() }));
-vi.mock("../../lib/endfieldClient/positionSocket", () => ({ connectEndfieldPositionSocket: mocks.connect }));
-vi.mock("../../middleware/auth", () => ({ resolveAuthIdentity: vi.fn() }));
+vi.mock("@/lib/endfieldClient/positionSocket", () => ({
+  connectEndfieldPositionSocket: mocks.connect,
+}));
+vi.mock("@/middleware/auth", () => ({ resolveAuthIdentity: vi.fn() }));
 vi.mock("./credentials", () => ({
   getDecryptedBinding: mocks.binding,
   isAutoRefreshableEndfieldError: () => false,
   refreshBindingCredentials: vi.fn(),
-  withAutoRefreshedBinding: vi.fn()
+  withAutoRefreshedBinding: vi.fn(),
 }));
-vi.mock("./locatorTicket", () => ({ verifyLocatorSocketTicket: async () => "user-1", issueLocatorSocketTicket: vi.fn() }));
-vi.mock("./locatorCache", () => ({ readPositionCache: vi.fn(), writePositionCache: vi.fn(), getPositionCacheKey: () => "key", refreshPositionCache: vi.fn() }));
-import { handleEndfieldPositionSocket } from "./positionHandlers";
+vi.mock("./locatorTicket", () => ({
+  verifyLocatorSocketTicket: async () => "user-1",
+  issueLocatorSocketTicket: vi.fn(),
+}));
+vi.mock("./locatorCache", () => ({
+  readPositionCache: vi.fn(),
+  writePositionCache: vi.fn(),
+  getPositionCacheKey: () => "key",
+  refreshPositionCache: vi.fn(),
+}));
+import type { EndfieldPositionTermination } from "@/lib/endfieldClient/positionSocket";
+import { ApiError } from "@/lib/errors";
+
 import { positionReconnectDelay } from "./helpers";
-import { ApiError } from "../../lib/errors";
-import type { EndfieldPositionTermination } from "../../lib/endfieldClient/positionSocket";
+import { handleEndfieldPositionSocket } from "./positionHandlers";
 
 class TestSocket extends EventTarget {
   accept = vi.fn();
@@ -40,25 +52,48 @@ describe("locator reconnection lifecycle", () => {
     callbacks.length = 0;
     waits = [];
     server = new TestSocket();
-    vi.stubGlobal("WebSocketPair", class { 0 = new TestSocket(); 1 = server; });
-    vi.stubGlobal("Response", class { constructor(_body: unknown, readonly init: ResponseInit) {} });
+    vi.stubGlobal(
+      "WebSocketPair",
+      class {
+        0 = new TestSocket();
+        1 = server;
+      },
+    );
+    vi.stubGlobal(
+      "Response",
+      class {
+        constructor(
+          _body: unknown,
+          readonly init: ResponseInit,
+        ) {}
+      },
+    );
     mocks.connect.mockReset().mockImplementation(async (_args, handlers) => {
       callbacks.push(handlers);
       return new TestSocket();
     });
     mocks.binding.mockResolvedValue({
       binding: { provider: "skland", role_id: "role-1", server_id: 1 },
-      publicBinding: {}, cred: "test", token: "test", deviceProfile: {}
+      publicBinding: {},
+      cred: "test",
+      token: "test",
+      deviceProfile: {},
     } as DecryptedBinding);
     context = {
       req: {
-        header: (key: string) => key === "upgrade" ? "websocket" : undefined,
-        query: (key: string) => key === "ticket" ? "ticket" : undefined
+        header: (key: string) => (key === "upgrade" ? "websocket" : undefined),
+        query: (key: string) => (key === "ticket" ? "ticket" : undefined),
       },
-      env: {}, get: () => "request-1", executionCtx: { waitUntil: (promise: Promise<unknown>) => waits.push(promise) }
+      env: {},
+      get: () => "request-1",
+      executionCtx: { waitUntil: (promise: Promise<unknown>) => waits.push(promise) },
     } as unknown as AppContext;
   });
-  afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
 
   async function connect() {
     await handleEndfieldPositionSocket(context);
@@ -67,8 +102,9 @@ describe("locator reconnection lifecycle", () => {
   }
 
   it("uses bounded jitter rather than fixed one-second retries", () => {
-    expect([0, 1, 2, 3, 4, 5, 20].map((attempt) => positionReconnectDelay(attempt, 1)))
-      .toEqual([1000, 2000, 4000, 8000, 16000, 30000, 30000]);
+    expect([0, 1, 2, 3, 4, 5, 20].map((attempt) => positionReconnectDelay(attempt, 1))).toEqual([
+      1000, 2000, 4000, 8000, 16000, 30000, 30000,
+    ]);
     expect(positionReconnectDelay(20, 0)).toBe(15000);
   });
 
@@ -110,20 +146,28 @@ describe("locator reconnection lifecycle", () => {
       kind: "remote-close",
       phase: "subscribed",
       code: 1006,
-      lifetimeMs: 12_345
+      lifetimeMs: 12_345,
     });
-    expect(warn).toHaveBeenCalledWith("[locator][position-stream] reconnect scheduled", expect.objectContaining({
-      reason: "upstream-closed",
-      upstreamTermination: "remote-close",
-      upstreamPhase: "subscribed",
-      upstreamCode: 1006,
-      upstreamConnectionLifetimeMs: 12_345
-    }));
+    expect(warn).toHaveBeenCalledWith(
+      "[locator][position-stream] reconnect scheduled",
+      expect.objectContaining({
+        reason: "upstream-closed",
+        upstreamTermination: "remote-close",
+        upstreamPhase: "subscribed",
+        upstreamCode: 1006,
+        upstreamConnectionLifetimeMs: 12_345,
+      }),
+    );
   });
 
   it("ignores a failed in-flight upstream connection after the client has closed", async () => {
     let rejectConnection!: (reason: Error) => void;
-    mocks.connect.mockImplementation(() => new Promise((_resolve, reject) => { rejectConnection = reject; }));
+    mocks.connect.mockImplementation(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectConnection = reject;
+        }),
+    );
     await connect();
     server.dispatchEvent(new Event("close"));
     const sent = server.send.mock.calls.length;
@@ -135,7 +179,12 @@ describe("locator reconnection lifecycle", () => {
 
   it("aborts a pending upgrade and closes a late upstream connection", async () => {
     let finish!: (value: TestSocket) => void;
-    mocks.connect.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+    mocks.connect.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
     await connect();
     const signal = mocks.connect.mock.calls[0]![0].signal as AbortSignal;
     server.dispatchEvent(new Event("close"));
@@ -149,7 +198,9 @@ describe("locator reconnection lifecycle", () => {
 
   it("cleans client listeners immediately when the initial send fails", async () => {
     const remove = vi.spyOn(server, "removeEventListener");
-    server.send.mockImplementation(() => { throw new Error("peer gone"); });
+    server.send.mockImplementation(() => {
+      throw new Error("peer gone");
+    });
     await connect();
     expect(server.close).toHaveBeenCalledWith(1011, "send failed");
     expect(remove.mock.calls.map(([type]) => type).sort()).toEqual(["close", "error", "message"]);

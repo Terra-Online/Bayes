@@ -1,4 +1,5 @@
-import { ApiError, isApiError } from "../errors";
+import { ApiError, isApiError } from "@/lib/errors";
+
 import { parseApiEnvelope, parseAuthEnvelope } from "./envelope";
 import { buildDeviceHeaders, buildUrl, getEndfieldHosts } from "./hosts";
 import { getEndfieldTimestamp, getSignature } from "./signature";
@@ -7,13 +8,13 @@ import type {
   EndfieldProvider,
   GenerateCredData,
   OauthGrantData,
-  RefreshAuthData
+  RefreshAuthData,
 } from "./types";
 
 export async function grantEndfieldOAuthCode(
   provider: EndfieldProvider,
   accountToken: string,
-  deviceProfile?: EndfieldDeviceProfile
+  deviceProfile?: EndfieldDeviceProfile,
 ): Promise<OauthGrantData> {
   const hosts = getEndfieldHosts(provider);
   const response = await fetch(buildUrl(hosts.authBaseUrl, "/user/oauth2/v2/grant"), {
@@ -24,13 +25,13 @@ export async function grantEndfieldOAuthCode(
       origin: provider === "skland" ? "https://www.skland.com" : "https://www.skport.com",
       referer: provider === "skland" ? "https://www.skland.com/" : "https://www.skport.com/",
       ...(provider === "skland" ? { "x-requested-with": "com.hypergryph.skland" } : {}),
-      ...buildDeviceHeaders(deviceProfile)
+      ...buildDeviceHeaders(deviceProfile),
     },
     body: JSON.stringify({
       token: accountToken,
       appCode: hosts.appCode,
-      type: 0
-    })
+      type: 0,
+    }),
   });
 
   let data: OauthGrantData;
@@ -44,14 +45,18 @@ export async function grantEndfieldOAuthCode(
         "Invalid Gryphline account token. Please copy the full response from https://web-api.gryphline.com/cookie_store/account_token.",
         {
           expectedTokenSource: "https://web-api.gryphline.com/cookie_store/account_token",
-          rejectedAuthBaseUrl: hosts.authBaseUrl
-        }
+          rejectedAuthBaseUrl: hosts.authBaseUrl,
+        },
       );
     }
     throw error;
   }
   if (!data.code) {
-    throw new ApiError(502, "ENDFIELD_CODE_MISSING", "OAuth grant response did not include a code.");
+    throw new ApiError(
+      502,
+      "ENDFIELD_CODE_MISSING",
+      "OAuth grant response did not include a code.",
+    );
   }
   return data;
 }
@@ -59,7 +64,7 @@ export async function grantEndfieldOAuthCode(
 export async function generateEndfieldCredByCode(
   provider: EndfieldProvider,
   code: string,
-  deviceProfile?: EndfieldDeviceProfile
+  deviceProfile?: EndfieldDeviceProfile,
 ): Promise<GenerateCredData> {
   const hosts = getEndfieldHosts(provider);
   const timestamp = getEndfieldTimestamp();
@@ -73,14 +78,18 @@ export async function generateEndfieldCredByCode(
       platform: "3",
       timestamp,
       vname: "1.0.0",
-      ...buildDeviceHeaders(deviceProfile)
+      ...buildDeviceHeaders(deviceProfile),
     },
-    body: JSON.stringify({ kind: 1, code })
+    body: JSON.stringify({ kind: 1, code }),
   });
 
   const data = await parseApiEnvelope<GenerateCredData>(response);
   if (!data.cred || !data.token) {
-    throw new ApiError(502, "ENDFIELD_CREDENTIAL_MISSING", "Cred generation response did not include credentials.");
+    throw new ApiError(
+      502,
+      "ENDFIELD_CREDENTIAL_MISSING",
+      "Cred generation response did not include credentials.",
+    );
   }
   return data;
 }
@@ -93,7 +102,13 @@ export async function refreshEndfieldAuth(args: {
   const hosts = getEndfieldHosts(args.provider);
   const path = "/web/v1/auth/refresh";
   const timestamp = getEndfieldTimestamp();
-  const sign = await getSignature(path, timestamp, args.cred ?? "", "", args.deviceProfile?.deviceId ?? "");
+  const sign = await getSignature(
+    path,
+    timestamp,
+    args.cred ?? "",
+    "",
+    args.deviceProfile?.deviceId ?? "",
+  );
 
   const response = await fetch(buildUrl(hosts.baseUrl, path), {
     method: "GET",
@@ -106,13 +121,17 @@ export async function refreshEndfieldAuth(args: {
       sign,
       "accept-language": "en-US",
       "sk-language": "en",
-      ...buildDeviceHeaders(args.deviceProfile)
-    }
+      ...buildDeviceHeaders(args.deviceProfile),
+    },
   });
 
   const data = await parseApiEnvelope<RefreshAuthData>(response);
   if (!data.token) {
-    throw new ApiError(502, "ENDFIELD_REFRESH_TOKEN_MISSING", "Auth refresh response did not include a token.");
+    throw new ApiError(
+      502,
+      "ENDFIELD_REFRESH_TOKEN_MISSING",
+      "Auth refresh response did not include a token.",
+    );
   }
   return data;
 }

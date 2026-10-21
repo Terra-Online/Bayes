@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createAuthDatabase } from "../../test/authDatabase";
+
+import { createAuthDatabase } from "@/test/authDatabase";
+
 import { authSchemaDatabase } from "./schemaMetadata";
 
 describe("validated D1 metadata isolation", () => {
@@ -8,20 +10,31 @@ describe("validated D1 metadata isolation", () => {
   function setup() {
     const database = createAuthDatabase();
     databases.push(database);
-    database.sqlite.exec("INSERT INTO auth_users (id, name, email) VALUES ('user', 'First', 'first@example.test')");
+    database.sqlite.exec(
+      "INSERT INTO auth_users (id, name, email) VALUES ('user', 'First', 'first@example.test')",
+    );
     return database;
   }
 
   it("shares only plain completed schema results, without exposing mutable cached rows", async () => {
     const database = setup();
     const cold = authSchemaDatabase(database.db);
-    const result = await cold.db.prepare("SELECT * FROM pragma_table_info(?)").bind("auth_users").all();
+    const result = await cold.db
+      .prepare("SELECT * FROM pragma_table_info(?)")
+      .bind("auth_users")
+      .all();
     const warm = authSchemaDatabase(database.db, new Map(cold.metadata));
     result.results[0]!.name = "mutated-by-caller";
-    const cached = await warm.db.prepare("SELECT * FROM pragma_table_info(?)").bind("auth_users").all();
+    const cached = await warm.db
+      .prepare("SELECT * FROM pragma_table_info(?)")
+      .bind("auth_users")
+      .all();
     expect(cached.results[0]!.name).toBe("id");
     cached.results[0]!.name = "another-mutation";
-    expect((await warm.db.prepare("SELECT * FROM pragma_table_info(?)").bind("auth_users").all()).results[0]!.name).toBe("id");
+    expect(
+      (await warm.db.prepare("SELECT * FROM pragma_table_info(?)").bind("auth_users").all())
+        .results[0]!.name,
+    ).toBe("id");
     expect(database.queries).toHaveLength(1);
     expect(cached.meta.rows_read).toBe(0);
   });

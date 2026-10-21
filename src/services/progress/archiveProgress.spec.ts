@@ -1,19 +1,21 @@
 import { describe, expect, it } from "vitest";
-import { sha256Hex } from "../../lib/crypto";
-import { encodeBase64 } from "./bitmap";
+
+import { sha256Hex } from "@/lib/crypto";
+
 import {
   archiveIdsFromBitmap,
   buildCanonicalArchiveManifest,
   normalizeArchiveManifestPayload,
-  type RegisteredArchiveManifest
+  type RegisteredArchiveManifest,
 } from "./archiveManifest";
 import { emptyArchiveProgressState, type ArchiveProgressState } from "./archiveModel";
 import {
   applyArchiveProgressPatch,
   buildArchiveSyncRequestHash,
   normalizeArchiveSyncPatch,
-  prepareArchiveProgressForManifest
+  prepareArchiveProgressForManifest,
 } from "./archiveUserProgress";
+import { encodeBase64 } from "./bitmap";
 
 const HASH_A = "a".repeat(64);
 
@@ -23,13 +25,13 @@ const manifest = (archiveIndexHash: string, archiveIds: string[]): RegisteredArc
   bitsPerArchive: 1,
   archiveIds,
   archiveCount: archiveIds.length,
-  indexById: new Map(archiveIds.map((archiveId, index) => [archiveId, index]))
+  indexById: new Map(archiveIds.map((archiveId, index) => [archiveId, index])),
 });
 
 const progress = (
   activeByte: number,
   source: RegisteredArchiveManifest,
-  retainedArchiveIds: string[] = []
+  retainedArchiveIds: string[] = [],
 ): ArchiveProgressState => ({
   version: 1,
   revision: "old-revision",
@@ -40,7 +42,7 @@ const progress = (
   bitsPerArchive: source.bitsPerArchive,
   archiveCount: source.archiveCount,
   retainedArchiveIds,
-  updatedAt: 1
+  updatedAt: 1,
 });
 
 describe("archive progress manifest", () => {
@@ -58,19 +60,23 @@ describe("archive progress manifest", () => {
     [["archive-b", "archive-a"], "must be sorted"],
     [["archive-a", "archive-a"], "must not contain duplicate"],
   ])("rejects a non-canonical archive index", async (archiveIds, message) => {
-    await expect(normalizeArchiveManifestPayload({
-      archiveIndexHash: HASH_A,
-      archiveIds
-    })).rejects.toMatchObject({ status: 422, message: expect.stringContaining(message) });
+    await expect(
+      normalizeArchiveManifestPayload({
+        archiveIndexHash: HASH_A,
+        archiveIds,
+      }),
+    ).rejects.toMatchObject({ status: 422, message: expect.stringContaining(message) });
   });
 
   it("rejects a mismatched manifest hash", async () => {
-    await expect(normalizeArchiveManifestPayload({
-      archiveIndexHash: HASH_A,
-      archiveIds: ["archive-a"]
-    })).rejects.toMatchObject({
+    await expect(
+      normalizeArchiveManifestPayload({
+        archiveIndexHash: HASH_A,
+        archiveIds: ["archive-a"],
+      }),
+    ).rejects.toMatchObject({
       status: 422,
-      code: "ARCHIVE_PROGRESS_MANIFEST_HASH_MISMATCH"
+      code: "ARCHIVE_PROGRESS_MANIFEST_HASH_MISMATCH",
     });
   });
 });
@@ -83,7 +89,7 @@ describe("archive progress patches", () => {
       archiveIndexHash: HASH_A,
       setArchiveIds: ["archive-a", "archive-a"],
       clearArchiveIds: [],
-      updatedAt: 123
+      updatedAt: 123,
     });
     expect(normalized.setArchiveIds).toEqual(["archive-a"]);
     expect(normalized.updatedAt).toBe(123);
@@ -91,15 +97,10 @@ describe("archive progress patches", () => {
 
   it("sets and clears known and retained archive ids", () => {
     const target = manifest(HASH_A, ["archive-a", "archive-b"]);
-    const patched = applyArchiveProgressPatch(
-      Uint8Array.of(0b01),
-      ["archive-removed"],
-      target,
-      {
-        clearArchiveIds: ["archive-a", "archive-removed"],
-        setArchiveIds: ["archive-b", "archive-future"]
-      }
-    );
+    const patched = applyArchiveProgressPatch(Uint8Array.of(0b01), ["archive-removed"], target, {
+      clearArchiveIds: ["archive-a", "archive-removed"],
+      setArchiveIds: ["archive-b", "archive-future"],
+    });
 
     expect(archiveIdsFromBitmap(patched.bytes, target)).toEqual(["archive-b"]);
     expect(patched.retainedArchiveIds).toEqual(["archive-future"]);
@@ -110,16 +111,16 @@ describe("archive progress patches", () => {
       clientMutationId: "mutation-1",
       archiveIndexHash: HASH_A,
       setArchiveIds: ["archive-b", "archive-a"],
-      updatedAt: 123
+      updatedAt: 123,
     });
     const second = normalizeArchiveSyncPatch({
       clientMutationId: "mutation-1",
       archiveIndexHash: HASH_A,
       setArchiveIds: ["archive-a", "archive-b"],
-      updatedAt: 123
+      updatedAt: 123,
     });
     await expect(buildArchiveSyncRequestHash(first)).resolves.toBe(
-      await buildArchiveSyncRequestHash(second)
+      await buildArchiveSyncRequestHash(second),
     );
   });
 });
@@ -133,7 +134,7 @@ describe("archive manifest migration", () => {
     const afterRemoval = await prepareArchiveProgressForManifest(
       progress(0b11, source),
       reduced,
-      source
+      source,
     );
     expect(archiveIdsFromBitmap(afterRemoval.bytes, reduced)).toEqual(["archive-b"]);
     expect(afterRemoval.retainedArchiveIds).toEqual(["archive-a"]);
@@ -142,7 +143,7 @@ describe("archive manifest migration", () => {
     const afterReturn = await prepareArchiveProgressForManifest(
       { ...afterRemoval.progress, version: 2 },
       expanded,
-      reduced
+      reduced,
     );
     expect(archiveIdsFromBitmap(afterReturn.bytes, expanded)).toEqual(["archive-a", "archive-b"]);
     expect(afterReturn.retainedArchiveIds).toEqual([]);

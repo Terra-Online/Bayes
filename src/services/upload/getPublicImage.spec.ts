@@ -1,19 +1,20 @@
 import { Hono } from "hono";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ApiError } from "../../lib/errors";
-import type { AppEnv } from "../../types/app";
-import type { PublicSubmissionImage } from "../../repositories/submission/types";
+
+import { ApiError } from "@/lib/errors";
+import type { PublicSubmissionImage } from "@/repositories/submission/types";
+import type { AppEnv } from "@/types/app";
 
 const mocks = vi.hoisted(() => ({
   getPublicImageById: vi.fn(),
-  getOptionalAuthIdentity: vi.fn()
+  getOptionalAuthIdentity: vi.fn(),
 }));
 
-vi.mock("../../repositories/submission/getPublicImage", () => ({
-  getPublicImageById: mocks.getPublicImageById
+vi.mock("@/repositories/submission/getPublicImage", () => ({
+  getPublicImageById: mocks.getPublicImageById,
 }));
 vi.mock("./helpers", () => ({
-  getOptionalAuthIdentity: mocks.getOptionalAuthIdentity
+  getOptionalAuthIdentity: mocks.getOptionalAuthIdentity,
 }));
 
 import { handleGetPublicImage } from "./getPublicImage";
@@ -27,7 +28,7 @@ const item: PublicSubmissionImage = {
   status: "active",
   upvoteCount: 2,
   flagCount: 1,
-  createdAt: "2026-09-01"
+  createdAt: "2026-09-01",
 };
 
 beforeEach(() => {
@@ -44,16 +45,12 @@ function request(path: string, headers?: Record<string, string>) {
     throw error;
   });
   app.get("/images/:id", handleGetPublicImage);
-  return app.request(
-    "https://api.example.com" + path,
-    { headers },
-    {
-      DB: {} as D1Database,
-      UGC_ASSET_BASE_URL: "https://assets.example.com",
-      BETTER_AUTH_URL: "https://api.example.com",
-      UGC_UPLOAD_TEST_PREFIX: ""
-    } as AppEnv["Bindings"]
-  );
+  return app.request("https://api.example.com" + path, { headers }, {
+    DB: {} as D1Database,
+    UGC_ASSET_BASE_URL: "https://assets.example.com",
+    BETTER_AUTH_URL: "https://api.example.com",
+    UGC_UPLOAD_TEST_PREFIX: "",
+  } as AppEnv["Bindings"]);
 }
 
 describe("handleGetPublicImage", () => {
@@ -70,8 +67,8 @@ describe("handleGetPublicImage", () => {
       expect.objectContaining({
         id: "photo",
         markerId: "42",
-        assetBaseUrl: "https://assets.example.com"
-      })
+        assetBaseUrl: "https://assets.example.com",
+      }),
     );
   });
 
@@ -79,10 +76,9 @@ describe("handleGetPublicImage", () => {
     mocks.getPublicImageById.mockResolvedValue(item);
     mocks.getOptionalAuthIdentity.mockResolvedValue({ uid: "viewer" });
 
-    const response = await request(
-      "/images/photo?markerId=42&scope=prod",
-      { authorization: "Bearer viewer" }
-    );
+    const response = await request("/images/photo?markerId=42&scope=prod", {
+      authorization: "Bearer viewer",
+    });
 
     expect(response.status).toBe(200);
     expect(mocks.getPublicImageById).toHaveBeenCalledWith(
@@ -91,8 +87,8 @@ describe("handleGetPublicImage", () => {
         id: "photo",
         markerId: "42",
         excludePathPrefix: "_test",
-        viewerUserId: "viewer"
-      })
+        viewerUserId: "viewer",
+      }),
     );
   });
 
@@ -108,7 +104,7 @@ describe("handleGetPublicImage", () => {
   it.each([
     "/images/photo",
     "/images/photo?markerId=",
-    "/images/photo?markerId=" + "x".repeat(129)
+    "/images/photo?markerId=" + "x".repeat(129),
   ])("rejects an invalid markerId in %s", async (path) => {
     const response = await request(path);
 

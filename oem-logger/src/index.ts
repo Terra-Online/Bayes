@@ -24,36 +24,50 @@ function getFetchEvent(item: TraceItem): FetchEventInfo | null {
 
 function getEventType(item: TraceItem): string {
   const event = item.event;
-  if (!event) return "unknown";
-  if ("request" in event) return "fetch";
-  if ("queue" in event) return "queue";
-  if ("cron" in event) return "scheduled";
-  if ("scheduledTime" in event) return "scheduled";
+  if (!event) {
+    return "unknown";
+  }
+  if ("request" in event) {
+    return "fetch";
+  }
+  if ("queue" in event) {
+    return "queue";
+  }
+  if ("cron" in event) {
+    return "scheduled";
+  }
+  if ("scheduledTime" in event) {
+    return "scheduled";
+  }
   return "other";
 }
 
 export function isErrorTrace(item: TraceItem): boolean {
-  if (item.outcome === "canceled") return false;
+  if (item.outcome === "canceled") {
+    return false;
+  }
   const fetchEvent = getFetchEvent(item);
   const status = fetchEvent?.response?.status;
   if (
-    item.scriptName === "oem-backend"
-    && item.outcome === "exception"
-    && item.wallTime >= 5 * 60_000
-    && fetchEvent?.request.method === "GET"
-    && fetchEvent.request.headers.upgrade?.toLowerCase() === "websocket"
-    && URL.canParse(fetchEvent.request.url)
-    && new URL(fetchEvent.request.url).pathname === "/locator/position-stream"
-    && (status === undefined || status < 500)
-    && item.exceptions.length === 1
-    && item.exceptions[0]?.message === "Network connection lost."
-    && !item.logs.some((log) => log.level === "error")
-  ) return false;
+    item.scriptName === "oem-backend" &&
+    item.outcome === "exception" &&
+    item.wallTime >= 5 * 60_000 &&
+    fetchEvent?.request.method === "GET" &&
+    fetchEvent.request.headers.upgrade?.toLowerCase() === "websocket" &&
+    URL.canParse(fetchEvent.request.url) &&
+    new URL(fetchEvent.request.url).pathname === "/locator/position-stream" &&
+    (status === undefined || status < 500) &&
+    item.exceptions.length === 1 &&
+    item.exceptions[0]?.message === "Network connection lost." &&
+    !item.logs.some((log) => log.level === "error")
+  ) {
+    return false;
+  }
   return Boolean(
     (typeof status === "number" && status >= 500) ||
     item.outcome !== "ok" ||
     item.exceptions.length > 0 ||
-    item.logs.some((log) => log.level === "error")
+    item.logs.some((log) => log.level === "error"),
   );
 }
 
@@ -63,23 +77,20 @@ function makeErrorId(item: TraceItem, fetchEvent: FetchEventInfo | null, index: 
   return `${item.eventTimestamp ?? Date.now()}-${suffix}-${index}`;
 }
 
-function writeErrors(
-  items: TraceItem[],
-  db: D1Database,
-  receivedAtMs: number
-): Promise<void> {
+function writeErrors(items: TraceItem[], db: D1Database, receivedAtMs: number): Promise<void> {
   const statements = items.map((item, index) => {
     const fetchEvent = getFetchEvent(item);
     const status = fetchEvent?.response?.status ?? null;
     const errorLogCount = item.logs.reduce(
       (count, log) => count + (log.level === "error" ? 1 : 0),
-      0
+      0,
     );
     const requestHeaders = fetchEvent?.request.headers;
     const rayId = requestHeaders?.["cf-ray"] ?? null;
     const requestId = requestHeaders?.["x-request-id"] ?? null;
 
-    return db.prepare(`
+    return db
+      .prepare(`
       INSERT OR IGNORE INTO worker_errors (
         id,
         event_timestamp_ms,
@@ -99,25 +110,26 @@ function writeErrors(
         truncated,
         payload_json
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).bind(
-      makeErrorId(item, fetchEvent, index),
-      item.eventTimestamp ?? receivedAtMs,
-      receivedAtMs,
-      item.scriptName,
-      getEventType(item),
-      fetchEvent?.request.method ?? null,
-      fetchEvent?.request.url ?? null,
-      status,
-      item.outcome,
-      rayId,
-      requestId,
-      item.exceptions.length,
-      errorLogCount,
-      item.cpuTime,
-      item.wallTime,
-      item.truncated ? 1 : 0,
-      JSON.stringify(item)
-    );
+    `)
+      .bind(
+        makeErrorId(item, fetchEvent, index),
+        item.eventTimestamp ?? receivedAtMs,
+        receivedAtMs,
+        item.scriptName,
+        getEventType(item),
+        fetchEvent?.request.method ?? null,
+        fetchEvent?.request.url ?? null,
+        status,
+        item.outcome,
+        rayId,
+        requestId,
+        item.exceptions.length,
+        errorLogCount,
+        item.cpuTime,
+        item.wallTime,
+        item.truncated ? 1 : 0,
+        JSON.stringify(item),
+      );
   });
 
   return db.batch(statements).then(() => undefined);
@@ -132,14 +144,16 @@ export default {
         (errors ??= []).push(item);
       }
     }
-    if (!errors) return;
+    if (!errors) {
+      return;
+    }
 
     ctx.waitUntil(
       writeErrors(errors, env.OEM_ERR, Date.now()).catch((error) => {
         console.error("[oem-errogger] failed to persist worker errors", {
-          error: error instanceof Error ? error.message : String(error)
+          error: error instanceof Error ? error.message : String(error),
         });
-      })
+      }),
     );
   },
 
@@ -148,11 +162,13 @@ export default {
       env.OEM_ERR.prepare(`
         DELETE FROM worker_errors
         WHERE event_timestamp_ms < (unixepoch('now', '-120 days') * 1000)
-      `).run().catch((error) => {
-        console.error("[oem-errogger] failed to clean expired worker errors", {
-          error: error instanceof Error ? error.message : String(error)
-        });
-      })
+      `)
+        .run()
+        .catch((error) => {
+          console.error("[oem-errogger] failed to clean expired worker errors", {
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }),
     );
-  }
+  },
 };

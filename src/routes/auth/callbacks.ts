@@ -1,12 +1,14 @@
 import { getCookies } from "better-auth/cookies";
-import { createAuth } from "../../lib/auth/createAuth";
-import { AUTH_EXCHANGE_CHALLENGE_PARAM } from "../../lib/auth/browserSession";
-import { createSessionExchangeCode } from "./sessionExchange";
+
+import { AUTH_EXCHANGE_CHALLENGE_PARAM } from "@/lib/auth/browserSession";
+import { createAuth } from "@/lib/auth/createAuth";
+
 import {
   isTrustedCallbackUrlForResponse,
   resolveTrustedCallbackUrl,
   resolveTrustedRequestOrigin,
 } from "./frontendOrigins";
+import { createSessionExchangeCode } from "./sessionExchange";
 import type { AuthRouteContext } from "./types";
 
 function splitSetCookieHeader(setCookie: string): string[] {
@@ -21,10 +23,10 @@ function splitSetCookieHeader(setCookie: string): string[] {
         cursor += 1;
       }
       while (
-        cursor < setCookie.length
-        && setCookie[cursor] !== "="
-        && setCookie[cursor] !== ";"
-        && setCookie[cursor] !== ","
+        cursor < setCookie.length &&
+        setCookie[cursor] !== "=" &&
+        setCookie[cursor] !== ";" &&
+        setCookie[cursor] !== ","
       ) {
         cursor += 1;
       }
@@ -51,7 +53,10 @@ function splitSetCookieHeader(setCookie: string): string[] {
   return result;
 }
 
-function readSessionTokenFromSetCookie(setCookie: string | null, cookieName: string): string | null {
+function readSessionTokenFromSetCookie(
+  setCookie: string | null,
+  cookieName: string,
+): string | null {
   if (!setCookie) {
     return null;
   }
@@ -159,7 +164,8 @@ export function applyDefaultSocialCallbackUrls(c: AuthRouteContext, body: Record
   }
 
   const nextBody = { ...body };
-  const callbackURL = resolveTrustedCallbackUrl(c, nextBody.callbackURL, defaultOrigin) ?? defaultOrigin;
+  const callbackURL =
+    resolveTrustedCallbackUrl(c, nextBody.callbackURL, defaultOrigin) ?? defaultOrigin;
   nextBody.callbackURL = callbackURL;
   nextBody.newUserCallbackURL =
     resolveTrustedCallbackUrl(c, nextBody.newUserCallbackURL, defaultOrigin) ?? callbackURL;
@@ -169,7 +175,10 @@ export function applyDefaultSocialCallbackUrls(c: AuthRouteContext, body: Record
   return nextBody;
 }
 
-export async function attachSessionExchangeCode(c: AuthRouteContext, response: Response): Promise<Response> {
+export async function attachSessionExchangeCode(
+  c: AuthRouteContext,
+  response: Response,
+): Promise<Response> {
   if (!response.status.toString().startsWith("3")) {
     return response;
   }
@@ -202,7 +211,9 @@ export async function attachSessionExchangeCode(c: AuthRouteContext, response: R
 
   const frontendUrl = new URL(location);
   const challenge = frontendUrl.searchParams.get(AUTH_EXCHANGE_CHALLENGE_PARAM);
-  if (!challenge || !/^[a-f0-9]{64}$/.test(challenge)) return response;
+  if (!challenge || !/^[a-f0-9]{64}$/.test(challenge)) {
+    return response;
+  }
   frontendUrl.searchParams.delete(AUTH_EXCHANGE_CHALLENGE_PARAM);
   const code = await createSessionExchangeCode(c, sessionToken, frontendUrl.origin, challenge);
   const headers = new Headers(response.headers);

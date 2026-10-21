@@ -1,9 +1,11 @@
 import type { Hono } from "hono";
-import { createAuth } from "../../lib/auth/createAuth";
-import { AUTH_EXCHANGE_CHALLENGE_PARAM, createOAuthExchangeProof } from "../../lib/auth/browserSession";
-import { ApiError } from "../../lib/errors";
-import { rateLimit } from "../../middleware/rate-limit";
-import type { AppEnv } from "../../types/app";
+
+import { AUTH_EXCHANGE_CHALLENGE_PARAM, createOAuthExchangeProof } from "@/lib/auth/browserSession";
+import { createAuth } from "@/lib/auth/createAuth";
+import { ApiError } from "@/lib/errors";
+import { rateLimit } from "@/middleware/rate-limit";
+import type { AppEnv } from "@/types/app";
+
 import {
   applyDefaultSocialCallbackUrls,
   attachSessionExchangeCode,
@@ -39,7 +41,9 @@ export function registerSocialAuthRoutes(
     }
     const proof = await createOAuthExchangeProof(createAuth(c.env));
     for (const key of ["callbackURL", "newUserCallbackURL"]) {
-      if (typeof nextBody[key] !== "string") continue;
+      if (typeof nextBody[key] !== "string") {
+        continue;
+      }
       const callback = new URL(nextBody[key]);
       callback.searchParams.set(AUTH_EXCHANGE_CHALLENGE_PARAM, proof.challenge);
       nextBody[key] = callback.toString();
@@ -48,7 +52,8 @@ export function registerSocialAuthRoutes(
     console.warn("[auth][social-sign-in] forwarding", {
       provider,
       requestSignUp: typeof nextBody.requestSignUp === "boolean" ? nextBody.requestSignUp : null,
-      disableRedirect: typeof nextBody.disableRedirect === "boolean" ? nextBody.disableRedirect : null,
+      disableRedirect:
+        typeof nextBody.disableRedirect === "boolean" ? nextBody.disableRedirect : null,
       requestOrigin: resolveTrustedRequestOrigin(c),
       callbackURL: toSafeTrustedUrlLog(
         c,
@@ -64,12 +69,10 @@ export function registerSocialAuthRoutes(
       ),
     });
 
-    const response = await deps.forwardToAuthJsonPath(
-      c,
-      "/sign-in/social",
-      nextBody,
-    );
-    if (response.ok) response.headers.append("Set-Cookie", proof.cookie);
+    const response = await deps.forwardToAuthJsonPath(c, "/sign-in/social", nextBody);
+    if (response.ok) {
+      response.headers.append("Set-Cookie", proof.cookie);
+    }
     response.headers.set("Cache-Control", "private, no-store");
     return response;
   });

@@ -1,8 +1,10 @@
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { onAppError } from "../../middleware/error-handler";
-import { SqliteD1 } from "../../test/sqliteD1";
-import type { AppEnv } from "../../types/app";
+
+import { onAppError } from "@/middleware/error-handler";
+import { SqliteD1 } from "@/test/sqliteD1";
+import type { AppEnv } from "@/types/app";
+
 import { handleGetPublicComment } from "./getPublicComment";
 
 let database: SqliteD1;
@@ -75,35 +77,35 @@ function insertComment(payload: {
   userId?: string;
   createdAt?: string;
 }) {
-  database.sqlite.prepare(`
+  database.sqlite
+    .prepare(`
     INSERT INTO ugc_submissions (
       id, poi_id, poi_hash, poi_type, snapshot_id, user_id, content,
       file_path, kind, status, parent_id, comment_depth, created_at, updated_at
     ) VALUES (?, ?, 'hash', 'poi', ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)
-  `).run(
-    payload.id,
-    payload.markerId ?? "marker-1",
-    `snapshot-${payload.id}`,
-    payload.userId ?? "reply-author",
-    payload.content ?? `Content ${payload.id}`,
-    payload.kind ?? "comment",
-    payload.status ?? "active",
-    payload.parentId ?? null,
-    payload.depth ?? 0,
-    payload.createdAt ?? "2026-09-10T00:00:00.000Z",
-    payload.createdAt ?? "2026-09-10T00:00:00.000Z"
-  );
+  `)
+    .run(
+      payload.id,
+      payload.markerId ?? "marker-1",
+      `snapshot-${payload.id}`,
+      payload.userId ?? "reply-author",
+      payload.content ?? `Content ${payload.id}`,
+      payload.kind ?? "comment",
+      payload.status ?? "active",
+      payload.parentId ?? null,
+      payload.depth ?? 0,
+      payload.createdAt ?? "2026-09-10T00:00:00.000Z",
+      payload.createdAt ?? "2026-09-10T00:00:00.000Z",
+    );
 }
 
 function request(path: string) {
   const app = new Hono<AppEnv>();
   app.onError(onAppError);
   app.get("/comments/:id", handleGetPublicComment);
-  return app.request(
-    `https://api.example.com${path}`,
-    undefined,
-    { DB: database.db } as AppEnv["Bindings"]
-  );
+  return app.request(`https://api.example.com${path}`, undefined, {
+    DB: database.db,
+  } as AppEnv["Bindings"]);
 }
 
 type CommentFixture = Parameters<typeof insertComment>[0];
@@ -116,17 +118,17 @@ const unavailableCases: Array<{
   {
     name: "missing target",
     path: "/comments/missing?markerId=marker-1",
-    fixture: null
+    fixture: null,
   },
   {
     name: "wrong marker",
     path: "/comments/target?markerId=marker-2",
-    fixture: { id: "target", content: "Wrong marker secret" }
+    fixture: { id: "target", content: "Wrong marker secret" },
   },
   {
     name: "image kind",
     path: "/comments/image?markerId=marker-1",
-    fixture: { id: "image", kind: "image", content: "Image secret" }
+    fixture: { id: "image", kind: "image", content: "Image secret" },
   },
   ...["pending_openai", "pending_audit", "stale"].map((status) => ({
     name: `${status} target`,
@@ -134,9 +136,9 @@ const unavailableCases: Array<{
     fixture: {
       id: status,
       status,
-      content: `Private ${status} content`
-    }
-  }))
+      content: `Private ${status} content`,
+    },
+  })),
 ];
 
 describe("handleGetPublicComment integration", () => {
@@ -148,17 +150,17 @@ describe("handleGetPublicComment integration", () => {
       parentId: "target",
       depth: 2,
       status: "pending_audit",
-      content: "Private reply content"
+      content: "Private reply content",
     });
     insertComment({
       id: "public-grandchild",
       parentId: "hidden-reply",
       depth: 3,
-      content: "Public descendant"
+      content: "Public descendant",
     });
 
     const response = await request("/comments/target?markerId=marker-1");
-    const payload = await response.json() as {
+    const payload = (await response.json()) as {
       item: {
         path: Array<{ id: string }>;
         replies: Array<{ id: string }>;
@@ -172,25 +174,32 @@ describe("handleGetPublicComment integration", () => {
     expect(JSON.stringify(payload)).not.toContain("Private reply content");
   });
 
-  it.each(unavailableCases)("returns an indistinguishable 404 for $name", async ({ path, fixture }) => {
-    if (fixture) insertComment(fixture);
-
-    const response = await request(path);
-    const body = await response.text();
-
-    expect(response.status).toBe(404);
-    expect(response.headers.get("Cache-Control")).toBe("private, no-store");
-    expect(JSON.parse(body)).toEqual({
-      code: "COMMENT_NOT_FOUND",
-      message: "Comment not found.",
-      error: {
-        code: "COMMENT_NOT_FOUND",
-        message: "Comment not found."
+  it.each(unavailableCases)(
+    "returns an indistinguishable 404 for $name",
+    async ({ path, fixture }) => {
+      if (fixture) {
+        insertComment(fixture);
       }
-    });
-    if (fixture) {
-      expect(body).not.toContain(fixture.content);
-      if (fixture.status) expect(body).not.toContain(fixture.status);
-    }
-  });
+
+      const response = await request(path);
+      const body = await response.text();
+
+      expect(response.status).toBe(404);
+      expect(response.headers.get("Cache-Control")).toBe("private, no-store");
+      expect(JSON.parse(body)).toEqual({
+        code: "COMMENT_NOT_FOUND",
+        message: "Comment not found.",
+        error: {
+          code: "COMMENT_NOT_FOUND",
+          message: "Comment not found.",
+        },
+      });
+      if (fixture) {
+        expect(body).not.toContain(fixture.content);
+        if (fixture.status) {
+          expect(body).not.toContain(fixture.status);
+        }
+      }
+    },
+  );
 });

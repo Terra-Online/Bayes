@@ -1,10 +1,16 @@
-import { ApiError } from "../../lib/errors";
-import { UGC_PUBLIC_IMAGE_CACHE_CONTROL } from "./imageDeliveryPolicy";
-import { getImageSubmissionByFilePath, getPublicSubmissionByFilePath } from "../../repositories/submission/statusSubmission";
-import type { AppEnv } from "../../types/app";
-import { parseObjectKeyFromRequestPath } from "./helpers";
+import type { Context } from "hono";
 
-export async function handleServePublicImageFile(c: import("hono").Context<AppEnv>) {
+import { ApiError } from "@/lib/errors";
+import {
+  getImageSubmissionByFilePath,
+  getPublicSubmissionByFilePath,
+} from "@/repositories/submission/statusSubmission";
+import type { AppEnv } from "@/types/app";
+
+import { parseObjectKeyFromRequestPath } from "./helpers";
+import { UGC_PUBLIC_IMAGE_CACHE_CONTROL } from "./imageDeliveryPolicy";
+
+export async function handleServePublicImageFile(c: Context<AppEnv>) {
   const objectKey = parseObjectKeyFromRequestPath(c.req.path);
   const submission = await getPublicSubmissionByFilePath(c.env.DB, objectKey);
   if (!submission) {
@@ -20,15 +26,18 @@ export async function handleServePublicImageFile(c: import("hono").Context<AppEn
   object.writeHttpMetadata(headers);
   headers.set("etag", object.httpEtag);
   headers.set("Cache-Control", UGC_PUBLIC_IMAGE_CACHE_CONTROL);
-  headers.set("Content-Type", object.httpMetadata?.contentType ?? submission.mimeType ?? "application/octet-stream");
+  headers.set(
+    "Content-Type",
+    object.httpMetadata?.contentType ?? submission.mimeType ?? "application/octet-stream",
+  );
 
   return new Response(object.body, {
     status: 200,
-    headers
+    headers,
   });
 }
 
-export async function handleServePrivateImageFile(c: import("hono").Context<AppEnv>) {
+export async function handleServePrivateImageFile(c: Context<AppEnv>) {
   const user = c.get("authUser");
   if (!user) {
     throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
@@ -48,10 +57,13 @@ export async function handleServePrivateImageFile(c: import("hono").Context<AppE
   object.writeHttpMetadata(headers);
   headers.set("etag", object.httpEtag);
   headers.set("Cache-Control", "private, max-age=60");
-  headers.set("Content-Type", object.httpMetadata?.contentType ?? submission.mimeType ?? "application/octet-stream");
+  headers.set(
+    "Content-Type",
+    object.httpMetadata?.contentType ?? submission.mimeType ?? "application/octet-stream",
+  );
 
   return new Response(object.body, {
     status: 200,
-    headers
+    headers,
   });
 }

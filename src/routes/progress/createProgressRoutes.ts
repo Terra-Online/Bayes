@@ -1,30 +1,28 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
-import { ApiError } from "../../lib/errors";
-import { fetchProgressStatsFromWorkersCache } from "../../publicRead/client/client";
-import { requireAuth } from "../../middleware/auth";
-import { rateLimit } from "../../middleware/rate-limit";
+
+import { ApiError } from "@/lib/errors";
+import { requireAuth } from "@/middleware/auth";
+import { rateLimit } from "@/middleware/rate-limit";
+import { fetchProgressStatsFromWorkersCache } from "@/publicRead/client/client";
+import {
+  normalizeArchiveManifestPayload,
+  saveArchiveProgressManifest,
+} from "@/services/progress/archiveManifest";
 import {
   isSha256Hex,
   normalizeManifestPayload,
-  saveProgressManifest
-} from "../../services/progress/manifest";
-import {
-  normalizeArchiveManifestPayload,
-  saveArchiveProgressManifest
-} from "../../services/progress/archiveManifest";
-import { jsonResponse } from "../../services/progress/responses";
-import type { AppEnv } from "../../types/app";
+  saveProgressManifest,
+} from "@/services/progress/manifest";
+import { jsonResponse } from "@/services/progress/responses";
+import type { AppEnv } from "@/types/app";
 
 function isProgressLocked(flag: string | undefined): boolean {
   const normalized = (flag ?? "true").trim().toLowerCase();
   return !["0", "false", "off", "no"].includes(normalized);
 }
 
-async function proxyUserProgress(
-  c: Context<AppEnv>,
-  path: "state" | "sync"
-): Promise<Response> {
+async function proxyUserProgress(c: Context<AppEnv>, path: "state" | "sync"): Promise<Response> {
   const user = c.get("authUser");
   if (!user) {
     throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
@@ -37,20 +35,21 @@ async function proxyUserProgress(
     url.searchParams.set("markerIndexHash", markerIndexHash);
   }
 
-  const request = path === "state"
-    ? new Request(url, { method: "GET", headers: { "x-request-id": c.get("requestId") ?? "" } })
-    : new Request(url, {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-request-id": c.get("requestId") ?? "" },
-      body: await c.req.text()
-    });
+  const request =
+    path === "state"
+      ? new Request(url, { method: "GET", headers: { "x-request-id": c.get("requestId") ?? "" } })
+      : new Request(url, {
+          method: "POST",
+          headers: { "content-type": "application/json", "x-request-id": c.get("requestId") ?? "" },
+          body: await c.req.text(),
+        });
 
   return stub.fetch(request);
 }
 
 async function proxyUserArchiveProgress(
   c: Context<AppEnv>,
-  path: "state" | "sync"
+  path: "state" | "sync",
 ): Promise<Response> {
   const user = c.get("authUser");
   if (!user) {
@@ -63,13 +62,15 @@ async function proxyUserArchiveProgress(
     const archiveIndexHash = c.req.query("archiveIndexHash")?.trim().toLowerCase() ?? "";
     url.searchParams.set("archiveIndexHash", archiveIndexHash);
   }
-  return stub.fetch(path === "state"
-    ? new Request(url, { method: "GET", headers: { "x-request-id": c.get("requestId") ?? "" } })
-    : new Request(url, {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-request-id": c.get("requestId") ?? "" },
-      body: await c.req.text()
-    }));
+  return stub.fetch(
+    path === "state"
+      ? new Request(url, { method: "GET", headers: { "x-request-id": c.get("requestId") ?? "" } })
+      : new Request(url, {
+          method: "POST",
+          headers: { "content-type": "application/json", "x-request-id": c.get("requestId") ?? "" },
+          body: await c.req.text(),
+        }),
+  );
 }
 
 async function registerManifest(c: Context<AppEnv>): Promise<Response> {
@@ -77,7 +78,7 @@ async function registerManifest(c: Context<AppEnv>): Promise<Response> {
   await saveProgressManifest(c.env, manifest);
   return jsonResponse({
     ok: true,
-    manifest: { markerIndexHash: manifest.markerIndexHash }
+    manifest: { markerIndexHash: manifest.markerIndexHash },
   });
 }
 
@@ -86,7 +87,7 @@ async function registerArchiveManifest(c: Context<AppEnv>): Promise<Response> {
   await saveArchiveProgressManifest(c.env, manifest);
   return jsonResponse({
     ok: true,
-    manifest: { archiveIndexHash: manifest.archiveIndexHash }
+    manifest: { archiveIndexHash: manifest.archiveIndexHash },
   });
 }
 
@@ -106,7 +107,7 @@ export function createProgressRoutes() {
       throw new ApiError(
         503,
         "PROGRESS_TEMPORARILY_DISABLED",
-        "Progress endpoints are temporarily disabled during stabilization."
+        "Progress endpoints are temporarily disabled during stabilization.",
       );
     }
     await next();

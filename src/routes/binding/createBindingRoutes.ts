@@ -1,14 +1,16 @@
 import { Hono } from "hono";
-import { requireAuth } from "../../middleware/auth";
-import { rateLimit } from "../../middleware/rate-limit";
-import type { AppEnv } from "../../types/app";
+
+import { requireAuth } from "@/middleware/auth";
+import { rateLimit } from "@/middleware/rate-limit";
+import type { AppEnv } from "@/types/app";
+
 import {
   handleBindRole,
   handleBindingStatus,
   handleDisableBinding,
   handleExchangeCode,
   handleExchangeToken,
-  handleUnlinkBinding
+  handleUnlinkBinding,
 } from "./bindingHandlers";
 
 export function createBindingRoutes() {

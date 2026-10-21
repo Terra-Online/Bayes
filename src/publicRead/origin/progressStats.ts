@@ -1,5 +1,5 @@
-import { getJsonFromKv, MIN_KV_EXPIRATION_TTL_SECONDS, putJsonToKv } from "../../lib/kvJson";
-import type { Bindings } from "../../types/app";
+import { getJsonFromKv, MIN_KV_EXPIRATION_TTL_SECONDS, putJsonToKv } from "@/lib/kvJson";
+import type { Bindings } from "@/types/app";
 
 export const PROGRESS_STATS_HTTP_MAX_AGE_SECONDS = 10;
 export const PROGRESS_STATS_KV_TTL_SECONDS = MIN_KV_EXPIRATION_TTL_SECONDS;
@@ -13,14 +13,14 @@ function jsonResponse(payload: unknown, headers?: HeadersInit): Response {
   return new Response(JSON.stringify(payload), {
     headers: {
       "content-type": "application/json; charset=utf-8",
-      ...headers
-    }
+      ...headers,
+    },
   });
 }
 
 export async function buildPublicProgressStatsResponse(
   env: Bindings,
-  markerIndexHash: string
+  markerIndexHash: string,
 ): Promise<Response> {
   const kvKey = buildProgressStatsCacheKey(markerIndexHash);
   const cached = await getJsonFromKv<unknown>(env.OEM_KV, kvKey);
@@ -28,7 +28,7 @@ export async function buildPublicProgressStatsResponse(
     return jsonResponse(cached, {
       "Cache-Control": `public, max-age=${PROGRESS_STATS_HTTP_MAX_AGE_SECONDS}`,
       "Cloudflare-CDN-Cache-Control": `public, max-age=${PROGRESS_STATS_KV_TTL_SECONDS}`,
-      "x-oem-kv-cache": "hit"
+      "x-oem-kv-cache": "hit",
     });
   }
 
@@ -43,20 +43,23 @@ export async function buildPublicProgressStatsResponse(
     return new Response(response.body, {
       status: response.status,
       statusText: response.statusText,
-      headers
+      headers,
     });
   }
 
-  const payload = await response.clone().json().catch(() => null);
+  const payload = await response
+    .clone()
+    .json()
+    .catch(() => null);
   if (payload) {
     await putJsonToKv(env.OEM_KV, kvKey, payload, {
-      expirationTtl: PROGRESS_STATS_KV_TTL_SECONDS
+      expirationTtl: PROGRESS_STATS_KV_TTL_SECONDS,
     }).catch(() => undefined);
   }
 
   return jsonResponse(payload, {
     "Cache-Control": `public, max-age=${PROGRESS_STATS_HTTP_MAX_AGE_SECONDS}`,
     "Cloudflare-CDN-Cache-Control": `public, max-age=${PROGRESS_STATS_KV_TTL_SECONDS}`,
-    "x-oem-kv-cache": "miss"
+    "x-oem-kv-cache": "miss",
   });
 }

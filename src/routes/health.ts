@@ -1,5 +1,6 @@
 import { Hono } from "hono";
-import type { AppEnv } from "../types/app";
+
+import type { AppEnv } from "@/types/app";
 
 export function createHealthRoutes() {
   const app = new Hono<AppEnv>();
@@ -9,7 +10,7 @@ export function createHealthRoutes() {
       status: "ok",
       service: "oem-backend",
       now: new Date().toISOString(),
-      requestId: c.get("requestId")
+      requestId: c.get("requestId"),
     });
   });
 

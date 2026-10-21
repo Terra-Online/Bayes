@@ -16,8 +16,9 @@ export function buildPublicImagesSearchParams(payload: {
   assetBaseUrl: string;
 }): URLSearchParams {
   const searchParams = new URLSearchParams();
-  normalizePublicReadMarkerIds(payload.markerIds)
-    .forEach((markerId) => searchParams.append("markerId", markerId));
+  normalizePublicReadMarkerIds(payload.markerIds).forEach((markerId) =>
+    searchParams.append("markerId", markerId),
+  );
   searchParams.set("limit", String(payload.limit));
   searchParams.set("namespace", payload.cacheNamespace);
   searchParams.set("assetBaseUrl", payload.assetBaseUrl);
@@ -31,8 +32,9 @@ export function buildPublicCommentsSearchParams(payload: {
   cacheNamespace: PublicReadCacheNamespace;
 }): URLSearchParams {
   const searchParams = new URLSearchParams();
-  normalizePublicReadMarkerIds(payload.markerIds)
-    .forEach((markerId) => searchParams.append("markerId", markerId));
+  normalizePublicReadMarkerIds(payload.markerIds).forEach((markerId) =>
+    searchParams.append("markerId", markerId),
+  );
   searchParams.set("limit", String(payload.limit));
   searchParams.set("replyLimit", String(payload.replyLimit));
   searchParams.set("namespace", payload.cacheNamespace);
@@ -43,8 +45,14 @@ export function buildProgressStatsSearchParams(markerIndexHash: string): URLSear
   return new URLSearchParams({ markerIndexHash: markerIndexHash.trim().toLowerCase() });
 }
 
-export function parsePublicReadInteger(value: string | null, minimum: number, maximum: number): number | null {
-  if (!value || !/^\d+$/.test(value)) return null;
+export function parsePublicReadInteger(
+  value: string | null,
+  minimum: number,
+  maximum: number,
+): number | null {
+  if (!value || !/^\d+$/.test(value)) {
+    return null;
+  }
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) && parsed >= minimum && parsed <= maximum ? parsed : null;
 }

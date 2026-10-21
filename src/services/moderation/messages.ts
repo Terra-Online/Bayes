@@ -1,14 +1,9 @@
-import type { AuthUser } from "../../types/app";
-import type { SubmissionRecord, SubmissionStatus } from "../../repositories/submission/types";
+import type { SubmissionRecord, SubmissionStatus } from "@/repositories/submission/types";
+import type { AuthUser } from "@/types/app";
 
-export type ModerationQueueSource =
-  | "upload"
-  | "manual"
-  | "scheduled_backfill";
+export type ModerationQueueSource = "upload" | "manual" | "scheduled_backfill";
 
-export type TransPrewarmSource =
-  | "auto_moderation"
-  | "manual_moderation";
+export type TransPrewarmSource = "auto_moderation" | "manual_moderation";
 
 export type TransPrewarmTargetStatus = "success" | "failed" | "skipped";
 

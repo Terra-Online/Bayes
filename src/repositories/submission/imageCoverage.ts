@@ -10,12 +10,9 @@ export async function listVisibleImageCountsByMarker(
   payload: {
     pathPrefix?: string;
     excludePathPrefix?: string;
-  }
+  },
 ): Promise<MarkerImageCount[]> {
-  const filters = [
-    "kind = 'image'",
-    "status IN ('active', 'flagged', 'remove_request')"
-  ];
+  const filters = ["kind = 'image'", "status IN ('active', 'flagged', 'remove_request')"];
   const scope = buildImageScopeFilters(payload);
   filters.push(...scope.clauses);
 
@@ -24,13 +21,13 @@ export async function listVisibleImageCountsByMarker(
       `SELECT poi_id, COUNT(*) AS image_count
        FROM ugc_submissions
        WHERE ${filters.join(" AND ")}
-       GROUP BY poi_id`
+       GROUP BY poi_id`,
     )
     .bind(...scope.bindings)
     .all<{ poi_id: string; image_count: number | string }>();
 
   return (result.results ?? []).map((row) => ({
     markerId: String(row.poi_id),
-    imageCount: Math.max(0, Math.floor(Number(row.image_count) || 0))
+    imageCount: Math.max(0, Math.floor(Number(row.image_count) || 0)),
   }));
 }

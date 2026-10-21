@@ -1,26 +1,49 @@
-import { describe, expect, it } from "vitest";
 import { getCookies } from "better-auth/cookies";
-import type { Bindings } from "../../types/app";
+import { describe, expect, it } from "vitest";
+
+import type { Bindings } from "@/types/app";
+
 import { authCookieOptions } from "./origins";
 import { hasSessionCredentials } from "./sessionCredentials";
 
 describe("session credential presence", () => {
-  it.each([undefined, "https://api.opendfieldmap.org", "http://localhost:8787"])("matches current and legacy Better Auth cookies for %s", (url) => {
-    const env = { BETTER_AUTH_URL: url } as Bindings;
-    const options = authCookieOptions(env);
-    const current = getCookies(options).sessionToken.name;
-    const legacy = getCookies({ ...options, advanced: { ...options.advanced, cookiePrefix: "better-auth" } }).sessionToken.name;
-    for (const name of [current, legacy]) {
-      expect(hasSessionCredentials(env, new Headers({ cookie: `analytics=abc;${name}=token.signature; other=123` }))).toBe(true);
-      // Malformed and expired credentials must still reach the auth library.
-      expect(hasSessionCredentials(env, new Headers({ cookie: `${name}=invalid` }))).toBe(true);
-    }
-    expect(hasSessionCredentials(env, new Headers({ cookie: "analytics=abc; cf_clearance=xyz; session=test" }))).toBe(false);
-    expect(hasSessionCredentials(env, new Headers())).toBe(false);
-    expect(hasSessionCredentials(env, new Headers({ cookie: `other=${current}=value` }))).toBe(false);
-  });
+  it.each([undefined, "https://api.opendfieldmap.org", "http://localhost:8787"])(
+    "matches current and legacy Better Auth cookies for %s",
+    (url) => {
+      const env = { BETTER_AUTH_URL: url } as Bindings;
+      const options = authCookieOptions(env);
+      const current = getCookies(options).sessionToken.name;
+      const legacy = getCookies({
+        ...options,
+        advanced: { ...options.advanced, cookiePrefix: "better-auth" },
+      }).sessionToken.name;
+      for (const name of [current, legacy]) {
+        expect(
+          hasSessionCredentials(
+            env,
+            new Headers({ cookie: `analytics=abc;${name}=token.signature; other=123` }),
+          ),
+        ).toBe(true);
+        // Malformed and expired credentials must still reach the auth library.
+        expect(hasSessionCredentials(env, new Headers({ cookie: `${name}=invalid` }))).toBe(true);
+      }
+      expect(
+        hasSessionCredentials(
+          env,
+          new Headers({ cookie: "analytics=abc; cf_clearance=xyz; session=test" }),
+        ),
+      ).toBe(false);
+      expect(hasSessionCredentials(env, new Headers())).toBe(false);
+      expect(hasSessionCredentials(env, new Headers({ cookie: `other=${current}=value` }))).toBe(
+        false,
+      );
+    },
+  );
 
-  it.each(["Bearer opaque", "Bearer malformed.signature", "Basic invalid"])("passes authorization through unchanged: %s", (authorization) => {
-    expect(hasSessionCredentials({} as Bindings, new Headers({ authorization }))).toBe(true);
-  });
+  it.each(["Bearer opaque", "Bearer malformed.signature", "Basic invalid"])(
+    "passes authorization through unchanged: %s",
+    (authorization) => {
+      expect(hasSessionCredentials({} as Bindings, new Headers({ authorization }))).toBe(true);
+    },
+  );
 });

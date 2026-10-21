@@ -1,5 +1,6 @@
+import { getEndfieldMapMarkList } from "@/lib/endfieldClient/mapClient";
+
 import officialMarkerHashToPointId from "./officialMarkerHashToPointId.json";
-import { getEndfieldMapMarkList } from "../../lib/endfieldClient/mapClient";
 import type { DecryptedBinding, OfficialMapMark, OfficialMarksResult } from "./types";
 
 const OFFICIAL_MARKER_HASH_TO_POINT_ID = officialMarkerHashToPointId as Record<string, string>;
@@ -17,16 +18,17 @@ function collectOfficialMarkers(value: unknown, output: OfficialMapMark[] = []):
   }
 
   const record = value as Record<string, unknown>;
-  const candidate = record.marker && typeof record.marker === "object"
-    ? record.marker as Record<string, unknown>
-    : record;
+  const candidate =
+    record.marker && typeof record.marker === "object"
+      ? (record.marker as Record<string, unknown>)
+      : record;
   if (
-    (typeof candidate.id === "string" || typeof candidate.id === "number")
-    && typeof candidate.isUserMarked === "boolean"
+    (typeof candidate.id === "string" || typeof candidate.id === "number") &&
+    typeof candidate.isUserMarked === "boolean"
   ) {
     output.push({
       id: String(candidate.id),
-      isUserMarked: candidate.isUserMarked
+      isUserMarked: candidate.isUserMarked,
     });
     if (candidate !== record) {
       return output;
@@ -48,7 +50,7 @@ export async function getOfficialMarks(binding: DecryptedBinding): Promise<Offic
       mapId: "map01",
       cred: binding.cred,
       token: binding.token,
-      deviceProfile: binding.deviceProfile
+      deviceProfile: binding.deviceProfile,
     }),
     getEndfieldMapMarkList({
       provider: binding.binding.provider,
@@ -57,19 +59,23 @@ export async function getOfficialMarks(binding: DecryptedBinding): Promise<Offic
       mapId: "map02",
       cred: binding.cred,
       token: binding.token,
-      deviceProfile: binding.deviceProfile
-    })
+      deviceProfile: binding.deviceProfile,
+    }),
   ]);
 
   const raw = { map01, map02 };
   return {
     raw,
-    markers: collectOfficialMarkers(raw)
+    markers: collectOfficialMarkers(raw),
   };
 }
 
 export function officialMarkedPointIds(markedIds: string[]): string[] {
-  return [...new Set(markedIds
-    .map((id) => OFFICIAL_MARKER_HASH_TO_POINT_ID[id.toLowerCase()])
-    .filter((id): id is string => Boolean(id)))];
+  return [
+    ...new Set(
+      markedIds
+        .map((id) => OFFICIAL_MARKER_HASH_TO_POINT_ID[id.toLowerCase()])
+        .filter((id): id is string => Boolean(id)),
+    ),
+  ];
 }

@@ -22,22 +22,40 @@ export function transientDependencyError(error: unknown): ApiError | undefined {
   let retryable = false;
   let durableObjectReset = false;
   for (let depth = 0; depth < 8 && current && typeof current === "object"; depth += 1) {
-    const cause = current as { message?: unknown; cause?: unknown; overloaded?: unknown; retryable?: unknown; durableObjectReset?: unknown };
-    if (typeof cause.message === "string") messages.push(cause.message);
+    const cause = current as {
+      message?: unknown;
+      cause?: unknown;
+      overloaded?: unknown;
+      retryable?: unknown;
+      durableObjectReset?: unknown;
+    };
+    if (typeof cause.message === "string") {
+      messages.push(cause.message);
+    }
     overloaded ||= cause.overloaded === true;
     retryable ||= cause.retryable === true;
     durableObjectReset ||= cause.durableObjectReset === true;
     current = cause.cause;
   }
   const message = messages.join(" ");
-  const d1Failure = /\bD1(?:_|\b)/i.test(message)
-    && /overloaded|queued for too long|internal error|reset|temporarily unavailable|network connection lost/i.test(message);
-  const durableObjectFailure = /durable object/i.test(message)
-    && /no longer active|reset|code was updated|overloaded|storage.*(?:inaccessible|timeout|timed out|internal error)/i.test(message);
-  if (!overloaded && !retryable && !durableObjectReset && !d1Failure && !durableObjectFailure) return undefined;
+  const d1Failure =
+    /\bD1(?:_|\b)/i.test(message) &&
+    /overloaded|queued for too long|internal error|reset|temporarily unavailable|network connection lost/i.test(
+      message,
+    );
+  const durableObjectFailure =
+    /durable object/i.test(message) &&
+    /no longer active|reset|code was updated|overloaded|storage.*(?:inaccessible|timeout|timed out|internal error)/i.test(
+      message,
+    );
+  if (!overloaded && !retryable && !durableObjectReset && !d1Failure && !durableObjectFailure) {
+    return undefined;
+  }
   return new ApiError(
     503,
-    overloaded || /overloaded|queued for too long/i.test(message) ? "DEPENDENCY_OVERLOADED" : "DEPENDENCY_UNAVAILABLE",
-    "A required service is temporarily unavailable. Please try again later."
+    overloaded || /overloaded|queued for too long/i.test(message)
+      ? "DEPENDENCY_OVERLOADED"
+      : "DEPENDENCY_UNAVAILABLE",
+    "A required service is temporarily unavailable. Please try again later.",
   );
 }

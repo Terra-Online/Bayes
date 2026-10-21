@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+
 import { encodeBase64, decodeBase64 } from "./bitmap";
 
 describe("progress base64 compatibility", () => {

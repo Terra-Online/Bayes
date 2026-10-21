@@ -1,12 +1,13 @@
-import type { AuthUser, Bindings } from "../../types/app";
-import { buildPointShareUrl } from "../../lib/pointShare";
-import type { SubmissionRecord, SubmissionStatus } from "../../repositories/submission/types";
+import { buildPointShareUrl } from "@/lib/pointShare";
+import type { SubmissionRecord, SubmissionStatus } from "@/repositories/submission/types";
+import type { AuthUser, Bindings } from "@/types/app";
+
 import type {
   ModerationNotificationEvent,
   OemWebhookQueueMessage,
   PendingOpenAICompletionStats,
   TransPrewarmSource,
-  TransPrewarmTarget
+  TransPrewarmTarget,
 } from "./messages";
 
 const DISCORD_WEBHOOK_TIMEOUT_MS = 5_000;
@@ -16,13 +17,13 @@ export function createEmptyPendingOpenAICompletionStats(): PendingOpenAICompleti
     processed: 0,
     active: 0,
     pendingAudit: 0,
-    stale: 0
+    stale: 0,
   };
 }
 
 export function recordPendingOpenAICompletionStatus(
   stats: PendingOpenAICompletionStats,
-  status: SubmissionStatus
+  status: SubmissionStatus,
 ): void {
   stats.processed += 1;
   if (status === "active") {
@@ -42,7 +43,7 @@ export async function notifyFlagCreated(
     changed: boolean;
     flagCount: number;
     nextStatus: SubmissionStatus;
-  }
+  },
 ): Promise<void> {
   await enqueueModerationNotification(env, {
     type: "flag_created",
@@ -51,7 +52,7 @@ export async function notifyFlagCreated(
     changed: payload.changed,
     flagCount: payload.flagCount,
     previousStatus: payload.submission.status,
-    nextStatus: payload.nextStatus
+    nextStatus: payload.nextStatus,
   });
 }
 
@@ -62,14 +63,14 @@ export async function notifySubmissionModerationResult(
     previousStatus: SubmissionStatus;
     nextStatus: "active" | "pending_audit";
     source: TransPrewarmSource;
-  }
+  },
 ): Promise<void> {
   await enqueueModerationNotification(env, {
     type: "submission_moderation_result",
     submission: payload.submission,
     previousStatus: payload.previousStatus,
     nextStatus: payload.nextStatus,
-    source: payload.source
+    source: payload.source,
   });
 }
 
@@ -79,13 +80,13 @@ export async function notifyCommentTransPrewarmDone(
     submission: SubmissionRecord;
     source: TransPrewarmSource;
     targets: TransPrewarmTarget[];
-  }
+  },
 ): Promise<void> {
   await enqueueModerationNotification(env, {
     type: "comment_translation_prewarm_completed",
     submission: payload.submission,
     source: payload.source,
-    targets: payload.targets
+    targets: payload.targets,
   });
 }
 
@@ -97,7 +98,7 @@ export async function notifyFlagRemoved(
     changed: boolean;
     flagCount: number;
     nextStatus: SubmissionStatus;
-  }
+  },
 ): Promise<void> {
   await enqueueModerationNotification(env, {
     type: "flag_removed",
@@ -106,7 +107,7 @@ export async function notifyFlagRemoved(
     changed: payload.changed,
     flagCount: payload.flagCount,
     previousStatus: payload.submission.status,
-    nextStatus: payload.nextStatus
+    nextStatus: payload.nextStatus,
   });
 }
 
@@ -117,7 +118,7 @@ export async function notifyRemoveRequestCreated(
     actor: AuthUser;
     nextStatus: SubmissionStatus;
     source: "remove_request" | "recall";
-  }
+  },
 ): Promise<void> {
   await enqueueModerationNotification(env, {
     type: "remove_request_created",
@@ -125,7 +126,7 @@ export async function notifyRemoveRequestCreated(
     actor: payload.actor,
     previousStatus: payload.submission.status,
     nextStatus: payload.nextStatus,
-    source: payload.source
+    source: payload.source,
   });
 }
 
@@ -136,7 +137,7 @@ export async function notifyRemoveRequestCancelled(
     actor: AuthUser;
     nextStatus: SubmissionStatus;
     flagCount: number;
-  }
+  },
 ): Promise<void> {
   await enqueueModerationNotification(env, {
     type: "remove_request_cancelled",
@@ -145,21 +146,24 @@ export async function notifyRemoveRequestCancelled(
     previousStatus: payload.submission.status,
     nextStatus: payload.nextStatus,
     flagCount: payload.flagCount,
-    source: "remove_request"
+    source: "remove_request",
   });
 }
 
-async function enqueueModerationNotification(env: Bindings, event: ModerationNotificationEvent): Promise<void> {
+async function enqueueModerationNotification(
+  env: Bindings,
+  event: ModerationNotificationEvent,
+): Promise<void> {
   await env.OEM_WEBHOOK_Q.send({
     type: "discord_notification",
     event,
-    queuedAt: new Date().toISOString()
+    queuedAt: new Date().toISOString(),
   });
 }
 
 export async function processWebhookQueueBatch(
   env: Bindings,
-  batch: MessageBatch<OemWebhookQueueMessage>
+  batch: MessageBatch<OemWebhookQueueMessage>,
 ): Promise<void> {
   for (const message of batch.messages) {
     try {
@@ -169,14 +173,17 @@ export async function processWebhookQueueBatch(
       console.warn("OEM_WEBHOOK_Q message failed", {
         type: message.body?.type,
         eventType: message.body?.event?.type,
-        error: error instanceof Error ? error.message : String(error)
+        error: error instanceof Error ? error.message : String(error),
       });
       message.retry();
     }
   }
 }
 
-export async function sendModerationNotificationNow(env: Bindings, event: ModerationNotificationEvent): Promise<void> {
+export async function sendModerationNotificationNow(
+  env: Bindings,
+  event: ModerationNotificationEvent,
+): Promise<void> {
   if (event.type === "pending_openai_completed") {
     return;
   }
@@ -193,23 +200,23 @@ export async function sendModerationNotificationNow(env: Bindings, event: Modera
     const response = await fetch(webhookUrl, {
       method: "POST",
       headers: {
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
       },
       signal: controller.signal,
-      body: JSON.stringify(formatDiscordWebhookPayload(event))
+      body: JSON.stringify(formatDiscordWebhookPayload(event)),
     });
 
     if (!response.ok) {
       const detail = await response.text().catch(() => "");
       console.warn("Discord moderation notification failed", {
         status: response.status,
-        detail: detail.slice(0, 240)
+        detail: detail.slice(0, 240),
       });
       throw new Error(`Discord moderation notification failed: ${response.status}`);
     }
   } catch (error) {
     console.warn("Discord moderation notification failed", {
-      error: error instanceof Error ? error.message : String(error)
+      error: error instanceof Error ? error.message : String(error),
     });
     throw error;
   } finally {
@@ -221,7 +228,9 @@ function resolveModerationWebhookUrl(env: Bindings): string {
   return (env.DISCORD_MODERATION_WEBHOOK_URL ?? "").trim();
 }
 
-function formatDiscordWebhookPayload(event: Exclude<ModerationNotificationEvent, { type: "pending_openai_completed" }>): Record<string, unknown> {
+function formatDiscordWebhookPayload(
+  event: Exclude<ModerationNotificationEvent, { type: "pending_openai_completed" }>,
+): Record<string, unknown> {
   if (event.type === "submission_moderation_result") {
     const approved = event.nextStatus === "active";
     return {
@@ -232,12 +241,16 @@ function formatDiscordWebhookPayload(event: Exclude<ModerationNotificationEvent,
           color: approved ? 0x2f855a : 0xdd6b20,
           fields: [
             ...submissionFields(event.submission),
-            { name: "status", value: `${event.previousStatus} -> ${event.nextStatus}`, inline: true },
-            { name: "source", value: event.source, inline: true }
+            {
+              name: "status",
+              value: `${event.previousStatus} -> ${event.nextStatus}`,
+              inline: true,
+            },
+            { name: "source", value: event.source, inline: true },
           ],
-          timestamp: new Date().toISOString()
-        }
-      ]
+          timestamp: new Date().toISOString(),
+        },
+      ],
     };
   }
 
@@ -252,11 +265,15 @@ function formatDiscordWebhookPayload(event: Exclude<ModerationNotificationEvent,
             ...submissionFields(event.submission),
             { name: "source", value: event.source, inline: true },
             { name: "completed", value: formatCompletedTargetLangs(event.targets), inline: false },
-            { name: "incomplete", value: formatIncompleteTargetLangs(event.targets), inline: false }
+            {
+              name: "incomplete",
+              value: formatIncompleteTargetLangs(event.targets),
+              inline: false,
+            },
           ],
-          timestamp: new Date().toISOString()
-        }
-      ]
+          timestamp: new Date().toISOString(),
+        },
+      ],
     };
   }
 
@@ -264,19 +281,19 @@ function formatDiscordWebhookPayload(event: Exclude<ModerationNotificationEvent,
     flag_created: "Flag created",
     flag_removed: "Flag removed",
     remove_request_created: "Remove request created",
-    remove_request_cancelled: "Remove request cancelled"
+    remove_request_cancelled: "Remove request cancelled",
   }[event.type];
 
   const fields = [
     ...submissionFields(event.submission),
     ...actorFields(event.actor),
-    { name: "status", value: `${event.previousStatus} -> ${event.nextStatus}`, inline: true }
+    { name: "status", value: `${event.previousStatus} -> ${event.nextStatus}`, inline: true },
   ];
 
   if (isFlagNotificationEvent(event)) {
     fields.push(
       { name: "flag_changed", value: String(event.changed), inline: true },
-      { name: "flag_count", value: String(event.flagCount), inline: true }
+      { name: "flag_count", value: String(event.flagCount), inline: true },
     );
   } else {
     fields.push({ name: "source", value: event.source, inline: true });
@@ -290,26 +307,31 @@ function formatDiscordWebhookPayload(event: Exclude<ModerationNotificationEvent,
     embeds: [
       {
         title: actionTitle,
-        color: event.type === "flag_removed" || event.type === "remove_request_cancelled" ? 0x3182ce : 0xdd6b20,
+        color:
+          event.type === "flag_removed" || event.type === "remove_request_cancelled"
+            ? 0x3182ce
+            : 0xdd6b20,
         fields,
-        timestamp: new Date().toISOString()
-      }
-    ]
+        timestamp: new Date().toISOString(),
+      },
+    ],
   };
 }
 
-function submissionFields(submission: SubmissionRecord): Array<{ name: string; value: string; inline: boolean }> {
+function submissionFields(
+  submission: SubmissionRecord,
+): Array<{ name: string; value: string; inline: boolean }> {
   return [
     { name: "submission", value: submission.id, inline: true },
     { name: "kind", value: submission.kind, inline: true },
     { name: "marker", value: truncateFieldValue(submission.markerId), inline: true },
     { name: "point", value: buildPointShareUrl(submission), inline: false },
-    { name: "uploader", value: formatSubmitter(submission), inline: true }
+    { name: "uploader", value: formatSubmitter(submission), inline: true },
   ];
 }
 
 function isFlagNotificationEvent(
-  event: ModerationNotificationEvent
+  event: ModerationNotificationEvent,
 ): event is Extract<ModerationNotificationEvent, { type: "flag_created" | "flag_removed" }> {
   return event.type === "flag_created" || event.type === "flag_removed";
 }
@@ -317,7 +339,7 @@ function isFlagNotificationEvent(
 function actorFields(actor: AuthUser): Array<{ name: string; value: string; inline: boolean }> {
   return [
     { name: "actor", value: `${actor.nickname} (${actor.publicUid})`, inline: true },
-    { name: "actor_role", value: actor.role, inline: true }
+    { name: "actor_role", value: actor.role, inline: true },
   ];
 }
 

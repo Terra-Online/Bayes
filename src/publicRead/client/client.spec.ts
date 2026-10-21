@@ -1,19 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  fetch: vi.fn()
+  fetch: vi.fn(),
 }));
 
 vi.mock("cloudflare:workers", () => ({
   exports: {
     PublicReadCache: {
-      fetch: mocks.fetch
-    }
-  }
+      fetch: mocks.fetch,
+    },
+  },
 }));
 
 import { publicReadResponse, readPublicImagesFromWorkersCache } from "./client";
-const fetchPublicImagesFromWorkersCache = async (payload: Parameters<typeof readPublicImagesFromWorkersCache>[0]) => publicReadResponse(await readPublicImagesFromWorkersCache(payload));
+const fetchPublicImagesFromWorkersCache = async (
+  payload: Parameters<typeof readPublicImagesFromWorkersCache>[0],
+) => publicReadResponse(await readPublicImagesFromWorkersCache(payload));
 
 describe("fetchPublicImagesFromWorkersCache", () => {
   beforeEach(() => {
@@ -26,7 +28,10 @@ describe("fetchPublicImagesFromWorkersCache", () => {
     const stringify = vi.spyOn(JSON, "stringify");
     try {
       const result = await readPublicImagesFromWorkersCache({
-        markerIds: ["marker"], limit: 6, cacheNamespace: "prod", assetBaseUrl: "https://assets.example"
+        markerIds: ["marker"],
+        limit: 6,
+        cacheNamespace: "prod",
+        assetBaseUrl: "https://assets.example",
       });
       expect(stringify).not.toHaveBeenCalled();
       expect(result).not.toBeInstanceOf(Response);
@@ -42,16 +47,18 @@ describe("fetchPublicImagesFromWorkersCache", () => {
       if (markerId === "failed") {
         return Promise.reject(new Error("Network connection lost."));
       }
-      return Promise.resolve(Response.json({
-        items: [{ id: "image-1", markerId }]
-      }));
+      return Promise.resolve(
+        Response.json({
+          items: [{ id: "image-1", markerId }],
+        }),
+      );
     });
 
     const response = await fetchPublicImagesFromWorkersCache({
       markerIds: ["success", "failed"],
       limit: 6,
       cacheNamespace: "prod",
-      assetBaseUrl: "https://assets.example.com"
+      assetBaseUrl: "https://assets.example.com",
     });
 
     expect(response.status).toBe(200);
@@ -61,7 +68,7 @@ describe("fetchPublicImagesFromWorkersCache", () => {
     await expect(response.json()).resolves.toEqual({
       items: [{ id: "image-1", markerId: "success" }],
       partial: true,
-      failedMarkerIds: ["failed"]
+      failedMarkerIds: ["failed"],
     });
   });
 
@@ -72,13 +79,13 @@ describe("fetchPublicImagesFromWorkersCache", () => {
       markerIds: ["first", "second"],
       limit: 6,
       cacheNamespace: "prod",
-      assetBaseUrl: "https://assets.example.com"
+      assetBaseUrl: "https://assets.example.com",
     });
 
     expect(response.status).toBe(502);
     expect(response.headers.get("cache-control")).toBe("private, no-store");
     await expect(response.json()).resolves.toMatchObject({
-      code: "PUBLIC_CACHE_READ_FAILED"
+      code: "PUBLIC_CACHE_READ_FAILED",
     });
   });
 });

@@ -1,4 +1,4 @@
-import type { Bindings } from "../types/app";
+import type { Bindings } from "@/types/app";
 
 export interface RuntimeConfig {
   sessionTtlSeconds: number;
@@ -50,7 +50,7 @@ const DEFAULT_GOOGLE_TRANSLATE_GLOSSARY_LANGUAGES = [
   "ru",
   "th",
   "vi",
-  "id"
+  "id",
 ];
 const DEFAULT_GOOGLE_TRANSLATE_ALLOWED_LANGUAGES = [
   ...DEFAULT_GOOGLE_TRANSLATE_GLOSSARY_LANGUAGES,
@@ -58,7 +58,7 @@ const DEFAULT_GOOGLE_TRANSLATE_ALLOWED_LANGUAGES = [
   "sv",
   "ar",
   "hi",
-  "el"
+  "el",
 ];
 
 function parsePositiveInt(value: string | undefined, fallback: number): number {
@@ -154,28 +154,37 @@ export function getSessionTtlSeconds(env: Bindings): number {
   return parsePositiveInt(env.SESSION_TTL_SECONDS, DEFAULT_SESSION_TTL_SECONDS);
 }
 
-export function getUgcReadConfig(env: Bindings): Pick<RuntimeConfig, "ugcAssetBaseUrl" | "ugcUploadPathPrefix"> {
+export function getUgcReadConfig(
+  env: Bindings,
+): Pick<RuntimeConfig, "ugcAssetBaseUrl" | "ugcUploadPathPrefix"> {
   return {
     ugcAssetBaseUrl: (env.UGC_ASSET_BASE_URL ?? DEFAULT_UGC_ASSET_BASE_URL).replace(/\/$/, ""),
     ugcUploadPathPrefix: normalizeUploadPrefix(
-      env.UGC_UPLOAD_TEST_PREFIX ?? (isLocalBackendUrl(env.BETTER_AUTH_URL) ? DEFAULT_TEST_UPLOAD_PREFIX : "")
+      env.UGC_UPLOAD_TEST_PREFIX ??
+        (isLocalBackendUrl(env.BETTER_AUTH_URL) ? DEFAULT_TEST_UPLOAD_PREFIX : ""),
     ),
   };
 }
 
 export function getRuntimeConfig(env: Bindings): RuntimeConfig {
-  const allowed = (env.ALLOWED_UPLOAD_MIME ?? "image/jpeg,image/png,image/webp,image/avif,image/heic,image/heif")
+  const allowed = (
+    env.ALLOWED_UPLOAD_MIME ?? "image/jpeg,image/png,image/webp,image/avif,image/heic,image/heif"
+  )
     .split(",")
     .map((item) => item.trim().toLowerCase())
     .filter(Boolean);
-  const localAutoApprove = (env.LOCAL_UPLOAD_AUTO_APPROVE ?? "")
-    .trim()
-    .toLowerCase();
+  const localAutoApprove = (env.LOCAL_UPLOAD_AUTO_APPROVE ?? "").trim().toLowerCase();
 
   return {
     sessionTtlSeconds: getSessionTtlSeconds(env),
-    progressCacheTtlSeconds: parsePositiveInt(env.PROGRESS_CACHE_TTL_SECONDS, DEFAULT_PROGRESS_TTL_SECONDS),
-    uploadUrlTtlSeconds: parsePositiveInt(env.UPLOAD_URL_TTL_SECONDS, DEFAULT_UPLOAD_URL_TTL_SECONDS),
+    progressCacheTtlSeconds: parsePositiveInt(
+      env.PROGRESS_CACHE_TTL_SECONDS,
+      DEFAULT_PROGRESS_TTL_SECONDS,
+    ),
+    uploadUrlTtlSeconds: parsePositiveInt(
+      env.UPLOAD_URL_TTL_SECONDS,
+      DEFAULT_UPLOAD_URL_TTL_SECONDS,
+    ),
     allowedUploadMime: new Set(allowed),
     maxUploadBytes: parsePositiveInt(env.MAX_UPLOAD_BYTES, DEFAULT_MAX_UPLOAD_BYTES),
     ...getUgcReadConfig(env),
@@ -183,7 +192,10 @@ export function getRuntimeConfig(env: Bindings): RuntimeConfig {
     localUploadAutoApprove: ["1", "true", "on", "yes"].includes(localAutoApprove),
     scheduledModerationEnabled: parseBoolean(env.ENABLE_SCHEDULED_MODERATION, true),
     surgeModeEnabled: parseBoolean(env.SURGE_MODE_ENABLED, false),
-    surgeBackoffMultiplier: parsePositiveInt(env.SURGE_BACKOFF_MULTIPLIER, DEFAULT_SURGE_BACKOFF_MULTIPLIER),
+    surgeBackoffMultiplier: parsePositiveInt(
+      env.SURGE_BACKOFF_MULTIPLIER,
+      DEFAULT_SURGE_BACKOFF_MULTIPLIER,
+    ),
     commentTranslationPrewarmEnabled: parseBoolean(env.ENABLE_COMMENT_TRANSLATION_PREWARM, false),
     googleTranslate: {
       clientEmail: env.GOOGLE_TRANSLATE_CLIENT_EMAIL?.trim() || undefined,
@@ -193,14 +205,17 @@ export function getRuntimeConfig(env: Bindings): RuntimeConfig {
       glossary: env.GOOGLE_TRANSLATE_GLOSSARY?.trim() || undefined,
       glossaryVersion: normalizeCacheVersion(
         env.GOOGLE_TRANSLATE_GLOSSARY_VERSION,
-        DEFAULT_GOOGLE_TRANSLATE_GLOSSARY_VERSION
+        DEFAULT_GOOGLE_TRANSLATE_GLOSSARY_VERSION,
       ),
       glossaryLanguages: parseCsvSet(
         env.GOOGLE_TRANSLATE_GLOSSARY_LANGUAGES,
-        DEFAULT_GOOGLE_TRANSLATE_GLOSSARY_LANGUAGES
+        DEFAULT_GOOGLE_TRANSLATE_GLOSSARY_LANGUAGES,
       ),
-      allowedLanguages: parseCsvSet(env.GOOGLE_TRANSLATE_ALLOWED_LANGUAGES, DEFAULT_GOOGLE_TRANSLATE_ALLOWED_LANGUAGES),
-      fetchProxyUrl: normalizeLocalProxyUrl(env.GOOGLE_TRANSLATE_FETCH_PROXY_URL)
-    }
+      allowedLanguages: parseCsvSet(
+        env.GOOGLE_TRANSLATE_ALLOWED_LANGUAGES,
+        DEFAULT_GOOGLE_TRANSLATE_ALLOWED_LANGUAGES,
+      ),
+      fetchProxyUrl: normalizeLocalProxyUrl(env.GOOGLE_TRANSLATE_FETCH_PROXY_URL),
+    },
   };
 }

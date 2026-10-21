@@ -18,7 +18,7 @@ export async function createPendingSubmission(
     status?: SubmissionStatus;
     parentId?: string | null;
     commentDepth?: number;
-  }
+  },
 ): Promise<void> {
   await db
     .prepare(
@@ -38,7 +38,7 @@ export async function createPendingSubmission(
          parent_id,
          comment_depth
        )
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)`
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)`,
     )
     .bind(
       payload.id,
@@ -54,7 +54,7 @@ export async function createPendingSubmission(
       payload.mimeType ?? null,
       payload.sizeBytes ?? null,
       payload.parentId ?? null,
-      payload.commentDepth ?? 0
+      payload.commentDepth ?? 0,
     )
     .run();
 }
@@ -62,7 +62,7 @@ export async function createPendingSubmission(
 export async function getPendingOpenAISubmissions(
   db: D1Database,
   limit = 50,
-  queuedBefore?: string
+  queuedBefore?: string,
 ): Promise<SubmissionRecord[]> {
   const queueFilter = queuedBefore
     ? "AND (moderation_queued_at IS NULL OR moderation_queued_at < ?2)"
@@ -73,7 +73,7 @@ export async function getPendingOpenAISubmissions(
        WHERE status = 'pending_openai'
        ${queueFilter}
        ORDER BY created_at ASC
-       LIMIT ?1`
+       LIMIT ?1`,
     )
     .bind(...(queuedBefore ? [limit, queuedBefore] : [limit]))
     .all<Record<string, unknown>>();

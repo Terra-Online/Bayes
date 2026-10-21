@@ -18,23 +18,29 @@ export async function hmacSha256Hex(message: string, secret: string): Promise<st
     textEncoder.encode(secret),
     {
       name: "HMAC",
-      hash: "SHA-256"
+      hash: "SHA-256",
     },
     false,
-    ["sign"]
+    ["sign"],
   );
 
   const signature = await crypto.subtle.sign("HMAC", key, textEncoder.encode(message));
   return toHex(new Uint8Array(signature));
 }
 
-export async function getSignature(path: string, timestamp: string, token: string, body = "", deviceId = ""): Promise<string> {
+export async function getSignature(
+  path: string,
+  timestamp: string,
+  token: string,
+  body = "",
+  deviceId = "",
+): Promise<string> {
   const dId = deviceId ? `B${deviceId}` : "";
   const headerJson = JSON.stringify({
     platform: "3",
     timestamp,
     dId,
-    vName: "1.0.0"
+    vName: "1.0.0",
   });
 
   const hmacHex = await hmacSha256Hex(path + body + timestamp + headerJson, token);

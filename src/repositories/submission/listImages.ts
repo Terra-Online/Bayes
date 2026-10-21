@@ -1,10 +1,13 @@
 import { mapSubmission, publicImageFromRow, toCount } from "./mapper";
 import type { PublicSubmissionImage, UserSubmissionImage } from "./types";
 
-export function buildImageScopeFilters(payload: {
-  pathPrefix?: string;
-  excludePathPrefix?: string;
-}, bindingOffset = 0): { clauses: string[]; bindings: string[] } {
+export function buildImageScopeFilters(
+  payload: {
+    pathPrefix?: string;
+    excludePathPrefix?: string;
+  },
+  bindingOffset = 0,
+): { clauses: string[]; bindings: string[] } {
   const clauses: string[] = [];
   const bindings: string[] = [];
   if (payload.pathPrefix) {
@@ -28,10 +31,13 @@ export async function listActiveImagesByMarker(
     pathPrefix?: string;
     excludePathPrefix?: string;
     viewerUserId?: string;
-  }
+  },
 ): Promise<PublicSubmissionImage[]> {
   const requestedIds = payload.markerIds ?? (payload.markerId ? [payload.markerId] : []);
-  const markerIds = [...new Set(requestedIds.map((item) => item.trim()).filter(Boolean))].slice(0, 100);
+  const markerIds = [...new Set(requestedIds.map((item) => item.trim()).filter(Boolean))].slice(
+    0,
+    100,
+  );
   if (markerIds.length === 0) {
     return [];
   }
@@ -40,7 +46,7 @@ export async function listActiveImagesByMarker(
   const filters: string[] = [
     "poi_id IN (SELECT value FROM json_each(?1))",
     "kind = 'image'",
-    "status IN ('active', 'flagged', 'remove_request')"
+    "status IN ('active', 'flagged', 'remove_request')",
   ];
   const scope = buildImageScopeFilters(payload, 1);
   filters.push(...scope.clauses);
@@ -101,12 +107,14 @@ export async function listActiveImagesByMarker(
        LEFT JOIN flag_counts f ON f.submission_id = s.id
        ${viewerJoin}
        LEFT JOIN users u ON u.uid = s.user_id
-       ORDER BY s.poi_id ASC, s.created_at DESC, s.id DESC`
+       ORDER BY s.poi_id ASC, s.created_at DESC, s.id DESC`,
     )
     .bind(JSON.stringify(markerIds), ...scope.bindings, limit, ...viewerBindings)
     .all<Record<string, unknown>>();
 
-  return (result.results ?? []).map((row) => publicImageFromRow(row, payload.assetBaseUrl, payload.viewerUserId));
+  return (result.results ?? []).map((row) =>
+    publicImageFromRow(row, payload.assetBaseUrl, payload.viewerUserId),
+  );
 }
 
 export async function listUserImagesByMarker(
@@ -120,10 +128,13 @@ export async function listUserImagesByMarker(
     limit?: number;
     pathPrefix?: string;
     excludePathPrefix?: string;
-  }
+  },
 ): Promise<UserSubmissionImage[]> {
   const requestedIds = payload.markerIds ?? (payload.markerId ? [payload.markerId] : []);
-  const markerIds = [...new Set(requestedIds.map((item) => item.trim()).filter(Boolean))].slice(0, 100);
+  const markerIds = [...new Set(requestedIds.map((item) => item.trim()).filter(Boolean))].slice(
+    0,
+    100,
+  );
   if (markerIds.length === 0) {
     return [];
   }
@@ -133,7 +144,7 @@ export async function listUserImagesByMarker(
     "user_id = ?1",
     "poi_id IN (SELECT value FROM json_each(?2))",
     "kind = 'image'",
-    "status IN ('pending_openai', 'pending_audit', 'active', 'flagged', 'remove_request')"
+    "status IN ('pending_openai', 'pending_audit', 'active', 'flagged', 'remove_request')",
   ];
   const extraBindings: Array<string | number> = [];
   if (payload.pathPrefix) {
@@ -188,7 +199,7 @@ export async function listUserImagesByMarker(
        LEFT JOIN upvote_counts v ON v.submission_id = s.id
        LEFT JOIN flag_counts f ON f.submission_id = s.id
        LEFT JOIN users u ON u.uid = s.user_id
-       ORDER BY s.poi_id ASC, s.created_at DESC, s.id DESC`
+       ORDER BY s.poi_id ASC, s.created_at DESC, s.id DESC`,
     )
     .bind(payload.userId, JSON.stringify(markerIds), ...extraBindings, limit)
     .all<Record<string, unknown>>();
@@ -196,9 +207,10 @@ export async function listUserImagesByMarker(
   return (result.results ?? []).map((row) => {
     const submission = mapSubmission(row);
     const filePath = submission.filePath ?? "";
-    const assetBaseUrl = submission.status === "pending_openai" || submission.status === "pending_audit"
-      ? payload.privateAssetBaseUrl
-      : payload.assetBaseUrl;
+    const assetBaseUrl =
+      submission.status === "pending_openai" || submission.status === "pending_audit"
+        ? payload.privateAssetBaseUrl
+        : payload.assetBaseUrl;
     return {
       id: submission.id,
       markerId: submission.markerId,
@@ -209,15 +221,16 @@ export async function listUserImagesByMarker(
       filePath,
       content: submission.content,
       createdAt: submission.createdAt,
-      author: submission.submitter?.publicUid && submission.submitter.nickname
-        ? {
-            nickname: submission.submitter.nickname,
-            publicUid: submission.submitter.publicUid
-          }
-        : null,
+      author:
+        submission.submitter?.publicUid && submission.submitter.nickname
+          ? {
+              nickname: submission.submitter.nickname,
+              publicUid: submission.submitter.publicUid,
+            }
+          : null,
       upvoteCount: toCount(row.upvote_count),
       flagCount: toCount(row.flag_count),
-      status: submission.status
+      status: submission.status,
     };
   });
 }
@@ -235,11 +248,15 @@ export async function listImageViewerReactionsByMarker(
     submissionIds: string[];
     pathPrefix?: string;
     excludePathPrefix?: string;
-  }
+  },
 ): Promise<Map<string, ImageViewerReaction>> {
-  const markerIds = [...new Set(payload.markerIds.map((item) => item.trim()).filter(Boolean))].slice(0, 100);
+  const markerIds = [
+    ...new Set(payload.markerIds.map((item) => item.trim()).filter(Boolean)),
+  ].slice(0, 100);
   const submissionIds = [...new Set(payload.submissionIds)];
-  if (markerIds.length === 0 || submissionIds.length === 0) return new Map();
+  if (markerIds.length === 0 || submissionIds.length === 0) {
+    return new Map();
+  }
 
   const scope = buildImageScopeFilters(payload, 3);
   const filters = [
@@ -247,10 +264,11 @@ export async function listImageViewerReactionsByMarker(
     "s.poi_id IN (SELECT value FROM json_each(?2))",
     "s.kind = 'image'",
     "s.status IN ('active', 'flagged', 'remove_request')",
-    ...scope.clauses.map((clause) => `s.${clause}`)
+    ...scope.clauses.map((clause) => `s.${clause}`),
   ];
-  const result = await db.prepare(
-    `SELECT
+  const result = await db
+    .prepare(
+      `SELECT
        s.id,
        CASE WHEN u.user_id IS NULL THEN 0 ELSE 1 END AS viewer_upvoted,
        CASE WHEN f.user_id IS NULL THEN 0 ELSE 1 END AS viewer_flagged
@@ -258,14 +276,23 @@ export async function listImageViewerReactionsByMarker(
      LEFT JOIN ugc_submission_upvotes u ON u.submission_id = s.id AND u.user_id = ?1 AND u.active = 1
      LEFT JOIN ugc_submission_flags f ON f.submission_id = s.id AND f.user_id = ?1 AND f.active = 1
      WHERE ${filters.join(" AND ")}
-       AND (u.user_id IS NOT NULL OR f.user_id IS NOT NULL)`
-  ).bind(payload.userId, JSON.stringify(markerIds), JSON.stringify(submissionIds), ...scope.bindings).all<Record<string, unknown>>();
+       AND (u.user_id IS NOT NULL OR f.user_id IS NOT NULL)`,
+    )
+    .bind(
+      payload.userId,
+      JSON.stringify(markerIds),
+      JSON.stringify(submissionIds),
+      ...scope.bindings,
+    )
+    .all<Record<string, unknown>>();
 
-  return new Map((result.results ?? []).map((row) => [
-    String(row.id),
-    {
-      upvoted: Boolean(row.viewer_upvoted),
-      flagged: Boolean(row.viewer_flagged)
-    }
-  ]));
+  return new Map(
+    (result.results ?? []).map((row) => [
+      String(row.id),
+      {
+        upvoted: Boolean(row.viewer_upvoted),
+        flagged: Boolean(row.viewer_flagged),
+      },
+    ]),
+  );
 }

@@ -1,17 +1,27 @@
-import { decryptSecret, encryptSecret } from "../../lib/crypto";
-import { generateEndfieldCredByCode, grantEndfieldOAuthCode, refreshEndfieldAuth } from "../../lib/endfieldClient/authClient";
+import { decryptSecret, encryptSecret } from "@/lib/crypto";
+import {
+  generateEndfieldCredByCode,
+  grantEndfieldOAuthCode,
+  refreshEndfieldAuth,
+} from "@/lib/endfieldClient/authClient";
 import {
   createEndfieldDeviceId,
   createEndfieldDeviceProfile,
-  SKLAND_DEVICE_PROFILE_USER_AGENT
-} from "../../lib/endfieldClient/deviceProfile";
+  SKLAND_DEVICE_PROFILE_USER_AGENT,
+} from "@/lib/endfieldClient/deviceProfile";
 import {
   isEndfieldCredentialErrorCode,
   isEndfieldCredentialExpiredErrorCode,
-  isEndfieldDeviceErrorCode
-} from "../../lib/endfieldClient/positionParser";
-import { ApiError } from "../../lib/errors";
-import { deleteLocatorCaches, getLocatorCache, readDecryptedBindingCache, writeDecryptedBindingCache } from "./locatorCache";
+  isEndfieldDeviceErrorCode,
+} from "@/lib/endfieldClient/positionParser";
+import { ApiError } from "@/lib/errors";
+
+import {
+  deleteLocatorCaches,
+  getLocatorCache,
+  readDecryptedBindingCache,
+  writeDecryptedBindingCache,
+} from "./locatorCache";
 import { getBindingWithDeviceProfile, publicBinding, updateBindingCredentials } from "./repository";
 import type { AppContext, DecryptedBinding } from "./types";
 
@@ -20,7 +30,11 @@ const credentialRequests = new WeakMap<AppContext, Map<string, Promise<Decrypted
 export function getCredentialSecret(c: AppContext): string {
   const secret = c.env.ENDFIELD_CREDENTIAL_SECRET ?? c.env.BETTER_AUTH_SECRET;
   if (!secret || secret.trim().length < 16) {
-    throw new ApiError(503, "ENDFIELD_CREDENTIAL_SECRET_MISSING", "Endfield credential encryption secret is not configured.");
+    throw new ApiError(
+      503,
+      "ENDFIELD_CREDENTIAL_SECRET_MISSING",
+      "Endfield credential encryption secret is not configured.",
+    );
   }
   return secret;
 }
@@ -28,7 +42,7 @@ export function getCredentialSecret(c: AppContext): string {
 export async function getDecryptedBinding(
   c: AppContext,
   uid: string,
-  options: { bypassCache?: boolean } = {}
+  options: { bypassCache?: boolean } = {},
 ): Promise<DecryptedBinding> {
   const cache = getLocatorCache(c.env);
   const revision = cache.revision;
@@ -52,7 +66,7 @@ export async function getDecryptedBinding(
     decryptSecret(binding.token_enc, secret),
     binding.account_token_enc
       ? decryptSecret(binding.account_token_enc, secret).catch(() => undefined)
-      : undefined
+      : undefined,
   ]);
 
   const decrypted: DecryptedBinding = {
@@ -62,7 +76,7 @@ export async function getDecryptedBinding(
     token,
     accountToken,
     wsBaseUrl: c.env.ENDFIELD_WS_BASE_URL,
-    deviceProfile
+    deviceProfile,
   };
   if (getLocatorCache(c.env) === cache && cache.revision === revision) {
     writeDecryptedBindingCache(c.env, uid, decrypted);
@@ -71,15 +85,21 @@ export async function getDecryptedBinding(
 }
 
 export function isAutoRefreshableEndfieldError(error: unknown): boolean {
-  if (!(error instanceof ApiError)) return false;
+  if (!(error instanceof ApiError)) {
+    return false;
+  }
   const details = error.details as { upstreamCode?: unknown; upstreamStatus?: unknown } | undefined;
-  if (isEndfieldCredentialExpiredErrorCode(details?.upstreamCode)) return false;
-  return error.code === "ENDFIELD_CREDENTIAL_REJECTED"
-    || error.code === "ENDFIELD_DEVICE_REJECTED"
-    || details?.upstreamStatus === 401
-    || details?.upstreamStatus === 403
-    || isEndfieldCredentialErrorCode(details?.upstreamCode)
-    || isEndfieldDeviceErrorCode(details?.upstreamCode);
+  if (isEndfieldCredentialExpiredErrorCode(details?.upstreamCode)) {
+    return false;
+  }
+  return (
+    error.code === "ENDFIELD_CREDENTIAL_REJECTED" ||
+    error.code === "ENDFIELD_DEVICE_REJECTED" ||
+    details?.upstreamStatus === 401 ||
+    details?.upstreamStatus === 403 ||
+    isEndfieldCredentialErrorCode(details?.upstreamCode) ||
+    isEndfieldDeviceErrorCode(details?.upstreamCode)
+  );
 }
 
 async function updateStoredCredential(
@@ -87,16 +107,19 @@ async function updateStoredCredential(
   uid: string,
   binding: DecryptedBinding,
   generated: { cred: string; token: string },
-  deviceProfile = binding.deviceProfile
+  deviceProfile = binding.deviceProfile,
 ): Promise<DecryptedBinding> {
   const secret = getCredentialSecret(c);
   const [encryptedCred, encryptedToken] = await Promise.all([
     encryptSecret(generated.cred, secret),
-    encryptSecret(generated.token, secret)
+    encryptSecret(generated.token, secret),
   ]);
   const updated = await updateBindingCredentials(c.env.DB, {
-    uid, binding: binding.binding, credEnc: encryptedCred, tokenEnc: encryptedToken,
-    deviceProfile: deviceProfile !== binding.deviceProfile ? deviceProfile : undefined
+    uid,
+    binding: binding.binding,
+    credEnc: encryptedCred,
+    tokenEnc: encryptedToken,
+    deviceProfile: deviceProfile !== binding.deviceProfile ? deviceProfile : undefined,
   });
   if (!updated) {
     return getDecryptedBinding(c, uid, { bypassCache: true });
@@ -108,7 +131,7 @@ async function updateStoredCredential(
     cred_enc: encryptedCred,
     token_enc: encryptedToken,
     status: "enabled" as const,
-    updated_at: updated.updated_at
+    updated_at: updated.updated_at,
   };
   const refreshed: DecryptedBinding = {
     ...binding,
@@ -116,7 +139,7 @@ async function updateStoredCredential(
     publicBinding: publicBinding(updatedBinding),
     cred: generated.cred,
     token: generated.token,
-    deviceProfile
+    deviceProfile,
   };
   writeDecryptedBindingCache(c.env, uid, refreshed);
   return refreshed;
@@ -125,12 +148,12 @@ async function updateStoredCredential(
 async function performCredentialRefresh(
   c: AppContext,
   uid: string,
-  binding: DecryptedBinding
+  binding: DecryptedBinding,
 ): Promise<DecryptedBinding> {
   const latest = await getDecryptedBinding(c, uid, { bypassCache: true });
   if (
-    latest.binding.cred_enc !== binding.binding.cred_enc
-    || latest.binding.token_enc !== binding.binding.token_enc
+    latest.binding.cred_enc !== binding.binding.cred_enc ||
+    latest.binding.token_enc !== binding.binding.token_enc
   ) {
     return latest;
   }
@@ -139,52 +162,63 @@ async function performCredentialRefresh(
     const refreshed = await refreshEndfieldAuth({
       provider: binding.binding.provider,
       cred: binding.cred,
-      deviceProfile: binding.deviceProfile
+      deviceProfile: binding.deviceProfile,
     });
     return updateStoredCredential(c, uid, binding, {
       cred: refreshed.cred ?? binding.cred,
-      token: refreshed.token!
+      token: refreshed.token!,
     });
   } catch (refreshError) {
     let deviceProfile = binding.deviceProfile;
-    const refreshDetails = refreshError instanceof ApiError
-      ? refreshError.details as { upstreamCode?: unknown } | undefined
-      : undefined;
-    const deviceRejected = refreshError instanceof ApiError
-      && (refreshError.code === "ENDFIELD_DEVICE_REJECTED" || isEndfieldDeviceErrorCode(refreshDetails?.upstreamCode));
+    const refreshDetails =
+      refreshError instanceof ApiError
+        ? (refreshError.details as { upstreamCode?: unknown } | undefined)
+        : undefined;
+    const deviceRejected =
+      refreshError instanceof ApiError &&
+      (refreshError.code === "ENDFIELD_DEVICE_REJECTED" ||
+        isEndfieldDeviceErrorCode(refreshDetails?.upstreamCode));
 
     if (deviceRejected) {
       try {
         deviceProfile = createEndfieldDeviceProfile(
           await createEndfieldDeviceId(),
-          SKLAND_DEVICE_PROFILE_USER_AGENT
+          SKLAND_DEVICE_PROFILE_USER_AGENT,
         );
         const refreshed = await refreshEndfieldAuth({
           provider: binding.binding.provider,
           cred: binding.cred,
-          deviceProfile
+          deviceProfile,
         });
-        return updateStoredCredential(c, uid, binding, {
-          cred: refreshed.cred ?? binding.cred,
-          token: refreshed.token!
-        }, deviceProfile);
+        return updateStoredCredential(
+          c,
+          uid,
+          binding,
+          {
+            cred: refreshed.cred ?? binding.cred,
+            token: refreshed.token!,
+          },
+          deviceProfile,
+        );
       } catch {
         // Fall through to account-token exchange, when available.
       }
     }
 
-    if (!binding.accountToken) throw refreshError;
+    if (!binding.accountToken) {
+      throw refreshError;
+    }
 
     try {
       const grant = await grantEndfieldOAuthCode(
         binding.binding.provider,
         binding.accountToken,
-        deviceProfile
+        deviceProfile,
       );
       const generated = await generateEndfieldCredByCode(
         binding.binding.provider,
         grant.code,
-        deviceProfile
+        deviceProfile,
       );
       return updateStoredCredential(c, uid, binding, generated, deviceProfile);
     } catch {
@@ -196,12 +230,17 @@ async function performCredentialRefresh(
 export async function refreshBindingCredentials(
   c: AppContext,
   uid: string,
-  binding: DecryptedBinding
+  binding: DecryptedBinding,
 ): Promise<DecryptedBinding> {
   let requests = credentialRequests.get(c);
-  if (!requests) { requests = new Map(); credentialRequests.set(c, requests); }
+  if (!requests) {
+    requests = new Map();
+    credentialRequests.set(c, requests);
+  }
   const pending = requests.get(uid);
-  if (pending) return pending;
+  if (pending) {
+    return pending;
+  }
 
   const refresh = performCredentialRefresh(c, uid, binding);
   requests.set(uid, refresh);
@@ -218,9 +257,9 @@ export async function withAutoRefreshedBinding<T>(
   c: AppContext,
   uid: string,
   operation: (binding: DecryptedBinding) => Promise<T>,
-  initialBinding?: DecryptedBinding
+  initialBinding?: DecryptedBinding,
 ): Promise<T> {
-  const binding = initialBinding ?? await getDecryptedBinding(c, uid);
+  const binding = initialBinding ?? (await getDecryptedBinding(c, uid));
   try {
     return await operation(binding);
   } catch (error) {

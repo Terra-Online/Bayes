@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-import http from "node:http";
 import { spawn } from "node:child_process";
+import http from "node:http";
 
 const proxyHost = "127.0.0.1";
 const proxyPort = 8791;
@@ -35,12 +35,15 @@ function startGoogleFetchProxy() {
         }
 
         const method = String(payload.method || "GET").toUpperCase();
-        const headers = payload.headers && typeof payload.headers === "object" ? payload.headers : {};
+        const headers =
+          payload.headers && typeof payload.headers === "object" ? payload.headers : {};
         const args = ["-sS", "--connect-timeout", "10", "--max-time", "30", "-X", method];
 
         for (const [name, value] of Object.entries(headers)) {
           const lower = name.toLowerCase();
-          if (lower === "host" || lower === "content-length") continue;
+          if (lower === "host" || lower === "content-length") {
+            continue;
+          }
           args.push("-H", `${name}: ${value}`);
         }
 
@@ -116,7 +119,7 @@ function startWrangler() {
     {
       stdio: "inherit",
       env: process.env,
-    }
+    },
   );
 
   child.on("exit", (code, signal) => {
@@ -142,7 +145,9 @@ try {
   process.on("SIGTERM", shutdown);
 } catch (error) {
   if (error && typeof error === "object" && "code" in error && error.code === "EADDRINUSE") {
-    console.error(`[dev] ${proxyUrl} is already in use. Stop the old proxy or change scripts/dev-with-google-proxy.mjs.`);
+    console.error(
+      `[dev] ${proxyUrl} is already in use. Stop the old proxy or change scripts/dev-with-google-proxy.mjs.`,
+    );
   } else {
     console.error(error);
   }
