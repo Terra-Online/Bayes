@@ -4,9 +4,7 @@ import { isLocalBackendUrl } from "@/lib/isLocalBackendUrl";
 import type { AppEnv } from "@/types/app";
 
 export function createRoutes() {
-  const app = new Hono<AppEnv>();
-
-  app.put("/r2", async (c) => {
+  return new Hono<AppEnv>().put("/r2", async (c) => {
     const requestUrl = new URL(c.req.url);
     if (
       !isLocalBackendUrl(c.env.BETTER_AUTH_URL) ||
@@ -25,6 +23,4 @@ export function createRoutes() {
     });
     return c.json({ ok: true, key: objectKey });
   });
-
-  return app;
 }

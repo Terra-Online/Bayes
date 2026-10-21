@@ -1,11 +1,10 @@
-import { Hono } from "hono";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { onAppError } from "@/middleware/error-handler";
 import { SqliteD1 } from "@/test/sqliteD1";
 import type { AppEnv } from "@/types/app";
 
-import { handleGetPublicComment } from "./getPublicComment";
+import { createRoutes } from "./createRoutes";
 
 let database: SqliteD1;
 
@@ -100,9 +99,8 @@ function insertComment(payload: {
 }
 
 function request(path: string) {
-  const app = new Hono<AppEnv>();
+  const app = createRoutes();
   app.onError(onAppError);
-  app.get("/comments/:id", handleGetPublicComment);
   return app.request(`https://api.example.com${path}`, undefined, {
     DB: database.db,
   } as AppEnv["Bindings"]);
@@ -203,3 +201,9 @@ describe("handleGetPublicComment integration", () => {
     },
   );
 });
+
+vi.mock("cloudflare:workers", () => ({ DurableObject: class {}, exports: {} }));
+vi.mock("@cloudflare/containers", () => ({ getRandom: vi.fn() }));
+vi.mock("@/middleware/rate-limit", () => ({
+  rateLimit: () => async (_c: unknown, next: () => Promise<void>) => next(),
+}));

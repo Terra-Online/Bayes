@@ -1,4 +1,3 @@
-import { Hono } from "hono";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError } from "@/lib/errors";
@@ -14,11 +13,12 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/repositories/submission/getPublicComment", () => ({
   getPublicCommentContextById: mocks.getPublicCommentContextById,
 }));
-vi.mock("./helpers", () => ({
+vi.mock("./helpers", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./helpers")>()),
   getOptionalAuthIdentity: mocks.getOptionalAuthIdentity,
 }));
 
-import { handleGetPublicComment } from "./getPublicComment";
+import { createRoutes } from "./createRoutes";
 
 const target: PublicSubmissionComment = {
   id: "target",
@@ -50,14 +50,13 @@ beforeEach(() => {
 });
 
 function request(path: string, headers?: HeadersInit) {
-  const app = new Hono<AppEnv>();
+  const app = createRoutes();
   app.onError((error) => {
     if (error instanceof ApiError) {
       return new Response(JSON.stringify({ code: error.code }), { status: error.status });
     }
     throw error;
   });
-  app.get("/comments/:id", handleGetPublicComment);
   return app.request("https://api.example.com" + path, { headers }, {
     DB: {} as D1Database,
   } as AppEnv["Bindings"]);
@@ -116,3 +115,9 @@ describe("handleGetPublicComment", () => {
     expect(mocks.getPublicCommentContextById).not.toHaveBeenCalled();
   });
 });
+
+vi.mock("cloudflare:workers", () => ({ DurableObject: class {}, exports: {} }));
+vi.mock("@cloudflare/containers", () => ({ getRandom: vi.fn() }));
+vi.mock("@/middleware/rate-limit", () => ({
+  rateLimit: () => async (_c: unknown, next: () => Promise<void>) => next(),
+}));

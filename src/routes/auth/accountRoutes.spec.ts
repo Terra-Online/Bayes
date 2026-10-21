@@ -5,7 +5,7 @@ import { onAppError } from "@/middleware/error-handler";
 import { createAuthDatabase } from "@/test/authDatabase";
 import type { AppEnv, AuthUser, Bindings } from "@/types/app";
 
-import { registerAccountAuthRoutes } from "./accountRoutes";
+import { createRoutes as createAccountAuthRoutes } from "./accountRoutes";
 
 vi.mock("@/middleware/auth", () => ({
   requireAuth: async (_c: unknown, next: () => Promise<void>) => next(),
@@ -30,7 +30,7 @@ describe("provider-based unlink compatibility", () => {
       c.set("authUser", { uid: "owner" } as AuthUser);
       await next();
     });
-    registerAccountAuthRoutes(app, { forwardToAuthJsonPath: forward });
+    app.route("/", createAccountAuthRoutes({ forwardToAuthJsonPath: forward }));
   });
   afterEach(() => database.sqlite.close());
   function request(provider: string) {

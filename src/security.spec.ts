@@ -20,6 +20,32 @@ afterEach(() => {
 
 describe("backend safety boundaries", () => {
   it.each([
+    ["GET", "/locator/position-stream", 426, "WEBSOCKET_REQUIRED"],
+    ["POST", "/locator/agree-policy", 401, "SESSION_REQUIRED"],
+    ["GET", "/locator/unknown", 401, "SESSION_REQUIRED"],
+  ])("preserves the mounted locator boundary for %s %s", async (method, path, status, code) => {
+    const response = await createApp().request(path, { method }, {
+      DB: {} as D1Database,
+    } as Bindings);
+
+    expect(response.status).toBe(status);
+    expect(await response.json()).toMatchObject({ code });
+  });
+
+  it.each([
+    ["/auth/v1/session", 401, "SESSION_REQUIRED"],
+    ["/auth/v1/list-accounts", 401, "SESSION_REQUIRED"],
+    ["/auth/v1/unknown", 404, "NOT_FOUND"],
+  ])("preserves the mounted auth boundary for %s", async (path, status, code) => {
+    const response = await createApp().request(path, undefined, {
+      DB: {} as D1Database,
+    } as Bindings);
+
+    expect(response.status).toBe(status);
+    expect(await response.json()).toMatchObject({ code });
+  });
+
+  it.each([
     ["https://api.opendfieldmap.org", "https://api.opendfieldmap.org"],
     ["http://localhost:8787", "https://api.opendfieldmap.org"],
     ["https://api.opendfieldmap.org", "http://localhost:8787"],

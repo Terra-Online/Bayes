@@ -38,28 +38,28 @@ function parseAllowedOrigins(raw: string | undefined, backendUrl: string | undef
 }
 
 export function createApp() {
-  const app = new Hono<AppEnv>().use("*", requestIdMiddleware);
-  app.use(
-    "*",
-    cors({
-      origin: (origin, c) => {
-        const allowedOrigins = parseAllowedOrigins(c.env.CORS_ORIGINS, c.env.BETTER_AUTH_URL);
-        if (!origin) {
-          return allowedOrigins[0] ?? DEFAULT_CORS_ORIGINS[0]!;
-        }
-        return allowedOrigins.includes(origin)
-          ? origin
-          : (allowedOrigins[0] ?? DEFAULT_CORS_ORIGINS[0]!);
-      },
-      allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-      allowHeaders: ["Content-Type", "Authorization", "x-request-id", "x-oem-locale"],
-      exposeHeaders: ["x-request-id"],
-      credentials: true,
-      maxAge: 86400,
-    }),
-  );
-
-  app.onError(onAppError);
+  const app = new Hono<AppEnv>()
+    .use("*", requestIdMiddleware)
+    .use(
+      "*",
+      cors({
+        origin: (origin, c) => {
+          const allowedOrigins = parseAllowedOrigins(c.env.CORS_ORIGINS, c.env.BETTER_AUTH_URL);
+          if (!origin) {
+            return allowedOrigins[0] ?? DEFAULT_CORS_ORIGINS[0]!;
+          }
+          return allowedOrigins.includes(origin)
+            ? origin
+            : (allowedOrigins[0] ?? DEFAULT_CORS_ORIGINS[0]!);
+        },
+        allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allowHeaders: ["Content-Type", "Authorization", "x-request-id", "x-oem-locale"],
+        exposeHeaders: ["x-request-id"],
+        credentials: true,
+        maxAge: 86400,
+      }),
+    )
+    .onError(onAppError);
 
   mountRoutes(app);
 

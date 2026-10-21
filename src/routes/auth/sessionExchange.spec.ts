@@ -16,9 +16,9 @@ import type { AppEnv, Bindings } from "@/types/app";
 
 import { attachSessionExchangeCode } from "./callbacks";
 import { forwardToAuthRawRequest } from "./forwarding";
-import { handleSessionExchange } from "./sessionExchange";
-import { registerSessionAuthRoutes } from "./sessionRoutes";
-import { registerSocialAuthRoutes } from "./socialRoutes";
+import { createRoutes as createSessionExchangeRoutes } from "./sessionExchangeRoutes";
+import { createRoutes as createSessionAuthRoutes } from "./sessionRoutes";
+import { createRoutes as createSocialAuthRoutes } from "./socialRoutes";
 
 vi.mock("@/lib/auth/createAuth", () => ({ createAuth: vi.fn() }));
 vi.mock("@/lib/email/sender", () => ({ sendEmail: vi.fn() }));
@@ -116,18 +116,21 @@ describe("CHIPS OAuth exchange", () => {
         }),
       ),
     );
-    app.post("/session/exchange", handleSessionExchange);
-    registerSessionAuthRoutes(app);
-    registerSocialAuthRoutes(app, {
-      forwardToAuthJsonPath: async (_context, _path, body) => {
-        callbackUrl = String(body.callbackURL);
-        expect(body.newUserCallbackURL).toBe(body.callbackURL);
-        return new Response(JSON.stringify({ url: "https://provider.example/authorize" }), {
-          headers: { "content-type": "application/json" },
-        });
-      },
-      forwardToAuthRawRequest,
-    });
+    app.route("/", createSessionExchangeRoutes());
+    app.route("/", createSessionAuthRoutes());
+    app.route(
+      "/",
+      createSocialAuthRoutes({
+        forwardToAuthJsonPath: async (_context, _path, body) => {
+          callbackUrl = String(body.callbackURL);
+          expect(body.newUserCallbackURL).toBe(body.callbackURL);
+          return new Response(JSON.stringify({ url: "https://provider.example/authorize" }), {
+            headers: { "content-type": "application/json" },
+          });
+        },
+        forwardToAuthRawRequest,
+      }),
+    );
     app.post("/auth/v1/sign-out", async (context) => {
       const response = await forwardToAuthRawRequest(context);
       if (response.ok) {

@@ -1,5 +1,4 @@
 import { Hono } from "hono";
-import type { Context } from "hono";
 
 import { ApiError } from "@/lib/errors";
 import { requireAuth } from "@/middleware/auth";
@@ -15,96 +14,15 @@ import {
   saveProgressManifest,
 } from "@/services/progress/manifest";
 import { jsonResponse } from "@/services/progress/responses";
-import type { AppEnv, AuthUser } from "@/types/app";
+import type { AppEnv } from "@/types/app";
 
 function isProgressLocked(flag: string | undefined): boolean {
   const normalized = (flag ?? "true").trim().toLowerCase();
   return !["0", "false", "off", "no"].includes(normalized);
 }
 
-async function proxyUserProgress<E extends AppEnv<{ authUser: AuthUser; requestId: string }>>(
-  c: Context<E>,
-  path: "state" | "sync",
-): Promise<Response> {
-  const user = c.get("authUser");
-  if (!user) {
-    throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
-  }
-
-  const stub = c.env.OEM_USER_DO.getByName(user.uid);
-  const url = new URL(`https://progress-user/${path}`);
-  if (path === "state") {
-    const markerIndexHash = c.req.query("markerIndexHash")?.trim().toLowerCase() ?? "";
-    url.searchParams.set("markerIndexHash", markerIndexHash);
-  }
-
-  const request =
-    path === "state"
-      ? new Request(url, { method: "GET", headers: { "x-request-id": c.get("requestId") ?? "" } })
-      : new Request(url, {
-          method: "POST",
-          headers: { "content-type": "application/json", "x-request-id": c.get("requestId") ?? "" },
-          body: await c.req.text(),
-        });
-
-  return stub.fetch(request);
-}
-
-async function proxyUserArchiveProgress<
-  E extends AppEnv<{ authUser: AuthUser; requestId: string }>,
->(c: Context<E>, path: "state" | "sync"): Promise<Response> {
-  const user = c.get("authUser");
-  if (!user) {
-    throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
-  }
-
-  const stub = c.env.OEM_USER_DO.getByName(user.uid);
-  const url = new URL(`https://progress-user/archive/${path}`);
-  if (path === "state") {
-    const archiveIndexHash = c.req.query("archiveIndexHash")?.trim().toLowerCase() ?? "";
-    url.searchParams.set("archiveIndexHash", archiveIndexHash);
-  }
-  return stub.fetch(
-    path === "state"
-      ? new Request(url, { method: "GET", headers: { "x-request-id": c.get("requestId") ?? "" } })
-      : new Request(url, {
-          method: "POST",
-          headers: { "content-type": "application/json", "x-request-id": c.get("requestId") ?? "" },
-          body: await c.req.text(),
-        }),
-  );
-}
-
-async function registerManifest<E extends AppEnv>(c: Context<E>): Promise<Response> {
-  const manifest = await normalizeManifestPayload(await c.req.json().catch(() => null));
-  await saveProgressManifest(c.env, manifest);
-  return jsonResponse({
-    ok: true,
-    manifest: { markerIndexHash: manifest.markerIndexHash },
-  });
-}
-
-async function registerArchiveManifest<E extends AppEnv>(c: Context<E>): Promise<Response> {
-  const manifest = await normalizeArchiveManifestPayload(await c.req.json().catch(() => null));
-  await saveArchiveProgressManifest(c.env, manifest);
-  return jsonResponse({
-    ok: true,
-    manifest: { archiveIndexHash: manifest.archiveIndexHash },
-  });
-}
-
-async function proxyStats<E extends AppEnv>(c: Context<E>): Promise<Response> {
-  const markerIndexHash = c.req.query("markerIndexHash")?.trim().toLowerCase();
-  if (!markerIndexHash || !isSha256Hex(markerIndexHash)) {
-    throw new ApiError(422, "VALIDATION_ERROR", "markerIndexHash must be a SHA-256 hash.");
-  }
-  return fetchProgressStatsFromWorkersCache(markerIndexHash);
-}
-
 export function createRoutes() {
-  const app = new Hono<AppEnv<{ requestId: string }>>();
-
-  app.use("*", async (c, next) => {
+  const app = new Hono<AppEnv<{ requestId: string }>>().use("*", async (c, next) => {
     if (isProgressLocked(c.env.LOCK_PROGRESS_ENDPOINTS)) {
       throw new ApiError(
         503,
@@ -115,13 +33,90 @@ export function createRoutes() {
     await next();
   });
 
-  app.get("/state", requireAuth, async (c) => proxyUserProgress(c, "state"));
-  app.post("/manifest", requireAuth, registerManifest);
-  app.post("/sync", requireAuth, async (c) => proxyUserProgress(c, "sync"));
-  app.get("/stats", rateLimit("public"), async (c) => proxyStats(c));
-  app.get("/archive/state", requireAuth, async (c) => proxyUserArchiveProgress(c, "state"));
-  app.post("/archive/manifest", requireAuth, registerArchiveManifest);
-  app.post("/archive/sync", requireAuth, async (c) => proxyUserArchiveProgress(c, "sync"));
+  for (const path of ["state", "sync"] as const) {
+    app.on(path === "state" ? "GET" : "POST", `/${path}`, requireAuth, async (c) => {
+      const user = c.get("authUser");
+      if (!user) {
+        throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
+      }
 
-  return app;
+      const stub = c.env.OEM_USER_DO.getByName(user.uid);
+      const url = new URL(`https://progress-user/${path}`);
+      if (path === "state") {
+        const markerIndexHash = c.req.query("markerIndexHash")?.trim().toLowerCase() ?? "";
+        url.searchParams.set("markerIndexHash", markerIndexHash);
+      }
+
+      const request =
+        path === "state"
+          ? new Request(url, {
+              method: "GET",
+              headers: { "x-request-id": c.get("requestId") ?? "" },
+            })
+          : new Request(url, {
+              method: "POST",
+              headers: {
+                "content-type": "application/json",
+                "x-request-id": c.get("requestId") ?? "",
+              },
+              body: await c.req.text(),
+            });
+
+      return stub.fetch(request);
+    });
+  }
+  app
+    .post("/manifest", requireAuth, async (c) => {
+      const manifest = await normalizeManifestPayload(await c.req.json().catch(() => null));
+      await saveProgressManifest(c.env, manifest);
+      return jsonResponse({
+        ok: true,
+        manifest: { markerIndexHash: manifest.markerIndexHash },
+      });
+    })
+    .get("/stats", rateLimit("public"), async (c) => {
+      const markerIndexHash = c.req.query("markerIndexHash")?.trim().toLowerCase();
+      if (!markerIndexHash || !isSha256Hex(markerIndexHash)) {
+        throw new ApiError(422, "VALIDATION_ERROR", "markerIndexHash must be a SHA-256 hash.");
+      }
+      return fetchProgressStatsFromWorkersCache(markerIndexHash);
+    });
+  for (const path of ["state", "sync"] as const) {
+    app.on(path === "state" ? "GET" : "POST", `/archive/${path}`, requireAuth, async (c) => {
+      const user = c.get("authUser");
+      if (!user) {
+        throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
+      }
+
+      const stub = c.env.OEM_USER_DO.getByName(user.uid);
+      const url = new URL(`https://progress-user/archive/${path}`);
+      if (path === "state") {
+        const archiveIndexHash = c.req.query("archiveIndexHash")?.trim().toLowerCase() ?? "";
+        url.searchParams.set("archiveIndexHash", archiveIndexHash);
+      }
+      return stub.fetch(
+        path === "state"
+          ? new Request(url, {
+              method: "GET",
+              headers: { "x-request-id": c.get("requestId") ?? "" },
+            })
+          : new Request(url, {
+              method: "POST",
+              headers: {
+                "content-type": "application/json",
+                "x-request-id": c.get("requestId") ?? "",
+              },
+              body: await c.req.text(),
+            }),
+      );
+    });
+  }
+  return app.post("/archive/manifest", requireAuth, async (c) => {
+    const manifest = await normalizeArchiveManifestPayload(await c.req.json().catch(() => null));
+    await saveArchiveProgressManifest(c.env, manifest);
+    return jsonResponse({
+      ok: true,
+      manifest: { archiveIndexHash: manifest.archiveIndexHash },
+    });
+  });
 }

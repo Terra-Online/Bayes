@@ -4,9 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PublicSubmissionComment } from "@/repositories/submission/types";
 import type { AppEnv, AuthUser, Bindings } from "@/types/app";
 
-import { handleListPointImages } from "./listPointImages";
-import { handleListPublicComments } from "./listPublicComments";
-import { handleListPublicImages } from "./listPublicImages";
+import { createRoutes } from "./createRoutes";
 
 const mocks = vi.hoisted(() => ({
   identity: vi.fn(),
@@ -17,8 +15,11 @@ const mocks = vi.hoisted(() => ({
   commentState: vi.fn(),
 }));
 
-vi.mock("@/middleware/auth", () => ({ resolveAuthIdentity: mocks.identity }));
-vi.mock("cloudflare:workers", () => ({ exports: {} }));
+vi.mock("@/middleware/auth", () => ({
+  resolveAuthIdentity: mocks.identity,
+  resolveContextAuthUser: async (c: { get: (key: string) => unknown }) => c.get("authUser"),
+}));
+vi.mock("cloudflare:workers", () => ({ DurableObject: class {}, exports: {} }));
 vi.mock("@/publicRead/client/client", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/publicRead/client/client")>()),
   readPublicImagesFromWorkersCache: mocks.imagesCache,
@@ -46,10 +47,9 @@ app.get("/images", async (c, next) => {
     return next();
   }
   c.set("authUser", { uid: "viewer", role: "n" } as AuthUser);
-  return handleListPointImages(c);
+  return next();
 });
-app.get("/images", handleListPublicImages);
-app.get("/comments", handleListPublicComments);
+app.route("/", createRoutes());
 
 function comment(
   id: string,
@@ -282,3 +282,8 @@ describe("combined point image reads", () => {
     });
   });
 });
+
+vi.mock("@cloudflare/containers", () => ({ getRandom: vi.fn() }));
+vi.mock("@/middleware/rate-limit", () => ({
+  rateLimit: () => async (_c: unknown, next: () => Promise<void>) => next(),
+}));

@@ -8,7 +8,7 @@ import { enqueueModeration } from "@/services/moderation/queue";
 import type { oem_imgTrans } from "@/services/upload/imageTranscoderContainer";
 import type { AppEnv, AuthUser, Bindings } from "@/types/app";
 
-import { handleSubmitImage } from "./submitImage";
+import { createRoutes } from "./createRoutes";
 
 vi.mock("@cloudflare/containers", () => ({ getRandom: vi.fn() }));
 vi.mock("@/repositories/submission/createSubmission", () => ({
@@ -35,7 +35,7 @@ describe("upload side effects after preparation", () => {
       c.set("authUser", { uid: "u" } as AuthUser);
       await next();
     });
-    app.post("/image", handleSubmitImage);
+    app.route("/", createRoutes());
   });
   afterEach(() => vi.restoreAllMocks());
   function request(signal?: AbortSignal) {
@@ -45,9 +45,10 @@ describe("upload side effects after preparation", () => {
     form.set("poiHash", "hash");
     form.set("poiType", "poi");
     return app.request(
-      new Request("https://api.opendfieldmap.org/image", { method: "POST", body: form, signal }),
+      new Request("https://api.opendfieldmap.org/images", { method: "POST", body: form, signal }),
       undefined,
       {
+        LOCK_UPLOAD_ENDPOINTS: "false",
         OEM_IMG_TRANS: {},
         UGC_BUCKET: { put },
         DB: {},
@@ -95,3 +96,8 @@ describe("upload side effects after preparation", () => {
     expectNoWrites();
   });
 });
+
+vi.mock("cloudflare:workers", () => ({ DurableObject: class {}, exports: {} }));
+vi.mock("@/middleware/rate-limit", () => ({
+  rateLimit: () => async (_c: unknown, next: () => Promise<void>) => next(),
+}));

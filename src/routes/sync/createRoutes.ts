@@ -1,13 +1,31 @@
 import { Hono } from "hono";
 
 import { requireAuth } from "@/middleware/auth";
+import { withAutoRefreshedBinding } from "@/routes/binding/credentials";
+import { getOfficialMarks, officialMarkedPointIds } from "@/services/sync/officialMarks";
 import type { AppEnv } from "@/types/app";
 
-import { handleOfficialMarks } from "./syncHandlers";
-
 export function createRoutes() {
-  const app = new Hono<AppEnv>().use("/*", requireAuth);
-  app.get("/official", handleOfficialMarks);
-
-  return app;
+  return new Hono<AppEnv>().use("/*", requireAuth).get("/official", async (c) => {
+    const user = c.get("authUser");
+    return withAutoRefreshedBinding(c, user.uid, async (binding) => {
+      const result = await getOfficialMarks(binding);
+      const markedIds = [
+        ...new Set(
+          result.markers.filter((marker) => marker.isUserMarked).map((marker) => marker.id),
+        ),
+      ];
+      const pointIds = officialMarkedPointIds(markedIds);
+      const response = c.json({
+        binding: binding.publicBinding,
+        timestamp: new Date().toISOString(),
+        markedIds,
+        pointIds,
+        markers: result.markers,
+        raw: result.raw,
+      });
+      response.headers.set("cache-control", "private, no-store");
+      return response;
+    });
+  });
 }

@@ -52,91 +52,87 @@ const privateHeaders = (maxAge: number) => ({
 });
 
 export function createRoutes() {
-  const app = new Hono<AppEnv>().use("*", requireAuth);
-  app.use("/overview", rateLimit("auth"));
-  app.use("/contributions", rateLimit("auth"));
-  app.use("/contributions/:id/preview", rateLimit("preview"));
+  return new Hono<AppEnv>()
+    .use("*", requireAuth)
+    .use("/overview", rateLimit("auth"))
+    .use("/contributions", rateLimit("auth"))
+    .use("/contributions/:id/preview", rateLimit("preview"))
+    .get("/overview", async (c) => {
+      const user = c.get("authUser");
+      if (!user) {
+        throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
+      }
 
-  app.get("/overview", async (c) => {
-    const user = c.get("authUser");
-    if (!user) {
-      throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
-    }
-
-    const counts = await readCached(c.env.DB, `counts:${user.uid}`, 15_000, () =>
-      getContributionCounts(c.env.DB, user.uid),
-    );
-    return c.json({ user: toSessionUser(user), contributions: counts }, 200, privateHeaders(15));
-  });
-
-  app.get("/contributions", async (c) => {
-    const user = c.get("authUser");
-    if (!user) {
-      throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
-    }
-    const parsed = contributionQuerySchema.safeParse({
-      kind: c.req.query("kind") || undefined,
-      status: c.req.query("status") || undefined,
-      cursor: c.req.query("cursor") || undefined,
-      limit: c.req.query("limit") || undefined,
-    });
-    if (!parsed.success) {
-      throw new ApiError(
-        422,
-        "VALIDATION_ERROR",
-        "Invalid contribution query.",
-        parsed.error.flatten(),
+      const counts = await readCached(c.env.DB, `counts:${user.uid}`, 15_000, () =>
+        getContributionCounts(c.env.DB, user.uid),
       );
-    }
-    const cursor = parsed.data.cursor ? decodeContributionCursor(parsed.data.cursor) : undefined;
-    if (parsed.data.cursor && !cursor) {
-      throw new ApiError(422, "INVALID_CURSOR", "Contribution cursor is invalid.");
-    }
+      return c.json({ user: toSessionUser(user), contributions: counts }, 200, privateHeaders(15));
+    })
+    .get("/contributions", async (c) => {
+      const user = c.get("authUser");
+      if (!user) {
+        throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
+      }
+      const parsed = contributionQuerySchema.safeParse({
+        kind: c.req.query("kind") || undefined,
+        status: c.req.query("status") || undefined,
+        cursor: c.req.query("cursor") || undefined,
+        limit: c.req.query("limit") || undefined,
+      });
+      if (!parsed.success) {
+        throw new ApiError(
+          422,
+          "VALIDATION_ERROR",
+          "Invalid contribution query.",
+          parsed.error.flatten(),
+        );
+      }
+      const cursor = parsed.data.cursor ? decodeContributionCursor(parsed.data.cursor) : undefined;
+      if (parsed.data.cursor && !cursor) {
+        throw new ApiError(422, "INVALID_CURSOR", "Contribution cursor is invalid.");
+      }
 
-    const key = JSON.stringify(["contributions", user.uid, parsed.data]);
-    const result = await readCached(c.env.DB, key, 15_000, () =>
-      listContributions(c.env.DB, {
-        uid: user.uid,
-        kind: parsed.data.kind,
-        status: parsed.data.status,
-        cursor: cursor ?? undefined,
-        limit: parsed.data.limit,
-        previewBaseUrl: "/me/v1/contributions",
-      }),
-    );
-    return c.json(result, 200, privateHeaders(15));
-  });
-
-  app.get("/contributions/:id/preview", async (c) => {
-    const user = c.get("authUser");
-    if (!user) {
-      throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
-    }
-    const id = c.req.param("id");
-    const image = await getContributionImage(c.env.DB, user.uid, id);
-    if (!image) {
-      throw new ApiError(404, "IMAGE_NOT_FOUND", "Image file was not found.");
-    }
-    const etag = c.req.header("If-None-Match");
-    const object = await c.env.UGC_BUCKET.get(image.file_path, {
-      onlyIf: new Headers(etag ? { "If-None-Match": etag } : {}),
+      const key = JSON.stringify(["contributions", user.uid, parsed.data]);
+      const result = await readCached(c.env.DB, key, 15_000, () =>
+        listContributions(c.env.DB, {
+          uid: user.uid,
+          kind: parsed.data.kind,
+          status: parsed.data.status,
+          cursor: cursor ?? undefined,
+          limit: parsed.data.limit,
+          previewBaseUrl: "/me/v1/contributions",
+        }),
+      );
+      return c.json(result, 200, privateHeaders(15));
+    })
+    .get("/contributions/:id/preview", async (c) => {
+      const user = c.get("authUser");
+      if (!user) {
+        throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
+      }
+      const id = c.req.param("id");
+      const image = await getContributionImage(c.env.DB, user.uid, id);
+      if (!image) {
+        throw new ApiError(404, "IMAGE_NOT_FOUND", "Image file was not found.");
+      }
+      const etag = c.req.header("If-None-Match");
+      const object = await c.env.UGC_BUCKET.get(image.file_path, {
+        onlyIf: new Headers(etag ? { "If-None-Match": etag } : {}),
+      });
+      if (!object) {
+        throw new ApiError(404, "IMAGE_NOT_FOUND", "Image file was not found.");
+      }
+      const headers = new Headers();
+      object.writeHttpMetadata(headers);
+      headers.set(
+        "Content-Type",
+        object.httpMetadata?.contentType ?? image.mime_type ?? "application/octet-stream",
+      );
+      Object.entries(privateHeaders(3600)).forEach(([key, value]) => headers.set(key, value));
+      headers.set("etag", object.httpEtag);
+      if (!("body" in object)) {
+        return new Response(null, { status: 304, headers });
+      }
+      return new Response(object.body, { headers });
     });
-    if (!object) {
-      throw new ApiError(404, "IMAGE_NOT_FOUND", "Image file was not found.");
-    }
-    const headers = new Headers();
-    object.writeHttpMetadata(headers);
-    headers.set(
-      "Content-Type",
-      object.httpMetadata?.contentType ?? image.mime_type ?? "application/octet-stream",
-    );
-    Object.entries(privateHeaders(3600)).forEach(([key, value]) => headers.set(key, value));
-    headers.set("etag", object.httpEtag);
-    if (!("body" in object)) {
-      return new Response(null, { status: 304, headers });
-    }
-    return new Response(object.body, { headers });
-  });
-
-  return app;
 }

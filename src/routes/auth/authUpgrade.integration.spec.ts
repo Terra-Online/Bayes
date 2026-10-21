@@ -7,9 +7,9 @@ import { onAppError } from "@/middleware/error-handler";
 import { createAuthDatabase } from "@/test/authDatabase";
 import type { AppEnv, Bindings } from "@/types/app";
 
-import { registerEmailAuthRoutes } from "./emailRoutes";
+import { createRoutes as createEmailAuthRoutes } from "./emailRoutes";
 import { forwardToAuthJsonPath, forwardToAuthRawRequest } from "./forwarding";
-import { registerPasswordResetRoutes } from "./passwordResetRoutes";
+import { createRoutes as createPasswordResetRoutes } from "./passwordResetRoutes";
 
 vi.mock("@/lib/email/sender", () => ({ sendEmail: vi.fn() }));
 vi.mock("@/middleware/rate-limit", () => ({
@@ -44,8 +44,8 @@ describe("Better Auth 1.7 with the production D1 table layout", () => {
     auth = createAuth(env);
     app = new Hono<AppEnv<{ requestId: string }>>();
     app.onError(onAppError);
-    registerEmailAuthRoutes(app, { forwardToAuthJsonPath, forwardToAuthRawRequest });
-    registerPasswordResetRoutes(app, { forwardToAuthJsonPath });
+    app.route("/", createEmailAuthRoutes({ forwardToAuthJsonPath, forwardToAuthRawRequest }));
+    app.route("/", createPasswordResetRoutes({ forwardToAuthJsonPath }));
   });
   afterEach(() => {
     database.sqlite.close();
