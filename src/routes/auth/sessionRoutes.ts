@@ -1,5 +1,5 @@
-import type { Hono } from "hono";
 import type { Context } from "hono";
+import { Hono } from "hono";
 import { createMiddleware } from "hono/factory";
 
 import {
@@ -83,7 +83,9 @@ function mapProfileUpdateError(error: unknown): never {
   throw new ApiError(500, "PROFILE_UPDATE_FAILED", message);
 }
 
-export function registerSessionAuthRoutes(app: Hono<AppEnv<{ requestId: string }>>) {
+export function createRoutes() {
+  const app = new Hono<AppEnv<{ requestId: string }>>();
+
   app.get(
     "/session",
     async (c, next) => {
@@ -192,4 +194,6 @@ export function registerSessionAuthRoutes(app: Hono<AppEnv<{ requestId: string }
       mapProfileUpdateError(error);
     }
   });
+
+  return app;
 }

@@ -1,4 +1,4 @@
-import type { Hono } from "hono";
+import { Hono } from "hono";
 
 import { createAuth } from "@/lib/auth/createAuth";
 import { toSerializableError } from "@/lib/auth/errors";
@@ -6,10 +6,11 @@ import { isDisposableEmail } from "@/lib/email/disposable";
 import { ApiError } from "@/lib/errors";
 import { toApiError } from "@/middleware/error-handler";
 import { rateLimit } from "@/middleware/rate-limit";
-import { sendTemplateOtpSchema, registerWithOtpSchema } from "@/routes/schema/auth";
+import { registerWithOtpSchema, sendTemplateOtpSchema } from "@/routes/schema/auth";
 import type { AppEnv } from "@/types/app";
 
 import { deriveDisplayName, normalizeEmail } from "./emailUtils";
+import { forwardToAuthJsonPath, forwardToAuthRawRequest } from "./forwarding";
 import type { ForwardToAuthJsonPath, ForwardToAuthRawRequest } from "./types";
 
 type AuthSignInResult = {
@@ -87,13 +88,14 @@ async function revokeRegistrationSession(input: { env: AppEnv["Bindings"]; sessi
   }
 }
 
-export function registerEmailAuthRoutes(
-  app: Hono<AppEnv<{ requestId: string }>>,
+export function createRoutes(
   deps: {
     forwardToAuthJsonPath: ForwardToAuthJsonPath;
     forwardToAuthRawRequest: ForwardToAuthRawRequest;
-  },
+  } = { forwardToAuthJsonPath, forwardToAuthRawRequest },
 ) {
+  const app = new Hono<AppEnv<{ requestId: string }>>();
+
   app.post("/register", rateLimit("public"), async (c) => {
     let body: unknown;
     try {
@@ -234,4 +236,6 @@ export function registerEmailAuthRoutes(
     payload.email = email;
     return deps.forwardToAuthJsonPath(c, "/sign-in/email", payload);
   });
+
+  return app;
 }

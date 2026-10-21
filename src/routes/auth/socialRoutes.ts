@@ -1,4 +1,4 @@
-import type { Hono } from "hono";
+import { Hono } from "hono";
 
 import { AUTH_EXCHANGE_CHALLENGE_PARAM, createOAuthExchangeProof } from "@/lib/auth/browserSession";
 import { createAuth } from "@/lib/auth/createAuth";
@@ -12,16 +12,18 @@ import {
   getProviderFromCallbackPath,
   toSafeTrustedUrlLog,
 } from "./callbacks";
+import { forwardToAuthJsonPath, forwardToAuthRawRequest } from "./forwarding";
 import { parseTrustedFrontendOrigins, resolveTrustedRequestOrigin } from "./frontendOrigins";
 import type { ForwardToAuthJsonPath, ForwardToAuthRawRequest } from "./types";
 
-export function registerSocialAuthRoutes(
-  app: Hono<AppEnv<{ requestId: string }>>,
+export function createRoutes(
   deps: {
     forwardToAuthJsonPath: ForwardToAuthJsonPath;
     forwardToAuthRawRequest: ForwardToAuthRawRequest;
-  },
+  } = { forwardToAuthJsonPath, forwardToAuthRawRequest },
 ) {
+  const app = new Hono<AppEnv<{ requestId: string }>>();
+
   app.post("/sign-in/social", rateLimit("public"), async (c) => {
     let body: unknown;
     try {
@@ -105,4 +107,6 @@ export function registerSocialAuthRoutes(
   app.get("/error", rateLimit("public"), async (c) => {
     return deps.forwardToAuthRawRequest(c);
   });
+
+  return app;
 }

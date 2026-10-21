@@ -1,15 +1,17 @@
-import type { Context, Hono } from "hono";
+import type { Context } from "hono";
+import { Hono } from "hono";
 
 import { ApiError } from "@/lib/errors";
 import { rateLimit } from "@/middleware/rate-limit";
 import {
   requestPasswordResetSchema,
-  resetPasswordSchema,
   resetPasswordPreviewSchema,
+  resetPasswordSchema,
 } from "@/routes/schema/auth";
 import type { AppEnv } from "@/types/app";
 
 import { normalizeEmail } from "./emailUtils";
+import { forwardToAuthJsonPath } from "./forwarding";
 import type { ForwardToAuthJsonPath } from "./types";
 
 function forwardPasswordResetRequest<E extends AppEnv<{ requestId: string }>>(
@@ -42,33 +44,27 @@ function forwardPasswordResetRequest<E extends AppEnv<{ requestId: string }>>(
   );
 }
 
-async function handlePasswordResetRequest<E extends AppEnv<{ requestId: string }>>(
-  c: Context<E>,
-  forwardToAuthJsonPath: ForwardToAuthJsonPath,
-) {
-  let body: unknown;
-  try {
-    body = await c.req.json();
-  } catch {
-    throw new ApiError(422, "VALIDATION_ERROR", "Request body must be valid JSON.");
-  }
-
-  const parsed = requestPasswordResetSchema.safeParse(body);
-  if (!parsed.success) {
-    throw new ApiError(422, "VALIDATION_ERROR", "Invalid payload.", parsed.error.flatten());
-  }
-
-  return forwardPasswordResetRequest(c, forwardToAuthJsonPath, parsed.data);
-}
-
-export function registerPasswordResetRoutes(
-  app: Hono<AppEnv<{ requestId: string }>>,
+export function createRoutes(
   deps: {
     forwardToAuthJsonPath: ForwardToAuthJsonPath;
-  },
+  } = { forwardToAuthJsonPath },
 ) {
+  const app = new Hono<AppEnv<{ requestId: string }>>();
+
   app.post("/forget-password", rateLimit("reset-send"), async (c) => {
-    return handlePasswordResetRequest(c, deps.forwardToAuthJsonPath);
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      throw new ApiError(422, "VALIDATION_ERROR", "Request body must be valid JSON.");
+    }
+
+    const parsed = requestPasswordResetSchema.safeParse(body);
+    if (!parsed.success) {
+      throw new ApiError(422, "VALIDATION_ERROR", "Invalid payload.", parsed.error.flatten());
+    }
+
+    return forwardPasswordResetRequest(c, deps.forwardToAuthJsonPath, parsed.data);
   });
 
   app.post("/reset-password", rateLimit("public"), async (c) => {
@@ -125,4 +121,6 @@ export function registerPasswordResetRoutes(
 
     return c.json({ ok: true, tokenValid: true, email });
   });
+
+  return app;
 }

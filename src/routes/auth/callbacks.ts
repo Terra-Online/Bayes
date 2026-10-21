@@ -10,7 +10,7 @@ import {
   resolveTrustedCallbackUrl,
   resolveTrustedRequestOrigin,
 } from "./frontendOrigins";
-import { createSessionExchangeCode } from "./sessionExchange";
+import { createSessionExchangeCode } from "./sessionExchangeRoutes";
 
 function splitSetCookieHeader(setCookie: string): string[] {
   const result: string[] = [];

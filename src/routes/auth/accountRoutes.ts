@@ -1,4 +1,4 @@
-import type { Hono } from "hono";
+import { Hono } from "hono";
 
 import { ApiError } from "@/lib/errors";
 import { requireAuth } from "@/middleware/auth";
@@ -7,6 +7,7 @@ import { linkAccountSchema, unlinkAccountSchema } from "@/routes/schema/auth";
 import type { AppEnv } from "@/types/app";
 
 import { applyDefaultSocialCallbackUrls } from "./callbacks";
+import { forwardToAuthJsonPath } from "./forwarding";
 import type { ForwardToAuthJsonPath } from "./types";
 
 type AccountRow = {
@@ -18,10 +19,11 @@ function publicProvider(providerId: string): string {
   return providerId === "credential" ? "email" : providerId;
 }
 
-export function registerAccountAuthRoutes(
-  app: Hono<AppEnv<{ requestId: string }>>,
-  deps: { forwardToAuthJsonPath: ForwardToAuthJsonPath },
+export function createRoutes(
+  deps: { forwardToAuthJsonPath: ForwardToAuthJsonPath } = { forwardToAuthJsonPath },
 ) {
+  const app = new Hono<AppEnv<{ requestId: string }>>();
+
   app.get("/list-accounts", requireAuth, rateLimit("auth"), async (c) => {
     const user = c.get("authUser");
     if (!user) {
@@ -108,4 +110,6 @@ export function registerAccountAuthRoutes(
       accountId: accounts[0]!.id,
     });
   });
+
+  return app;
 }

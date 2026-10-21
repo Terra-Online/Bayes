@@ -8,7 +8,7 @@ import { resolveAuthIdentity } from "@/middleware/auth";
 import { onAppError } from "@/middleware/error-handler";
 import type { AppEnv, Bindings } from "@/types/app";
 
-import { registerSessionAuthRoutes } from "./sessionRoutes";
+import { createRoutes as createSessionAuthRoutes } from "./sessionRoutes";
 
 vi.mock("@/lib/auth/createAuth", () => ({ createAuth: vi.fn() }));
 vi.mock("@/lib/email/sender", () => ({ sendEmail: vi.fn() }));
@@ -62,7 +62,7 @@ describe.each(["http://localhost:8787", "https://api.opendfieldmap.org"])(
       vi.mocked(createAuth).mockReturnValue(auth);
       app = new Hono<AppEnv<{ requestId: string }>>();
       app.onError(onAppError);
-      registerSessionAuthRoutes(app);
+      app.route("/", createSessionAuthRoutes());
     });
 
     afterEach(() => {
