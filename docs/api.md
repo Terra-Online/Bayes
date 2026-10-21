@@ -132,7 +132,7 @@ When changing this flow, inspect the frontend caller together with
 [`browserSession.ts`](../src/lib/auth/browserSession.ts),
 [`socialRoutes.ts`](../src/routes/auth/socialRoutes.ts),
 [`callbacks.ts`](../src/routes/auth/callbacks.ts), and
-[`sessionExchange.ts`](../src/routes/auth/sessionExchange.ts).
+[`sessionExchangeRoutes.ts`](../src/routes/auth/sessionExchangeRoutes.ts).
 Do not replace the proof flow with a URL containing a session token.
 
 Sources: [`auth/createRoutes.ts`](../src/routes/auth/createRoutes.ts),
@@ -309,7 +309,7 @@ does not establish a working official-to-OEM point mapping.
 
 Sources: [`schema/binding.ts`](../src/routes/schema/binding.ts),
 [`binding/createRoutes.ts`](../src/routes/binding/createRoutes.ts),
-[`locator/positionHandlers.ts`](../src/routes/locator/positionHandlers.ts), and
+[`locator/positionRoutes.ts`](../src/routes/locator/positionRoutes.ts), and
 [`sync/createRoutes.ts`](../src/routes/sync/createRoutes.ts).
 
 ## Moderation and administrative reports
