@@ -14,6 +14,7 @@ import { createRoutes as createBindingRoutes } from "./binding/createRoutes";
 import { createRoutes as createDemoRoutes } from "./demo/createRoutes";
 import { createRoutes as createHealthRoutes } from "./health/createRoutes";
 import { createRoutes as createLocatorRoutes } from "./locator/createRoutes";
+import { createRoutes as createLocatorPositionRoutes } from "./locator/positionRoutes";
 import { createRoutes as createMeRoutes } from "./me/createRoutes";
 import { createRoutes as createModerationRoutes } from "./moderation/createRoutes";
 import { createRoutes as createNotifyRoutes } from "./notify/createRoutes";
@@ -35,6 +36,7 @@ export function mountRoutes<E extends AppEnv<{ requestId: string }>>(app: Hono<E
   app.route("/auth/v1", createAccountAuthRoutes());
   app.route("/auth/v1", createAuthRoutes());
   app.route("/binding/v1", createBindingRoutes());
+  app.route("/locator", createLocatorPositionRoutes());
   app.route("/locator", createLocatorRoutes());
   app.route("/progress/v1", createProgressRoutes());
   app.route("/sync/v1", createSyncRoutes());

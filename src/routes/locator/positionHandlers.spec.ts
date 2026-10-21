@@ -1,7 +1,10 @@
 import type { Context } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import type { EndfieldPositionTermination } from "@/lib/endfieldClient/positionSocket";
+import { ApiError } from "@/lib/errors";
 import type { DecryptedBinding } from "@/services/binding/types";
+import { positionReconnectDelay } from "@/services/locator/reconnect";
 import type { AppEnv } from "@/types/app";
 
 const mocks = vi.hoisted(() => ({ connect: vi.fn(), binding: vi.fn() }));
@@ -25,11 +28,8 @@ vi.mock("@/services/locator/cache", () => ({
   getPositionCacheKey: () => "key",
   refreshPositionCache: vi.fn(),
 }));
-import type { EndfieldPositionTermination } from "@/lib/endfieldClient/positionSocket";
-import { ApiError } from "@/lib/errors";
-import { positionReconnectDelay } from "@/services/locator/reconnect";
 
-import { handleEndfieldPositionSocket } from "./positionHandlers";
+import { createRoutes } from "./positionRoutes";
 
 class TestSocket extends EventTarget {
   accept = vi.fn();
@@ -98,7 +98,10 @@ describe("locator reconnection lifecycle", () => {
   });
 
   async function connect() {
-    await handleEndfieldPositionSocket(context);
+    const app = createRoutes();
+    await app.routes
+      .find((route) => route.path === "/position-stream")!
+      .handler(context, async () => {});
     await Promise.all(waits);
     await vi.advanceTimersByTimeAsync(0);
   }
