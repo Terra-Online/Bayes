@@ -1,7 +1,8 @@
+import type { Context } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { AppContext } from "@/routes/binding/types";
 import type { DecryptedBinding } from "@/services/binding/types";
+import type { AppEnv } from "@/types/app";
 
 const mocks = vi.hoisted(() => ({ connect: vi.fn(), binding: vi.fn() }));
 vi.mock("@/lib/endfieldClient/positionSocket", () => ({
@@ -38,7 +39,7 @@ class TestSocket extends EventTarget {
 
 describe("locator reconnection lifecycle", () => {
   let server: TestSocket;
-  let context: AppContext;
+  let context: Context<AppEnv>;
   let waits: Promise<unknown>[];
   const callbacks: Array<{
     onClose: (termination?: EndfieldPositionTermination) => void;
@@ -88,7 +89,7 @@ describe("locator reconnection lifecycle", () => {
       env: {},
       get: () => "request-1",
       executionCtx: { waitUntil: (promise: Promise<unknown>) => waits.push(promise) },
-    } as unknown as AppContext;
+    } as unknown as Context<AppEnv>;
   });
   afterEach(() => {
     vi.useRealTimers();

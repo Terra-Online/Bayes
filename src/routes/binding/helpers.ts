@@ -1,7 +1,9 @@
-import { ApiError } from "@/lib/errors";
-import type { AppContext } from "@/routes/binding/types";
+import type { Context } from "hono";
 
-export function requireUser(c: AppContext) {
+import { ApiError } from "@/lib/errors";
+import type { AppEnv } from "@/types/app";
+
+export function requireUser(c: Context<AppEnv>) {
   const user = c.get("authUser");
   if (!user) {
     throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");

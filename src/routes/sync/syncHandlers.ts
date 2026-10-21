@@ -1,9 +1,11 @@
+import type { Context } from "hono";
+
 import { withAutoRefreshedBinding } from "@/routes/binding/credentials";
 import { requireUser } from "@/routes/binding/helpers";
-import type { AppContext } from "@/routes/binding/types";
 import { getOfficialMarks, officialMarkedPointIds } from "@/services/sync/officialMarks";
+import type { AppEnv } from "@/types/app";
 
-export async function handleOfficialMarks(c: AppContext) {
+export async function handleOfficialMarks(c: Context<AppEnv>) {
   const user = requireUser(c);
   return withAutoRefreshedBinding(c, user.uid, async (binding) => {
     const result = await getOfficialMarks(binding);

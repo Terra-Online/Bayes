@@ -1,3 +1,5 @@
+import type { Context } from "hono";
+
 import {
   isEndfieldCredentialErrorCode,
   isEndfieldCredentialExpiredErrorCode,
@@ -18,7 +20,6 @@ import {
   refreshBindingCredentials,
   withAutoRefreshedBinding,
 } from "@/routes/binding/credentials";
-import type { AppContext } from "@/routes/binding/types";
 import type { DecryptedBinding } from "@/services/binding/types";
 import {
   getPositionCacheKey,
@@ -29,6 +30,7 @@ import {
 } from "@/services/locator/cache";
 import { positionReconnectDelay } from "@/services/locator/reconnect";
 import { issueLocatorSocketTicket, verifyLocatorSocketTicket } from "@/services/locator/ticket";
+import type { AppEnv } from "@/types/app";
 
 import { serializeLocatorError, shouldIncludeBinding } from "./helpers";
 import { refreshPositionCache } from "./positionCache";
@@ -68,7 +70,7 @@ function classifyClientClose(event: CloseEvent): PositionStreamCloseReason {
 }
 
 async function resolvePositionBinding(
-  c: AppContext,
+  c: Context<AppEnv>,
   ticketUid?: string,
 ): Promise<{ uid: string; binding: DecryptedBinding }> {
   if (ticketUid) {
@@ -96,12 +98,12 @@ async function resolvePositionBinding(
   return { uid: identity.uid, binding };
 }
 
-function schedulePositionRefresh(c: AppContext, key: string, binding: DecryptedBinding): void {
+function schedulePositionRefresh(c: Context<AppEnv>, key: string, binding: DecryptedBinding): void {
   const refresh = refreshPositionCache(c, key, binding).catch(() => undefined);
   c.executionCtx.waitUntil(refresh);
 }
 
-export async function handleEndfieldPositionSocket(c: AppContext) {
+export async function handleEndfieldPositionSocket(c: Context<AppEnv>) {
   if (c.req.header("upgrade")?.toLowerCase() !== "websocket") {
     throw new ApiError(426, "WEBSOCKET_REQUIRED", "Use a WebSocket connection for this endpoint.");
   }
@@ -461,7 +463,7 @@ export async function handleEndfieldPositionSocket(c: AppContext) {
   });
 }
 
-export async function handleEndfieldPosition(c: AppContext) {
+export async function handleEndfieldPosition(c: Context<AppEnv>) {
   const resolved = await resolvePositionBinding(c);
   const includeBinding = shouldIncludeBinding(c);
   const includeSocketTicket = c.req.query("socket_ticket") === "1";

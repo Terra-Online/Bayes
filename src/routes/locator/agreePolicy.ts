@@ -1,3 +1,5 @@
+import type { Context } from "hono";
+
 import { decryptSecret } from "@/lib/crypto";
 import { agreePolicy } from "@/lib/endfieldClient/mapClient";
 import { ApiError } from "@/lib/errors";
@@ -8,10 +10,10 @@ import {
 } from "@/repositories/binding/repository";
 import { getCredentialSecret } from "@/routes/binding/credentials";
 import { requireUser } from "@/routes/binding/helpers";
-import type { AppContext } from "@/routes/binding/types";
 import { agreeSchema } from "@/routes/schema/locator";
+import type { AppEnv } from "@/types/app";
 
-export async function handleAgree(c: AppContext) {
+export async function handleAgree(c: Context<AppEnv>) {
   const user = requireUser(c);
   const binding = await getBinding(c.env.DB, user.uid);
   if (!binding) {
