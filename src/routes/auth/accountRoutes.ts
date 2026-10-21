@@ -22,94 +22,89 @@ function publicProvider(providerId: string): string {
 export function createRoutes(
   deps: { forwardToAuthJsonPath: ForwardToAuthJsonPath } = { forwardToAuthJsonPath },
 ) {
-  const app = new Hono<AppEnv<{ requestId: string }>>();
+  return new Hono<AppEnv<{ requestId: string }>>()
+    .get("/list-accounts", requireAuth, rateLimit("auth"), async (c) => {
+      const user = c.get("authUser");
+      if (!user) {
+        throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
+      }
 
-  app.get("/list-accounts", requireAuth, rateLimit("auth"), async (c) => {
-    const user = c.get("authUser");
-    if (!user) {
-      throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
-    }
-
-    const result = await c.env.DB.prepare(
-      `SELECT providerId, createdAt
+      const result = await c.env.DB.prepare(
+        `SELECT providerId, createdAt
        FROM auth_accounts
        WHERE userId = ?1
        ORDER BY createdAt ASC, providerId ASC`,
-    )
-      .bind(user.uid)
-      .all<AccountRow>();
+      )
+        .bind(user.uid)
+        .all<AccountRow>();
 
-    const accounts = (result.results ?? []).map((account) => ({
-      provider: publicProvider(account.providerId),
-      linkedAt: account.createdAt,
-      verified: account.providerId === "credential" ? true : undefined,
-    }));
-    const uniqueProviders = new Set(accounts.map((account) => account.provider));
+      const accounts = (result.results ?? []).map((account) => ({
+        provider: publicProvider(account.providerId),
+        linkedAt: account.createdAt,
+        verified: account.providerId === "credential" ? true : undefined,
+      }));
+      const uniqueProviders = new Set(accounts.map((account) => account.provider));
 
-    const response = c.json({
-      accounts: accounts.map((account) => ({
-        ...account,
-        unlinkable: uniqueProviders.size > 1,
-      })),
+      const response = c.json({
+        accounts: accounts.map((account) => ({
+          ...account,
+          unlinkable: uniqueProviders.size > 1,
+        })),
+      });
+      response.headers.set("Cache-Control", "private, no-store");
+      return response;
+    })
+    .post("/link-social", requireAuth, rateLimit("auth"), async (c) => {
+      const parsed = linkAccountSchema.safeParse(await c.req.json().catch(() => null));
+      if (!parsed.success) {
+        throw new ApiError(
+          422,
+          "VALIDATION_ERROR",
+          "Invalid account link payload.",
+          parsed.error.flatten(),
+        );
+      }
+
+      const body = applyDefaultSocialCallbackUrls(c, {
+        ...parsed.data,
+        disableRedirect: parsed.data.disableRedirect ?? true,
+      });
+      return deps.forwardToAuthJsonPath(c, "/link-social", body);
+    })
+    .post("/unlink-account", requireAuth, rateLimit("auth"), async (c) => {
+      const parsed = unlinkAccountSchema.safeParse(await c.req.json().catch(() => null));
+      if (!parsed.success) {
+        throw new ApiError(
+          422,
+          "VALIDATION_ERROR",
+          "Invalid account unlink payload.",
+          parsed.error.flatten(),
+        );
+      }
+
+      const user = c.get("authUser");
+      if (!user) {
+        throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
+      }
+      const providerId = parsed.data.provider === "email" ? "credential" : parsed.data.provider;
+      const result = await c.env.DB.prepare(
+        "SELECT id FROM auth_accounts WHERE userId = ?1 AND providerId = ?2 LIMIT 2",
+      )
+        .bind(user.uid, providerId)
+        .all<{ id: string }>();
+      const accounts = result.results ?? [];
+      if (accounts.length === 0) {
+        throw new ApiError(
+          400,
+          "ACCOUNT_NOT_LINKED",
+          "This login method is not linked to your account.",
+        );
+      }
+      if (accounts.length > 1) {
+        throw new ApiError(409, "PROVIDER_CONFLICT", "Multiple accounts use this login method.");
+      }
+      return deps.forwardToAuthJsonPath(c, "/unlink-account", {
+        accountId: accounts[0]!.id,
+      });
     });
-    response.headers.set("Cache-Control", "private, no-store");
-    return response;
-  });
-
-  app.post("/link-social", requireAuth, rateLimit("auth"), async (c) => {
-    const parsed = linkAccountSchema.safeParse(await c.req.json().catch(() => null));
-    if (!parsed.success) {
-      throw new ApiError(
-        422,
-        "VALIDATION_ERROR",
-        "Invalid account link payload.",
-        parsed.error.flatten(),
-      );
-    }
-
-    const body = applyDefaultSocialCallbackUrls(c, {
-      ...parsed.data,
-      disableRedirect: parsed.data.disableRedirect ?? true,
-    });
-    return deps.forwardToAuthJsonPath(c, "/link-social", body);
-  });
-
-  app.post("/unlink-account", requireAuth, rateLimit("auth"), async (c) => {
-    const parsed = unlinkAccountSchema.safeParse(await c.req.json().catch(() => null));
-    if (!parsed.success) {
-      throw new ApiError(
-        422,
-        "VALIDATION_ERROR",
-        "Invalid account unlink payload.",
-        parsed.error.flatten(),
-      );
-    }
-
-    const user = c.get("authUser");
-    if (!user) {
-      throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
-    }
-    const providerId = parsed.data.provider === "email" ? "credential" : parsed.data.provider;
-    const result = await c.env.DB.prepare(
-      "SELECT id FROM auth_accounts WHERE userId = ?1 AND providerId = ?2 LIMIT 2",
-    )
-      .bind(user.uid, providerId)
-      .all<{ id: string }>();
-    const accounts = result.results ?? [];
-    if (accounts.length === 0) {
-      throw new ApiError(
-        400,
-        "ACCOUNT_NOT_LINKED",
-        "This login method is not linked to your account.",
-      );
-    }
-    if (accounts.length > 1) {
-      throw new ApiError(409, "PROVIDER_CONFLICT", "Multiple accounts use this login method.");
-    }
-    return deps.forwardToAuthJsonPath(c, "/unlink-account", {
-      accountId: accounts[0]!.id,
-    });
-  });
-
-  return app;
 }

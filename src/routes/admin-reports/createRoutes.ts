@@ -8,19 +8,14 @@ import { getUserRegistrationReport } from "@/repositories/report/user-registrati
 import type { AppEnv } from "@/types/app";
 
 export function createRoutes() {
-  const app = new Hono<AppEnv>();
-
-  app.get("/registrations", requireAuth, requireRole(["a"]), rateLimit("auth"), async (c) => {
-    return c.json(await getUserRegistrationReport(c.env.DB));
-  });
-
-  app.get("/translations", requireAuth, requireRole(["a"]), rateLimit("auth"), async (c) => {
-    return c.json(await getTranslationReport(c.env.DB));
-  });
-
-  app.get("/ugc-likes", requireAuth, requireRole(["a"]), rateLimit("auth"), async (c) => {
-    return c.json(await getUgcLikeReport(c.env.DB));
-  });
-
-  return app;
+  return new Hono<AppEnv>()
+    .get("/registrations", requireAuth, requireRole(["a"]), rateLimit("auth"), async (c) => {
+      return c.json(await getUserRegistrationReport(c.env.DB));
+    })
+    .get("/translations", requireAuth, requireRole(["a"]), rateLimit("auth"), async (c) => {
+      return c.json(await getTranslationReport(c.env.DB));
+    })
+    .get("/ugc-likes", requireAuth, requireRole(["a"]), rateLimit("auth"), async (c) => {
+      return c.json(await getUgcLikeReport(c.env.DB));
+    });
 }

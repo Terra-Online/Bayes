@@ -84,116 +84,112 @@ function mapProfileUpdateError(error: unknown): never {
 }
 
 export function createRoutes() {
-  const app = new Hono<AppEnv<{ requestId: string }>>();
-
-  app.get(
-    "/session",
-    async (c, next) => {
-      await next();
-      c.header("Cache-Control", "private, no-store");
-    },
-    createMiddleware<AppEnv<{ authUser: AuthUser; authSessionMigrating: boolean }>>(
+  return new Hono<AppEnv<{ requestId: string }>>()
+    .get(
+      "/session",
       async (c, next) => {
-        const authHeaders = getRequestAuthHeaders(c.req.raw);
-        if (!hasSessionCredentials(c.env, authHeaders)) {
-          throw new ApiError(401, "SESSION_REQUIRED", "Session is required.");
-        }
-        const auth = createAuth(c.env);
-        const browserSession = resolveBrowserSessionHeaders(auth, authHeaders);
-        const { response: session, headers } = await auth.api.getSession({
-          headers: browserSession.headers,
-          returnHeaders: true,
-        });
-        for (const cookie of headers.getSetCookie()) {
-          c.header("Set-Cookie", cookie, { append: true });
-        }
-        if (!session) {
-          invalidateAuthUserCache(authHeaders, c.env);
-          if (authHeaders.get("authorization")?.trim().toLowerCase().startsWith("bearer ")) {
-            throw new ApiError(401, "TOKEN_EXPIRED", "Token is expired, missing, or invalid.");
+        await next();
+        c.header("Cache-Control", "private, no-store");
+      },
+      createMiddleware<AppEnv<{ authUser: AuthUser; authSessionMigrating: boolean }>>(
+        async (c, next) => {
+          const authHeaders = getRequestAuthHeaders(c.req.raw);
+          if (!hasSessionCredentials(c.env, authHeaders)) {
+            throw new ApiError(401, "SESSION_REQUIRED", "Session is required.");
           }
-          throw new ApiError(401, "SESSION_REQUIRED", "Session is required.");
-        }
-
-        // This fresh, renewing session check also authenticates the middleware.
-        // A cached identity with disableRefresh must never replace it.
-        c.set(
-          "authUser",
-          await resolveAuthUser(c.env, authHeaders, {
-            uid: session.user.id,
-            email: session.user.email,
-            displayName: session.user.name,
-          }),
-        );
-
-        if (browserSession.migrating) {
-          c.header("Set-Cookie", await serializeBrowserSessionCookie(auth, session.session), {
-            append: true,
+          const auth = createAuth(c.env);
+          const browserSession = resolveBrowserSessionHeaders(auth, authHeaders);
+          const { response: session, headers } = await auth.api.getSession({
+            headers: browserSession.headers,
+            returnHeaders: true,
           });
-        } else if (c.req.header("cookie")?.includes("better-auth.")) {
-          for (const cookie of getLegacyCookieExpirations(auth)) {
+          for (const cookie of headers.getSetCookie()) {
             c.header("Set-Cookie", cookie, { append: true });
           }
-        }
-        c.set("authSessionMigrating", browserSession.migrating);
-        await next();
-      },
-    ),
-    rateLimit("auth"),
-    (c) => {
-      const user = c.get("authUser");
-      const response = c.json({
-        user: toSessionUser(user),
-        ...(c.get("authSessionMigrating") ? { requiresCookieConfirmation: true } : {}),
-      });
-      response.headers.set("Cache-Control", "private, no-store");
-      return response;
-    },
-  );
+          if (!session) {
+            invalidateAuthUserCache(authHeaders, c.env);
+            if (authHeaders.get("authorization")?.trim().toLowerCase().startsWith("bearer ")) {
+              throw new ApiError(401, "TOKEN_EXPIRED", "Token is expired, missing, or invalid.");
+            }
+            throw new ApiError(401, "SESSION_REQUIRED", "Session is required.");
+          }
 
-  app.patch("/profile", requireAuth, rateLimit("auth"), async (c) => {
-    const user = c.get("authUser");
-    if (!user) {
-      throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
-    }
+          // This fresh, renewing session check also authenticates the middleware.
+          // A cached identity with disableRefresh must never replace it.
+          c.set(
+            "authUser",
+            await resolveAuthUser(c.env, authHeaders, {
+              uid: session.user.id,
+              email: session.user.email,
+              displayName: session.user.name,
+            }),
+          );
 
-    const parsed = profileUpdateSchema.safeParse(
-      normalizeProfileUpdateBody(await readProfileUpdateBody(c)),
-    );
-    if (!parsed.success) {
-      throw new ApiError(
-        422,
-        "VALIDATION_ERROR",
-        "Invalid profile payload.",
-        parsed.error.flatten(),
-      );
-    }
-
-    try {
-      const updated = await updateUserNickname(c.env.DB, {
-        uid: user.uid,
-        nickname: parsed.data.nickname,
-        avatar: parsed.data.avatar,
-      });
-
-      invalidateAuthUserCache(getRequestAuthHeaders(c.req.raw), c.env);
-
-      return c.json({
-        user: {
-          uid: formatPublicUid(updated.uidNumber, updated.uidSuffix),
-          role: updated.role,
-          karma: updated.karma,
-          avatar: updated.avt,
-          email: updated.email,
-          nickname: updated.nickname,
-          registeredAt: updated.createdAt,
-          needsProfileSetup: !updated.nicknameCustomized,
+          if (browserSession.migrating) {
+            c.header("Set-Cookie", await serializeBrowserSessionCookie(auth, session.session), {
+              append: true,
+            });
+          } else if (c.req.header("cookie")?.includes("better-auth.")) {
+            for (const cookie of getLegacyCookieExpirations(auth)) {
+              c.header("Set-Cookie", cookie, { append: true });
+            }
+          }
+          c.set("authSessionMigrating", browserSession.migrating);
+          await next();
         },
-      });
-    } catch (error) {
-      mapProfileUpdateError(error);
-    }
-  });
+      ),
+      rateLimit("auth"),
+      (c) => {
+        const user = c.get("authUser");
+        const response = c.json({
+          user: toSessionUser(user),
+          ...(c.get("authSessionMigrating") ? { requiresCookieConfirmation: true } : {}),
+        });
+        response.headers.set("Cache-Control", "private, no-store");
+        return response;
+      },
+    )
+    .patch("/profile", requireAuth, rateLimit("auth"), async (c) => {
+      const user = c.get("authUser");
+      if (!user) {
+        throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
+      }
 
-  return app;
+      const parsed = profileUpdateSchema.safeParse(
+        normalizeProfileUpdateBody(await readProfileUpdateBody(c)),
+      );
+      if (!parsed.success) {
+        throw new ApiError(
+          422,
+          "VALIDATION_ERROR",
+          "Invalid profile payload.",
+          parsed.error.flatten(),
+        );
+      }
+
+      try {
+        const updated = await updateUserNickname(c.env.DB, {
+          uid: user.uid,
+          nickname: parsed.data.nickname,
+          avatar: parsed.data.avatar,
+        });
+
+        invalidateAuthUserCache(getRequestAuthHeaders(c.req.raw), c.env);
+
+        return c.json({
+          user: {
+            uid: formatPublicUid(updated.uidNumber, updated.uidSuffix),
+            role: updated.role,
+            karma: updated.karma,
+            avatar: updated.avt,
+            email: updated.email,
+            nickname: updated.nickname,
+            registeredAt: updated.createdAt,
+            needsProfileSetup: !updated.nicknameCustomized,
+          },
+        });
+      } catch (error) {
+        mapProfileUpdateError(error);
+      }
+    });
 }

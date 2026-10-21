@@ -22,9 +22,7 @@ function isProgressLocked(flag: string | undefined): boolean {
 }
 
 export function createRoutes() {
-  const app = new Hono<AppEnv<{ requestId: string }>>();
-
-  app.use("*", async (c, next) => {
+  const app = new Hono<AppEnv<{ requestId: string }>>().use("*", async (c, next) => {
     if (isProgressLocked(c.env.LOCK_PROGRESS_ENDPOINTS)) {
       throw new ApiError(
         503,
@@ -67,21 +65,22 @@ export function createRoutes() {
       return stub.fetch(request);
     });
   }
-  app.post("/manifest", requireAuth, async (c) => {
-    const manifest = await normalizeManifestPayload(await c.req.json().catch(() => null));
-    await saveProgressManifest(c.env, manifest);
-    return jsonResponse({
-      ok: true,
-      manifest: { markerIndexHash: manifest.markerIndexHash },
+  app
+    .post("/manifest", requireAuth, async (c) => {
+      const manifest = await normalizeManifestPayload(await c.req.json().catch(() => null));
+      await saveProgressManifest(c.env, manifest);
+      return jsonResponse({
+        ok: true,
+        manifest: { markerIndexHash: manifest.markerIndexHash },
+      });
+    })
+    .get("/stats", rateLimit("public"), async (c) => {
+      const markerIndexHash = c.req.query("markerIndexHash")?.trim().toLowerCase();
+      if (!markerIndexHash || !isSha256Hex(markerIndexHash)) {
+        throw new ApiError(422, "VALIDATION_ERROR", "markerIndexHash must be a SHA-256 hash.");
+      }
+      return fetchProgressStatsFromWorkersCache(markerIndexHash);
     });
-  });
-  app.get("/stats", rateLimit("public"), async (c) => {
-    const markerIndexHash = c.req.query("markerIndexHash")?.trim().toLowerCase();
-    if (!markerIndexHash || !isSha256Hex(markerIndexHash)) {
-      throw new ApiError(422, "VALIDATION_ERROR", "markerIndexHash must be a SHA-256 hash.");
-    }
-    return fetchProgressStatsFromWorkersCache(markerIndexHash);
-  });
   for (const path of ["state", "sync"] as const) {
     app.on(path === "state" ? "GET" : "POST", `/archive/${path}`, requireAuth, async (c) => {
       const user = c.get("authUser");
@@ -112,7 +111,7 @@ export function createRoutes() {
       );
     });
   }
-  app.post("/archive/manifest", requireAuth, async (c) => {
+  return app.post("/archive/manifest", requireAuth, async (c) => {
     const manifest = await normalizeArchiveManifestPayload(await c.req.json().catch(() => null));
     await saveArchiveProgressManifest(c.env, manifest);
     return jsonResponse({
@@ -120,6 +119,4 @@ export function createRoutes() {
       manifest: { archiveIndexHash: manifest.archiveIndexHash },
     });
   });
-
-  return app;
 }

@@ -79,9 +79,7 @@ export async function createSessionExchangeCode<E extends AppEnv<{ requestId: st
 }
 
 export function createRoutes() {
-  const app = new Hono<AppEnv<{ requestId: string }>>();
-
-  app.post(
+  return new Hono<AppEnv<{ requestId: string }>>().post(
     "/session/exchange",
     async (c, next) => {
       await next();
@@ -194,6 +192,4 @@ export function createRoutes() {
       });
     },
   );
-
-  return app;
 }

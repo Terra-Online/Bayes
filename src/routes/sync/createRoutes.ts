@@ -6,8 +6,7 @@ import { getOfficialMarks, officialMarkedPointIds } from "@/services/sync/offici
 import type { AppEnv } from "@/types/app";
 
 export function createRoutes() {
-  const app = new Hono<AppEnv>().use("/*", requireAuth);
-  app.get("/official", async (c) => {
+  return new Hono<AppEnv>().use("/*", requireAuth).get("/official", async (c) => {
     const user = c.get("authUser");
     return withAutoRefreshedBinding(c, user.uid, async (binding) => {
       const result = await getOfficialMarks(binding);
@@ -29,6 +28,4 @@ export function createRoutes() {
       return response;
     });
   });
-
-  return app;
 }

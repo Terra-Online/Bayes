@@ -10,23 +10,19 @@ import type { AppEnv } from "@/types/app";
 import { forwardToAuthRawRequest } from "./forwarding";
 
 export function createRoutes() {
-  const app = new Hono<AppEnv<{ requestId: string }>>();
-
-  app.post("/sign-out", rateLimit("public"), async (c) => {
-    const response = await forwardToAuthRawRequest(c);
-    if (response.ok) {
-      invalidateAuthUserCache(c.req.raw.headers, c.env);
-      for (const cookie of getLegacyCookieExpirations(createAuth(c.env))) {
-        response.headers.append("Set-Cookie", cookie);
+  return new Hono<AppEnv<{ requestId: string }>>()
+    .post("/sign-out", rateLimit("public"), async (c) => {
+      const response = await forwardToAuthRawRequest(c);
+      if (response.ok) {
+        invalidateAuthUserCache(c.req.raw.headers, c.env);
+        for (const cookie of getLegacyCookieExpirations(createAuth(c.env))) {
+          response.headers.append("Set-Cookie", cookie);
+        }
       }
-    }
-    response.headers.set("Cache-Control", "private, no-store");
-    return response;
-  });
-
-  app.on(["GET", "POST", "OPTIONS"], "/*", async () => {
-    throw new ApiError(404, "NOT_FOUND", "Not found.");
-  });
-
-  return app;
+      response.headers.set("Cache-Control", "private, no-store");
+      return response;
+    })
+    .on(["GET", "POST", "OPTIONS"], "/*", async () => {
+      throw new ApiError(404, "NOT_FOUND", "Not found.");
+    });
 }

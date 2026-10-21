@@ -214,391 +214,376 @@ async function runModeration<E extends AppEnv>(
 }
 
 export function createRoutes() {
-  const app = new Hono<AppEnv>();
+  return new Hono<AppEnv>()
+    .use("*", async (c, next) => {
+      if (isModerationLocked(c.env.LOCK_MODERATION_ENDPOINTS)) {
+        throw new ApiError(
+          503,
+          "MODERATION_TEMPORARILY_DISABLED",
+          "Moderation endpoints are temporarily disabled during stabilization.",
+        );
+      }
+      await next();
+    })
+    .post("/warnings", requireAuth, requireRole(["a"]), rateLimit("auth"), async (c) => {
+      const parsed = warningSchema.safeParse(await c.req.json().catch(() => ({})));
+      if (!parsed.success) {
+        throw new ApiError(
+          422,
+          "VALIDATION_ERROR",
+          "Invalid moderation warning payload.",
+          parsed.error.flatten(),
+        );
+      }
 
-  app.use("*", async (c, next) => {
-    if (isModerationLocked(c.env.LOCK_MODERATION_ENDPOINTS)) {
-      throw new ApiError(
-        503,
-        "MODERATION_TEMPORARILY_DISABLED",
-        "Moderation endpoints are temporarily disabled during stabilization.",
-      );
-    }
-    await next();
-  });
+      const result = await sendModerationWarning(c.env, parsed.data);
+      if (!result) {
+        throw new ApiError(404, "USER_NOT_FOUND", "No user was found for the supplied public UID.");
+      }
 
-  app.post("/warnings", requireAuth, requireRole(["a"]), rateLimit("auth"), async (c) => {
-    const parsed = warningSchema.safeParse(await c.req.json().catch(() => ({})));
-    if (!parsed.success) {
-      throw new ApiError(
-        422,
-        "VALIDATION_ERROR",
-        "Invalid moderation warning payload.",
-        parsed.error.flatten(),
-      );
-    }
-
-    const result = await sendModerationWarning(c.env, parsed.data);
-    if (!result) {
-      throw new ApiError(404, "USER_NOT_FOUND", "No user was found for the supplied public UID.");
-    }
-
-    return c.json({
-      ok: true,
-      publicUid: result.publicUid,
-      provider: result.delivery.provider,
-      messageId: result.delivery.id ?? null,
-    });
-  });
-
-  app.get("/pending", requireAuth, requireRole(["p", "a"]), rateLimit("auth"), async (c) => {
-    const parsed = listSchema.safeParse({
-      status: c.req.query("status"),
-      from: c.req.query("from"),
-      to: c.req.query("to"),
-      limit: c.req.query("limit"),
-    });
-    if (!parsed.success) {
-      throw new ApiError(
-        422,
-        "VALIDATION_ERROR",
-        "Invalid moderation query.",
-        parsed.error.flatten(),
-      );
-    }
-    const fromDate = parsed.data.from ? new Date(parsed.data.from) : null;
-    const toDate = parsed.data.to ? new Date(parsed.data.to) : null;
-    if (fromDate && toDate && fromDate.getTime() > toDate.getTime()) {
-      throw new ApiError(422, "VALIDATION_ERROR", "Invalid moderation query date range.", {
-        from: parsed.data.from,
-        to: parsed.data.to,
+      return c.json({
+        ok: true,
+        publicUid: result.publicUid,
+        provider: result.delivery.provider,
+        messageId: result.delivery.id ?? null,
       });
-    }
+    })
+    .get("/pending", requireAuth, requireRole(["p", "a"]), rateLimit("auth"), async (c) => {
+      const parsed = listSchema.safeParse({
+        status: c.req.query("status"),
+        from: c.req.query("from"),
+        to: c.req.query("to"),
+        limit: c.req.query("limit"),
+      });
+      if (!parsed.success) {
+        throw new ApiError(
+          422,
+          "VALIDATION_ERROR",
+          "Invalid moderation query.",
+          parsed.error.flatten(),
+        );
+      }
+      const fromDate = parsed.data.from ? new Date(parsed.data.from) : null;
+      const toDate = parsed.data.to ? new Date(parsed.data.to) : null;
+      if (fromDate && toDate && fromDate.getTime() > toDate.getTime()) {
+        throw new ApiError(422, "VALIDATION_ERROR", "Invalid moderation query date range.", {
+          from: parsed.data.from,
+          to: parsed.data.to,
+        });
+      }
 
-    const filters = {
-      statuses: parseStatuses(parsed.data.status),
-      createdFrom: fromDate ? toSqlTimestamp(fromDate) : undefined,
-      createdTo: toDate ? toSqlTimestamp(toDate) : undefined,
-    };
-    const limit = parsed.data.limit ?? 1000;
-    const [rows, stats] = await Promise.all([
-      getReviewSubmissions(c.env.DB, {
-        ...filters,
+      const filters = {
+        statuses: parseStatuses(parsed.data.status),
+        createdFrom: fromDate ? toSqlTimestamp(fromDate) : undefined,
+        createdTo: toDate ? toSqlTimestamp(toDate) : undefined,
+      };
+      const limit = parsed.data.limit ?? 1000;
+      const [rows, stats] = await Promise.all([
+        getReviewSubmissions(c.env.DB, {
+          ...filters,
+          limit,
+        }),
+        getReviewSubmissionStats(c.env.DB, filters),
+      ]);
+      return c.json({
+        items: rows,
+        stats,
         limit,
-      }),
-      getReviewSubmissionStats(c.env.DB, filters),
-    ]);
-    return c.json({
-      items: rows,
-      stats,
-      limit,
-    });
-  });
-
-  app.get("/images/coverage", requireAuth, requireRole(["a"]), rateLimit("auth"), async (c) => {
-    const parsed = imageCoverageQuerySchema.safeParse({
-      scope: c.req.query("scope"),
-    });
-    if (!parsed.success) {
-      throw new ApiError(
-        422,
-        "VALIDATION_ERROR",
-        "Invalid image coverage query.",
-        parsed.error.flatten(),
-      );
-    }
-
-    const requestedScope = parsed.data.scope ?? "prod";
-    return c.json(
-      await getImageCoverage(c.env.DB, {
-        scope: requestedScope,
-        imageScope: resolveImageScope("", requestedScope),
-      }),
-    );
-  });
-
-  app.get("/images/orphans", requireAuth, requireRole(["a"]), rateLimit("auth"), async (c) => {
-    const config = getRuntimeConfig(c.env);
-    return c.json(
-      await getOrphanImages({
-        db: c.env.DB,
-        bucket: c.env.UGC_BUCKET,
-        assetBaseUrl: config.ugcAssetBaseUrl,
-      }),
-    );
-  });
-
-  app.get(
-    "/images/duplicates",
-    requireAuth,
-    requireRole(["p", "a"]),
-    rateLimit("auth"),
-    async (c) => {
-      const parsed = duplicateImagesQuerySchema.safeParse({
+      });
+    })
+    .get("/images/coverage", requireAuth, requireRole(["a"]), rateLimit("auth"), async (c) => {
+      const parsed = imageCoverageQuerySchema.safeParse({
         scope: c.req.query("scope"),
-        limit: c.req.query("limit"),
-        offset: c.req.query("offset"),
       });
       if (!parsed.success) {
         throw new ApiError(
           422,
           "VALIDATION_ERROR",
-          "Invalid duplicate image query.",
+          "Invalid image coverage query.",
           parsed.error.flatten(),
         );
       }
 
-      const config = getRuntimeConfig(c.env);
-      const scope = resolveImageScope(config.ugcUploadPathPrefix, parsed.data.scope);
-      const result = await listDuplicateImageMarkers(c.env.DB, {
-        assetBaseUrl: resolvePublicAssetBaseUrl(c.req.url, config.ugcAssetBaseUrl),
-        pathPrefix: scope.pathPrefix,
-        excludePathPrefix: scope.excludePathPrefix,
-        limit: parsed.data.limit ?? 50,
-        offset: parsed.data.offset ?? 0,
-      });
-
-      return c.json({
-        items: result.items,
-        total: result.total,
-        limit: parsed.data.limit ?? 50,
-        offset: parsed.data.offset ?? 0,
-      });
-    },
-  );
-
-  app.get(
-    "/images/duplicates/:markerId",
-    requireAuth,
-    requireRole(["p", "a"]),
-    rateLimit("auth"),
-    async (c) => {
-      const markerId = c.req.param("markerId")?.trim();
-      if (!markerId) {
-        throw new ApiError(422, "VALIDATION_ERROR", "markerId is required.");
-      }
-
-      const parsed = duplicateMarkerImagesQuerySchema.safeParse({
-        scope: c.req.query("scope"),
-        limit: c.req.query("limit"),
-        offset: c.req.query("offset"),
-      });
-      if (!parsed.success) {
-        throw new ApiError(
-          422,
-          "VALIDATION_ERROR",
-          "Invalid duplicate image query.",
-          parsed.error.flatten(),
-        );
-      }
-
-      const config = getRuntimeConfig(c.env);
-      const scope = resolveImageScope(config.ugcUploadPathPrefix, parsed.data.scope);
-      const user = c.get("authUser");
-      const result = await listDuplicateMarkerImages(c.env.DB, {
-        markerId,
-        assetBaseUrl: resolvePublicAssetBaseUrl(c.req.url, config.ugcAssetBaseUrl),
-        pathPrefix: scope.pathPrefix,
-        excludePathPrefix: scope.excludePathPrefix,
-        limit: parsed.data.limit ?? 100,
-        offset: parsed.data.offset ?? 0,
-        viewerUserId: user?.uid,
-      });
-
-      return c.json({
-        markerId,
-        items: result.items,
-        total: result.total,
-        limit: parsed.data.limit ?? 100,
-        offset: parsed.data.offset ?? 0,
-      });
-    },
-  );
-
-  app.patch("/:id/status", requireAuth, requireRole(["p", "a"]), rateLimit("auth"), async (c) => {
-    const submissionId = c.req.param("id");
-    if (!submissionId) {
-      throw new ApiError(422, "VALIDATION_ERROR", "Submission id is required.");
-    }
-
-    const parsed = updateSchema.safeParse(await c.req.json());
-    if (!parsed.success) {
-      throw new ApiError(
-        422,
-        "VALIDATION_ERROR",
-        "Invalid moderation payload.",
-        parsed.error.flatten(),
-      );
-    }
-
-    const current = await getSubmissionById(c.env.DB, submissionId);
-    if (!current) {
-      throw new ApiError(404, "SUBMISSION_NOT_FOUND", "Submission was not found.");
-    }
-    assertStatusTransition(current.status, parsed.data.status);
-
-    const transition = await transitionSubmissionStatusWithNotifications(c.env.DB, {
-      submission: current,
-      status: parsed.data.status,
-      moderationNote: parsed.data.moderationNote,
-      source: "manual_moderation",
-      clearFlags: current.status === "flagged" && parsed.data.status === "active",
-    });
-    if (!transition.updated) {
-      throw new ApiError(
-        409,
-        "MODERATION_CONFLICT",
-        "Submission changed while it was being moderated.",
-      );
-    }
-    if (transition.notifications.length > 0) {
-      c.executionCtx.waitUntil(publishNotificationsCreated(c.env, transition.notifications));
-    }
-    if (
-      current.status !== parsed.data.status &&
-      (parsed.data.status === "active" || parsed.data.status === "pending_audit")
-    ) {
-      c.executionCtx.waitUntil(
-        notifySubmissionModerationResult(c.env, {
-          submission: current,
-          previousStatus: current.status,
-          nextStatus: parsed.data.status,
-          source: "manual_moderation",
+      const requestedScope = parsed.data.scope ?? "prod";
+      return c.json(
+        await getImageCoverage(c.env.DB, {
+          scope: requestedScope,
+          imageScope: resolveImageScope("", requestedScope),
         }),
       );
-    }
-    if (
-      current.status !== "active" &&
-      parsed.data.status === "active" &&
-      current.kind === "image"
-    ) {
+    })
+    .get("/images/orphans", requireAuth, requireRole(["a"]), rateLimit("auth"), async (c) => {
       const config = getRuntimeConfig(c.env);
-      c.executionCtx.waitUntil(prewarmPublicUgcAsset(config.ugcAssetBaseUrl, current.filePath));
-    }
-    c.executionCtx.waitUntil(
-      invalidateUploadCaches({
-        kv: c.env.OEM_KV,
-        kind: current.kind,
-        markerId: current.markerId,
-      }),
-    );
-    if (current.kind === "comment") {
-      if (current.status !== "active" && parsed.data.status === "active") {
+      return c.json(
+        await getOrphanImages({
+          db: c.env.DB,
+          bucket: c.env.UGC_BUCKET,
+          assetBaseUrl: config.ugcAssetBaseUrl,
+        }),
+      );
+    })
+    .get(
+      "/images/duplicates",
+      requireAuth,
+      requireRole(["p", "a"]),
+      rateLimit("auth"),
+      async (c) => {
+        const parsed = duplicateImagesQuerySchema.safeParse({
+          scope: c.req.query("scope"),
+          limit: c.req.query("limit"),
+          offset: c.req.query("offset"),
+        });
+        if (!parsed.success) {
+          throw new ApiError(
+            422,
+            "VALIDATION_ERROR",
+            "Invalid duplicate image query.",
+            parsed.error.flatten(),
+          );
+        }
+
+        const config = getRuntimeConfig(c.env);
+        const scope = resolveImageScope(config.ugcUploadPathPrefix, parsed.data.scope);
+        const result = await listDuplicateImageMarkers(c.env.DB, {
+          assetBaseUrl: resolvePublicAssetBaseUrl(c.req.url, config.ugcAssetBaseUrl),
+          pathPrefix: scope.pathPrefix,
+          excludePathPrefix: scope.excludePathPrefix,
+          limit: parsed.data.limit ?? 50,
+          offset: parsed.data.offset ?? 0,
+        });
+
+        return c.json({
+          items: result.items,
+          total: result.total,
+          limit: parsed.data.limit ?? 50,
+          offset: parsed.data.offset ?? 0,
+        });
+      },
+    )
+    .get(
+      "/images/duplicates/:markerId",
+      requireAuth,
+      requireRole(["p", "a"]),
+      rateLimit("auth"),
+      async (c) => {
+        const markerId = c.req.param("markerId")?.trim();
+        if (!markerId) {
+          throw new ApiError(422, "VALIDATION_ERROR", "markerId is required.");
+        }
+
+        const parsed = duplicateMarkerImagesQuerySchema.safeParse({
+          scope: c.req.query("scope"),
+          limit: c.req.query("limit"),
+          offset: c.req.query("offset"),
+        });
+        if (!parsed.success) {
+          throw new ApiError(
+            422,
+            "VALIDATION_ERROR",
+            "Invalid duplicate image query.",
+            parsed.error.flatten(),
+          );
+        }
+
+        const config = getRuntimeConfig(c.env);
+        const scope = resolveImageScope(config.ugcUploadPathPrefix, parsed.data.scope);
+        const user = c.get("authUser");
+        const result = await listDuplicateMarkerImages(c.env.DB, {
+          markerId,
+          assetBaseUrl: resolvePublicAssetBaseUrl(c.req.url, config.ugcAssetBaseUrl),
+          pathPrefix: scope.pathPrefix,
+          excludePathPrefix: scope.excludePathPrefix,
+          limit: parsed.data.limit ?? 100,
+          offset: parsed.data.offset ?? 0,
+          viewerUserId: user?.uid,
+        });
+
+        return c.json({
+          markerId,
+          items: result.items,
+          total: result.total,
+          limit: parsed.data.limit ?? 100,
+          offset: parsed.data.offset ?? 0,
+        });
+      },
+    )
+    .patch("/:id/status", requireAuth, requireRole(["p", "a"]), rateLimit("auth"), async (c) => {
+      const submissionId = c.req.param("id");
+      if (!submissionId) {
+        throw new ApiError(422, "VALIDATION_ERROR", "Submission id is required.");
+      }
+
+      const parsed = updateSchema.safeParse(await c.req.json());
+      if (!parsed.success) {
+        throw new ApiError(
+          422,
+          "VALIDATION_ERROR",
+          "Invalid moderation payload.",
+          parsed.error.flatten(),
+        );
+      }
+
+      const current = await getSubmissionById(c.env.DB, submissionId);
+      if (!current) {
+        throw new ApiError(404, "SUBMISSION_NOT_FOUND", "Submission was not found.");
+      }
+      assertStatusTransition(current.status, parsed.data.status);
+
+      const transition = await transitionSubmissionStatusWithNotifications(c.env.DB, {
+        submission: current,
+        status: parsed.data.status,
+        moderationNote: parsed.data.moderationNote,
+        source: "manual_moderation",
+        clearFlags: current.status === "flagged" && parsed.data.status === "active",
+      });
+      if (!transition.updated) {
+        throw new ApiError(
+          409,
+          "MODERATION_CONFLICT",
+          "Submission changed while it was being moderated.",
+        );
+      }
+      if (transition.notifications.length > 0) {
+        c.executionCtx.waitUntil(publishNotificationsCreated(c.env, transition.notifications));
+      }
+      if (
+        current.status !== parsed.data.status &&
+        (parsed.data.status === "active" || parsed.data.status === "pending_audit")
+      ) {
         c.executionCtx.waitUntil(
-          enqueueApprovedCommentTransPrewarm(c.env, submissionId, "manual_moderation"),
+          notifySubmissionModerationResult(c.env, {
+            submission: current,
+            previousStatus: current.status,
+            nextStatus: parsed.data.status,
+            source: "manual_moderation",
+          }),
         );
       }
-    }
-    const effectiveModerationNote = parsed.data.moderationNote ?? current.moderationNote;
-    const isPreviouslyApprovedEdit =
-      isCommentEditModerationNote(current.moderationNote) &&
-      current.editOriginalStatus !== "pending_openai" &&
-      current.editOriginalStatus !== "pending_audit";
-    if (
-      !isPreviouslyApprovedEdit &&
-      shouldApplyModerationPoints(current.status, parsed.data.status, effectiveModerationNote)
-    ) {
-      const reviewStatus = parsed.data.status === "active" ? "active" : "stale";
-      const redis = createRedisClient(c.env);
-      const config = getRuntimeConfig(c.env);
-      await applyUserPointsDelta(
-        c.env.DB,
-        current.userId,
-        await getModerationPointsDeltaWithDailyBackoff(redis, {
-          userId: current.userId,
+      if (
+        current.status !== "active" &&
+        parsed.data.status === "active" &&
+        current.kind === "image"
+      ) {
+        const config = getRuntimeConfig(c.env);
+        c.executionCtx.waitUntil(prewarmPublicUgcAsset(config.ugcAssetBaseUrl, current.filePath));
+      }
+      c.executionCtx.waitUntil(
+        invalidateUploadCaches({
+          kv: c.env.OEM_KV,
           kind: current.kind,
-          status: reviewStatus,
-          role: current.submitter?.role,
-          surgeModeEnabled: config.surgeModeEnabled,
-          surgeBackoffMultiplier: config.surgeBackoffMultiplier,
+          markerId: current.markerId,
         }),
       );
-    }
+      if (current.kind === "comment") {
+        if (current.status !== "active" && parsed.data.status === "active") {
+          c.executionCtx.waitUntil(
+            enqueueApprovedCommentTransPrewarm(c.env, submissionId, "manual_moderation"),
+          );
+        }
+      }
+      const effectiveModerationNote = parsed.data.moderationNote ?? current.moderationNote;
+      const isPreviouslyApprovedEdit =
+        isCommentEditModerationNote(current.moderationNote) &&
+        current.editOriginalStatus !== "pending_openai" &&
+        current.editOriginalStatus !== "pending_audit";
+      if (
+        !isPreviouslyApprovedEdit &&
+        shouldApplyModerationPoints(current.status, parsed.data.status, effectiveModerationNote)
+      ) {
+        const reviewStatus = parsed.data.status === "active" ? "active" : "stale";
+        const redis = createRedisClient(c.env);
+        const config = getRuntimeConfig(c.env);
+        await applyUserPointsDelta(
+          c.env.DB,
+          current.userId,
+          await getModerationPointsDeltaWithDailyBackoff(redis, {
+            userId: current.userId,
+            kind: current.kind,
+            status: reviewStatus,
+            role: current.submitter?.role,
+            surgeModeEnabled: config.surgeModeEnabled,
+            surgeBackoffMultiplier: config.surgeBackoffMultiplier,
+          }),
+        );
+      }
 
-    return c.json({ ok: true });
-  });
+      return c.json({ ok: true });
+    })
+    .post("/run", requireAuth, requireRole(["a"]), rateLimit("auth"), async (c) => {
+      const parsed = runSchema.safeParse(await c.req.json().catch(() => ({})));
+      if (!parsed.success) {
+        throw new ApiError(
+          422,
+          "VALIDATION_ERROR",
+          "Invalid moderation run payload.",
+          parsed.error.flatten(),
+        );
+      }
 
-  app.post("/run", requireAuth, requireRole(["a"]), rateLimit("auth"), async (c) => {
-    const parsed = runSchema.safeParse(await c.req.json().catch(() => ({})));
-    if (!parsed.success) {
-      throw new ApiError(
-        422,
-        "VALIDATION_ERROR",
-        "Invalid moderation run payload.",
-        parsed.error.flatten(),
-      );
-    }
+      return c.json(await runModeration(c, parsed.data));
+    })
+    .post("/run-once", requireAuth, requireRole(["a"]), rateLimit("auth"), async (c) => {
+      return c.json(await runModeration(c, { limit: 5 }));
+    })
+    .post("/karma/run-once", requireAuth, requireRole(["a"]), rateLimit("auth"), async (c) => {
+      const redis = createRedisClient(c.env);
+      let result;
+      try {
+        result = await evaluateKarmaBatch(c.env.DB, redis);
+      } catch (error) {
+        throw new ApiError(500, "KARMA_EVALUATION_FAILED", "Karma evaluation failed.", {
+          name: error instanceof Error ? error.name : undefined,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
 
-    return c.json(await runModeration(c, parsed.data));
-  });
-
-  app.post("/run-once", requireAuth, requireRole(["a"]), rateLimit("auth"), async (c) => {
-    return c.json(await runModeration(c, { limit: 5 }));
-  });
-
-  app.post("/karma/run-once", requireAuth, requireRole(["a"]), rateLimit("auth"), async (c) => {
-    const redis = createRedisClient(c.env);
-    let result;
-    try {
-      result = await evaluateKarmaBatch(c.env.DB, redis);
-    } catch (error) {
-      throw new ApiError(500, "KARMA_EVALUATION_FAILED", "Karma evaluation failed.", {
-        name: error instanceof Error ? error.name : undefined,
-        message: error instanceof Error ? error.message : String(error),
+      return c.json({
+        ok: true,
+        ...result,
       });
-    }
+    })
+    .delete("/test-images", requireAuth, requireRole(["a"]), rateLimit("auth"), async (c) => {
+      const config = getRuntimeConfig(c.env);
+      const prefix = config.ugcUploadPathPrefix || "_test";
+      if (prefix !== "_test") {
+        throw new ApiError(
+          409,
+          "TEST_PREFIX_DISABLED",
+          "Test image cleanup is only available for the _test prefix.",
+        );
+      }
 
-    return c.json({
-      ok: true,
-      ...result,
-    });
-  });
+      const archived = await markImageSubmissionsStaleByFilePathPrefix(
+        c.env.DB,
+        prefix,
+        "Archived from the test namespace; object retained by append-only policy.",
+      );
+      c.executionCtx.waitUntil(
+        Promise.all(
+          archived.markerIds.map((markerId) =>
+            invalidateUploadCaches({
+              kv: c.env.OEM_KV,
+              kind: "image",
+              markerId,
+            }),
+          ),
+        ),
+      );
 
-  app.delete("/test-images", requireAuth, requireRole(["a"]), rateLimit("auth"), async (c) => {
-    const config = getRuntimeConfig(c.env);
-    const prefix = config.ugcUploadPathPrefix || "_test";
-    if (prefix !== "_test") {
+      return c.json({
+        ok: true,
+        prefix,
+        archivedRows: archived.changedRows,
+        retainedObjects: true,
+        deletedObjects: 0,
+        deletedRows: 0,
+      });
+    })
+    .delete("/stale", requireAuth, requireRole(["a"]), rateLimit("auth"), async () => {
       throw new ApiError(
         409,
-        "TEST_PREFIX_DISABLED",
-        "Test image cleanup is only available for the _test prefix.",
+        "APPEND_ONLY_RETENTION",
+        "Stale submissions and their R2 objects are retained. Update status instead of deleting records.",
       );
-    }
-
-    const archived = await markImageSubmissionsStaleByFilePathPrefix(
-      c.env.DB,
-      prefix,
-      "Archived from the test namespace; object retained by append-only policy.",
-    );
-    c.executionCtx.waitUntil(
-      Promise.all(
-        archived.markerIds.map((markerId) =>
-          invalidateUploadCaches({
-            kv: c.env.OEM_KV,
-            kind: "image",
-            markerId,
-          }),
-        ),
-      ),
-    );
-
-    return c.json({
-      ok: true,
-      prefix,
-      archivedRows: archived.changedRows,
-      retainedObjects: true,
-      deletedObjects: 0,
-      deletedRows: 0,
     });
-  });
-
-  app.delete("/stale", requireAuth, requireRole(["a"]), rateLimit("auth"), async () => {
-    throw new ApiError(
-      409,
-      "APPEND_ONLY_RETENTION",
-      "Stale submissions and their R2 objects are retained. Update status instead of deleting records.",
-    );
-  });
-
-  return app;
 }

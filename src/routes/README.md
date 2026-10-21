@@ -13,6 +13,7 @@ Define handlers inline where routes are registered. Moving the implementation
 elsewhere does not reduce complexity; keeping it inline also lets Hono infer
 the Variables supplied by middleware.
 
-Middleware declares the Variables it supplies. Retain the app returned by `.use()`
-so Hono infers the accumulated Variables for subsequent handlers. Avoid predeclaring
-a global Variables inventory with no clear middleware owner for each field.
+Register each app's middleware and endpoints with chained Hono calls. Keep `.use()`
+in the chain so Hono infers the Variables supplied by middleware for subsequent
+handlers. Avoid predeclaring a global Variables inventory with no clear middleware
+owner for each field.

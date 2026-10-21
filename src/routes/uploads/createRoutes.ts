@@ -239,140 +239,134 @@ function mergeViewerPendingComments(
 }
 
 export function createRoutes() {
-  const app = new Hono<AppEnv<{ requestId: string }>>();
+  const app = new Hono<AppEnv<{ requestId: string }>>()
+    .post("/images", requireActiveUser, requireUploadsEnabled, rateLimit("upload"), async (c) => {
+      const user = c.get("authUser");
+      if (!user) {
+        throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
+      }
 
-  app.post("/images", requireActiveUser, requireUploadsEnabled, rateLimit("upload"), async (c) => {
-    const user = c.get("authUser");
-    if (!user) {
-      throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
-    }
+      const form = await c.req.parseBody();
+      const file = pickFile(form.file) ?? pickFile(form.image);
+      if (!file) {
+        throw new ApiError(422, "UPLOAD_FILE_MISSING", "Image file is required.");
+      }
 
-    const form = await c.req.parseBody();
-    const file = pickFile(form.file) ?? pickFile(form.image);
-    if (!file) {
-      throw new ApiError(422, "UPLOAD_FILE_MISSING", "Image file is required.");
-    }
-
-    const parsed = imageUploadFieldsSchema.safeParse({
-      markerId: pickString(form.markerId),
-      poiHash: pickString(form.poiHash),
-      poiType: pickString(form.poiType),
-      content: pickString(form.content),
-    });
-    if (!parsed.success) {
-      throw new ApiError(
-        422,
-        "VALIDATION_ERROR",
-        "Invalid upload payload.",
-        parsed.error.flatten(),
-      );
-    }
-
-    const config = getRuntimeConfig(c.env);
-    const normalizedMime = normalizeUploadMime(file);
-    if (
-      !config.allowedUploadMime.has(normalizedMime) ||
-      extensionFromMime(normalizedMime) === "bin"
-    ) {
-      throw new ApiError(422, "MIME_NOT_ALLOWED", "File MIME type is not allowed.");
-    }
-
-    const body = await file.arrayBuffer();
-    if (body.byteLength <= 0 || body.byteLength > config.maxUploadBytes) {
-      throw new ApiError(422, "UPLOAD_SIZE_INVALID", "Upload body size is invalid.", {
-        maxBytes: config.maxUploadBytes,
+      const parsed = imageUploadFieldsSchema.safeParse({
+        markerId: pickString(form.markerId),
+        poiHash: pickString(form.poiHash),
+        poiType: pickString(form.poiType),
+        content: pickString(form.content),
       });
-    }
+      if (!parsed.success) {
+        throw new ApiError(
+          422,
+          "VALIDATION_ERROR",
+          "Invalid upload payload.",
+          parsed.error.flatten(),
+        );
+      }
 
-    const preparedImage = await prepareUploadImageForStorage({
-      body,
-      mimeType: normalizedMime,
-      transcoder: c.env.OEM_IMG_TRANS,
-      signal: c.req.raw.signal,
-      requestId: c.get("requestId"),
-    });
-    if (preparedImage.sizeBytes <= 0 || preparedImage.sizeBytes > config.maxUploadBytes) {
-      throw new ApiError(
-        422,
-        "UPLOAD_SIZE_INVALID",
-        "Upload body size is invalid after processing.",
-        {
+      const config = getRuntimeConfig(c.env);
+      const normalizedMime = normalizeUploadMime(file);
+      if (
+        !config.allowedUploadMime.has(normalizedMime) ||
+        extensionFromMime(normalizedMime) === "bin"
+      ) {
+        throw new ApiError(422, "MIME_NOT_ALLOWED", "File MIME type is not allowed.");
+      }
+
+      const body = await file.arrayBuffer();
+      if (body.byteLength <= 0 || body.byteLength > config.maxUploadBytes) {
+        throw new ApiError(422, "UPLOAD_SIZE_INVALID", "Upload body size is invalid.", {
           maxBytes: config.maxUploadBytes,
+        });
+      }
+
+      const preparedImage = await prepareUploadImageForStorage({
+        body,
+        mimeType: normalizedMime,
+        transcoder: c.env.OEM_IMG_TRANS,
+        signal: c.req.raw.signal,
+        requestId: c.get("requestId"),
+      });
+      if (preparedImage.sizeBytes <= 0 || preparedImage.sizeBytes > config.maxUploadBytes) {
+        throw new ApiError(
+          422,
+          "UPLOAD_SIZE_INVALID",
+          "Upload body size is invalid after processing.",
+          {
+            maxBytes: config.maxUploadBytes,
+          },
+        );
+      }
+
+      const submissionId = nanoid(18);
+      const snapshotId = nanoid(12);
+      const poiType = normalizePathPart(parsed.data.poiType);
+      const poiHash = normalizePathPart(parsed.data.poiHash);
+      const uploadPrefix = resolveUploadPrefix(c.req.raw, config.ugcUploadPathPrefix);
+      const uploadScope = resolveImageScope(c.req.raw, config.ugcUploadPathPrefix, undefined);
+      const objectKey = buildUploadObjectKey({
+        poiType,
+        poiHash,
+        snapshotId,
+        mimeType: preparedImage.mimeType,
+        prefix: uploadPrefix,
+      });
+
+      c.req.raw.signal.throwIfAborted();
+      await c.env.UGC_BUCKET.put(objectKey, preparedImage.body, {
+        httpMetadata: {
+          contentType: preparedImage.mimeType,
+          cacheControl: UGC_PUBLIC_IMAGE_CACHE_CONTROL,
         },
-      );
-    }
+        customMetadata: {
+          sourceMimeType: normalizedMime,
+          convertedToWebp: preparedImage.converted ? "true" : "false",
+        },
+      });
 
-    const submissionId = nanoid(18);
-    const snapshotId = nanoid(12);
-    const poiType = normalizePathPart(parsed.data.poiType);
-    const poiHash = normalizePathPart(parsed.data.poiHash);
-    const uploadPrefix = resolveUploadPrefix(c.req.raw, config.ugcUploadPathPrefix);
-    const uploadScope = resolveImageScope(c.req.raw, config.ugcUploadPathPrefix, undefined);
-    const objectKey = buildUploadObjectKey({
-      poiType,
-      poiHash,
-      snapshotId,
-      mimeType: preparedImage.mimeType,
-      prefix: uploadPrefix,
-    });
-
-    c.req.raw.signal.throwIfAborted();
-    await c.env.UGC_BUCKET.put(objectKey, preparedImage.body, {
-      httpMetadata: {
-        contentType: preparedImage.mimeType,
-        cacheControl: UGC_PUBLIC_IMAGE_CACHE_CONTROL,
-      },
-      customMetadata: {
-        sourceMimeType: normalizedMime,
-        convertedToWebp: preparedImage.converted ? "true" : "false",
-      },
-    });
-
-    await createPendingSubmission(c.env.DB, {
-      id: submissionId,
-      markerId: parsed.data.markerId,
-      poiHash,
-      poiType,
-      snapshotId,
-      userId: user.uid,
-      content: parsed.data.content,
-      kind: "image",
-      filePath: objectKey,
-      mimeType: preparedImage.mimeType,
-      sizeBytes: preparedImage.sizeBytes,
-      status: "pending_openai",
-    });
-    await enqueueModeration(c.env, submissionId, snapshotId);
-    const duplicatePoi = await getDuplicateImageMarkerSummary(c.env.DB, {
-      markerId: parsed.data.markerId,
-      pathPrefix: uploadScope.pathPrefix,
-      excludePathPrefix: uploadScope.excludePathPrefix,
-    });
-
-    return c.json({
-      ok: true,
-      submission: {
+      await createPendingSubmission(c.env.DB, {
         id: submissionId,
         markerId: parsed.data.markerId,
-        status: "pending_openai",
-        filePath: objectKey,
+        poiHash,
+        poiType,
         snapshotId,
-      },
-      duplicatePoi: duplicatePoi
-        ? {
-            markerId: duplicatePoi.markerId,
-            imageCount: duplicatePoi.imageCount,
-            dashboardPath: `/ugc-review?duplicateMarker=${encodeURIComponent(duplicatePoi.markerId)}`,
-          }
-        : null,
-    });
-  });
-  app.post(
-    "/comments",
-    requireActiveUser,
-    requireUploadsEnabled,
-    rateLimit("upload"),
-    async (c) => {
+        userId: user.uid,
+        content: parsed.data.content,
+        kind: "image",
+        filePath: objectKey,
+        mimeType: preparedImage.mimeType,
+        sizeBytes: preparedImage.sizeBytes,
+        status: "pending_openai",
+      });
+      await enqueueModeration(c.env, submissionId, snapshotId);
+      const duplicatePoi = await getDuplicateImageMarkerSummary(c.env.DB, {
+        markerId: parsed.data.markerId,
+        pathPrefix: uploadScope.pathPrefix,
+        excludePathPrefix: uploadScope.excludePathPrefix,
+      });
+
+      return c.json({
+        ok: true,
+        submission: {
+          id: submissionId,
+          markerId: parsed.data.markerId,
+          status: "pending_openai",
+          filePath: objectKey,
+          snapshotId,
+        },
+        duplicatePoi: duplicatePoi
+          ? {
+              markerId: duplicatePoi.markerId,
+              imageCount: duplicatePoi.imageCount,
+              dashboardPath: `/ugc-review?duplicateMarker=${encodeURIComponent(duplicatePoi.markerId)}`,
+            }
+          : null,
+      });
+    })
+    .post("/comments", requireActiveUser, requireUploadsEnabled, rateLimit("upload"), async (c) => {
       const user = c.get("authUser");
       if (!user) {
         throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
@@ -451,145 +445,162 @@ export function createRoutes() {
           snapshotId,
         },
       });
-    },
-  );
-  app.post("/comments/translations", rateLimit("public"), async (c) => {
-    const parsed = commentTranslationSchema.safeParse(await c.req.json().catch(() => null));
-    if (!parsed.success) {
-      throw new ApiError(
-        422,
-        "VALIDATION_ERROR",
-        "Invalid translation payload.",
-        parsed.error.flatten(),
+    })
+    .post("/comments/translations", rateLimit("public"), async (c) => {
+      const parsed = commentTranslationSchema.safeParse(await c.req.json().catch(() => null));
+      if (!parsed.success) {
+        throw new ApiError(
+          422,
+          "VALIDATION_ERROR",
+          "Invalid translation payload.",
+          parsed.error.flatten(),
+        );
+      }
+
+      if (parsed.data.cachedOnly !== true) {
+        await assertActiveUser(c);
+      }
+
+      return c.json(await translateVisibleComments(c.env, parsed.data));
+    })
+    .get("/comments/mine", requireActiveUser, rateLimit("auth"), async (c) => {
+      const user = c.get("authUser");
+      if (!user) {
+        throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
+      }
+
+      const parsed = commentsQuerySchema.safeParse({
+        markerId: c.req.query("markerId"),
+        markerIds: c.req.query("markerIds"),
+        scope: c.req.query("scope"),
+        limit: c.req.query("limit"),
+        replyLimit: c.req.query("replyLimit"),
+        publicOnly: c.req.query("publicOnly") === "1" ? "1" : undefined,
+      });
+      if (!parsed.success) {
+        throw new ApiError(
+          422,
+          "VALIDATION_ERROR",
+          "Invalid comment query.",
+          parsed.error.flatten(),
+        );
+      }
+
+      const ids = requireMarkerIds(parsed.data);
+      const items = await listUserCommentsByMarker(c.env.DB, {
+        userId: user.uid,
+        markerIds: ids,
+        limit: parsed.data.limit ?? 50,
+      });
+
+      const response = c.json({ items });
+      response.headers.set("Cache-Control", "private, no-store");
+      return response;
+    })
+    .get("/comments", rateLimit("public"), async (c) => {
+      const parsed = commentsQuerySchema.safeParse({
+        markerId: c.req.query("markerId"),
+        markerIds: c.req.query("markerIds"),
+        scope: c.req.query("scope"),
+        limit: c.req.query("limit"),
+        replyLimit: c.req.query("replyLimit"),
+        publicOnly: c.req.query("publicOnly") === "1" ? "1" : undefined,
+      });
+      if (!parsed.success) {
+        throw new ApiError(
+          422,
+          "VALIDATION_ERROR",
+          "Invalid comment query.",
+          parsed.error.flatten(),
+        );
+      }
+
+      const ids = requireMarkerIds(parsed.data);
+      const limit = parsed.data.limit ?? 20;
+      const replyLimit = parsed.data.replyLimit ?? 3;
+      const cacheNamespace = resolvePublicCommentCacheNamespace(
+        resolveImageScope(
+          c.req.raw,
+          getUgcReadConfig(c.env).ugcUploadPathPrefix,
+          parsed.data.scope,
+        ),
       );
-    }
+      const publicResponsePromise = readPublicCommentsFromWorkersCache({
+        markerIds: ids,
+        limit,
+        replyLimit,
+        cacheNamespace,
+      });
 
-    if (parsed.data.cachedOnly !== true) {
-      await assertActiveUser(c);
-    }
-
-    return c.json(await translateVisibleComments(c.env, parsed.data));
-  });
-
-  app.get("/comments/mine", requireActiveUser, rateLimit("auth"), async (c) => {
-    const user = c.get("authUser");
-    if (!user) {
-      throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
-    }
-
-    const parsed = commentsQuerySchema.safeParse({
-      markerId: c.req.query("markerId"),
-      markerIds: c.req.query("markerIds"),
-      scope: c.req.query("scope"),
-      limit: c.req.query("limit"),
-      replyLimit: c.req.query("replyLimit"),
-      publicOnly: c.req.query("publicOnly") === "1" ? "1" : undefined,
-    });
-    if (!parsed.success) {
-      throw new ApiError(422, "VALIDATION_ERROR", "Invalid comment query.", parsed.error.flatten());
-    }
-
-    const ids = requireMarkerIds(parsed.data);
-    const items = await listUserCommentsByMarker(c.env.DB, {
-      userId: user.uid,
-      markerIds: ids,
-      limit: parsed.data.limit ?? 50,
-    });
-
-    const response = c.json({ items });
-    response.headers.set("Cache-Control", "private, no-store");
-    return response;
-  });
-  app.get("/comments", rateLimit("public"), async (c) => {
-    const parsed = commentsQuerySchema.safeParse({
-      markerId: c.req.query("markerId"),
-      markerIds: c.req.query("markerIds"),
-      scope: c.req.query("scope"),
-      limit: c.req.query("limit"),
-      replyLimit: c.req.query("replyLimit"),
-      publicOnly: c.req.query("publicOnly") === "1" ? "1" : undefined,
-    });
-    if (!parsed.success) {
-      throw new ApiError(422, "VALIDATION_ERROR", "Invalid comment query.", parsed.error.flatten());
-    }
-
-    const ids = requireMarkerIds(parsed.data);
-    const limit = parsed.data.limit ?? 20;
-    const replyLimit = parsed.data.replyLimit ?? 3;
-    const cacheNamespace = resolvePublicCommentCacheNamespace(
-      resolveImageScope(c.req.raw, getUgcReadConfig(c.env).ugcUploadPathPrefix, parsed.data.scope),
-    );
-    const publicResponsePromise = readPublicCommentsFromWorkersCache({
-      markerIds: ids,
-      limit,
-      replyLimit,
-      cacheNamespace,
-    });
-
-    if (parsed.data.publicOnly === "1" || !hasAuthHeaders(c.req.raw.headers)) {
-      return publicReadResponse(await publicResponsePromise);
-    }
-
-    const [publicResponse, identity] = await Promise.all([
-      publicResponsePromise,
-      getOptionalAuthIdentity(c.env, c.req.raw.headers),
-    ]);
-    if (!identity || publicResponse instanceof Response) {
-      return publicReadResponse(publicResponse);
-    }
-
-    const { payload } = publicResponse;
-    const submissionIds: string[] = [];
-    const collectIds = (comments: PublicSubmissionComment[]): void => {
-      for (const comment of comments) {
-        submissionIds.push(comment.id);
-        collectIds(comment.replies);
+      if (parsed.data.publicOnly === "1" || !hasAuthHeaders(c.req.raw.headers)) {
+        return publicReadResponse(await publicResponsePromise);
       }
-    };
-    collectIds(payload.items);
-    const viewerState = await listCommentViewerStateByMarker(c.env.DB, {
-      userId: identity.uid,
-      markerIds: ids,
-      submissionIds,
-      pendingLimit: 200,
-    });
-    const publicComments = applyCommentViewerReactions(payload.items, viewerState.reactions);
-    const items = mergeViewerPendingComments(publicComments, viewerState.pendingComments);
 
-    const response = c.json({ ...payload, items });
-    for (const header of ["x-oem-partial-response", "x-oem-failed-marker-count"]) {
-      const value = publicResponse.headers[header];
-      if (value !== undefined) {
-        response.headers.set(header, value);
+      const [publicResponse, identity] = await Promise.all([
+        publicResponsePromise,
+        getOptionalAuthIdentity(c.env, c.req.raw.headers),
+      ]);
+      if (!identity || publicResponse instanceof Response) {
+        return publicReadResponse(publicResponse);
       }
-    }
-    response.headers.set("Cache-Control", "private, no-store");
-    response.headers.set("x-oem-viewer-overlay", "comment");
-    return response;
-  });
-  // Keep after /comments/mine so "mine" is not treated as a comment ID.
-  app.get("/comments/:id", rateLimit("public"), async (c) => {
-    const parsed = commentQuerySchema.safeParse({
-      markerId: c.req.query("markerId"),
-    });
-    if (!parsed.success) {
-      throw new ApiError(422, "VALIDATION_ERROR", "Invalid comment query.", parsed.error.flatten());
-    }
 
-    const identity = await getOptionalAuthIdentity(c.env, c.req.raw.headers);
-    const item = await getPublicCommentContextById(c.env.DB, {
-      id: c.req.param("id"),
-      markerId: parsed.data.markerId,
-      ...(identity ? { viewerUserId: identity.uid } : {}),
-    });
-    if (!item) {
-      throw new ApiError(404, "COMMENT_NOT_FOUND", "Comment not found.");
-    }
+      const { payload } = publicResponse;
+      const submissionIds: string[] = [];
+      const collectIds = (comments: PublicSubmissionComment[]): void => {
+        for (const comment of comments) {
+          submissionIds.push(comment.id);
+          collectIds(comment.replies);
+        }
+      };
+      collectIds(payload.items);
+      const viewerState = await listCommentViewerStateByMarker(c.env.DB, {
+        userId: identity.uid,
+        markerIds: ids,
+        submissionIds,
+        pendingLimit: 200,
+      });
+      const publicComments = applyCommentViewerReactions(payload.items, viewerState.reactions);
+      const items = mergeViewerPendingComments(publicComments, viewerState.pendingComments);
 
-    const response = c.json({ item });
-    response.headers.set("Cache-Control", "private, no-store");
-    return response;
-  });
+      const response = c.json({ ...payload, items });
+      for (const header of ["x-oem-partial-response", "x-oem-failed-marker-count"]) {
+        const value = publicResponse.headers[header];
+        if (value !== undefined) {
+          response.headers.set(header, value);
+        }
+      }
+      response.headers.set("Cache-Control", "private, no-store");
+      response.headers.set("x-oem-viewer-overlay", "comment");
+      return response;
+    })
+    // Keep after /comments/mine so "mine" is not treated as a comment ID.
+    .get("/comments/:id", rateLimit("public"), async (c) => {
+      const parsed = commentQuerySchema.safeParse({
+        markerId: c.req.query("markerId"),
+      });
+      if (!parsed.success) {
+        throw new ApiError(
+          422,
+          "VALIDATION_ERROR",
+          "Invalid comment query.",
+          parsed.error.flatten(),
+        );
+      }
+
+      const identity = await getOptionalAuthIdentity(c.env, c.req.raw.headers);
+      const item = await getPublicCommentContextById(c.env.DB, {
+        id: c.req.param("id"),
+        markerId: parsed.data.markerId,
+        ...(identity ? { viewerUserId: identity.uid } : {}),
+      });
+      if (!item) {
+        throw new ApiError(404, "COMMENT_NOT_FOUND", "Comment not found.");
+      }
+
+      const response = c.json({ item });
+      response.headers.set("Cache-Control", "private, no-store");
+      return response;
+    });
   for (const [path, value] of [
     ["/comments/:id/upvote", 1],
     ["/comments/:id/downvote", -1],
@@ -625,163 +636,204 @@ export function createRoutes() {
       return c.json({ ok: true, vote: vote.currentVote, previousVote: vote.previousVote, score });
     });
   }
-  app.post(
-    "/comments/:id/flag",
-    requireActiveUser,
-    requireUploadsEnabled,
-    rateLimit("auth"),
-    async (c) => {
-      const { user, submissionId } = requireUserAndSubmissionId(c);
-      const submission = await getSubmissionById(c.env.DB, submissionId);
-      if (!submission || submission.kind !== "comment") {
-        throw new ApiError(404, "SUBMISSION_NOT_FOUND", "Comment submission was not found.");
-      }
-      if (submission.userId === user.uid) {
-        throw new ApiError(403, "CANNOT_FLAG_OWN_SUBMISSION", "You cannot flag your own comment.");
-      }
-      if (submission.status !== "active" && submission.status !== "flagged") {
-        throw new ApiError(
-          409,
-          "INVALID_SUBMISSION_STATUS",
-          "Only active or flagged comments can be flagged.",
-          {
-            status: submission.status,
-          },
-        );
-      }
+  app
+    .post(
+      "/comments/:id/flag",
+      requireActiveUser,
+      requireUploadsEnabled,
+      rateLimit("auth"),
+      async (c) => {
+        const { user, submissionId } = requireUserAndSubmissionId(c);
+        const submission = await getSubmissionById(c.env.DB, submissionId);
+        if (!submission || submission.kind !== "comment") {
+          throw new ApiError(404, "SUBMISSION_NOT_FOUND", "Comment submission was not found.");
+        }
+        if (submission.userId === user.uid) {
+          throw new ApiError(
+            403,
+            "CANNOT_FLAG_OWN_SUBMISSION",
+            "You cannot flag your own comment.",
+          );
+        }
+        if (submission.status !== "active" && submission.status !== "flagged") {
+          throw new ApiError(
+            409,
+            "INVALID_SUBMISSION_STATUS",
+            "Only active or flagged comments can be flagged.",
+            {
+              status: submission.status,
+            },
+          );
+        }
 
-      const created = await createSubmissionFlag(c.env.DB, {
-        submissionId,
-        userId: user.uid,
-      });
-      if (created && submission.status === "active") {
-        await updateSubmissionStatus(c.env.DB, {
-          id: submissionId,
-          status: "flagged",
-          moderationNote: "Flagged by user.",
+        const created = await createSubmissionFlag(c.env.DB, {
+          submissionId,
+          userId: user.uid,
         });
-      }
-      const flagCount = await countSubmissionFlags(c.env.DB, submissionId);
-      invalidateCommentCache(c, submission.markerId);
-      if (created) {
-        c.executionCtx.waitUntil(
-          notifyFlagCreated(c.env, {
-            submission,
-            actor: user,
-            changed: created,
-            flagCount,
-            nextStatus: "flagged",
-          }),
-        );
-      }
+        if (created && submission.status === "active") {
+          await updateSubmissionStatus(c.env.DB, {
+            id: submissionId,
+            status: "flagged",
+            moderationNote: "Flagged by user.",
+          });
+        }
+        const flagCount = await countSubmissionFlags(c.env.DB, submissionId);
+        invalidateCommentCache(c, submission.markerId);
+        if (created) {
+          c.executionCtx.waitUntil(
+            notifyFlagCreated(c.env, {
+              submission,
+              actor: user,
+              changed: created,
+              flagCount,
+              nextStatus: "flagged",
+            }),
+          );
+        }
 
-      return c.json({ ok: true, created, status: "flagged", flagCount });
-    },
-  );
-  app.post(
-    "/comments/:id/unflag",
-    requireActiveUser,
-    requireUploadsEnabled,
-    rateLimit("auth"),
-    async (c) => {
-      const { user, submissionId } = requireUserAndSubmissionId(c);
-      const submission = await getSubmissionById(c.env.DB, submissionId);
-      if (!submission || submission.kind !== "comment") {
-        throw new ApiError(404, "SUBMISSION_NOT_FOUND", "Comment submission was not found.");
-      }
-      if (submission.userId === user.uid) {
-        throw new ApiError(
-          403,
-          "CANNOT_UNFLAG_OWN_SUBMISSION",
-          "You cannot unflag your own comment.",
-        );
-      }
-      if (submission.status !== "active" && submission.status !== "flagged") {
-        throw new ApiError(
-          409,
-          "INVALID_SUBMISSION_STATUS",
-          "Only active or flagged comments can be unflagged.",
-          {
-            status: submission.status,
-          },
-        );
-      }
+        return c.json({ ok: true, created, status: "flagged", flagCount });
+      },
+    )
+    .post(
+      "/comments/:id/unflag",
+      requireActiveUser,
+      requireUploadsEnabled,
+      rateLimit("auth"),
+      async (c) => {
+        const { user, submissionId } = requireUserAndSubmissionId(c);
+        const submission = await getSubmissionById(c.env.DB, submissionId);
+        if (!submission || submission.kind !== "comment") {
+          throw new ApiError(404, "SUBMISSION_NOT_FOUND", "Comment submission was not found.");
+        }
+        if (submission.userId === user.uid) {
+          throw new ApiError(
+            403,
+            "CANNOT_UNFLAG_OWN_SUBMISSION",
+            "You cannot unflag your own comment.",
+          );
+        }
+        if (submission.status !== "active" && submission.status !== "flagged") {
+          throw new ApiError(
+            409,
+            "INVALID_SUBMISSION_STATUS",
+            "Only active or flagged comments can be unflagged.",
+            {
+              status: submission.status,
+            },
+          );
+        }
 
-      const deleted = await deleteSubmissionFlag(c.env.DB, {
-        submissionId,
-        userId: user.uid,
-      });
-      const flagCount = await countSubmissionFlags(c.env.DB, submissionId);
-      const status = flagCount > 0 ? "flagged" : "active";
-      if (submission.status !== status) {
-        await updateSubmissionStatus(c.env.DB, {
-          id: submissionId,
-          status,
-          moderationNote: status === "active" ? "User flag removed." : undefined,
+        const deleted = await deleteSubmissionFlag(c.env.DB, {
+          submissionId,
+          userId: user.uid,
         });
-      }
-      invalidateCommentCache(c, submission.markerId);
-      if (deleted) {
-        c.executionCtx.waitUntil(
-          notifyFlagRemoved(c.env, {
-            submission,
-            actor: user,
-            changed: deleted,
-            flagCount,
-            nextStatus: status,
-          }),
-        );
-      }
+        const flagCount = await countSubmissionFlags(c.env.DB, submissionId);
+        const status = flagCount > 0 ? "flagged" : "active";
+        if (submission.status !== status) {
+          await updateSubmissionStatus(c.env.DB, {
+            id: submissionId,
+            status,
+            moderationNote: status === "active" ? "User flag removed." : undefined,
+          });
+        }
+        invalidateCommentCache(c, submission.markerId);
+        if (deleted) {
+          c.executionCtx.waitUntil(
+            notifyFlagRemoved(c.env, {
+              submission,
+              actor: user,
+              changed: deleted,
+              flagCount,
+              nextStatus: status,
+            }),
+          );
+        }
 
-      return c.json({ ok: true, deleted, status, flagCount });
-    },
-  );
-  app.post(
-    "/comments/:id/edit",
-    requireActiveUser,
-    requireUploadsEnabled,
-    rateLimit("upload"),
-    async (c) => {
-      const { user, submissionId } = requireUserAndSubmissionId(c);
-      const parsed = commentEditSchema.safeParse(await c.req.json().catch(() => null));
-      if (!parsed.success) {
-        throw new ApiError(
-          422,
-          "VALIDATION_ERROR",
-          "Invalid comment edit payload.",
-          parsed.error.flatten(),
-        );
-      }
+        return c.json({ ok: true, deleted, status, flagCount });
+      },
+    )
+    .post(
+      "/comments/:id/edit",
+      requireActiveUser,
+      requireUploadsEnabled,
+      rateLimit("upload"),
+      async (c) => {
+        const { user, submissionId } = requireUserAndSubmissionId(c);
+        const parsed = commentEditSchema.safeParse(await c.req.json().catch(() => null));
+        if (!parsed.success) {
+          throw new ApiError(
+            422,
+            "VALIDATION_ERROR",
+            "Invalid comment edit payload.",
+            parsed.error.flatten(),
+          );
+        }
 
-      const submission = await getSubmissionById(c.env.DB, submissionId);
-      if (!submission || submission.kind !== "comment") {
-        throw new ApiError(404, "SUBMISSION_NOT_FOUND", "Comment submission was not found.");
-      }
-      const isAuthor = submission.userId === user.uid;
-      const isAdmin = user.role === "a" || user.role === "r";
-      if (!isAuthor && !isAdmin) {
-        throw new ApiError(
-          403,
-          "COMMENT_EDIT_OWNER_ONLY",
-          "Only the author or an admin can edit a comment.",
-        );
-      }
-      if (
-        !["pending_openai", "pending_audit", "active", "flagged", "remove_request"].includes(
-          submission.status,
-        )
-      ) {
-        throw new ApiError(
-          409,
-          "INVALID_SUBMISSION_STATUS",
-          "Comment cannot be edited in its current status.",
-          {
-            status: submission.status,
-          },
-        );
-      }
+        const submission = await getSubmissionById(c.env.DB, submissionId);
+        if (!submission || submission.kind !== "comment") {
+          throw new ApiError(404, "SUBMISSION_NOT_FOUND", "Comment submission was not found.");
+        }
+        const isAuthor = submission.userId === user.uid;
+        const isAdmin = user.role === "a" || user.role === "r";
+        if (!isAuthor && !isAdmin) {
+          throw new ApiError(
+            403,
+            "COMMENT_EDIT_OWNER_ONLY",
+            "Only the author or an admin can edit a comment.",
+          );
+        }
+        if (
+          !["pending_openai", "pending_audit", "active", "flagged", "remove_request"].includes(
+            submission.status,
+          )
+        ) {
+          throw new ApiError(
+            409,
+            "INVALID_SUBMISSION_STATUS",
+            "Comment cannot be edited in its current status.",
+            {
+              status: submission.status,
+            },
+          );
+        }
 
-      if (submission.content === parsed.data.content) {
+        if (submission.content === parsed.data.content) {
+          return c.json({
+            ok: true,
+            submission: {
+              id: submission.id,
+              markerId: submission.markerId,
+              parentId: submission.parentId,
+              depth: submission.commentDepth,
+              status: submission.status,
+              snapshotId: submission.snapshotId,
+            },
+          });
+        }
+
+        const snapshotId = nanoid(12);
+        const updated = await updateCommentContentForModeration(c.env.DB, {
+          id: submissionId,
+          content: parsed.data.content,
+          expectedSnapshotId: submission.snapshotId,
+          snapshotId,
+          moderationNote: `${
+            isAuthor
+              ? COMMENT_EDIT_MODERATION_NOTE_PREFIX
+              : COMMENT_ADMIN_EDIT_MODERATION_NOTE_PREFIX
+          } awaiting moderation.`,
+        });
+        if (!updated) {
+          throw new ApiError(
+            409,
+            "COMMENT_EDIT_CONFLICT",
+            "Comment changed while the edit was being submitted.",
+          );
+        }
+        await clearSubmissionFlags(c.env.DB, submissionId);
+        invalidateCommentCache(c, submission.markerId);
+        await enqueueModeration(c.env, submissionId, snapshotId);
+
         return c.json({
           ok: true,
           submission: {
@@ -789,617 +841,590 @@ export function createRoutes() {
             markerId: submission.markerId,
             parentId: submission.parentId,
             depth: submission.commentDepth,
-            status: submission.status,
-            snapshotId: submission.snapshotId,
+            status: "pending_openai",
+            snapshotId,
           },
         });
-      }
-
-      const snapshotId = nanoid(12);
-      const updated = await updateCommentContentForModeration(c.env.DB, {
-        id: submissionId,
-        content: parsed.data.content,
-        expectedSnapshotId: submission.snapshotId,
-        snapshotId,
-        moderationNote: `${
-          isAuthor ? COMMENT_EDIT_MODERATION_NOTE_PREFIX : COMMENT_ADMIN_EDIT_MODERATION_NOTE_PREFIX
-        } awaiting moderation.`,
-      });
-      if (!updated) {
-        throw new ApiError(
-          409,
-          "COMMENT_EDIT_CONFLICT",
-          "Comment changed while the edit was being submitted.",
-        );
-      }
-      await clearSubmissionFlags(c.env.DB, submissionId);
-      invalidateCommentCache(c, submission.markerId);
-      await enqueueModeration(c.env, submissionId, snapshotId);
-
-      return c.json({
-        ok: true,
-        submission: {
-          id: submission.id,
-          markerId: submission.markerId,
-          parentId: submission.parentId,
-          depth: submission.commentDepth,
-          status: "pending_openai",
-          snapshotId,
-        },
-      });
-    },
-  );
-  app.post(
-    "/comments/:id/remove-request",
-    requireActiveUser,
-    requireUploadsEnabled,
-    rateLimit("auth"),
-    async (c) => {
-      const { user, submissionId } = requireUserAndSubmissionId(c);
-      const submission = await getSubmissionById(c.env.DB, submissionId);
-      if (!submission || submission.kind !== "comment") {
-        throw new ApiError(404, "SUBMISSION_NOT_FOUND", "Comment submission was not found.");
-      }
-      if (submission.userId !== user.uid) {
-        throw new ApiError(
-          403,
-          "REMOVE_REQUEST_OWNER_ONLY",
-          "Only the author can request comment removal.",
-        );
-      }
-      if (submission.status !== "active" && submission.status !== "flagged") {
-        throw new ApiError(
-          409,
-          "INVALID_STATUS_TRANSITION",
-          "Only visible comments can receive a remove request.",
-          {
-            from: submission.status,
-            to: "remove_request",
-          },
-        );
-      }
-
-      await updateSubmissionStatus(c.env.DB, {
-        id: submissionId,
-        status: "remove_request",
-        moderationNote: "Removal requested by author.",
-      });
-      invalidateCommentCache(c, submission.markerId);
-      c.executionCtx.waitUntil(
-        notifyRemoveRequestCreated(c.env, {
-          submission,
-          actor: user,
-          nextStatus: "remove_request",
-          source: "remove_request",
-        }),
-      );
-
-      return c.json({ ok: true, status: "remove_request" });
-    },
-  );
-  app.post(
-    "/comments/:id/recall",
-    requireActiveUser,
-    requireUploadsEnabled,
-    rateLimit("auth"),
-    async (c) => {
-      const { user, submissionId } = requireUserAndSubmissionId(c);
-      const submission = await getSubmissionById(c.env.DB, submissionId);
-      if (!submission || submission.kind !== "comment") {
-        throw new ApiError(404, "SUBMISSION_NOT_FOUND", "Comment submission was not found.");
-      }
-      if (submission.userId !== user.uid) {
-        throw new ApiError(403, "RECALL_OWNER_ONLY", "Only the author can recall a comment.");
-      }
-      if (submission.editOriginalContent !== null) {
-        const originalStatus = submission.editOriginalStatus;
-        const status =
-          originalStatus === "pending_openai" || originalStatus === "pending_audit"
-            ? originalStatus
-            : "active";
-        const reverted = await revertCommentEdit(c.env.DB, {
-          id: submissionId,
-          expectedSnapshotId: submission.snapshotId,
-          status,
-          moderationNote: "Comment edit reverted by author.",
-        });
-        if (!reverted) {
+      },
+    )
+    .post(
+      "/comments/:id/remove-request",
+      requireActiveUser,
+      requireUploadsEnabled,
+      rateLimit("auth"),
+      async (c) => {
+        const { user, submissionId } = requireUserAndSubmissionId(c);
+        const submission = await getSubmissionById(c.env.DB, submissionId);
+        if (!submission || submission.kind !== "comment") {
+          throw new ApiError(404, "SUBMISSION_NOT_FOUND", "Comment submission was not found.");
+        }
+        if (submission.userId !== user.uid) {
           throw new ApiError(
-            409,
-            "COMMENT_EDIT_CONFLICT",
-            "Comment changed while the edit was being reverted.",
+            403,
+            "REMOVE_REQUEST_OWNER_ONLY",
+            "Only the author can request comment removal.",
           );
         }
-        invalidateCommentCache(c, submission.markerId);
-        if (status === "pending_openai" && submission.editOriginalSnapshotId) {
-          await enqueueModeration(c.env, submissionId, submission.editOriginalSnapshotId);
+        if (submission.status !== "active" && submission.status !== "flagged") {
+          throw new ApiError(
+            409,
+            "INVALID_STATUS_TRANSITION",
+            "Only visible comments can receive a remove request.",
+            {
+              from: submission.status,
+              to: "remove_request",
+            },
+          );
         }
-        return c.json({
-          ok: true,
-          status,
-          editReverted: true,
-          content: submission.editOriginalContent,
-        });
-      }
-      if (submission.status === "stale") {
-        return c.json({ ok: true, status: "stale" });
-      }
-      if (
-        !["pending_openai", "pending_audit", "active", "flagged", "remove_request"].includes(
-          submission.status,
-        )
-      ) {
-        throw new ApiError(
-          409,
-          "INVALID_STATUS_TRANSITION",
-          "Comment cannot be recalled from its current status.",
-          {
-            from: submission.status,
-            to: "stale",
-          },
-        );
-      }
 
-      const transition = await transitionSubmissionStatusWithNotifications(c.env.DB, {
-        submission,
-        status: "stale",
-        moderationNote: `${RECALL_MODERATION_NOTE_PREFIX} comment withdrawn by author.`,
-        source: "user_action",
-      });
-      if (!transition.updated) {
-        throw new ApiError(409, "RECALL_CONFLICT", "Comment changed while it was being recalled.");
-      }
-      if (transition.notifications.length > 0) {
-        c.executionCtx.waitUntil(publishNotificationsCreated(c.env, transition.notifications));
-      }
-      invalidateCommentCache(c, submission.markerId);
-      return c.json({ ok: true, status: "stale" });
-    },
-  );
-
-  app.get("/public-file/*", rateLimit("public"), async (c) => {
-    const objectKey = parseObjectKeyFromRequestPath(c.req.path);
-    const submission = await getPublicSubmissionByFilePath(c.env.DB, objectKey);
-    if (!submission) {
-      throw new ApiError(404, "IMAGE_NOT_FOUND", "Image file was not found.");
-    }
-
-    const object = await c.env.UGC_BUCKET.get(objectKey);
-    if (!object) {
-      throw new ApiError(404, "IMAGE_NOT_FOUND", "Image file was not found.");
-    }
-
-    const headers = new Headers();
-    object.writeHttpMetadata(headers);
-    headers.set("etag", object.httpEtag);
-    headers.set("Cache-Control", UGC_PUBLIC_IMAGE_CACHE_CONTROL);
-    headers.set(
-      "Content-Type",
-      object.httpMetadata?.contentType ?? submission.mimeType ?? "application/octet-stream",
-    );
-
-    return new Response(object.body, {
-      status: 200,
-      headers,
-    });
-  });
-  app.get("/images/mine", requireActiveUser, rateLimit("auth"), async (c) => {
-    const user = c.get("authUser");
-    if (!user) {
-      throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
-    }
-
-    const parsed = imagesQuerySchema.safeParse({
-      markerId: c.req.query("markerId"),
-      markerIds: c.req.query("markerIds"),
-      scope: c.req.query("scope"),
-      limit: c.req.query("limit"),
-      publicOnly: c.req.query("publicOnly") === "1" ? "1" : undefined,
-    });
-    if (!parsed.success) {
-      throw new ApiError(422, "VALIDATION_ERROR", "Invalid image query.", parsed.error.flatten());
-    }
-
-    const ids = requireMarkerIds(parsed.data, false);
-    const config = getUgcReadConfig(c.env);
-    const scope = resolveImageScope(c.req.raw, config.ugcUploadPathPrefix, parsed.data.scope);
-    const items = await listUserImagesByMarker(c.env.DB, {
-      userId: user.uid,
-      markerIds: ids,
-      assetBaseUrl: resolvePublicAssetBaseUrl(c.req.url, config.ugcAssetBaseUrl),
-      privateAssetBaseUrl: resolvePrivateAssetBaseUrl(c.req.url),
-      pathPrefix: scope.pathPrefix,
-      excludePathPrefix: scope.excludePathPrefix,
-      limit: parsed.data.limit ?? 6,
-    });
-
-    const response = c.json({ items });
-    response.headers.set("Cache-Control", "private, no-store");
-    return response;
-  });
-  // Keep after /images/mine so "mine" is not treated as an image ID.
-  app.get("/images/:id", rateLimit("public"), async (c) => {
-    const parsed = imageQuerySchema.safeParse({
-      markerId: c.req.query("markerId"),
-      scope: c.req.query("scope"),
-    });
-    if (!parsed.success) {
-      throw new ApiError(422, "VALIDATION_ERROR", "Invalid image query.", parsed.error.flatten());
-    }
-
-    const config = getRuntimeConfig(c.env);
-    const scope = resolveImageScope(c.req.raw, config.ugcUploadPathPrefix, parsed.data.scope);
-    const identity = await getOptionalAuthIdentity(c.env, c.req.raw.headers);
-    const item = await getPublicImageById(c.env.DB, {
-      id: c.req.param("id"),
-      markerId: parsed.data.markerId,
-      assetBaseUrl: resolvePublicAssetBaseUrl(c.req.url, config.ugcAssetBaseUrl),
-      ...scope,
-      viewerUserId: identity?.uid,
-    });
-    if (!item) {
-      throw new ApiError(404, "NOT_FOUND", "Image not found.");
-    }
-    const response = c.json({ item });
-    response.headers.set("Cache-Control", "private, no-store");
-    return response;
-  });
-  app.get("/file/*", requireActiveUser, rateLimit("auth"), async (c) => {
-    const user = c.get("authUser");
-    if (!user) {
-      throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
-    }
-    const objectKey = parseObjectKeyFromRequestPath(c.req.path);
-    const submission = await getImageSubmissionByFilePath(c.env.DB, objectKey, user);
-    if (!submission) {
-      throw new ApiError(404, "IMAGE_NOT_FOUND", "Image file was not found.");
-    }
-
-    const object = await c.env.UGC_BUCKET.get(objectKey);
-    if (!object) {
-      throw new ApiError(404, "IMAGE_NOT_FOUND", "Image file was not found.");
-    }
-
-    const headers = new Headers();
-    object.writeHttpMetadata(headers);
-    headers.set("etag", object.httpEtag);
-    headers.set("Cache-Control", "private, max-age=60");
-    headers.set(
-      "Content-Type",
-      object.httpMetadata?.contentType ?? submission.mimeType ?? "application/octet-stream",
-    );
-
-    return new Response(object.body, {
-      status: 200,
-      headers,
-    });
-  });
-  app.post(
-    "/images/:id/upvote",
-    requireActiveUser,
-    requireUploadsEnabled,
-    rateLimit("auth"),
-    async (c) => {
-      const { user, submissionId } = requireUserAndSubmissionId(c);
-      const submission = await getSubmissionById(c.env.DB, submissionId);
-      if (!submission || submission.kind !== "image") {
-        throw new ApiError(404, "SUBMISSION_NOT_FOUND", "Image submission was not found.");
-      }
-      if (!["active", "flagged", "remove_request"].includes(submission.status)) {
-        throw new ApiError(
-          409,
-          "INVALID_SUBMISSION_STATUS",
-          "Only visible images can be upvoted.",
-          {
-            status: submission.status,
-          },
-        );
-      }
-
-      const created = await createSubmissionUpvote(c.env.DB, {
-        submissionId,
-        actor: user,
-      });
-      const upvoteCount = await countSubmissionUpvotes(c.env.DB, submissionId);
-      invalidateImageCache(c, submission.markerId);
-      if (created.notifications.length > 0) {
-        c.executionCtx.waitUntil(publishNotificationsCreated(c.env, created.notifications));
-      }
-
-      return c.json({ ok: true, created: created.created, upvoteCount });
-    },
-  );
-  app.post(
-    "/images/:id/unvote",
-    requireActiveUser,
-    requireUploadsEnabled,
-    rateLimit("auth"),
-    async (c) => {
-      const { user, submissionId } = requireUserAndSubmissionId(c);
-      const submission = await getSubmissionById(c.env.DB, submissionId);
-      if (!submission || submission.kind !== "image") {
-        throw new ApiError(404, "SUBMISSION_NOT_FOUND", "Image submission was not found.");
-      }
-      if (!["active", "flagged", "remove_request"].includes(submission.status)) {
-        throw new ApiError(
-          409,
-          "INVALID_SUBMISSION_STATUS",
-          "Only visible images can be unvoted.",
-          {
-            status: submission.status,
-          },
-        );
-      }
-
-      const deleted = await deleteSubmissionUpvote(c.env.DB, {
-        submissionId,
-        userId: user.uid,
-      });
-      const upvoteCount = await countSubmissionUpvotes(c.env.DB, submissionId);
-      invalidateImageCache(c, submission.markerId);
-
-      return c.json({ ok: true, deleted, upvoteCount });
-    },
-  );
-  app.post(
-    "/images/:id/flag",
-    requireActiveUser,
-    requireUploadsEnabled,
-    rateLimit("auth"),
-    async (c) => {
-      const { user, submissionId } = requireUserAndSubmissionId(c);
-      const submission = await getSubmissionById(c.env.DB, submissionId);
-      if (!submission || submission.kind !== "image") {
-        throw new ApiError(404, "SUBMISSION_NOT_FOUND", "Image submission was not found.");
-      }
-      if (submission.userId === user.uid) {
-        throw new ApiError(403, "CANNOT_FLAG_OWN_SUBMISSION", "You cannot flag your own image.");
-      }
-      if (submission.status !== "active" && submission.status !== "flagged") {
-        throw new ApiError(
-          409,
-          "INVALID_SUBMISSION_STATUS",
-          "Only active or flagged images can be flagged.",
-          {
-            status: submission.status,
-          },
-        );
-      }
-
-      const created = await createSubmissionFlag(c.env.DB, {
-        submissionId,
-        userId: user.uid,
-      });
-      if (created && submission.status === "active") {
         await updateSubmissionStatus(c.env.DB, {
           id: submissionId,
-          status: "flagged",
-          moderationNote: "Flagged by user.",
+          status: "remove_request",
+          moderationNote: "Removal requested by author.",
         });
-      }
-      const flagCount = await countSubmissionFlags(c.env.DB, submissionId);
-      invalidateImageCache(c, submission.markerId);
-      if (created) {
+        invalidateCommentCache(c, submission.markerId);
         c.executionCtx.waitUntil(
-          notifyFlagCreated(c.env, {
+          notifyRemoveRequestCreated(c.env, {
             submission,
             actor: user,
-            changed: created,
-            flagCount,
-            nextStatus: "flagged",
+            nextStatus: "remove_request",
+            source: "remove_request",
           }),
         );
+
+        return c.json({ ok: true, status: "remove_request" });
+      },
+    )
+    .post(
+      "/comments/:id/recall",
+      requireActiveUser,
+      requireUploadsEnabled,
+      rateLimit("auth"),
+      async (c) => {
+        const { user, submissionId } = requireUserAndSubmissionId(c);
+        const submission = await getSubmissionById(c.env.DB, submissionId);
+        if (!submission || submission.kind !== "comment") {
+          throw new ApiError(404, "SUBMISSION_NOT_FOUND", "Comment submission was not found.");
+        }
+        if (submission.userId !== user.uid) {
+          throw new ApiError(403, "RECALL_OWNER_ONLY", "Only the author can recall a comment.");
+        }
+        if (submission.editOriginalContent !== null) {
+          const originalStatus = submission.editOriginalStatus;
+          const status =
+            originalStatus === "pending_openai" || originalStatus === "pending_audit"
+              ? originalStatus
+              : "active";
+          const reverted = await revertCommentEdit(c.env.DB, {
+            id: submissionId,
+            expectedSnapshotId: submission.snapshotId,
+            status,
+            moderationNote: "Comment edit reverted by author.",
+          });
+          if (!reverted) {
+            throw new ApiError(
+              409,
+              "COMMENT_EDIT_CONFLICT",
+              "Comment changed while the edit was being reverted.",
+            );
+          }
+          invalidateCommentCache(c, submission.markerId);
+          if (status === "pending_openai" && submission.editOriginalSnapshotId) {
+            await enqueueModeration(c.env, submissionId, submission.editOriginalSnapshotId);
+          }
+          return c.json({
+            ok: true,
+            status,
+            editReverted: true,
+            content: submission.editOriginalContent,
+          });
+        }
+        if (submission.status === "stale") {
+          return c.json({ ok: true, status: "stale" });
+        }
+        if (
+          !["pending_openai", "pending_audit", "active", "flagged", "remove_request"].includes(
+            submission.status,
+          )
+        ) {
+          throw new ApiError(
+            409,
+            "INVALID_STATUS_TRANSITION",
+            "Comment cannot be recalled from its current status.",
+            {
+              from: submission.status,
+              to: "stale",
+            },
+          );
+        }
+
+        const transition = await transitionSubmissionStatusWithNotifications(c.env.DB, {
+          submission,
+          status: "stale",
+          moderationNote: `${RECALL_MODERATION_NOTE_PREFIX} comment withdrawn by author.`,
+          source: "user_action",
+        });
+        if (!transition.updated) {
+          throw new ApiError(
+            409,
+            "RECALL_CONFLICT",
+            "Comment changed while it was being recalled.",
+          );
+        }
+        if (transition.notifications.length > 0) {
+          c.executionCtx.waitUntil(publishNotificationsCreated(c.env, transition.notifications));
+        }
+        invalidateCommentCache(c, submission.markerId);
+        return c.json({ ok: true, status: "stale" });
+      },
+    )
+    .get("/public-file/*", rateLimit("public"), async (c) => {
+      const objectKey = parseObjectKeyFromRequestPath(c.req.path);
+      const submission = await getPublicSubmissionByFilePath(c.env.DB, objectKey);
+      if (!submission) {
+        throw new ApiError(404, "IMAGE_NOT_FOUND", "Image file was not found.");
       }
 
-      return c.json({ ok: true, created, status: "flagged", flagCount });
-    },
-  );
-  app.post(
-    "/images/:id/unflag",
-    requireActiveUser,
-    requireUploadsEnabled,
-    rateLimit("auth"),
-    async (c) => {
-      const { user, submissionId } = requireUserAndSubmissionId(c);
-      const submission = await getSubmissionById(c.env.DB, submissionId);
-      if (!submission || submission.kind !== "image") {
-        throw new ApiError(404, "SUBMISSION_NOT_FOUND", "Image submission was not found.");
-      }
-      if (submission.userId === user.uid) {
-        throw new ApiError(
-          403,
-          "CANNOT_UNFLAG_OWN_SUBMISSION",
-          "You cannot unflag your own image.",
-        );
-      }
-      if (submission.status !== "active" && submission.status !== "flagged") {
-        throw new ApiError(
-          409,
-          "INVALID_SUBMISSION_STATUS",
-          "Only active or flagged images can be unflagged.",
-          {
-            status: submission.status,
-          },
-        );
+      const object = await c.env.UGC_BUCKET.get(objectKey);
+      if (!object) {
+        throw new ApiError(404, "IMAGE_NOT_FOUND", "Image file was not found.");
       }
 
-      const deleted = await deleteSubmissionFlag(c.env.DB, {
-        submissionId,
-        userId: user.uid,
+      const headers = new Headers();
+      object.writeHttpMetadata(headers);
+      headers.set("etag", object.httpEtag);
+      headers.set("Cache-Control", UGC_PUBLIC_IMAGE_CACHE_CONTROL);
+      headers.set(
+        "Content-Type",
+        object.httpMetadata?.contentType ?? submission.mimeType ?? "application/octet-stream",
+      );
+
+      return new Response(object.body, {
+        status: 200,
+        headers,
       });
-      const flagCount = await countSubmissionFlags(c.env.DB, submissionId);
-      const status = flagCount > 0 ? "flagged" : "active";
-      if (submission.status !== status) {
+    })
+    .get("/images/mine", requireActiveUser, rateLimit("auth"), async (c) => {
+      const user = c.get("authUser");
+      if (!user) {
+        throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
+      }
+
+      const parsed = imagesQuerySchema.safeParse({
+        markerId: c.req.query("markerId"),
+        markerIds: c.req.query("markerIds"),
+        scope: c.req.query("scope"),
+        limit: c.req.query("limit"),
+        publicOnly: c.req.query("publicOnly") === "1" ? "1" : undefined,
+      });
+      if (!parsed.success) {
+        throw new ApiError(422, "VALIDATION_ERROR", "Invalid image query.", parsed.error.flatten());
+      }
+
+      const ids = requireMarkerIds(parsed.data, false);
+      const config = getUgcReadConfig(c.env);
+      const scope = resolveImageScope(c.req.raw, config.ugcUploadPathPrefix, parsed.data.scope);
+      const items = await listUserImagesByMarker(c.env.DB, {
+        userId: user.uid,
+        markerIds: ids,
+        assetBaseUrl: resolvePublicAssetBaseUrl(c.req.url, config.ugcAssetBaseUrl),
+        privateAssetBaseUrl: resolvePrivateAssetBaseUrl(c.req.url),
+        pathPrefix: scope.pathPrefix,
+        excludePathPrefix: scope.excludePathPrefix,
+        limit: parsed.data.limit ?? 6,
+      });
+
+      const response = c.json({ items });
+      response.headers.set("Cache-Control", "private, no-store");
+      return response;
+    })
+    // Keep after /images/mine so "mine" is not treated as an image ID.
+    .get("/images/:id", rateLimit("public"), async (c) => {
+      const parsed = imageQuerySchema.safeParse({
+        markerId: c.req.query("markerId"),
+        scope: c.req.query("scope"),
+      });
+      if (!parsed.success) {
+        throw new ApiError(422, "VALIDATION_ERROR", "Invalid image query.", parsed.error.flatten());
+      }
+
+      const config = getRuntimeConfig(c.env);
+      const scope = resolveImageScope(c.req.raw, config.ugcUploadPathPrefix, parsed.data.scope);
+      const identity = await getOptionalAuthIdentity(c.env, c.req.raw.headers);
+      const item = await getPublicImageById(c.env.DB, {
+        id: c.req.param("id"),
+        markerId: parsed.data.markerId,
+        assetBaseUrl: resolvePublicAssetBaseUrl(c.req.url, config.ugcAssetBaseUrl),
+        ...scope,
+        viewerUserId: identity?.uid,
+      });
+      if (!item) {
+        throw new ApiError(404, "NOT_FOUND", "Image not found.");
+      }
+      const response = c.json({ item });
+      response.headers.set("Cache-Control", "private, no-store");
+      return response;
+    })
+    .get("/file/*", requireActiveUser, rateLimit("auth"), async (c) => {
+      const user = c.get("authUser");
+      if (!user) {
+        throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
+      }
+      const objectKey = parseObjectKeyFromRequestPath(c.req.path);
+      const submission = await getImageSubmissionByFilePath(c.env.DB, objectKey, user);
+      if (!submission) {
+        throw new ApiError(404, "IMAGE_NOT_FOUND", "Image file was not found.");
+      }
+
+      const object = await c.env.UGC_BUCKET.get(objectKey);
+      if (!object) {
+        throw new ApiError(404, "IMAGE_NOT_FOUND", "Image file was not found.");
+      }
+
+      const headers = new Headers();
+      object.writeHttpMetadata(headers);
+      headers.set("etag", object.httpEtag);
+      headers.set("Cache-Control", "private, max-age=60");
+      headers.set(
+        "Content-Type",
+        object.httpMetadata?.contentType ?? submission.mimeType ?? "application/octet-stream",
+      );
+
+      return new Response(object.body, {
+        status: 200,
+        headers,
+      });
+    })
+    .post(
+      "/images/:id/upvote",
+      requireActiveUser,
+      requireUploadsEnabled,
+      rateLimit("auth"),
+      async (c) => {
+        const { user, submissionId } = requireUserAndSubmissionId(c);
+        const submission = await getSubmissionById(c.env.DB, submissionId);
+        if (!submission || submission.kind !== "image") {
+          throw new ApiError(404, "SUBMISSION_NOT_FOUND", "Image submission was not found.");
+        }
+        if (!["active", "flagged", "remove_request"].includes(submission.status)) {
+          throw new ApiError(
+            409,
+            "INVALID_SUBMISSION_STATUS",
+            "Only visible images can be upvoted.",
+            {
+              status: submission.status,
+            },
+          );
+        }
+
+        const created = await createSubmissionUpvote(c.env.DB, {
+          submissionId,
+          actor: user,
+        });
+        const upvoteCount = await countSubmissionUpvotes(c.env.DB, submissionId);
+        invalidateImageCache(c, submission.markerId);
+        if (created.notifications.length > 0) {
+          c.executionCtx.waitUntil(publishNotificationsCreated(c.env, created.notifications));
+        }
+
+        return c.json({ ok: true, created: created.created, upvoteCount });
+      },
+    )
+    .post(
+      "/images/:id/unvote",
+      requireActiveUser,
+      requireUploadsEnabled,
+      rateLimit("auth"),
+      async (c) => {
+        const { user, submissionId } = requireUserAndSubmissionId(c);
+        const submission = await getSubmissionById(c.env.DB, submissionId);
+        if (!submission || submission.kind !== "image") {
+          throw new ApiError(404, "SUBMISSION_NOT_FOUND", "Image submission was not found.");
+        }
+        if (!["active", "flagged", "remove_request"].includes(submission.status)) {
+          throw new ApiError(
+            409,
+            "INVALID_SUBMISSION_STATUS",
+            "Only visible images can be unvoted.",
+            {
+              status: submission.status,
+            },
+          );
+        }
+
+        const deleted = await deleteSubmissionUpvote(c.env.DB, {
+          submissionId,
+          userId: user.uid,
+        });
+        const upvoteCount = await countSubmissionUpvotes(c.env.DB, submissionId);
+        invalidateImageCache(c, submission.markerId);
+
+        return c.json({ ok: true, deleted, upvoteCount });
+      },
+    )
+    .post(
+      "/images/:id/flag",
+      requireActiveUser,
+      requireUploadsEnabled,
+      rateLimit("auth"),
+      async (c) => {
+        const { user, submissionId } = requireUserAndSubmissionId(c);
+        const submission = await getSubmissionById(c.env.DB, submissionId);
+        if (!submission || submission.kind !== "image") {
+          throw new ApiError(404, "SUBMISSION_NOT_FOUND", "Image submission was not found.");
+        }
+        if (submission.userId === user.uid) {
+          throw new ApiError(403, "CANNOT_FLAG_OWN_SUBMISSION", "You cannot flag your own image.");
+        }
+        if (submission.status !== "active" && submission.status !== "flagged") {
+          throw new ApiError(
+            409,
+            "INVALID_SUBMISSION_STATUS",
+            "Only active or flagged images can be flagged.",
+            {
+              status: submission.status,
+            },
+          );
+        }
+
+        const created = await createSubmissionFlag(c.env.DB, {
+          submissionId,
+          userId: user.uid,
+        });
+        if (created && submission.status === "active") {
+          await updateSubmissionStatus(c.env.DB, {
+            id: submissionId,
+            status: "flagged",
+            moderationNote: "Flagged by user.",
+          });
+        }
+        const flagCount = await countSubmissionFlags(c.env.DB, submissionId);
+        invalidateImageCache(c, submission.markerId);
+        if (created) {
+          c.executionCtx.waitUntil(
+            notifyFlagCreated(c.env, {
+              submission,
+              actor: user,
+              changed: created,
+              flagCount,
+              nextStatus: "flagged",
+            }),
+          );
+        }
+
+        return c.json({ ok: true, created, status: "flagged", flagCount });
+      },
+    )
+    .post(
+      "/images/:id/unflag",
+      requireActiveUser,
+      requireUploadsEnabled,
+      rateLimit("auth"),
+      async (c) => {
+        const { user, submissionId } = requireUserAndSubmissionId(c);
+        const submission = await getSubmissionById(c.env.DB, submissionId);
+        if (!submission || submission.kind !== "image") {
+          throw new ApiError(404, "SUBMISSION_NOT_FOUND", "Image submission was not found.");
+        }
+        if (submission.userId === user.uid) {
+          throw new ApiError(
+            403,
+            "CANNOT_UNFLAG_OWN_SUBMISSION",
+            "You cannot unflag your own image.",
+          );
+        }
+        if (submission.status !== "active" && submission.status !== "flagged") {
+          throw new ApiError(
+            409,
+            "INVALID_SUBMISSION_STATUS",
+            "Only active or flagged images can be unflagged.",
+            {
+              status: submission.status,
+            },
+          );
+        }
+
+        const deleted = await deleteSubmissionFlag(c.env.DB, {
+          submissionId,
+          userId: user.uid,
+        });
+        const flagCount = await countSubmissionFlags(c.env.DB, submissionId);
+        const status = flagCount > 0 ? "flagged" : "active";
+        if (submission.status !== status) {
+          await updateSubmissionStatus(c.env.DB, {
+            id: submissionId,
+            status,
+            moderationNote: status === "active" ? "User flag removed." : undefined,
+          });
+          prewarmIfActive(c, status, submission.filePath);
+        }
+        invalidateImageCache(c, submission.markerId);
+        if (deleted) {
+          c.executionCtx.waitUntil(
+            notifyFlagRemoved(c.env, {
+              submission,
+              actor: user,
+              changed: deleted,
+              flagCount,
+              nextStatus: status,
+            }),
+          );
+        }
+
+        return c.json({ ok: true, deleted, status, flagCount });
+      },
+    )
+    .post(
+      "/images/:id/remove-request",
+      requireActiveUser,
+      requireUploadsEnabled,
+      rateLimit("auth"),
+      async (c) => {
+        const { user, submissionId } = requireUserAndSubmissionId(c);
+        const submission = await getSubmissionById(c.env.DB, submissionId);
+        if (!submission) {
+          throw new ApiError(404, "SUBMISSION_NOT_FOUND", "Submission was not found.");
+        }
+        if (submission.userId !== user.uid) {
+          throw new ApiError(
+            403,
+            "REMOVE_REQUEST_OWNER_ONLY",
+            "Only the uploader can request image removal.",
+          );
+        }
+        if (submission.status !== "active" && submission.status !== "flagged") {
+          throw new ApiError(
+            409,
+            "INVALID_STATUS_TRANSITION",
+            "Only visible images can receive a remove request.",
+            {
+              from: submission.status,
+              to: "remove_request",
+            },
+          );
+        }
+
+        await updateSubmissionStatus(c.env.DB, {
+          id: submissionId,
+          status: "remove_request",
+          moderationNote: "Removal requested by uploader.",
+        });
+        invalidateImageCache(c, submission.markerId);
+        c.executionCtx.waitUntil(
+          notifyRemoveRequestCreated(c.env, {
+            submission,
+            actor: user,
+            nextStatus: "remove_request",
+            source: "remove_request",
+          }),
+        );
+
+        return c.json({ ok: true, status: "remove_request" });
+      },
+    )
+    .post(
+      "/images/:id/unrecall",
+      requireActiveUser,
+      requireUploadsEnabled,
+      rateLimit("auth"),
+      async (c) => {
+        const { user, submissionId } = requireUserAndSubmissionId(c);
+        const submission = await getSubmissionById(c.env.DB, submissionId);
+        if (!submission || submission.kind !== "image") {
+          throw new ApiError(404, "SUBMISSION_NOT_FOUND", "Image submission was not found.");
+        }
+        if (submission.userId !== user.uid) {
+          throw new ApiError(
+            403,
+            "RECALL_OWNER_ONLY",
+            "Only the uploader can cancel image recall.",
+          );
+        }
+        if (submission.status !== "remove_request") {
+          throw new ApiError(
+            409,
+            "INVALID_STATUS_TRANSITION",
+            "Only remove requests can be cancelled.",
+            {
+              from: submission.status,
+              to: "active",
+            },
+          );
+        }
+
+        const flagCount = await countSubmissionFlags(c.env.DB, submissionId);
+        const status = flagCount > 0 ? "flagged" : "active";
         await updateSubmissionStatus(c.env.DB, {
           id: submissionId,
           status,
-          moderationNote: status === "active" ? "User flag removed." : undefined,
+          moderationNote: "Removal request cancelled by uploader.",
         });
         prewarmIfActive(c, status, submission.filePath);
-      }
-      invalidateImageCache(c, submission.markerId);
-      if (deleted) {
+        invalidateImageCache(c, submission.markerId);
         c.executionCtx.waitUntil(
-          notifyFlagRemoved(c.env, {
+          notifyRemoveRequestCancelled(c.env, {
             submission,
             actor: user,
-            changed: deleted,
-            flagCount,
             nextStatus: status,
+            flagCount,
           }),
         );
-      }
 
-      return c.json({ ok: true, deleted, status, flagCount });
-    },
-  );
-  app.post(
-    "/images/:id/remove-request",
-    requireActiveUser,
-    requireUploadsEnabled,
-    rateLimit("auth"),
-    async (c) => {
-      const { user, submissionId } = requireUserAndSubmissionId(c);
-      const submission = await getSubmissionById(c.env.DB, submissionId);
-      if (!submission) {
-        throw new ApiError(404, "SUBMISSION_NOT_FOUND", "Submission was not found.");
-      }
-      if (submission.userId !== user.uid) {
-        throw new ApiError(
-          403,
-          "REMOVE_REQUEST_OWNER_ONLY",
-          "Only the uploader can request image removal.",
-        );
-      }
-      if (submission.status !== "active" && submission.status !== "flagged") {
-        throw new ApiError(
-          409,
-          "INVALID_STATUS_TRANSITION",
-          "Only visible images can receive a remove request.",
-          {
-            from: submission.status,
-            to: "remove_request",
-          },
-        );
-      }
+        return c.json({ ok: true, status, flagCount });
+      },
+    )
+    .post(
+      "/images/:id/recall",
+      requireActiveUser,
+      requireUploadsEnabled,
+      rateLimit("auth"),
+      async (c) => {
+        const { user, submissionId } = requireUserAndSubmissionId(c);
+        const submission = await getSubmissionById(c.env.DB, submissionId);
+        if (!submission || submission.kind !== "image") {
+          throw new ApiError(404, "SUBMISSION_NOT_FOUND", "Image submission was not found.");
+        }
+        if (submission.userId !== user.uid) {
+          throw new ApiError(403, "RECALL_OWNER_ONLY", "Only the uploader can recall an image.");
+        }
+        if (submission.status === "stale") {
+          return c.json({ ok: true, status: "stale" });
+        }
+        if (
+          !["pending_openai", "pending_audit", "active", "flagged", "remove_request"].includes(
+            submission.status,
+          )
+        ) {
+          throw new ApiError(
+            409,
+            "INVALID_STATUS_TRANSITION",
+            "Image cannot be recalled from its current status.",
+            {
+              from: submission.status,
+              to: "stale",
+            },
+          );
+        }
 
-      await updateSubmissionStatus(c.env.DB, {
-        id: submissionId,
-        status: "remove_request",
-        moderationNote: "Removal requested by uploader.",
-      });
-      invalidateImageCache(c, submission.markerId);
-      c.executionCtx.waitUntil(
-        notifyRemoveRequestCreated(c.env, {
+        const transition = await transitionSubmissionStatusWithNotifications(c.env.DB, {
           submission,
-          actor: user,
-          nextStatus: "remove_request",
-          source: "remove_request",
-        }),
-      );
-
-      return c.json({ ok: true, status: "remove_request" });
-    },
-  );
-  app.post(
-    "/images/:id/unrecall",
-    requireActiveUser,
-    requireUploadsEnabled,
-    rateLimit("auth"),
-    async (c) => {
-      const { user, submissionId } = requireUserAndSubmissionId(c);
-      const submission = await getSubmissionById(c.env.DB, submissionId);
-      if (!submission || submission.kind !== "image") {
-        throw new ApiError(404, "SUBMISSION_NOT_FOUND", "Image submission was not found.");
-      }
-      if (submission.userId !== user.uid) {
-        throw new ApiError(403, "RECALL_OWNER_ONLY", "Only the uploader can cancel image recall.");
-      }
-      if (submission.status !== "remove_request") {
-        throw new ApiError(
-          409,
-          "INVALID_STATUS_TRANSITION",
-          "Only remove requests can be cancelled.",
-          {
-            from: submission.status,
-            to: "active",
-          },
-        );
-      }
-
-      const flagCount = await countSubmissionFlags(c.env.DB, submissionId);
-      const status = flagCount > 0 ? "flagged" : "active";
-      await updateSubmissionStatus(c.env.DB, {
-        id: submissionId,
-        status,
-        moderationNote: "Removal request cancelled by uploader.",
-      });
-      prewarmIfActive(c, status, submission.filePath);
-      invalidateImageCache(c, submission.markerId);
-      c.executionCtx.waitUntil(
-        notifyRemoveRequestCancelled(c.env, {
-          submission,
-          actor: user,
-          nextStatus: status,
-          flagCount,
-        }),
-      );
-
-      return c.json({ ok: true, status, flagCount });
-    },
-  );
-  app.post(
-    "/images/:id/recall",
-    requireActiveUser,
-    requireUploadsEnabled,
-    rateLimit("auth"),
-    async (c) => {
-      const { user, submissionId } = requireUserAndSubmissionId(c);
-      const submission = await getSubmissionById(c.env.DB, submissionId);
-      if (!submission || submission.kind !== "image") {
-        throw new ApiError(404, "SUBMISSION_NOT_FOUND", "Image submission was not found.");
-      }
-      if (submission.userId !== user.uid) {
-        throw new ApiError(403, "RECALL_OWNER_ONLY", "Only the uploader can recall an image.");
-      }
-      if (submission.status === "stale") {
+          status: "stale",
+          moderationNote: `${RECALL_MODERATION_NOTE_PREFIX} image withdrawn by uploader.`,
+          source: "user_action",
+        });
+        if (!transition.updated) {
+          throw new ApiError(409, "RECALL_CONFLICT", "Image changed while it was being recalled.");
+        }
+        if (transition.notifications.length > 0) {
+          c.executionCtx.waitUntil(publishNotificationsCreated(c.env, transition.notifications));
+        }
+        invalidateImageCache(c, submission.markerId);
         return c.json({ ok: true, status: "stale" });
-      }
-      if (
-        !["pending_openai", "pending_audit", "active", "flagged", "remove_request"].includes(
-          submission.status,
-        )
-      ) {
-        throw new ApiError(
-          409,
-          "INVALID_STATUS_TRANSITION",
-          "Image cannot be recalled from its current status.",
-          {
-            from: submission.status,
-            to: "stale",
-          },
-        );
-      }
-
-      const transition = await transitionSubmissionStatusWithNotifications(c.env.DB, {
-        submission,
-        status: "stale",
-        moderationNote: `${RECALL_MODERATION_NOTE_PREFIX} image withdrawn by uploader.`,
-        source: "user_action",
-      });
-      if (!transition.updated) {
-        throw new ApiError(409, "RECALL_CONFLICT", "Image changed while it was being recalled.");
-      }
-      if (transition.notifications.length > 0) {
-        c.executionCtx.waitUntil(publishNotificationsCreated(c.env, transition.notifications));
-      }
-      invalidateImageCache(c, submission.markerId);
-      return c.json({ ok: true, status: "stale" });
-    },
-  );
+      },
+    );
   const publicImageLimit = rateLimit("public");
   const privateImageLimit = rateLimit("auth");
-  app.get(
+  return app.get(
     "/images",
     createMiddleware<AppEnv<{ authUser?: AuthUser; authUserPromise?: Promise<AuthUser> }>>(
       async (c, next) => {
@@ -1559,6 +1584,4 @@ export function createRoutes() {
       return response;
     },
   );
-
-  return app;
 }

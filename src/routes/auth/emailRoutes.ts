@@ -94,148 +94,143 @@ export function createRoutes(
     forwardToAuthRawRequest: ForwardToAuthRawRequest;
   } = { forwardToAuthJsonPath, forwardToAuthRawRequest },
 ) {
-  const app = new Hono<AppEnv<{ requestId: string }>>();
-
-  app.post("/register", rateLimit("public"), async (c) => {
-    let body: unknown;
-    try {
-      body = await c.req.json();
-    } catch {
-      throw new ApiError(422, "VALIDATION_ERROR", "Request body must be valid JSON.");
-    }
-
-    const parsed = registerWithOtpSchema.safeParse(body);
-    if (!parsed.success) {
-      throw new ApiError(422, "VALIDATION_ERROR", "Invalid payload.", parsed.error.flatten());
-    }
-
-    const email = normalizeEmail(parsed.data.email);
-    if (isDisposableEmail(email)) {
-      throw new ApiError(
-        422,
-        "DISPOSABLE_EMAIL_NOT_ALLOWED",
-        "Disposable email addresses are not allowed for registration.",
-      );
-    }
-
-    const password = parsed.data.password;
-    const otp = parsed.data.otp;
-    const name = parsed.data.name?.trim() || deriveDisplayName(email);
-
-    const signInWithOtpResponse = await deps.forwardToAuthJsonPath(c, "/sign-in/email-otp", {
-      email,
-      otp,
-      name,
-    });
-
-    if (!signInWithOtpResponse.ok) {
-      return signInWithOtpResponse;
-    }
-
-    const signInResult = await readAuthSignInResult(signInWithOtpResponse);
-    if (!signInResult) {
-      throw new ApiError(500, "AUTH_FLOW_FAILED", "Missing session token after OTP sign-in.");
-    }
-
-    const auth = createAuth(c.env);
-    try {
-      await auth.api.setPassword({
-        body: { newPassword: password },
-        headers: new Headers({
-          authorization: `Bearer ${signInResult.token}`,
-        }),
-      });
-    } catch (error) {
-      const code = readCodeFromUnknownError(error);
-      if (code !== "PASSWORD_ALREADY_SET") {
-        console.warn("[auth][register] password setup failed", {
-          requestId: c.get("requestId"),
-          code,
-          error: toSerializableError(error),
-        });
-        await revokeRegistrationSession({
-          env: c.env,
-          sessionToken: signInResult.token,
-        });
-
-        const status =
-          error && typeof error === "object" && "statusCode" in error
-            ? Number(error.statusCode)
-            : undefined;
-        if (status && status >= 400 && status < 500) {
-          throw new ApiError(status, code ?? "SET_PASSWORD_FAILED", "Failed to set password.");
-        }
-        throw toApiError(error);
+  return new Hono<AppEnv<{ requestId: string }>>()
+    .post("/register", rateLimit("public"), async (c) => {
+      let body: unknown;
+      try {
+        body = await c.req.json();
+      } catch {
+        throw new ApiError(422, "VALIDATION_ERROR", "Request body must be valid JSON.");
       }
-    }
 
-    return signInWithOtpResponse;
-  });
+      const parsed = registerWithOtpSchema.safeParse(body);
+      if (!parsed.success) {
+        throw new ApiError(422, "VALIDATION_ERROR", "Invalid payload.", parsed.error.flatten());
+      }
 
-  app.post("/email-otp/send-verification-otp", rateLimit("otp-send"), async (c) => {
-    let body: unknown;
-    try {
-      body = await c.req.json();
-    } catch {
-      throw new ApiError(422, "VALIDATION_ERROR", "Request body must be valid JSON.");
-    }
+      const email = normalizeEmail(parsed.data.email);
+      if (isDisposableEmail(email)) {
+        throw new ApiError(
+          422,
+          "DISPOSABLE_EMAIL_NOT_ALLOWED",
+          "Disposable email addresses are not allowed for registration.",
+        );
+      }
 
-    const parsed = sendTemplateOtpSchema.safeParse(body);
-    if (!parsed.success) {
-      throw new ApiError(422, "VALIDATION_ERROR", "Invalid payload.", parsed.error.flatten());
-    }
+      const password = parsed.data.password;
+      const otp = parsed.data.otp;
+      const name = parsed.data.name?.trim() || deriveDisplayName(email);
 
-    const email = normalizeEmail(parsed.data.email);
-    if (isDisposableEmail(email)) {
-      throw new ApiError(
-        422,
-        "DISPOSABLE_EMAIL_NOT_ALLOWED",
-        "Disposable email addresses are not allowed for registration.",
-      );
-    }
-
-    const locale = parsed.data.locale?.trim();
-    const requestHeaders = locale
-      ? {
-          "x-oem-locale": locale,
-        }
-      : undefined;
-
-    return deps.forwardToAuthJsonPath(
-      c,
-      "/email-otp/send-verification-otp",
-      {
+      const signInWithOtpResponse = await deps.forwardToAuthJsonPath(c, "/sign-in/email-otp", {
         email,
-        type: parsed.data.type,
-      },
-      {
-        headers: requestHeaders,
-      },
-    );
-  });
+        otp,
+        name,
+      });
 
-  app.post("/sign-in/email", rateLimit("public"), async (c) => {
-    let body: unknown;
-    try {
-      body = await c.req.json();
-    } catch {
-      return deps.forwardToAuthRawRequest(c);
-    }
+      if (!signInWithOtpResponse.ok) {
+        return signInWithOtpResponse;
+      }
 
-    if (!body || typeof body !== "object" || Array.isArray(body)) {
-      throw new ApiError(422, "VALIDATION_ERROR", "Invalid payload.");
-    }
+      const signInResult = await readAuthSignInResult(signInWithOtpResponse);
+      if (!signInResult) {
+        throw new ApiError(500, "AUTH_FLOW_FAILED", "Missing session token after OTP sign-in.");
+      }
 
-    const payload = body as Record<string, unknown>;
-    const rawEmail = payload.email;
-    if (typeof rawEmail !== "string") {
+      const auth = createAuth(c.env);
+      try {
+        await auth.api.setPassword({
+          body: { newPassword: password },
+          headers: new Headers({
+            authorization: `Bearer ${signInResult.token}`,
+          }),
+        });
+      } catch (error) {
+        const code = readCodeFromUnknownError(error);
+        if (code !== "PASSWORD_ALREADY_SET") {
+          console.warn("[auth][register] password setup failed", {
+            requestId: c.get("requestId"),
+            code,
+            error: toSerializableError(error),
+          });
+          await revokeRegistrationSession({
+            env: c.env,
+            sessionToken: signInResult.token,
+          });
+
+          const status =
+            error && typeof error === "object" && "statusCode" in error
+              ? Number(error.statusCode)
+              : undefined;
+          if (status && status >= 400 && status < 500) {
+            throw new ApiError(status, code ?? "SET_PASSWORD_FAILED", "Failed to set password.");
+          }
+          throw toApiError(error);
+        }
+      }
+
+      return signInWithOtpResponse;
+    })
+    .post("/email-otp/send-verification-otp", rateLimit("otp-send"), async (c) => {
+      let body: unknown;
+      try {
+        body = await c.req.json();
+      } catch {
+        throw new ApiError(422, "VALIDATION_ERROR", "Request body must be valid JSON.");
+      }
+
+      const parsed = sendTemplateOtpSchema.safeParse(body);
+      if (!parsed.success) {
+        throw new ApiError(422, "VALIDATION_ERROR", "Invalid payload.", parsed.error.flatten());
+      }
+
+      const email = normalizeEmail(parsed.data.email);
+      if (isDisposableEmail(email)) {
+        throw new ApiError(
+          422,
+          "DISPOSABLE_EMAIL_NOT_ALLOWED",
+          "Disposable email addresses are not allowed for registration.",
+        );
+      }
+
+      const locale = parsed.data.locale?.trim();
+      const requestHeaders = locale
+        ? {
+            "x-oem-locale": locale,
+          }
+        : undefined;
+
+      return deps.forwardToAuthJsonPath(
+        c,
+        "/email-otp/send-verification-otp",
+        {
+          email,
+          type: parsed.data.type,
+        },
+        {
+          headers: requestHeaders,
+        },
+      );
+    })
+    .post("/sign-in/email", rateLimit("public"), async (c) => {
+      let body: unknown;
+      try {
+        body = await c.req.json();
+      } catch {
+        return deps.forwardToAuthRawRequest(c);
+      }
+
+      if (!body || typeof body !== "object" || Array.isArray(body)) {
+        throw new ApiError(422, "VALIDATION_ERROR", "Invalid payload.");
+      }
+
+      const payload = body as Record<string, unknown>;
+      const rawEmail = payload.email;
+      if (typeof rawEmail !== "string") {
+        return deps.forwardToAuthJsonPath(c, "/sign-in/email", payload);
+      }
+
+      const email = normalizeEmail(rawEmail);
+      payload.email = email;
       return deps.forwardToAuthJsonPath(c, "/sign-in/email", payload);
-    }
-
-    const email = normalizeEmail(rawEmail);
-    payload.email = email;
-    return deps.forwardToAuthJsonPath(c, "/sign-in/email", payload);
-  });
-
-  return app;
+    });
 }
