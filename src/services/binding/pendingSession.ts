@@ -1,39 +1,50 @@
 import { createToken } from "@/lib/crypto";
 import { ApiError } from "@/lib/errors";
-import { createRedisClient } from "@/lib/redis";
 import { hmacServiceIdentifier } from "@/lib/serviceIdentity";
-import type { AppContext } from "@/routes/binding/types";
+import {
+  savePendingRecord,
+  readPendingRecord,
+  deletePendingRecord,
+  type PendingSessionRedis,
+} from "@/repositories/binding/pendingSession";
 import { pendingSessionSchema } from "@/services/binding/contract/schemas";
 import type { PendingEndfieldSession } from "@/services/binding/types";
-import type { Bindings } from "@/types/app";
+
+export type PendingSessionDependencies = {
+  // Preserve lazy client creation so storage setup happens only when the flow reaches Redis.
+  redis(): PendingSessionRedis;
+  key(uid: string, flowId: string): Promise<string>;
+};
 
 const PENDING_TTL_SECONDS = 10 * 60;
 
-export async function getPendingKey(env: Bindings, uid: string, flowId: string): Promise<string> {
+export async function getPendingKey(
+  env: Parameters<typeof hmacServiceIdentifier>[0],
+  uid: string,
+  flowId: string,
+): Promise<string> {
   const keyId = await hmacServiceIdentifier(env, "binding:endfield:pending", `${uid}:${flowId}`);
   return `binding:endfield:pending:${keyId}`;
 }
 
 export async function savePendingSession(
-  c: AppContext,
+  dependencies: PendingSessionDependencies,
   uid: string,
   session: PendingEndfieldSession,
 ): Promise<string> {
-  const redis = createRedisClient(c.env);
+  const redis = dependencies.redis();
   const flowId = createToken(24);
-  await redis.set(await getPendingKey(c.env, uid, flowId), JSON.stringify(session), {
-    ex: PENDING_TTL_SECONDS,
-  });
+  await savePendingRecord(redis, await dependencies.key(uid, flowId), session, PENDING_TTL_SECONDS);
   return flowId;
 }
 
 export async function readPendingSession(
-  c: AppContext,
+  dependencies: PendingSessionDependencies,
   uid: string,
   flowId: string,
 ): Promise<PendingEndfieldSession> {
-  const redis = createRedisClient(c.env);
-  const raw = await redis.get<unknown>(await getPendingKey(c.env, uid, flowId));
+  const redis = dependencies.redis();
+  const raw = await readPendingRecord(redis, await dependencies.key(uid, flowId));
   if (!raw) {
     throw new ApiError(
       410,
@@ -55,10 +66,10 @@ export async function readPendingSession(
 }
 
 export async function deletePendingSession(
-  c: AppContext,
+  dependencies: PendingSessionDependencies,
   uid: string,
   flowId: string,
 ): Promise<void> {
-  const redis = createRedisClient(c.env);
-  await redis.del(await getPendingKey(c.env, uid, flowId));
+  const redis = dependencies.redis();
+  await deletePendingRecord(redis, await dependencies.key(uid, flowId));
 }
