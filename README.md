@@ -23,8 +23,7 @@ Requirements: Node.js **22.12.0+** and pnpm. Image conversion also needs Docker
 when running the container locally.
 
 Follow [local development](docs/development.md) to install dependencies, copy the
-data templates, configure services, and initialize local D1. That guide also
-covers the fresh-database migration caveat and running without Docker.
+data templates, configure services, and initialize local D1.
 
 The karma template contains zero placeholders. Set your own policy before
 exercising karma behavior; no production policy values are included.
