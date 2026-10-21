@@ -78,12 +78,15 @@ Never commit `.dev.vars`, `.dev.vars.local`, provider keys, or account credentia
 pnpm run db:migrate:local
 ```
 
-### Fresh database migration caveat
+Fresh databases can apply the entire migration chain directly. Migration `0004`
+creates an empty historical compatibility column that `0017` removes; the final
+schema does not contain `ef_pass`. Already-applied migrations are not replayed.
 
-The current migration chain stops at `0017_drop_users_ef_pass.sql` on a new
-empty database with `no such column: "ef_pass"`. Earlier checked-in migrations
-do not create this historical column. Once migrations `0001`–`0016` have
-succeeded, use this compatibility step **only in that fresh local database**,
+### Recover a previously interrupted local migration
+
+If a fresh local database initialized with the older migration files already
+completed `0001`–`0016` and stopped at `0017_drop_users_ef_pass.sql` with
+`no such column: "ef_pass"`, run this compatibility step once in that database,
 then resume the migrations:
 
 ```sh
@@ -91,8 +94,9 @@ pnpm exec wrangler d1 execute DB --local --command 'ALTER TABLE users ADD COLUMN
 pnpm run db:migrate:local
 ```
 
-Migration `0017` removes the temporary column again. Do not apply this workaround
-to a remote or existing installation. If using `--env local`, add `--env local`
+Migration `0017` removes the temporary column again. New databases do not need
+this recovery step. Do not run it on a remote database or an installation that
+has already applied `0017`. If using `--env local`, add `--env local`
 to both the execute and migrations commands so they target the same local state.
 
 ### Start the server

@@ -17,11 +17,6 @@ describe("read path index migration on the repository schema", () => {
     for (const file of readdirSync(migrations)
       .filter((name) => name.endsWith(".sql") && name < "0036")
       .sort()) {
-      // 0017 removes a legacy column installed outside the historical migration
-      // chain. Supply that old-layout fixture; do not modify/replay old migrations.
-      if (file.startsWith("0017")) {
-        database.sqlite.exec("ALTER TABLE users ADD COLUMN ef_pass TEXT");
-      }
       database.sqlite.exec(readFileSync(new URL(file, migrations), "utf8"));
     }
     // Reproduce the observed installation where 0027's vote index is missing.

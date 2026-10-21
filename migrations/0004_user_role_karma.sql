@@ -5,6 +5,9 @@ CREATE TABLE IF NOT EXISTS users_v2 (
   email TEXT NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
   email_verified TEXT NOT NULL DEFAULT 'false',
+  -- Historical compatibility placeholder: 0017 drops this column.
+  -- Do not copy legacy credentials into the rebuilt table.
+  ef_pass TEXT,
   role TEXT NOT NULL DEFAULT 'n' CHECK (role IN ('n', 'p', 'a', 's', 'r')),
   avt INTEGER NOT NULL DEFAULT 0,
   nickname TEXT NOT NULL UNIQUE,
