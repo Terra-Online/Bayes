@@ -1,0 +1,47 @@
+{
+  "levels": [
+    {
+      "karma": 0,
+      "minPoints": 0
+    }
+  ],
+  "uploadRateLimitPerMinute": [
+    {
+      "minKarma": 0,
+      "limit": 0
+    }
+  ],
+  "scoreRules": {
+    "moderation": {
+      "approvedImage": 0,
+      "approvedComment": 0,
+      "rejectedSubmission": 0,
+      "approvedImageDailyBackoff": {
+        "halfRewardAtCount": 0,
+        "counterTtlSeconds": 0
+      },
+      "approvedCommentDailyBackoff": {
+        "halfRewardAtCount": 0,
+        "counterTtlSeconds": 0
+      }
+    }
+  },
+  "evaluation": {
+    "batchSize": 0,
+    "activity": {
+      "maxPassivePoints": 0,
+      "medianDays": 0
+    },
+    "decay": {
+      "inactiveAfterDays": 0,
+      "penaltyAtMedianDays": 0,
+      "medianDays": 0
+    },
+    "quality": {
+      "imageApprovalBaseline": 0,
+      "imageApprovalWeight": 0,
+      "imageVolumeMedian": 0,
+      "minReviewedImages": 0
+    }
+  }
+}

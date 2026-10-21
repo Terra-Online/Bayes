@@ -146,7 +146,6 @@ desktop.ini
 PRD.md
 PROGRESS.md
 UGC.md
-ENDPOINTS.md
 REFRESH.md
 src/lib/endfield-client-ua.json
 src/lib/endfieldClient/deviceProfilePool.json
@@ -167,13 +166,10 @@ src/lib/emailBlacklist.json
 .env.local
 /.idea/
 
-docs/*
+# Temporary reports and evidence belong in direct subdirectories of docs.
+/docs/*/
 !src/services/progress/progressConsistency.test.ts
 src/data
 
 # Archived local performance experiment output (not part of the active test suite)
 benchmark/results/
-
-# Production database snapshots, repair records and telemetry exports stay local
-/docs/performance-evidence-*/production-*.json
-/docs/performance-evidence-*/profile-repair*.json
