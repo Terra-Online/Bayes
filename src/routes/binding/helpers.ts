@@ -1,18 +1,5 @@
 import { ApiError } from "@/lib/errors";
-
-import type { AppContext } from "./types";
-
-export const POSITION_STREAM_RECONNECT_MS = 1_000;
-
-export function positionReconnectDelay(attempt: number, random = Math.random()): number {
-  const ceiling = Math.min(30_000, POSITION_STREAM_RECONNECT_MS * 2 ** Math.min(attempt, 5));
-  return Math.round(ceiling * (0.5 + random * 0.5));
-}
-
-export function shouldIncludeBinding(c: AppContext): boolean {
-  const value = c.req.query("binding") ?? c.req.query("includeBinding");
-  return value === "1" || value === "true";
-}
+import type { AppContext } from "@/routes/binding/types";
 
 export function requireUser(c: AppContext) {
   const user = c.get("authUser");
@@ -20,23 +7,4 @@ export function requireUser(c: AppContext) {
     throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
   }
   return user;
-}
-
-export function serializeLocatorError(error: unknown, requestId?: string) {
-  if (error instanceof ApiError) {
-    return {
-      status: error.status,
-      code: error.code,
-      message: error.message,
-      details: error.details,
-      ...(requestId ? { requestId } : {}),
-    };
-  }
-
-  return {
-    status: 500,
-    code: "LOCATOR_STREAM_ERROR",
-    message: error instanceof Error ? error.message : "Locator stream failed.",
-    ...(requestId ? { requestId } : {}),
-  };
 }

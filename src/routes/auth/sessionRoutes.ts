@@ -1,6 +1,5 @@
 import type { Hono } from "hono";
 import type { Context } from "hono";
-import { z } from "zod";
 
 import {
   getLegacyCookieExpirations,
@@ -18,20 +17,10 @@ import {
 } from "@/middleware/auth";
 import { rateLimit } from "@/middleware/rate-limit";
 import { formatPublicUid, getErrorMessage, updateUserNickname } from "@/repositories/users";
+import { profileUpdateSchema } from "@/routes/schema/auth";
 import type { AppEnv } from "@/types/app";
 
 import { toSessionUser } from "./sessionUser";
-
-const profileUpdateSchema = z.object({
-  nickname: z
-    .string()
-    .trim()
-    .min(2, "Nickname must be at least 2 characters.")
-    .max(26, "Nickname must be 26 characters or fewer.")
-    .regex(/^[A-Za-z0-9_-]+$/, "Nickname can only contain letters, numbers, '_' or '-'."),
-  avatar: z.number().int().min(1).max(99).optional(),
-  avt: z.number().int().min(1).max(99).optional(),
-});
 
 async function readProfileUpdateBody(c: Context<AppEnv>): Promise<unknown> {
   const contentType = c.req.header("content-type")?.toLowerCase() ?? "";

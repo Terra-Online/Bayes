@@ -1,5 +1,4 @@
 import type { Hono } from "hono";
-import { z } from "zod";
 
 import { createAuth } from "@/lib/auth/createAuth";
 import { toSerializableError } from "@/lib/auth/errors";
@@ -7,6 +6,7 @@ import { isDisposableEmail } from "@/lib/email/disposable";
 import { ApiError } from "@/lib/errors";
 import { toApiError } from "@/middleware/error-handler";
 import { rateLimit } from "@/middleware/rate-limit";
+import { sendTemplateOtpSchema, registerWithOtpSchema } from "@/routes/schema/auth";
 import type { AppEnv } from "@/types/app";
 
 import { deriveDisplayName, normalizeEmail } from "./emailUtils";
@@ -16,27 +16,6 @@ type AuthSignInResult = {
   token: string;
   userId: string;
 };
-
-const sendTemplateOtpSchema = z.object({
-  email: z.string().email("Invalid email address."),
-  type: z.literal("sign-in").default("sign-in"),
-  locale: z.string().trim().min(1).optional(),
-});
-
-const registerWithOtpSchema = z.object({
-  email: z.string().email("Invalid email address."),
-  password: z
-    .string()
-    .min(8, "Password must be at least 8 characters.")
-    .max(20, "Password must be 20 characters or fewer.")
-    .regex(/[A-Z]/, "Password must include at least one uppercase letter.")
-    .regex(/^\S+$/, "Password cannot contain spaces."),
-  otp: z
-    .string()
-    .trim()
-    .regex(/^\d{6}$/, "OTP must be 6 digits."),
-  name: z.string().trim().min(1).max(64).optional(),
-});
 
 async function readAuthSignInResult(response: Response): Promise<AuthSignInResult | null> {
   try {

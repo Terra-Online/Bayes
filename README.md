@@ -3,6 +3,13 @@
 Cloudflare Workers + Hono backend for Open Endfield Map. The service provides
 authentication, progress sync, UGC uploads, moderation, and related API routes.
 
+## Coding Standards
+
+When writing or reviewing code, follow [CODING_STANDARDS.md](CODING_STANDARDS.md)
+and the applicable module rules: [routes](src/routes/README.md),
+[public reads](src/publicRead/README.md). Reviews must identify violations with
+their location and the applicable rule.
+
 ## Requirements
 
 - Node.js 22.12.0 or later
@@ -131,13 +138,21 @@ permissions returns `401` or `403`.
 ## Project Layout
 
 - `src/index.ts`: Worker entry point and scheduled/queue handlers
-- `src/app.ts`: Hono application and route mounting
-- `src/routes/`: HTTP route modules
+- `src/app.ts`: Hono initialization, global middleware, and error handling
+- `src/routes/route.ts`: route prefixes and mounting order
+- `src/routes/<topic>/createRoutes.ts`: each topic's Hono routes, with handlers
+  and HTTP tests in the same topic directory
+- `src/routes/schema/`: HTTP input schemas, composed from business contracts
+  where needed
+- `src/routes/notify/liveUpgrade.ts`: raw notification WebSocket upgrade entry,
+  called by the Worker before Hono to preserve the upgrade response
 - `src/services/`: moderation, upload, progress, and notification logic
 - `src/publicRead/`: public read client, cache origin loaders, and shared contracts
 - `src/repositories/`: D1 data access
 - `src/lib/`: authentication, email, configuration, and shared utilities
 - `migrations/`: D1 schema migrations
+
+See [route conventions](src/routes/README.md) for ownership and migration notes.
 
 ## Performance and Runtime Checks
 

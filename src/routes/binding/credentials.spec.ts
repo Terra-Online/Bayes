@@ -1,12 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError } from "@/lib/errors";
+import type { EndfieldBindingRow } from "@/repositories/binding/types";
+import type { AppContext } from "@/routes/binding/types";
+import { deleteLocatorCaches, readDecryptedBindingCache } from "@/services/locator/cache";
 import { SqliteD1 } from "@/test/sqliteD1";
 import type { Bindings } from "@/types/app";
 
 import { getDecryptedBinding, refreshBindingCredentials } from "./credentials";
-import { deleteLocatorCaches, readDecryptedBindingCache } from "./locatorCache";
-import type { AppContext, EndfieldBindingRow } from "./types";
 
 const mocks = vi.hoisted(() => ({ refresh: vi.fn() }));
 vi.mock("@/lib/crypto", () => ({
@@ -24,8 +25,8 @@ vi.mock("@/lib/endfieldClient/deviceProfile", () => ({
   serializeEndfieldDeviceProfile: JSON.stringify,
   SKLAND_DEVICE_PROFILE_USER_AGENT: "agent",
 }));
-vi.mock("./repository", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("./repository")>()),
+vi.mock("@/repositories/binding/repository", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/repositories/binding/repository")>()),
   getBindingWithDeviceProfile: async (db: D1Database, uid: string) => {
     const row = await db
       .prepare("SELECT * FROM endfield_bindings WHERE uid = ?1")

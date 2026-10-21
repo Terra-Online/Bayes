@@ -1,8 +1,9 @@
+import { handleNotificationLiveUpgrade } from "@/routes/notify/liveUpgrade";
+
 import { createApp } from "./app";
 import { runWithAuthRequest } from "./lib/auth/createAuth";
 import { getRuntimeConfig } from "./lib/config";
 import { createRedisClient } from "./lib/redis";
-import { handleNotificationLiveUpgrade } from "./routes/notify";
 import { evaluateKarmaIfDue } from "./services/karma/evaluation";
 import type {
   OemModerationQueueMessage,

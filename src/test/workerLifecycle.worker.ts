@@ -6,8 +6,8 @@ import {
 import type { EndfieldDeviceProfile } from "@/lib/endfieldClient/types";
 import { listCachedPublicCommentsByMarker } from "@/publicRead/origin/markerComments";
 import { listCachedPublicImagesByMarker } from "@/publicRead/origin/markerImages";
-import { updateBindingCredentials } from "@/routes/binding/repository";
-import type { EndfieldBindingRow } from "@/routes/binding/types";
+import { updateBindingCredentials } from "@/repositories/binding/repository";
+import type { EndfieldBindingRow } from "@/repositories/binding/types";
 import { drainUserProgressStatsOutbox } from "@/services/progress/outbox";
 import type { Bindings } from "@/types/app";
 

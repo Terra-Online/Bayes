@@ -1,24 +1,13 @@
 import type { Hono } from "hono";
-import { z } from "zod";
 
 import { ApiError } from "@/lib/errors";
 import { requireAuth } from "@/middleware/auth";
 import { rateLimit } from "@/middleware/rate-limit";
+import { linkAccountSchema, unlinkAccountSchema } from "@/routes/schema/auth";
 import type { AppEnv } from "@/types/app";
 
 import { applyDefaultSocialCallbackUrls } from "./callbacks";
 import type { ForwardToAuthJsonPath } from "./types";
-
-const socialProviderSchema = z.enum(["google", "discord", "github"]);
-const linkAccountSchema = z.object({
-  provider: socialProviderSchema,
-  callbackURL: z.string().optional(),
-  errorCallbackURL: z.string().optional(),
-  disableRedirect: z.boolean().optional(),
-});
-const unlinkAccountSchema = z.object({
-  provider: z.enum(["email", "google", "discord", "github"]),
-});
 
 type AccountRow = {
   providerId: string;
