@@ -36,8 +36,8 @@ Better Auth endpoint. The auth instance is scoped to the Worker request.
 Authentication middleware resolves the session and the OEM user profile.
 Business roles and karma belong to that profile. Public user identifiers and
 internal user IDs serve different purposes; use the identifier required by the
-specific schema. Browser cookies and the OAuth exchange flow are described in
-[the API guide](api.md#accounts).
+specific schema. Browser cookie and OAuth exchange handling live in
+[`browserSession.ts`](../src/lib/auth/browserSession.ts).
 
 ## Progress and statistics
 
@@ -61,8 +61,8 @@ processes the image, stores the object in R2, creates a pending D1 submission,
 and enqueues moderation. Comments use JSON and the shared comment content
 contract. Queue consumers process moderation, translation, and webhook work.
 
-See [public read conventions](../src/publicRead/README.md) for the cache interface
-and [the API guide](api.md#images-and-comments) for caller behavior.
+The cache interface is implemented in
+[`publicRead/client/client.ts`](../src/publicRead/client/client.ts).
 
 ## Live services and external dependencies
 
@@ -74,8 +74,3 @@ and [the API guide](api.md#images-and-comments) for caller behavior.
 - Email uses the configured Resend/Cloudflare provider policy; social login,
   moderation, and translation require their respective external credentials.
 - `OEM_IMG_TRANS` runs the image transcoder container.
-
-## Observability
-
-See [operations](operations.md#runtime-validation) for release validation and
-[the logger guide](../oem-logger/README.md) for error investigation.

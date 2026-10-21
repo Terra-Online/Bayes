@@ -20,10 +20,7 @@ serialized and do not access D1.
 The logger runs a daily Cron Trigger at 03:17 UTC and deletes rows older than
 120 days based on `event_timestamp_ms`.
 
-## Deployment and investigation
-
-See [operations](../docs/operations.md#logger-deployment) for deployment and
-[contribution checks](../CONTRIBUTING.md#preparing-a-contribution) during development.
+## Investigation
 
 Query recent errors:
 

@@ -1,15 +1,13 @@
 # Local development
 
-Run commands from the repository root. Check [setup requirements](../CONTRIBUTING.md#environment-setup)
-first.
+Run commands from the repository root after completing environment setup and
+local data initialization.
 
 ## Install dependencies
 
 ```sh
 pnpm install --frozen-lockfile
 ```
-
-Initialize the local data files using [data templates](../templates/README.md).
 
 ## Configure the Worker
 
@@ -95,8 +93,6 @@ integration run may need Docker and additional provider configuration. Review
 curl http://127.0.0.1:8787/health/v1/status
 ```
 
-See [health semantics](api.md#health) when interpreting the result.
-
 For the local Google translation proxy, use `pnpm run dev:local`. This wrapper
 starts Wrangler with `--env local` and uses `.dev.vars.local` when present.
 Prepare that file from the example and apply local migrations for that environment:
@@ -141,5 +137,3 @@ still belong to route middleware; the allowlist only covers route prefixes.
 Generating the allowlist is local. To apply it remotely, prepare `.waf.vars` from
 `.waf.vars.example` and run `pnpm run waf:sync:apply`. For deployment integration,
 use `WAF_SYNC=1 pnpm run deploy` with the setup in [operations](operations.md).
-
-See [contribution checks](../CONTRIBUTING.md#preparing-a-contribution) before committing or pushing.

@@ -1,10 +1,8 @@
 # Operations and deployment
 
 These commands are for maintainers or contributors operating their own installation.
-See [development](development.md) for local work and
-[contribution checks](../CONTRIBUTING.md#preparing-a-contribution) before pushing. Repository
-configuration names existing OEM resources; provision and configure your own
-resources before deploying a fork.
+Repository configuration names existing OEM resources; provision and configure
+your own resources before deploying a fork.
 
 ## Resources and configuration
 
@@ -16,7 +14,6 @@ and a one-minute cron. The logger has its own Wrangler config and `OEM_ERR` D1.
 Review custom domains, resource IDs/names, queue names, Tail Worker service,
 and environment bindings for your installation.
 
-Secrets and common flags are listed in [development](development.md).
 Keep a deployment-specific secrets file separate from local values and inspect
 which feature locks are intended to be active.
 
@@ -28,7 +25,7 @@ The normal command performs these steps:
 1. Validate required secrets, including configured OAuth providers and email settings.
 2. Run `pnpm run check`.
 3. Refuse a `BETTER_AUTH_URL` containing localhost or `127.0.0.1`.
-4. Optionally apply WAF rules; see [WAF changes](development.md#waf-changes).
+4. Optionally apply WAF rules.
 5. Apply remote logger migrations and deploy `oem-errogger`.
 6. Apply remote backend D1 migrations.
 7. Deploy `oem-backend` with the secrets file and `--keep-vars`.
@@ -65,7 +62,7 @@ After a release, verify the health endpoint and the affected feature with the
 appropriate credentials. Check feature locks and queue consumers if mutations
 succeed but background processing does not complete.
 
-Use the [request ID](api.md#common-behavior) to correlate failures. The
+Use request IDs to correlate failures. The
 [logger guide](../oem-logger/README.md) documents error retention and D1 queries.
 For performance work, compare versioned windows with comparable traffic and
 outcomes. CPU, wall time, SQL rows read, cache misses, and long-lived WebSockets

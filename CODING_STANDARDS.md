@@ -74,10 +74,16 @@ length and repeat agent requirements when that helps a contributor complete a ta
 This audience-specific overlap is permitted; avoid competing sources within the
 agent guidance.
 
-Use a small number of directory documents for navigation. Most documents should
-be self-contained leaves with no outbound links to other files, including source
-files. Keep the documentation graph acyclic; a leaf should not link back to an
-index or send the reader to another leaf.
+The documentation graph contains only links between documentation files. Links
+to source code, scripts, and configuration are unrestricted and do not affect
+whether a document is a leaf. Keep most documents as leaves with no outgoing
+document links, and keep the graph acyclic.
+
+Navigation belongs in the root README, CONTRIBUTING, this agent entrypoint, and
+`docs/README.md`. Human navigation follows root README to CONTRIBUTING to
+`docs/README.md`; the root README also points agents here. Within the human
+guides, development may point to operations, and `docs/` may point to the logger
+README. Keep these directions one-way; leaves must not link back to an index.
 
 Use English for shared guides, matching Atlos. Update the owning document with a
 behavior change. Human guide destinations are listed in [docs/README.md](docs/README.md).

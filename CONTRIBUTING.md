@@ -14,13 +14,12 @@ explicitly changes them. Describe any compatibility change in the pull request.
 ## Environment setup
 
 Use Node.js 22.12.0+ and pnpm. Docker is needed for local container image conversion.
-Some local data files need initialization; follow [data templates](templates/README.md).
-Then follow [local development](docs/development.md) to configure and run the backend.
+Some local data files need initialization before running the backend.
 A Cloudflare production account is not required for local checks.
 
-If you are new to the project, [architecture](docs/architecture.md) introduces the
-runtime data flow, and the [API guide](docs/api.md) helps you explore the endpoints.
-Deployment is covered separately in [operations](docs/operations.md).
+The [documentation index](docs/README.md) will help you prepare the local data,
+configure the backend, understand its architecture, or explore the endpoints.
+Deployment is covered separately from local development.
 
 ## Preparing a contribution
 
@@ -43,7 +42,6 @@ or limitations that affect another contributor's ability to reproduce the result
 
 ## Documentation and support
 
-The [documentation index](docs/README.md) points to the guide for each task.
 The guides in `docs/` are written for people: they can take time to explain the
 steps and the context needed to carry them out.
 

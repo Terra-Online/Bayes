@@ -8,8 +8,6 @@ Start with the task you want to do:
 
 | Task | Guide |
 | --- | --- |
-| Understand the project | [Repository README](../README.md) |
-| Make your first contribution | [Contributing](../CONTRIBUTING.md) |
 | Configure and run a public checkout | [Local development](development.md) |
 | Understand runtime data flow | [Architecture](architecture.md) |
 | Call or change an endpoint | [API guide](api.md) |
