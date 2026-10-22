@@ -1,7 +1,11 @@
 import { readFileSync } from "node:fs";
-import { DatabaseSync, type SQLInputValue, type StatementSync } from "node:sqlite";
 
 import { afterEach, describe, expect, it } from "vitest";
+
+import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
+import { migrations } from "@/test/database/migrations";
+import { insertSubmission as seedSubmission } from "@/test/fixtures/submissions";
+import { insertUser } from "@/test/fixtures/users";
 
 import {
   decodeNotificationCursor,
@@ -19,83 +23,6 @@ import { markImageSubmissionsStaleByFilePathPrefix } from "./submission-review";
 import { transitionSubmissionStatusWithNotifications } from "./submission/statusSubmission";
 import type { SubmissionRecord, SubmissionStatus } from "./submission/types";
 import { createSubmissionUpvote } from "./submission/voteSubmission";
-
-class SqliteD1Statement {
-  constructor(
-    private readonly database: DatabaseSync,
-    private readonly query: string,
-    private readonly values: SQLInputValue[] = [],
-  ) {}
-
-  bind(...values: unknown[]): D1PreparedStatement {
-    return new SqliteD1Statement(
-      this.database,
-      this.query,
-      values as SQLInputValue[],
-    ) as unknown as D1PreparedStatement;
-  }
-
-  execute(): D1Result<Record<string, unknown>> {
-    const statement = this.database.prepare(this.query);
-    if (this.isReader(statement)) {
-      return {
-        success: true,
-        results: statement.all(...this.values) as Record<string, unknown>[],
-        meta: { changes: 0 } as D1Meta & Record<string, unknown>,
-      };
-    }
-    const result = statement.run(...this.values);
-    return {
-      success: true,
-      results: [],
-      meta: { changes: Number(result.changes) } as D1Meta & Record<string, unknown>,
-    };
-  }
-
-  async all<T>(): Promise<D1Result<T>> {
-    return this.execute() as unknown as D1Result<T>;
-  }
-
-  async first<T>(): Promise<T | null> {
-    const row = this.database.prepare(this.query).get(...this.values);
-    return (row ?? null) as T | null;
-  }
-
-  async run<T>(): Promise<D1Result<T>> {
-    return this.execute() as unknown as D1Result<T>;
-  }
-
-  private isReader(statement: StatementSync): boolean {
-    return statement.columns().length > 0;
-  }
-}
-
-class SqliteD1Database {
-  readonly sqlite = new DatabaseSync(":memory:");
-
-  prepare(query: string): D1PreparedStatement {
-    return new SqliteD1Statement(this.sqlite, query) as unknown as D1PreparedStatement;
-  }
-
-  async batch<T>(statements: D1PreparedStatement[]): Promise<D1Result<T>[]> {
-    this.sqlite.exec("BEGIN");
-    try {
-      const results = statements.map(
-        (statement) =>
-          (statement as unknown as SqliteD1Statement).execute() as unknown as D1Result<T>,
-      );
-      this.sqlite.exec("COMMIT");
-      return results;
-    } catch (error) {
-      this.sqlite.exec("ROLLBACK");
-      throw error;
-    }
-  }
-
-  close(): void {
-    this.sqlite.close();
-  }
-}
 
 const submission = (id: string, updatedAt: string): SubmissionRecord => ({
   id,
@@ -162,8 +89,32 @@ const comment = (
   },
 });
 
+function persistSubmission(
+  database: TestDatabase,
+  item: SubmissionRecord,
+  status: SubmissionStatus,
+) {
+  seedSubmission(database.sqlite, {
+    id: item.id,
+    userId: item.userId,
+    kind: item.kind,
+    markerId: item.markerId,
+    poiHash: item.poiHash,
+    poiType: item.poiType,
+    snapshotId: item.snapshotId,
+    status,
+    content: item.content,
+    filePath: item.filePath,
+    parentId: item.parentId,
+    depth: item.commentDepth,
+    createdAt: item.createdAt,
+    updatedAt: item.updatedAt,
+    mimeType: item.mimeType,
+  });
+}
+
 describe("notification aggregation SQL", () => {
-  let database: SqliteD1Database | null = null;
+  let database: TestDatabase | null = null;
 
   afterEach(() => {
     database?.close();
@@ -171,46 +122,13 @@ describe("notification aggregation SQL", () => {
   });
 
   it("counts one unread container, reopens it after read, and starts a new fixed window", async () => {
-    database = new SqliteD1Database();
-    const db = database as unknown as D1Database;
-    database.sqlite.exec(`
-      PRAGMA foreign_keys = ON;
-      CREATE TABLE users (uid TEXT PRIMARY KEY);
-      CREATE TABLE ugc_submissions (
-        id TEXT PRIMARY KEY,
-        user_id TEXT NOT NULL,
-        parent_id TEXT,
-        poi_id TEXT NOT NULL,
-        poi_hash TEXT NOT NULL,
-        poi_type TEXT NOT NULL,
-        snapshot_id TEXT NOT NULL,
-        status TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        kind TEXT NOT NULL,
-        content TEXT
-      );
-      ${readFileSync(new URL("../../migrations/0029_notifications.sql", import.meta.url), "utf8")}
-      ${readFileSync(new URL("../../migrations/0030_notification_aggregation.sql", import.meta.url), "utf8")}
-      INSERT INTO users (uid) VALUES ('user-1');
-    `);
+    database = createTestDatabase();
+    const db = database.db;
+    insertUser(database.sqlite, { uid: "user-1" });
 
     const write = async (id: string, createdAt: string) => {
       const item = submission(id, createdAt);
-      database?.sqlite
-        .prepare(
-          `INSERT INTO ugc_submissions (
-           id, user_id, poi_id, poi_hash, poi_type, snapshot_id, status, updated_at, kind
-         ) VALUES (?, ?, ?, ?, ?, ?, 'active', ?, 'image')`,
-        )
-        .run(
-          item.id,
-          item.userId,
-          item.markerId,
-          item.poiHash,
-          item.poiType,
-          item.snapshotId,
-          createdAt,
-        );
+      persistSubmission(database!, item, "active");
       await db.batch(prepareSubmissionStatusNotificationWrite(db, transition(item, createdAt)));
     };
 
@@ -289,67 +207,18 @@ describe("notification aggregation SQL", () => {
   });
 
   it("writes all aggregation key variants and keeps unrelated reply and vote groups separate", async () => {
-    database = new SqliteD1Database();
-    const db = database as unknown as D1Database;
-    database.sqlite.exec(`
-      PRAGMA foreign_keys = ON;
-      CREATE TABLE users (uid TEXT PRIMARY KEY);
-      CREATE TABLE ugc_submissions (
-        id TEXT PRIMARY KEY,
-        user_id TEXT NOT NULL,
-        parent_id TEXT,
-        poi_id TEXT NOT NULL,
-        poi_hash TEXT NOT NULL,
-        poi_type TEXT NOT NULL,
-        snapshot_id TEXT NOT NULL,
-        status TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        kind TEXT NOT NULL,
-        content TEXT
-      );
-      CREATE TABLE ugc_submission_votes (
-        submission_id TEXT NOT NULL,
-        user_id TEXT NOT NULL,
-        value INTEGER NOT NULL,
-        active INTEGER NOT NULL,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        PRIMARY KEY (submission_id, user_id)
-      );
-      ${readFileSync(new URL("../../migrations/0029_notifications.sql", import.meta.url), "utf8")}
-      ${readFileSync(new URL("../../migrations/0030_notification_aggregation.sql", import.meta.url), "utf8")}
-      INSERT INTO users (uid) VALUES ('user-1'), ('user-2'), ('user-3');
-    `);
-
-    const insertSubmission = (item: SubmissionRecord, status: SubmissionStatus) => {
-      database?.sqlite
-        .prepare(
-          `INSERT INTO ugc_submissions (
-           id, user_id, parent_id, poi_id, poi_hash, poi_type,
-           snapshot_id, status, updated_at, kind, content
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        )
-        .run(
-          item.id,
-          item.userId,
-          item.parentId,
-          item.markerId,
-          item.poiHash,
-          item.poiType,
-          item.snapshotId,
-          status,
-          item.updatedAt,
-          item.kind,
-          item.content,
-        );
-    };
+    database = createTestDatabase();
+    const db = database.db;
+    insertUser(database.sqlite, { uid: "user-1" });
+    insertUser(database.sqlite, { uid: "user-2" });
+    insertUser(database.sqlite, { uid: "user-3" });
 
     const review = submission("review", "2026-08-02T11:00:00.000Z");
     const removed = submission("removed", "2026-08-02T11:00:01.000Z");
     const reopenedInitially = submission("reopened", "2026-08-02T11:00:02.000Z");
-    insertSubmission(review, "pending_audit");
-    insertSubmission(removed, "stale");
-    insertSubmission(reopenedInitially, "active");
+    persistSubmission(database, review, "pending_audit");
+    persistSubmission(database, removed, "stale");
+    persistSubmission(database, reopenedInitially, "active");
     await db.batch(
       prepareSubmissionStatusNotificationWrite(
         db,
@@ -388,14 +257,14 @@ describe("notification aggregation SQL", () => {
     const reply2 = comment("reply-2", "user-3", parent1.id, "2026-08-02T11:01:20.000Z", "Bob");
     const reply3 = comment("reply-3", "user-2", parent2.id, "2026-08-02T11:01:21.000Z", "Alice");
     for (const item of [parent1, parent2, reply1, reply2, reply3]) {
-      insertSubmission(item, "active");
+      persistSubmission(database, item, "active");
     }
     for (const item of [reply1, reply2, reply3]) {
       await db.batch(prepareApprovedReplyNotificationWrite(db, transition(item, item.updatedAt)));
     }
 
     const voteTarget = comment("vote-target", "user-1", null, "2026-08-02T11:02:00.000Z", "Owner");
-    insertSubmission(voteTarget, "active");
+    persistSubmission(database, voteTarget, "active");
     const actors = [
       {
         uid: "user-2",
@@ -469,58 +338,14 @@ describe("notification aggregation SQL", () => {
   });
 
   it("aggregates likes for six hours per target while replies keep the one-minute window", async () => {
-    database = new SqliteD1Database();
-    const db = database as unknown as D1Database;
-    database.sqlite.exec(`
-      PRAGMA foreign_keys = ON;
-      CREATE TABLE users (uid TEXT PRIMARY KEY);
-      CREATE TABLE ugc_submissions (
-        id TEXT PRIMARY KEY,
-        user_id TEXT NOT NULL,
-        parent_id TEXT,
-        poi_id TEXT NOT NULL,
-        poi_hash TEXT NOT NULL,
-        poi_type TEXT NOT NULL,
-        snapshot_id TEXT NOT NULL,
-        status TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        kind TEXT NOT NULL,
-        content TEXT
-      );
-      CREATE TABLE ugc_submission_votes (
-        submission_id TEXT NOT NULL,
-        user_id TEXT NOT NULL,
-        value INTEGER NOT NULL,
-        active INTEGER NOT NULL,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        PRIMARY KEY (submission_id, user_id)
-      );
-      ${readFileSync(new URL("../../migrations/0029_notifications.sql", import.meta.url), "utf8")}
-      ${readFileSync(new URL("../../migrations/0030_notification_aggregation.sql", import.meta.url), "utf8")}
-      INSERT INTO users (uid) VALUES ('owner'), ('actor-1'), ('actor-2'), ('actor-3'), ('actor-4');
-    `);
+    database = createTestDatabase();
+    const db = database.db;
+    insertUser(database.sqlite, { uid: "owner" });
+    insertUser(database.sqlite, { uid: "actor-1" });
+    insertUser(database.sqlite, { uid: "actor-2" });
+    insertUser(database.sqlite, { uid: "actor-3" });
+    insertUser(database.sqlite, { uid: "actor-4" });
 
-    const insertComment = (item: SubmissionRecord) => {
-      database?.sqlite
-        .prepare(
-          `INSERT INTO ugc_submissions (
-           id, user_id, parent_id, poi_id, poi_hash, poi_type,
-           snapshot_id, status, updated_at, kind, content
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, 'comment', ?)`,
-        )
-        .run(
-          item.id,
-          item.userId,
-          item.parentId,
-          item.markerId,
-          item.poiHash,
-          item.poiType,
-          item.snapshotId,
-          item.updatedAt,
-          item.content,
-        );
-    };
     const actor = (uid: string) => ({
       uid,
       publicUid: `public-${uid}`,
@@ -563,8 +388,8 @@ describe("notification aggregation SQL", () => {
       "2026-08-02T00:00:00.000Z",
       "Owner",
     );
-    insertComment(voteTarget1);
-    insertComment(voteTarget2);
+    persistSubmission(database, voteTarget1, "active");
+    persistSubmission(database, voteTarget2, "active");
     await addVote(voteTarget1.id, "actor-1", "2026-08-02T00:00:00.000Z");
     await addVote(voteTarget1.id, "actor-2", "2026-08-02T05:59:59.999Z");
     await addVote(voteTarget1.id, "actor-3", "2026-08-02T06:00:00.000Z");
@@ -573,9 +398,9 @@ describe("notification aggregation SQL", () => {
     const parent = comment("reply-parent", "owner", null, "2026-08-02T10:00:00.000Z", "Owner");
     const reply1 = comment("reply-1m", "actor-1", parent.id, "2026-08-02T10:00:00.000Z", "Actor 1");
     const reply2 = comment("reply-2m", "actor-2", parent.id, "2026-08-02T10:01:00.000Z", "Actor 2");
-    insertComment(parent);
-    insertComment(reply1);
-    insertComment(reply2);
+    persistSubmission(database, parent, "active");
+    persistSubmission(database, reply1, "active");
+    persistSubmission(database, reply2, "active");
     await db.batch(prepareApprovedReplyNotificationWrite(db, transition(reply1, reply1.updatedAt)));
     await db.batch(prepareApprovedReplyNotificationWrite(db, transition(reply2, reply2.updatedAt)));
 
@@ -593,37 +418,14 @@ describe("notification aggregation SQL", () => {
   });
 
   it("returns a notification for a persisted user recall", async () => {
-    database = new SqliteD1Database();
-    const db = database as unknown as D1Database;
+    database = createTestDatabase();
+    const db = database.db;
+    insertUser(database.sqlite, { uid: "owner" });
     database.sqlite.exec(`
-      PRAGMA foreign_keys = ON;
-      CREATE TABLE users (uid TEXT PRIMARY KEY);
-      CREATE TABLE ugc_submissions (
-        id TEXT PRIMARY KEY,
-        user_id TEXT NOT NULL,
-        parent_id TEXT,
-        poi_id TEXT NOT NULL,
-        poi_hash TEXT NOT NULL,
-        poi_type TEXT NOT NULL,
-        snapshot_id TEXT NOT NULL,
-        status TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        kind TEXT NOT NULL,
-        content TEXT,
-        moderation_note TEXT,
-        edit_original_content TEXT,
-        edit_original_status TEXT,
-        edit_original_snapshot_id TEXT
-      );
-      ${readFileSync(new URL("../../migrations/0029_notifications.sql", import.meta.url), "utf8")}
-      ${readFileSync(new URL("../../migrations/0030_notification_aggregation.sql", import.meta.url), "utf8")}
-      ${readFileSync(new URL("../../migrations/0035_ugc_review_events.sql", import.meta.url), "utf8")}
-      INSERT INTO users (uid) VALUES ('owner');
-      INSERT INTO ugc_submissions (
+      INSERT INTO ugc_submissions (file_path,
         id, user_id, poi_id, poi_hash, poi_type, snapshot_id,
         status, updated_at, kind, moderation_note
-      ) VALUES (
-        'remove-1', 'owner', 'marker-1', 'hash-1', 'type-1', 'snapshot-1',
+      ) VALUES ('fixture.webp', 'remove-1', 'owner', 'marker-1', 'hash-1', 'type-1', 'snapshot-1',
         'active', '2026-08-02T12:00:00.000Z', 'image', NULL
       );
     `);
@@ -684,18 +486,28 @@ describe("notification aggregation SQL", () => {
   });
 
   it("records bulk manual archives atomically and respects escaped prefixes", async () => {
-    database = new SqliteD1Database();
-    const db = database as unknown as D1Database;
-    database.sqlite.exec(`
-      CREATE TABLE ugc_submissions (
-        id TEXT PRIMARY KEY, snapshot_id TEXT, kind TEXT, status TEXT,
-        file_path TEXT, moderation_note TEXT, updated_at TEXT, poi_id TEXT
-      );
-      ${readFileSync(new URL("../../migrations/0035_ugc_review_events.sql", import.meta.url), "utf8")}
-      INSERT INTO ugc_submissions VALUES
-        ('mine', 'v1', 'image', 'pending_openai', 'test_a/a.webp', NULL, 'old', 'point1'),
-        ('other', 'v1', 'image', 'active', 'testXa/b.webp', NULL, 'old', 'point2');
-    `);
+    database = createTestDatabase();
+    const db = database.db;
+    insertUser(database.sqlite, { uid: "owner" });
+    seedSubmission(database.sqlite, {
+      id: "mine",
+      userId: "owner",
+      kind: "image",
+      snapshotId: "v1-mine",
+      status: "pending_openai",
+      filePath: "test_a/a.webp",
+      updatedAt: "old",
+      markerId: "point1",
+    });
+    seedSubmission(database.sqlite, {
+      id: "other",
+      userId: "owner",
+      kind: "image",
+      snapshotId: "v1-other",
+      filePath: "testXa/b.webp",
+      updatedAt: "old",
+      markerId: "point2",
+    });
     expect(await markImageSubmissionsStaleByFilePathPrefix(db, "test_a", "Manual cleanup")).toEqual(
       { changedRows: 1, markerIds: ["point1"] },
     );
@@ -717,41 +529,19 @@ describe("notification aggregation SQL", () => {
   });
 
   it("notifies image owners for a new upvote, ignores duplicates, and suppresses self-upvotes", async () => {
-    database = new SqliteD1Database();
-    const db = database as unknown as D1Database;
+    database = createTestDatabase();
+    const db = database.db;
+    insertUser(database.sqlite, { uid: "owner" });
+    insertUser(database.sqlite, { uid: "actor" });
     database.sqlite.exec(`
-      PRAGMA foreign_keys = ON;
-      CREATE TABLE users (uid TEXT PRIMARY KEY);
-      CREATE TABLE ugc_submissions (
-        id TEXT PRIMARY KEY,
-        user_id TEXT NOT NULL,
-        parent_id TEXT,
-        poi_id TEXT NOT NULL,
-        poi_hash TEXT NOT NULL,
-        poi_type TEXT NOT NULL,
-        snapshot_id TEXT NOT NULL,
-        status TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        kind TEXT NOT NULL,
-        content TEXT
-      );
-      CREATE TABLE ugc_submission_upvotes (
-        submission_id TEXT NOT NULL,
-        user_id TEXT NOT NULL,
-        active INTEGER NOT NULL DEFAULT 1,
-        created_at TEXT NOT NULL,
-        PRIMARY KEY (submission_id, user_id)
-      );
-      ${readFileSync(new URL("../../migrations/0029_notifications.sql", import.meta.url), "utf8")}
-      ${readFileSync(new URL("../../migrations/0030_notification_aggregation.sql", import.meta.url), "utf8")}
-      INSERT INTO users (uid) VALUES ('owner'), ('actor');
-      INSERT INTO ugc_submissions (
+
+      INSERT INTO ugc_submissions (file_path,
         id, user_id, poi_id, poi_hash, poi_type, snapshot_id,
         status, updated_at, kind, content
       ) VALUES
-        ('image-1', 'owner', 'marker-1', 'hash-1', 'type-1', 'snapshot-1',
+        ('fixture.webp', 'image-1', 'owner', 'marker-1', 'hash-1', 'type-1', 'snapshot-1',
          'active', '2026-08-02T12:00:00.000Z', 'image', NULL),
-        ('image-self', 'actor', 'marker-2', 'hash-2', 'type-1', 'snapshot-2',
+        ('fixture.webp', 'image-self', 'actor', 'marker-2', 'hash-2', 'type-1', 'snapshot-2',
          'active', '2026-08-02T12:00:00.000Z', 'image', NULL);
     `);
 
@@ -794,25 +584,9 @@ describe("notification aggregation SQL", () => {
   });
 
   it("removes legacy rejected notifications and lets the delete trigger repair unread counters", async () => {
-    database = new SqliteD1Database();
+    database = createTestDatabase(migrations.filter((file) => file < "0030"));
+    insertUser(database.sqlite, { uid: "user-1" });
     database.sqlite.exec(`
-      PRAGMA foreign_keys = ON;
-      CREATE TABLE users (uid TEXT PRIMARY KEY);
-      CREATE TABLE ugc_submissions (
-        id TEXT PRIMARY KEY,
-        user_id TEXT NOT NULL,
-        parent_id TEXT,
-        poi_id TEXT NOT NULL,
-        poi_hash TEXT NOT NULL,
-        poi_type TEXT NOT NULL,
-        snapshot_id TEXT NOT NULL,
-        status TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        kind TEXT NOT NULL,
-        content TEXT
-      );
-      ${readFileSync(new URL("../../migrations/0029_notifications.sql", import.meta.url), "utf8")}
-      INSERT INTO users (uid) VALUES ('user-1');
       INSERT INTO notifications (
         id, recipient_user_id, category, type, payload_json, dedupe_key, created_at
       ) VALUES

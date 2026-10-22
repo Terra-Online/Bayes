@@ -1,11 +1,9 @@
-import { readFileSync } from "node:fs";
-
 import type { Redis } from "@upstash/redis";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as rules from "@/lib/karma/rules";
-import { SqliteD1 } from "@/test/sqliteD1";
-import { UGC_COMPETING_INDEXES_SQL } from "@/test/ugcIndexes";
+import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
+import { insertUser as seedUser } from "@/test/fixtures/users";
 
 import { evaluateKarmaBatch, evaluateKarmaIfDue } from "./evaluation";
 
@@ -65,25 +63,18 @@ class MemoryRedis {
 }
 
 describe("12-hour resumable karma evaluation", () => {
-  let database: SqliteD1;
+  let database: TestDatabase;
   let redis: MemoryRedis;
 
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(START);
     vi.spyOn(rules, "getKarmaEvaluationBatchSize").mockReturnValue(3);
-    database = new SqliteD1();
+    database = createTestDatabase();
     redis = new MemoryRedis();
-    database.sqlite.exec(`
-      CREATE TABLE users (uid TEXT PRIMARY KEY, role TEXT, karma INTEGER, points INTEGER, created_at TEXT, last_active TEXT);
-      CREATE TABLE ugc_submissions (id TEXT PRIMARY KEY, user_id TEXT, kind TEXT, poi_id TEXT, created_at TEXT, status TEXT, moderation_note TEXT, parent_id TEXT);
-      ${UGC_COMPETING_INDEXES_SQL}
-      CREATE TABLE progress_stats_outbox (id INTEGER PRIMARY KEY, uid TEXT, status TEXT, created_at INTEGER, processed_at INTEGER);
-      ${readFileSync(new URL("../../../migrations/0033_query_efficiency_indexes.sql", import.meta.url), "utf8")}
-    `);
   });
   afterEach(() => {
-    database.sqlite.close();
+    database.close();
     vi.useRealTimers();
     vi.restoreAllMocks();
   });
@@ -92,15 +83,14 @@ describe("12-hour resumable karma evaluation", () => {
     uid: string,
     options: { karma?: number; points?: number; role?: string; lastActive?: string } = {},
   ) {
-    database.sqlite
-      .prepare("INSERT INTO users VALUES (?, ?, ?, ?, '2026-09-05 11:00:00', ?)")
-      .run(
-        uid,
-        options.role ?? "n",
-        options.karma ?? 0,
-        options.points ?? 150,
-        options.lastActive ?? "2026-09-05 11:00:00",
-      );
+    seedUser(database.sqlite, {
+      uid,
+      role: options.role ?? "n",
+      karma: options.karma ?? 0,
+      points: options.points ?? 150,
+      created_at: "2026-09-05 11:00:00",
+      last_active: options.lastActive ?? "2026-09-05 11:00:00",
+    });
   }
 
   it("covers every eligible user across batches before waiting for the next 12-hour cycle", async () => {
@@ -175,14 +165,15 @@ describe("12-hour resumable karma evaluation", () => {
     for (let index = 0; index < 90; index += 1) {
       insertUser(`selected-${String(index).padStart(3, "0")}`);
     }
+    seedUser(database.sqlite, { uid: "outside-user", role: "r" });
     database.sqlite.exec(`
       WITH RECURSIVE sequence(number) AS (
         SELECT 1 UNION ALL SELECT number + 1 FROM sequence WHERE number < 10000
       )
-      INSERT INTO ugc_submissions (id, user_id, kind, status)
-        SELECT 'outside-' || number, 'outside-user', 'image', 'active' FROM sequence;
-      INSERT INTO ugc_submissions (id, user_id, kind, status)
-        VALUES ('selected-image', 'selected-000', 'image', 'active');
+      INSERT INTO ugc_submissions (id, user_id, kind, status, poi_id, poi_hash, poi_type, snapshot_id, file_path)
+        SELECT 'outside-' || number, 'outside-user', 'image', 'active', 'outside', 'hash', 'poi', 'snapshot-' || number, 'outside.webp' FROM sequence;
+      INSERT INTO ugc_submissions (id, user_id, kind, status, poi_id, poi_hash, poi_type, snapshot_id, file_path)
+        VALUES ('selected-image', 'selected-000', 'image', 'active', 'selected', 'hash', 'poi', 'selected-snapshot', 'selected.webp');
     `);
     const score = vi.spyOn(rules, "calculateKarmaEvaluationScore");
     expect(await evaluateKarmaIfDue(database.db, redis.redis)).toMatchObject({ selected: 90 });

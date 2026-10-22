@@ -1,27 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { SqliteD1 } from "@/test/sqliteD1";
+import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
+import { insertUser } from "@/test/fixtures/users";
 
 import { ensureUserProfile, getUserByPublicUid } from "./users";
 
 describe("profile activity write throttling", () => {
-  let database: SqliteD1;
+  let database: TestDatabase;
   const identity = { uid: "user-1", email: "user@example.test" };
 
   beforeEach(() => {
-    database = new SqliteD1();
-    database.sqlite.exec(`
-      CREATE TABLE users (
-        uid TEXT PRIMARY KEY, email TEXT UNIQUE, password_hash TEXT, role TEXT, karma INTEGER DEFAULT 0,
-        avt INTEGER, nickname TEXT UNIQUE, nickname_customized INTEGER, uid_number INTEGER UNIQUE,
-        uid_suffix TEXT, email_verified TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP, last_active TEXT DEFAULT CURRENT_TIMESTAMP
-      );
-      CREATE TABLE user_uid_sequence (id INTEGER PRIMARY KEY AUTOINCREMENT);
-      INSERT INTO users (uid, email, role, karma, nickname, last_active)
-        VALUES ('user-1', 'user@example.test', 'n', 2, 'Tester', datetime('now', '-5 minutes'));
-    `);
+    database = createTestDatabase();
+    insertUser(database.sqlite, { ...identity, karma: 2, nickname: "Tester" });
+    database.sqlite.exec("UPDATE users SET last_active = datetime('now', '-5 minutes')");
   });
-  afterEach(() => database.sqlite.close());
+  afterEach(() => database.close());
 
   it("uses only reads for repeated activity within an hour, without caching roles or karma", async () => {
     const first = await ensureUserProfile(database.db, identity);

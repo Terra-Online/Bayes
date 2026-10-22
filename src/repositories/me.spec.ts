@@ -1,25 +1,17 @@
-import { readFileSync } from "node:fs";
-
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
-import { createUGCImageDatabase } from "@/test/ugcImageDatabase";
+import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
+import { seedImageReadScenario } from "@/test/fixtures/imageReadScenario";
+import { insertNotification } from "@/test/fixtures/notifications";
 
 import { getContributionImage, listContributions } from "./me";
 
-let database: ReturnType<typeof createUGCImageDatabase>;
+let database: TestDatabase;
 beforeEach(() => {
-  database = createUGCImageDatabase();
-  database.sqlite.exec(`
-    ALTER TABLE ugc_submissions ADD COLUMN mime_type TEXT;
-    ALTER TABLE ugc_submissions ADD COLUMN poi_type TEXT DEFAULT 'sample';
-    ALTER TABLE ugc_submissions ADD COLUMN moderation_note TEXT;
-    ALTER TABLE ugc_submissions ADD COLUMN snapshot_id TEXT DEFAULT 'current';
-    ALTER TABLE ugc_submissions ADD COLUMN updated_at TEXT DEFAULT '2026-09-05T12:00:00Z';
-    ${readFileSync(new URL("../../migrations/0035_ugc_review_events.sql", import.meta.url), "utf8")}
-    CREATE TABLE notification_messages (submission_id TEXT, dedupe_key TEXT UNIQUE, created_at TEXT);
-  `);
+  database = createTestDatabase();
+  seedImageReadScenario(database.sqlite);
 });
-afterEach(() => database.sqlite.close());
+afterEach(() => database.close());
 
 const list = () =>
   listContributions(database.db, {
@@ -34,16 +26,27 @@ function event(
   snapshot = "current",
   at = "2026-09-04T12:00:00Z",
 ) {
+  const key = `system:${id}:${snapshot}:${from}:${to}`;
+  const notification = insertNotification(database.sqlite, {
+    id: key,
+    recipientUserId: "author",
+    createdAt: at,
+  });
   database.sqlite
-    .prepare("INSERT INTO notification_messages VALUES (?, ?, ?)")
-    .run(id, `system:${id}:${snapshot}:${from}:${to}`, at);
+    .prepare(`INSERT INTO notification_messages
+    (id, notification_id, submission_id, dedupe_key, created_at)
+    VALUES (?, ?, ?, ?, ?)`)
+    .run(key, notification.id, id, key, at);
 }
 
-it("returns portable preview paths and retains complete comment content", async () => {
+it("returns portable preview paths and retains complete historical comment content", async () => {
   const content = "**a long comment** ".repeat(30);
+  // Exercise reads of legacy content beyond the current write constraint.
+  database.sqlite.exec("PRAGMA ignore_check_constraints = ON");
   database.sqlite
     .prepare("UPDATE ugc_submissions SET kind = 'comment', content = ? WHERE id = 'mine'")
     .run(content);
+  database.sqlite.exec("PRAGMA ignore_check_constraints = OFF");
   const { items } = await list();
   expect(items.find((item) => item.id === "photo")?.previewUrl).toBe(
     "/me/v1/contributions/photo/preview",

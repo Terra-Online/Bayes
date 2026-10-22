@@ -2,7 +2,8 @@ import { afterEach, beforeEach, expect, it } from "vitest";
 
 import { decryptSecret } from "@/lib/crypto";
 import { createEndfieldDeviceProfile } from "@/lib/endfieldClient/deviceProfile";
-import { SqliteD1 } from "@/test/sqliteD1";
+import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
+import { insertUser } from "@/test/fixtures/users";
 
 import { bindRole, disableBinding, unlinkBinding, type BindingDependencies } from "./binding";
 import { savePendingSession } from "./pendingSession";
@@ -17,18 +18,13 @@ const role = {
   serverName: "Server",
   isDefault: true,
 };
-let database: SqliteD1;
+let database: TestDatabase;
 let dependencies: BindingDependencies;
 let records: Map<string, unknown>;
 
 beforeEach(() => {
-  database = new SqliteD1();
-  database.sqlite.exec(`CREATE TABLE endfield_bindings (
-    uid TEXT PRIMARY KEY, provider TEXT, server_id INTEGER, role_id TEXT, role_nickname TEXT,
-    server_name TEXT, cred_enc TEXT, token_enc TEXT, account_token_enc TEXT, status TEXT, updated_at TEXT
-  ); CREATE TABLE endfield_role_device_profiles (
-    role_id TEXT PRIMARY KEY, device_profile TEXT, updated_at TEXT
-  );`);
+  database = createTestDatabase();
+  insertUser(database.sqlite, { uid: "user" });
   records = new Map();
   dependencies = {
     db: database.db,
@@ -47,7 +43,7 @@ beforeEach(() => {
     invalidateCaches: () => {},
   };
 });
-afterEach(() => database.sqlite.close());
+afterEach(() => database.close());
 
 async function startFlow() {
   return savePendingSession(dependencies.pending, "user", {

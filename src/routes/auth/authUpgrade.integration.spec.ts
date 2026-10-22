@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createAuth } from "@/lib/auth/createAuth";
 import { sendEmail } from "@/lib/email/sender";
 import { onAppError } from "@/middleware/error-handler";
-import { createAuthDatabase } from "@/test/authDatabase";
+import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import type { AppEnv, Bindings } from "@/types/app";
 
 import { createRoutes as createEmailAuthRoutes } from "./emailRoutes";
@@ -17,7 +17,7 @@ vi.mock("@/middleware/rate-limit", () => ({
 }));
 
 describe("Better Auth 1.7 with the production D1 table layout", () => {
-  let database: ReturnType<typeof createAuthDatabase>;
+  let database: TestDatabase;
   let env: Bindings;
   let auth: ReturnType<typeof createAuth>;
   let app: Hono<AppEnv<{ requestId: string }>>;
@@ -29,7 +29,7 @@ describe("Better Auth 1.7 with the production D1 table layout", () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     vi.mocked(sendEmail).mockClear();
-    database = createAuthDatabase();
+    database = createTestDatabase();
     env = {
       DB: database.db,
       BETTER_AUTH_URL: "https://api.opendfieldmap.org",
@@ -48,7 +48,7 @@ describe("Better Auth 1.7 with the production D1 table layout", () => {
     app.route("/", createPasswordResetRoutes({ forwardToAuthJsonPath }));
   });
   afterEach(() => {
-    database.sqlite.close();
+    database.close();
     vi.restoreAllMocks();
   });
 
@@ -81,16 +81,19 @@ describe("Better Auth 1.7 with the production D1 table layout", () => {
   it("allows only one concurrent registration and consumes the OTP with DELETE RETURNING", async () => {
     const otp = await issueOTP();
     const responses = await Promise.all([register(otp), register(otp)]);
-    expect(responses.map((response) => response.status).sort()).toEqual([200, 400]);
+    expect(
+      responses.map((response) => response.status).sort(),
+      JSON.stringify(vi.mocked(console.error).mock.calls),
+    ).toEqual([200, 400]);
     const failed = responses.find((response) => !response.ok)!;
     expect(await failed.json()).toMatchObject({ code: "INVALID_OTP" });
     expect(count("auth_users")).toBe(1);
     expect(count("auth_sessions")).toBe(1);
     expect(count("auth_accounts")).toBe(1);
     expect(
-      database.queries.some((query) =>
-        /^delete from "auth_verifications".*returning \*/i.test(query),
-      ),
+      database.queries
+        .map((query) => query.sql)
+        .some((query) => /^delete from "auth_verifications".*returning \*/i.test(query)),
     ).toBe(true);
     expect((await register(otp)).status).toBe(400);
     const login = await auth.api.signInEmail({ body: { email, password: "New-password123" } });
@@ -212,7 +215,11 @@ describe("Better Auth 1.7 with the production D1 table layout", () => {
       database.sqlite.prepare("SELECT emailVerified FROM auth_users").get()!.emailVerified,
     ).toBe(1);
     expect(count("auth_sessions")).toBe(0);
-    expect(database.queries.some((sql) => /^delete from auth_users/i.test(sql))).toBe(false);
+    expect(
+      database.queries
+        .map((query) => query.sql)
+        .some((sql) => /^delete from auth_users/i.test(sql)),
+    ).toBe(false);
     database.hooks.beforeQuery = undefined;
     const retry = await register(await issueOTP());
     expect(retry.status).toBe(200);

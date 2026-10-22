@@ -3,7 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError } from "@/lib/errors";
 import { onAppError } from "@/middleware/error-handler";
-import { createUGCImageDatabase } from "@/test/ugcImageDatabase";
+import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
+import { seedImageReadScenario } from "@/test/fixtures/imageReadScenario";
 import type { AppEnv, AuthUser } from "@/types/app";
 
 vi.mock("cloudflare:workers", () => ({ DurableObject: class {}, exports: {} }));
@@ -53,16 +54,16 @@ const suspendedUser: AuthUser = {
   role: "s",
 };
 
-let sqlite: ReturnType<typeof createUGCImageDatabase>["sqlite"];
+let database: TestDatabase;
 let db: D1Database;
 
 beforeEach(() => {
-  const database = createUGCImageDatabase();
-  sqlite = database.sqlite;
+  database = createTestDatabase();
+  seedImageReadScenario(database.sqlite);
   db = database.db;
 });
 
-afterEach(() => sqlite.close());
+afterEach(() => database.close());
 
 function request(
   path: string,

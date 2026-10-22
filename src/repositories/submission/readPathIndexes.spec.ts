@@ -1,8 +1,9 @@
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync } from "node:fs";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { SqliteD1 } from "@/test/sqliteD1";
+import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
+import { migrations as migrationFiles } from "@/test/database/migrations";
 
 import { getImageSubmissionByFilePath, getPublicSubmissionByFilePath } from "./statusSubmission";
 import { countSubmissionUpvotes } from "./voteSubmission";
@@ -11,14 +12,9 @@ const migrations = new URL("../../../migrations/", import.meta.url);
 const migration = readFileSync(new URL("0036_file_path_and_vote_indexes.sql", migrations), "utf8");
 
 describe("read path index migration on the repository schema", () => {
-  let database: SqliteD1;
+  let database: TestDatabase;
   beforeEach(() => {
-    database = new SqliteD1();
-    for (const file of readdirSync(migrations)
-      .filter((name) => name.endsWith(".sql") && name < "0036")
-      .sort()) {
-      database.sqlite.exec(readFileSync(new URL(file, migrations), "utf8"));
-    }
+    database = createTestDatabase(migrationFiles.filter((file) => file < "0036"));
     // Reproduce the observed installation where 0027's vote index is missing.
     database.sqlite.exec("DROP INDEX idx_ugc_submission_upvotes_active_submission");
     database.sqlite.exec(
@@ -52,7 +48,7 @@ describe("read path index migration on the repository schema", () => {
       SELECT id, 'owner', 1 FROM ugc_submissions WHERE kind = 'image';
       INSERT INTO ugc_submission_upvotes (submission_id, user_id, active) VALUES ('public', 'other', 0);`);
   });
-  afterEach(() => database.sqlite.close());
+  afterEach(() => database.close());
 
   async function lookup() {
     return Promise.all([

@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, expect, it } from "vitest";
 
-import { SqliteD1 } from "@/test/sqliteD1";
+import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
+import { insertUser } from "@/test/fixtures/users";
 
 import { getBinding, saveBinding } from "./repository";
 
-let database: SqliteD1;
+let database: TestDatabase;
 const role = {
   serverId: 1,
   roleId: "role",
@@ -15,13 +16,10 @@ const role = {
   isDefault: true,
 };
 beforeEach(() => {
-  database = new SqliteD1();
-  database.sqlite.exec(`CREATE TABLE endfield_bindings (
-    uid TEXT PRIMARY KEY, provider TEXT, server_id INTEGER, role_id TEXT, role_nickname TEXT,
-    server_name TEXT, cred_enc TEXT, token_enc TEXT, account_token_enc TEXT, status TEXT, updated_at TEXT
-  )`);
+  database = createTestDatabase();
+  insertUser(database.sqlite, { uid: "user" });
 });
-afterEach(() => database.sqlite.close());
+afterEach(() => database.close());
 
 it("preserves the account token when creating and replacing a binding", async () => {
   await saveBinding(database.db, "user", "skland", role, {
