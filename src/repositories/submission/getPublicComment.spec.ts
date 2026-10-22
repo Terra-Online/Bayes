@@ -33,7 +33,9 @@ beforeEach(() => {
 
 afterEach(() => database.close());
 
-function insertComment(payload: Omit<SubmissionFixture, "userId"> & { userId?: string }) {
+type CommentFixture = Omit<SubmissionFixture, "userId"> & { userId?: string };
+
+function insertComment(payload: CommentFixture) {
   return insertSubmission(database.sqlite, {
     ...payload,
     userId: payload.userId ?? "reply-author",
