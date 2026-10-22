@@ -41,12 +41,9 @@ function event(
 
 it("returns portable preview paths and retains complete historical comment content", async () => {
   const content = "**a long comment** ".repeat(30);
-  // Exercise reads of legacy content beyond the current write constraint.
-  database.sqlite.exec("PRAGMA ignore_check_constraints = ON");
   database.sqlite
     .prepare("UPDATE ugc_submissions SET kind = 'comment', content = ? WHERE id = 'mine'")
     .run(content);
-  database.sqlite.exec("PRAGMA ignore_check_constraints = OFF");
   const { items } = await list();
   expect(items.find((item) => item.id === "photo")?.previewUrl).toBe(
     "/me/v1/contributions/photo/preview",

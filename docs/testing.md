@@ -242,9 +242,6 @@ Known limitations and exceptions:
 - Historical index and notification-cleanup tests deliberately stop at a
   migration boundary. Adapter tests use a small synthetic table to verify
   parameter binding and rollback.
-- The `/me` historical long-comment read test temporarily disables CHECK
-  enforcement only while preparing that legacy row, then restores it. Ordinary
-  fixtures keep the real constraints enabled.
 - Native Workers suites retain their deliberately reduced or historical
   database setups and their independent execution commands.
 
