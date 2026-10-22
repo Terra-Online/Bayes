@@ -11,7 +11,74 @@ import type { EndfieldBindingRow } from "@/repositories/binding/types";
 import { drainUserProgressStatsOutbox } from "@/services/progress/outbox";
 import type { Bindings } from "@/types/app";
 
-type FixtureEnv = { TEST_GATE: Fetcher; STATS: Fetcher; KV: KVNamespace; DB: D1Database };
+interface FixtureEnv {
+  TEST_GATE: Fetcher;
+  STATS: Fetcher;
+  KV: KVNamespace;
+  DB: D1Database;
+}
+
+// Only external Stats routing is substituted. Unconfigured binding access fails loudly.
+function outboxBindings(env: FixtureEnv): Bindings {
+  const stats = new Proxy({} as Bindings["OEM_STATS_DO"], {
+    get(_target, key) {
+      if (key === "getByName") {
+        return () => env.STATS;
+      }
+      throw new Error(`Unexpected Stats namespace operation: ${String(key)}`);
+    },
+  });
+  return new Proxy({} as Bindings, {
+    get(_target, key) {
+      if (key === "DB") {
+        return env.DB;
+      }
+      if (key === "OEM_STATS_DO") {
+        return stats;
+      }
+      throw new Error(`Unexpected outbox binding: ${String(key)}`);
+    },
+  });
+}
+
+interface PublicReadObservation {
+  db: D1Database;
+  statements: number;
+}
+
+function observePublicReads(env: FixtureEnv, request: Request): PublicReadObservation {
+  const observation: PublicReadObservation = { db: env.DB, statements: 0 };
+  function observeStatement(statement: D1PreparedStatement): D1PreparedStatement {
+    return new Proxy(statement, {
+      get(target, key) {
+        if (key === "bind") {
+          return (...values: unknown[]) => observeStatement(target.bind(...values));
+        }
+        const value = Reflect.get(target, key);
+        if (typeof value !== "function") {
+          return value;
+        }
+        return async (...args: unknown[]) => {
+          // Count executions, not prepare/bind, to preserve the cold/warm read budget.
+          observation.statements++;
+          if (request.headers.has("x-test-block")) {
+            await env.TEST_GATE.fetch("https://gate/");
+          }
+          return Reflect.apply(value, target, args);
+        };
+      },
+    });
+  }
+  observation.db = new Proxy(env.DB, {
+    get(target, key) {
+      if (key === "prepare") {
+        return (sql: string) => observeStatement(target.prepare(sql));
+      }
+      throw new Error(`Unexpected public-read database operation: ${String(key)}`);
+    },
+  });
+  return observation;
+}
 const timers = new Set<unknown>();
 const nativeTimeout = globalThis.setTimeout;
 const nativeInterval = globalThis.setInterval;
@@ -76,44 +143,12 @@ export default {
       }
     }
     if (path === "/outbox") {
-      let delivered = false;
-      const db = {
-        prepare: () => ({
-          bind() {
-            return this;
-          },
-          all: async () => ({
-            results: delivered
-              ? []
-              : [
-                  {
-                    id: 1,
-                    event_id: "event",
-                    uid: "user",
-                    mutation_id: "mutation",
-                    marker_index_hash: "hash",
-                    payload: JSON.stringify({
-                      eventId: "event",
-                      markerIndexHash: "hash",
-                      pointCount: 1,
-                      increments: [0],
-                      decrements: [],
-                      firstSync: true,
-                    }),
-                    attempts: 0,
-                    created_at: 0,
-                  },
-                ],
-          }),
-          run: async () => {
-            delivered = true;
-          },
-        }),
-      } as unknown as D1Database;
-      await drainUserProgressStatsOutbox(
-        { DB: db, OEM_STATS_DO: { getByName: () => env.STATS } } as unknown as Bindings,
-        "user",
-      );
+      await drainUserProgressStatsOutbox(outboxBindings(env), "user");
+      // A failed delivery also writes (retry/blocked). Only persisted processing is success.
+      const row = await env.DB.prepare(
+        "SELECT status, processed_at FROM progress_stats_outbox WHERE event_id = 'event'",
+      ).first<{ status: string; processed_at: number | null }>();
+      const delivered = row?.status === "processed" && row.processed_at !== null;
       return Response.json({ delivered, timers: timers.size });
     }
     if (path === "/socket" || path === "/position") {
@@ -136,23 +171,9 @@ export default {
       connection.close();
       return Response.json({ active, timers: timers.size });
     }
-    let statements = 0;
-    const db = {
-      prepare: () => ({
-        bind() {
-          return this;
-        },
-        all: async () => {
-          statements++;
-          if (request.headers.has("x-test-block")) {
-            await env.TEST_GATE.fetch("https://gate/");
-          }
-          return { results: [] };
-        },
-      }),
-    } as unknown as D1Database;
+    const observation = observePublicReads(env, request);
     const payload = {
-      db,
+      db: observation.db,
       kv: env.KV,
       markerIds: [path.slice(1)],
       limit: 6,
@@ -165,6 +186,6 @@ export default {
       request.headers.get("x-test-kind") === "comments"
         ? await listCachedPublicCommentsByMarker(payload)
         : await listCachedPublicImagesByMarker(payload);
-    return Response.json({ items, statements });
+    return Response.json({ items, statements: observation.statements });
   },
 };
