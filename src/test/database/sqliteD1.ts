@@ -56,11 +56,11 @@ class SqliteStatement {
   }
 
   async all<Result>(): Promise<D1Result<Result>> {
-    return this.execute() as unknown as D1Result<Result>;
+    return this.execute() as D1Result<Result>;
   }
 
   async run<Result>(): Promise<D1Result<Result>> {
-    return this.execute() as unknown as D1Result<Result>;
+    return this.execute() as D1Result<Result>;
   }
 }
 
@@ -73,7 +73,7 @@ export class SqliteD1 {
     prepare: (sql: string) => this.prepare(sql),
     batch: <Result>(statements: D1PreparedStatement[]) => this.batch<Result>(statements),
     exec: (sql: string) => this.exec(sql),
-  } as unknown as D1Database;
+  } as D1Database;
   readonly hooks: { beforeQuery?: (sql: string, values: SQLInputValue[]) => void } = {};
 
   close(): void {
@@ -96,7 +96,7 @@ export class SqliteD1 {
         (statement as unknown as SqliteStatement).execute(),
       );
       this.sqlite.exec("COMMIT");
-      return results as unknown as D1Result<Result>[];
+      return results as D1Result<Result>[];
     } catch (error) {
       this.sqlite.exec("ROLLBACK");
       throw error;
