@@ -2,8 +2,7 @@ import type { StatementSync } from "node:sqlite";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { createTestDatabase } from "@/test/database/createTestDatabase";
-import type { SqliteD1 } from "@/test/database/sqliteD1";
+import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { insertUser } from "@/test/fixtures/users";
 
 import {
@@ -13,7 +12,7 @@ import {
 } from "./repository";
 
 describe("outbox query efficiency", () => {
-  let database: SqliteD1;
+  let database: TestDatabase;
   let eventInsert: StatementSync;
   const now = Date.parse("2026-09-05T12:00:00Z");
 

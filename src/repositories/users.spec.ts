@@ -1,13 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { createTestDatabase } from "@/test/database/createTestDatabase";
-import type { SqliteD1 } from "@/test/database/sqliteD1";
+import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { insertUser } from "@/test/fixtures/users";
 
 import { ensureUserProfile, getUserByPublicUid } from "./users";
 
 describe("profile activity write throttling", () => {
-  let database: SqliteD1;
+  let database: TestDatabase;
   const identity = { uid: "user-1", email: "user@example.test" };
 
   beforeEach(() => {

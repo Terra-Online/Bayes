@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
-import { createTestDatabase } from "@/test/database/createTestDatabase";
+import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { seedImageReadScenario } from "@/test/fixtures/imageReadScenario";
 import { insertNotification } from "@/test/fixtures/notifications";
 
 import { getContributionImage, listContributions } from "./me";
 
-let database: ReturnType<typeof createTestDatabase>;
+let database: TestDatabase;
 beforeEach(() => {
   database = createTestDatabase();
   seedImageReadScenario(database.sqlite);

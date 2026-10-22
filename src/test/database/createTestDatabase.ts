@@ -1,6 +1,8 @@
 import { applyMigrations, migrations } from "./migrations";
 import { SqliteD1 } from "./sqliteD1";
 
+export type { SqliteD1 as TestDatabase } from "./sqliteD1";
+
 export function createTestDatabase(files: string[] = migrations): SqliteD1 {
   const database = new SqliteD1();
   try {

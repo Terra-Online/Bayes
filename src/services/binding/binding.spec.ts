@@ -2,8 +2,7 @@ import { afterEach, beforeEach, expect, it } from "vitest";
 
 import { decryptSecret } from "@/lib/crypto";
 import { createEndfieldDeviceProfile } from "@/lib/endfieldClient/deviceProfile";
-import { createTestDatabase } from "@/test/database/createTestDatabase";
-import type { SqliteD1 } from "@/test/database/sqliteD1";
+import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { insertUser } from "@/test/fixtures/users";
 
 import { bindRole, disableBinding, unlinkBinding, type BindingDependencies } from "./binding";
@@ -19,7 +18,7 @@ const role = {
   serverName: "Server",
   isDefault: true,
 };
-let database: SqliteD1;
+let database: TestDatabase;
 let dependencies: BindingDependencies;
 let records: Map<string, unknown>;
 

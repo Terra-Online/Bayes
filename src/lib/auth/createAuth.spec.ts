@@ -1,7 +1,7 @@
 import { betterAuth } from "better-auth";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createTestDatabase } from "@/test/database/createTestDatabase";
+import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import type { Bindings } from "@/types/app";
 
 import { createAuth, runWithAuthRequest } from "./createAuth";
@@ -9,7 +9,7 @@ import { createAuth, runWithAuthRequest } from "./createAuth";
 vi.mock("@/lib/email/sender", () => ({ sendEmail: vi.fn() }));
 
 describe("completed authentication context reuse", () => {
-  const databases: ReturnType<typeof createTestDatabase>[] = [];
+  const databases: TestDatabase[] = [];
   function environment(): Bindings {
     const database = createTestDatabase();
     databases.push(database);

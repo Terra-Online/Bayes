@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createAuth } from "@/lib/auth/createAuth";
 import { sendEmail } from "@/lib/email/sender";
 import { onAppError } from "@/middleware/error-handler";
-import { createTestDatabase } from "@/test/database/createTestDatabase";
+import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import type { AppEnv, Bindings } from "@/types/app";
 
 import { createRoutes as createEmailAuthRoutes } from "./emailRoutes";
@@ -17,7 +17,7 @@ vi.mock("@/middleware/rate-limit", () => ({
 }));
 
 describe("Better Auth 1.7 with the production D1 table layout", () => {
-  let database: ReturnType<typeof createTestDatabase>;
+  let database: TestDatabase;
   let env: Bindings;
   let auth: ReturnType<typeof createAuth>;
   let app: Hono<AppEnv<{ requestId: string }>>;

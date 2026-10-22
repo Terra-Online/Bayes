@@ -10,7 +10,7 @@ import {
 } from "@/lib/auth/browserSession";
 import { createAuth } from "@/lib/auth/createAuth";
 import { onAppError } from "@/middleware/error-handler";
-import { createTestDatabase } from "@/test/database/createTestDatabase";
+import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import type { AppEnv, Bindings } from "@/types/app";
 
 import { attachSessionExchangeCode } from "./callbacks";
@@ -52,7 +52,7 @@ const CN_API_ORIGIN = "https://api.opendfieldmap.cn";
 const CN_ORIGIN = "https://opendfieldmap.cn";
 
 describe("CHIPS OAuth exchange", () => {
-  let database: ReturnType<typeof createTestDatabase>;
+  let database: TestDatabase;
   let auth: ReturnType<typeof createAuth>;
   let env: Bindings;
   let app: Hono<AppEnv<{ requestId: string }>>;

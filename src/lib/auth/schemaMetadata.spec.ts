@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { createTestDatabase } from "@/test/database/createTestDatabase";
+import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 
 import { authSchemaDatabase } from "./schemaMetadata";
 
 describe("validated D1 metadata isolation", () => {
-  const databases: ReturnType<typeof createTestDatabase>[] = [];
+  const databases: TestDatabase[] = [];
   afterEach(() => databases.splice(0).forEach((database) => database.close()));
   function setup() {
     const database = createTestDatabase();

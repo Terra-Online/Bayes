@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createTestDatabase } from "@/test/database/createTestDatabase";
-import type { SqliteD1 } from "@/test/database/sqliteD1";
+import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { insertUser } from "@/test/fixtures/users";
 import type { Bindings } from "@/types/app";
 
@@ -14,7 +13,7 @@ vi.mock("@/lib/email/sender", () => ({
 import { sendModerationWarning } from "./warnings";
 
 describe("moderation warning service", () => {
-  let database: SqliteD1;
+  let database: TestDatabase;
 
   beforeEach(() => {
     sendEmail.mockReset().mockResolvedValue({ provider: "cloudflare", id: "message-1" });

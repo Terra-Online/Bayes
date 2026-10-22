@@ -2,8 +2,7 @@ import type { Redis } from "@upstash/redis";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as rules from "@/lib/karma/rules";
-import { createTestDatabase } from "@/test/database/createTestDatabase";
-import type { SqliteD1 } from "@/test/database/sqliteD1";
+import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { insertUser as seedUser } from "@/test/fixtures/users";
 
 import { evaluateKarmaBatch, evaluateKarmaIfDue } from "./evaluation";
@@ -64,7 +63,7 @@ class MemoryRedis {
 }
 
 describe("12-hour resumable karma evaluation", () => {
-  let database: SqliteD1;
+  let database: TestDatabase;
   let redis: MemoryRedis;
 
   beforeEach(() => {

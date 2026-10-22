@@ -2,8 +2,7 @@ import { Hono } from "hono";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 import { ApiError } from "@/lib/errors";
-import { createTestDatabase } from "@/test/database/createTestDatabase";
-import type { SqliteD1 } from "@/test/database/sqliteD1";
+import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { insertAuthUser, insertSession, testAuthConfig } from "@/test/fixtures/auth";
 import { insertUser } from "@/test/fixtures/users";
 import type { AppEnv, AuthUser, Bindings } from "@/types/app";
@@ -35,7 +34,7 @@ vi.mock("@/middleware/rate-limit", () => ({
 
 import { createRoutes } from "./createRoutes";
 
-let database: SqliteD1;
+let database: TestDatabase;
 let env: Bindings;
 let sessions: Map<string, ReturnType<typeof insertSession>>;
 const external = vi.fn<typeof fetch>();

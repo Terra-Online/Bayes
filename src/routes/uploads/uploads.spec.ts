@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError } from "@/lib/errors";
 import { onAppError } from "@/middleware/error-handler";
-import { createTestDatabase } from "@/test/database/createTestDatabase";
+import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { seedImageReadScenario } from "@/test/fixtures/imageReadScenario";
 import type { AppEnv, AuthUser } from "@/types/app";
 
@@ -54,7 +54,7 @@ const suspendedUser: AuthUser = {
   role: "s",
 };
 
-let database: ReturnType<typeof createTestDatabase>;
+let database: TestDatabase;
 let db: D1Database;
 
 beforeEach(() => {

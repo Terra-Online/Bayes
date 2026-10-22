@@ -1,13 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { createTestDatabase } from "@/test/database/createTestDatabase";
-import type { SqliteD1 } from "@/test/database/sqliteD1";
+import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { insertSubmission, type SubmissionFixture } from "@/test/fixtures/submissions";
 import { insertUser } from "@/test/fixtures/users";
 
 import { getPublicCommentContextById } from "./getPublicComment";
 
-let database: SqliteD1;
+let database: TestDatabase;
 let db: D1Database;
 
 beforeEach(() => {

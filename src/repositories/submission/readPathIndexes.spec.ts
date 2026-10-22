@@ -2,9 +2,8 @@ import { readFileSync } from "node:fs";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { createTestDatabase } from "@/test/database/createTestDatabase";
+import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { migrations as migrationFiles } from "@/test/database/migrations";
-import type { SqliteD1 } from "@/test/database/sqliteD1";
 
 import { getImageSubmissionByFilePath, getPublicSubmissionByFilePath } from "./statusSubmission";
 import { countSubmissionUpvotes } from "./voteSubmission";
@@ -13,7 +12,7 @@ const migrations = new URL("../../../migrations/", import.meta.url);
 const migration = readFileSync(new URL("0036_file_path_and_vote_indexes.sql", migrations), "utf8");
 
 describe("read path index migration on the repository schema", () => {
-  let database: SqliteD1;
+  let database: TestDatabase;
   beforeEach(() => {
     database = createTestDatabase(migrationFiles.filter((file) => file < "0036"));
     // Reproduce the observed installation where 0027's vote index is missing.

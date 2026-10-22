@@ -1,12 +1,11 @@
 import { afterEach, beforeEach, expect, it } from "vitest";
 
-import { createTestDatabase } from "@/test/database/createTestDatabase";
-import type { SqliteD1 } from "@/test/database/sqliteD1";
+import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { insertUser } from "@/test/fixtures/users";
 
 import { getBinding, saveBinding } from "./repository";
 
-let database: SqliteD1;
+let database: TestDatabase;
 const role = {
   serverId: 1,
   roleId: "role",

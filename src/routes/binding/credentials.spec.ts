@@ -4,8 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/lib/errors";
 import type { EndfieldBindingRow } from "@/repositories/binding/types";
 import { deleteLocatorCaches, readDecryptedBindingCache } from "@/services/locator/cache";
-import { createTestDatabase } from "@/test/database/createTestDatabase";
-import type { SqliteD1 } from "@/test/database/sqliteD1";
+import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { insertUser } from "@/test/fixtures/users";
 import type { AppEnv, Bindings } from "@/types/app";
 
@@ -40,7 +39,7 @@ vi.mock("@/repositories/binding/repository", async (importOriginal) => ({
 }));
 
 describe("request-owned credential refresh and conditional persistence", () => {
-  let database: SqliteD1;
+  let database: TestDatabase;
   let env: Bindings;
   const context = () => ({ env }) as Context<AppEnv>;
   beforeEach(() => {

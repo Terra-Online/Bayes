@@ -2,9 +2,8 @@ import { readFileSync } from "node:fs";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createTestDatabase } from "@/test/database/createTestDatabase";
+import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { migrations } from "@/test/database/migrations";
-import type { SqliteD1 } from "@/test/database/sqliteD1";
 import { insertSubmission as seedSubmission } from "@/test/fixtures/submissions";
 import { insertUser } from "@/test/fixtures/users";
 
@@ -90,7 +89,11 @@ const comment = (
   },
 });
 
-function persistSubmission(database: SqliteD1, item: SubmissionRecord, status: SubmissionStatus) {
+function persistSubmission(
+  database: TestDatabase,
+  item: SubmissionRecord,
+  status: SubmissionStatus,
+) {
   seedSubmission(database.sqlite, {
     id: item.id,
     userId: item.userId,
@@ -111,7 +114,7 @@ function persistSubmission(database: SqliteD1, item: SubmissionRecord, status: S
 }
 
 describe("notification aggregation SQL", () => {
-  let database: SqliteD1 | null = null;
+  let database: TestDatabase | null = null;
 
   afterEach(() => {
     database?.close();

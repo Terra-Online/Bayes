@@ -1,15 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { onAppError } from "@/middleware/error-handler";
-import { createTestDatabase } from "@/test/database/createTestDatabase";
-import type { SqliteD1 } from "@/test/database/sqliteD1";
+import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { insertSubmission, type SubmissionFixture } from "@/test/fixtures/submissions";
 import { insertUser } from "@/test/fixtures/users";
 import type { AppEnv } from "@/types/app";
 
 import { createRoutes } from "./createRoutes";
 
-let database: SqliteD1;
+let database: TestDatabase;
 
 beforeEach(() => {
   database = createTestDatabase();

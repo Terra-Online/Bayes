@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 import { ApiError } from "@/lib/errors";
-import { createTestDatabase } from "@/test/database/createTestDatabase";
+import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { insertAuthUser, insertSession, testAuthConfig } from "@/test/fixtures/auth";
 import { seedImageReadScenario } from "@/test/fixtures/imageReadScenario";
 import type { AppEnv, AuthUser } from "@/types/app";
@@ -12,7 +12,7 @@ vi.mock("@/middleware/rate-limit", () => ({
 }));
 import { createRoutes } from "./createRoutes";
 
-let database: ReturnType<typeof createTestDatabase>;
+let database: TestDatabase;
 const get = vi.fn();
 let sessions: Map<string, ReturnType<typeof insertSession>>;
 beforeEach(() => {

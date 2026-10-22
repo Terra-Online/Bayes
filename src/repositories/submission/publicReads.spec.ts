@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { markNotificationsRead } from "@/repositories/notifications";
-import { createTestDatabase } from "@/test/database/createTestDatabase";
+import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { insertNotification } from "@/test/fixtures/notifications";
 import { insertSubmission } from "@/test/fixtures/submissions";
 import { insertUser } from "@/test/fixtures/users";
@@ -19,7 +19,7 @@ import {
 import { getVisibleCommentsByIds } from "./statusSubmission";
 
 describe("public read SQL under D1 limits", () => {
-  let connection: ReturnType<typeof createTestDatabase>;
+  let connection: TestDatabase;
   const markerIds = Array.from({ length: 100 }, (_, index) => `marker-${index}`);
 
   beforeEach(() => {

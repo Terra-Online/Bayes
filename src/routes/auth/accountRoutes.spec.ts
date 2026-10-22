@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { onAppError } from "@/middleware/error-handler";
-import { createTestDatabase } from "@/test/database/createTestDatabase";
+import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import type { AppEnv, AuthUser, Bindings } from "@/types/app";
 
 import { createRoutes as createAccountAuthRoutes } from "./accountRoutes";
@@ -15,7 +15,7 @@ vi.mock("@/middleware/rate-limit", () => ({
 }));
 
 describe("provider-based unlink compatibility", () => {
-  let database: ReturnType<typeof createTestDatabase>;
+  let database: TestDatabase;
   let app: Hono<AppEnv<{ authUser?: AuthUser; requestId: string }>>;
   const forward = vi.fn(async () => new Response("{}"));
   beforeEach(() => {
