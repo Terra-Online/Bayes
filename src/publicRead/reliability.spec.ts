@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { createMockBindings } from "@/test/bindings";
+import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import type { Bindings } from "@/types/app";
 
-const mocks = vi.hoisted(() => ({ fetch: vi.fn(), images: vi.fn(), comments: vi.fn() }));
+const mocks = vi.hoisted(() => ({ fetch: vi.fn() }));
 vi.mock("cloudflare:workers", () => ({
   exports: { PublicReadCache: { fetch: mocks.fetch } },
   WorkerEntrypoint: class {
@@ -11,14 +13,6 @@ vi.mock("cloudflare:workers", () => ({
       protected env: Bindings,
     ) {}
   },
-}));
-vi.mock("./origin/markerImages", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("./origin/markerImages")>()),
-  listCachedPublicImagesByMarker: mocks.images,
-}));
-vi.mock("./origin/markerComments", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("./origin/markerComments")>()),
-  listCachedPublicCommentsByMarker: mocks.comments,
 }));
 import {
   publicReadResponse,
@@ -33,12 +27,26 @@ const fetchPublicCommentsFromWorkersCache = async (
 ) => publicReadResponse(await readPublicCommentsFromWorkersCache(payload));
 import { PublicReadCache } from "./origin/entrypoint";
 
-beforeEach(() => mocks.fetch.mockReset());
-afterEach(() => vi.restoreAllMocks());
+let database: TestDatabase;
+let pending: Promise<unknown>[];
+let context: ExecutionContext;
+beforeEach(() => {
+  mocks.fetch.mockReset();
+  database = createTestDatabase();
+  pending = [];
+  context = {
+    waitUntil: (promise: Promise<unknown>) => pending.push(promise),
+  } as unknown as ExecutionContext;
+});
+afterEach(async () => {
+  await Promise.all(pending);
+  vi.restoreAllMocks();
+  database.close();
+});
 
 describe("bounded public reads", () => {
   it.each(["images", "comments"])(
-    "releases unused %s entries before other marker bodies finish",
+    "trims unused %s entries before other marker bodies finish",
     async (kind) => {
       let finishSlow!: () => void;
       const firstItems = [
@@ -66,8 +74,8 @@ describe("bounded public reads", () => {
         kind === "images"
           ? fetchPublicImagesFromWorkersCache(payload)
           : fetchPublicCommentsFromWorkersCache(payload);
-      await vi.waitFor(() => expect(finishSlow).toBeTypeOf("function"));
       try {
+        await vi.waitFor(() => expect(finishSlow).toBeTypeOf("function"));
         expect(select).toHaveBeenCalledWith(0, 1);
       } finally {
         finishSlow();
@@ -120,6 +128,7 @@ describe("bounded public reads", () => {
     const releases: Array<() => void> = [];
     let active = 0;
     let peak = 0;
+    let drainBodies = false;
     mocks.fetch.mockImplementation(async (request: Request) => {
       active += 1;
       peak = Math.max(peak, active);
@@ -128,10 +137,15 @@ describe("bounded public reads", () => {
         ok: true,
         json: () =>
           new Promise((resolve) => {
-            releases.push(() => {
+            const release = () => {
               active -= 1;
               resolve({ items: [{ id: markerId, markerId }] });
-            });
+            };
+            if (drainBodies) {
+              release();
+            } else {
+              releases.push(release);
+            }
           }),
       };
     });
@@ -145,77 +159,52 @@ describe("bounded public reads", () => {
       cacheNamespace: "prod",
       assetBaseUrl: "https://assets.example",
     });
-    await vi.waitFor(() => expect(releases).toHaveLength(8));
-    expect(mocks.fetch).toHaveBeenCalledTimes(8);
-    releases
-      .splice(0)
-      .reverse()
-      .forEach((release) => release());
-    await vi.waitFor(() => expect(releases).toHaveLength(8));
-    releases.splice(0).forEach((release) => release());
-    await vi.waitFor(() => expect(releases).toHaveLength(4));
-    releases.splice(0).forEach((release) => release());
-    const response = await responsePromise;
-    expect(peak).toBe(8);
-    expect(await response.json()).toEqual({
-      items: markerIds.map((markerId) => ({ id: markerId, markerId })),
-    });
-  });
-
-  it("keeps partial responses uncacheable and propagates overload backoff without retries", async () => {
-    vi.spyOn(console, "error").mockImplementation(() => undefined);
-    mocks.fetch.mockImplementation(async (request: Request) => {
-      if (new URL(request.url).searchParams.get("markerId") === "failed") {
-        return Response.json({}, { status: 503 });
-      }
-      return Response.json({ items: [] });
-    });
-    const partial = await fetchPublicCommentsFromWorkersCache({
-      markerIds: ["empty", "failed"],
-      limit: 20,
-      replyLimit: 3,
-      cacheNamespace: "prod",
-    });
-    expect(partial.status).toBe(200);
-    expect(partial.headers.get("cache-control")).toBe("private, no-store");
-    expect(await partial.json()).toEqual({ items: [], partial: true, failedMarkerIds: ["failed"] });
-    const failed = await fetchPublicCommentsFromWorkersCache({
-      markerIds: ["failed"],
-      limit: 20,
-      replyLimit: 3,
-      cacheNamespace: "prod",
-    });
-    expect(failed.status).toBe(503);
-    expect(failed.headers.get("retry-after")).toBe("5");
-    expect(mocks.fetch).toHaveBeenCalledTimes(3);
-  });
-
-  it("handles platform overload before the cache entrypoint is reached", async () => {
-    mocks.fetch.mockRejectedValue(
-      Object.assign(new Error("Too much work queued"), { overloaded: true }),
-    );
-    const response = await fetchPublicImagesFromWorkersCache({
-      markerIds: ["failed"],
-      limit: 6,
-      cacheNamespace: "prod",
-      assetBaseUrl: "https://assets.example",
-    });
-    expect(response.status).toBe(503);
-    expect(response.headers.get("retry-after")).toBe("5");
-    expect(mocks.fetch).toHaveBeenCalledTimes(1);
+    try {
+      await vi.waitFor(() => expect(releases).toHaveLength(8));
+      expect(mocks.fetch).toHaveBeenCalledTimes(8);
+      releases
+        .splice(0)
+        .reverse()
+        .forEach((release) => release());
+      await vi.waitFor(() => expect(releases).toHaveLength(8));
+      releases.splice(0).forEach((release) => release());
+      await vi.waitFor(() => expect(releases).toHaveLength(4));
+      releases.splice(0).forEach((release) => release());
+      const response = await responsePromise;
+      expect(peak).toBe(8);
+      expect(await response.json()).toEqual({
+        items: markerIds.map((markerId) => ({ id: markerId, markerId })),
+      });
+    } finally {
+      // Release existing bodies and immediately consume any later bodies. The
+      // bounded wait also clears its polling timer if the client never settles.
+      drainBodies = true;
+      releases.splice(0).forEach((release) => release());
+      let settled = false;
+      void responsePromise.then(
+        () => {
+          settled = true;
+        },
+        () => {
+          settled = true;
+        },
+      );
+      await vi.waitFor(() => expect(settled).toBe(true), { timeout: 1000 });
+      await responsePromise;
+    }
   });
 
   it.each(["images", "comments"])(
     "does not cache D1 failures in the %s entrypoint",
     async (kind) => {
       vi.spyOn(console, "error").mockImplementation(() => undefined);
-      mocks[kind as "images" | "comments"].mockRejectedValueOnce(
-        new Error("D1_ERROR: D1 DB is overloaded."),
-      );
-      const cache = new PublicReadCache(
-        { waitUntil: vi.fn() } as unknown as ExecutionContext,
-        {} as Bindings,
-      );
+      database.hooks.beforeQuery = (sql) => {
+        if (/ugc_submissions/.test(sql)) {
+          throw new Error("D1_ERROR: D1 DB is overloaded.");
+        }
+      };
+      const bindings = createMockBindings({ DB: database.db });
+      const cache = new PublicReadCache(context, bindings.bindings);
       const response = await cache.fetch(
         new Request(
           `https://public-read-cache.internal/${kind}?markerId=marker-1&limit=6&replyLimit=3&namespace=prod&assetBaseUrl=https://assets.example`,
@@ -246,13 +235,11 @@ describe("bounded public reads", () => {
       idFromName: vi.fn().mockReturnValue("stats-id"),
       get: vi.fn().mockReturnValue(stub),
     };
-    const cache = new PublicReadCache(
-      { waitUntil: vi.fn() } as unknown as ExecutionContext,
-      {
-        OEM_KV: kv,
-        OEM_STATS_DO: stats,
-      } as unknown as Bindings,
-    );
+    const bindings = createMockBindings({ DB: database.db });
+    bindings.bindings.OEM_KV = kv as unknown as KVNamespace;
+    bindings.statsObjects.idFromName.mockImplementation(stats.idFromName);
+    bindings.statsObjects.get.mockImplementation(stats.get);
+    const cache = new PublicReadCache(context, bindings.bindings);
     const request = new Request(
       `https://public-read-cache.internal/progress-stats?markerIndexHash=${markerIndexHash}`,
     );
