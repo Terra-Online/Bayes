@@ -40,7 +40,7 @@ vi.mock("@upstash/redis", () => ({
   },
 }));
 
-const firstRole: EndfieldRoleOption = {
+const talosRole: EndfieldRoleOption = {
   serverId: 1,
   roleId: "talos-role",
   nickname: "Talos Explorer",
@@ -49,8 +49,8 @@ const firstRole: EndfieldRoleOption = {
   serverName: "Talos",
   isDefault: true,
 };
-const secondRole: EndfieldRoleOption = {
-  ...firstRole,
+const wulingRole: EndfieldRoleOption = {
+  ...talosRole,
   serverId: 2,
   roleId: "wuling-role",
   nickname: "Wuling Explorer",
@@ -139,7 +139,7 @@ function request(
 
 async function startFlow(
   uid = "owner",
-  roles = [firstRole, secondRole],
+  roles = [talosRole, wulingRole],
   kind: "code" | "token" = "code",
 ) {
   if (kind === "token") {
@@ -169,7 +169,7 @@ async function startFlow(
   return flow.flowId;
 }
 
-function selectRole(flowId: string, role = firstRole, uid = "owner") {
+function selectRole(flowId: string, role = talosRole, uid = "owner") {
   return request(
     "/binding/v1/endfield/bind-role",
     { flowId, serverId: role.serverId, roleId: role.roleId },
@@ -177,7 +177,7 @@ function selectRole(flowId: string, role = firstRole, uid = "owner") {
   );
 }
 
-async function bind(uid = "owner", role = firstRole, kind: "code" | "token" = "code") {
+async function bind(uid = "owner", role = talosRole, kind: "code" | "token" = "code") {
   const flowId = await startFlow(uid, [role], kind);
   expect((await selectRole(flowId, role, uid)).status).toBe(200);
 }
@@ -222,7 +222,7 @@ function bothMapRequests() {
 
 describe("official marks through HTTP", () => {
   it("uses the saved account token when ordinary credential refresh cannot recover sync", async () => {
-    await bind("owner", firstRole, "token");
+    await bind("owner", talosRole, "token");
     const mapsReady = bothMapRequests();
     external.mockImplementation(async (url, init) => {
       const target = new URL(String(url));
@@ -267,7 +267,7 @@ describe("official marks through HTTP", () => {
   });
 
   it("requires rebinding for an expired game login without replacing the stored account", async () => {
-    await bind("owner", firstRole, "token");
+    await bind("owner", talosRole, "token");
     const previous = storedBinding();
     const mapsReady = bothMapRequests();
     external.mockImplementation(async (url) => {
@@ -326,7 +326,7 @@ describe("official marks through HTTP", () => {
 
   it("reads fresh marks for each caller's bound role without sharing private progress", async () => {
     await bind();
-    await bind("neighbor", secondRole);
+    await bind("neighbor", wulingRole);
     let ownerMarked = true;
     external.mockImplementation(async (url, init) => {
       const target = new URL(String(url));
@@ -404,6 +404,7 @@ describe("official marks through HTTP", () => {
       },
       timestamp: expect.any(String),
       markedIds: ["MARK-A", "42", "unknown-marker", "mark-a"],
+      // Case variants identify one local point; unknown provider marks remain in markedIds.
       pointIds: ["point-a"],
       markers: [
         { id: "MARK-A", isUserMarked: true },
@@ -425,7 +426,7 @@ describe("binding ownership and lifecycle through HTTP", () => {
     expect((await request("/locator/position")).status).toBe(200);
     upstreamMaps([{ id: "old-role-mark", isUserMarked: true }]);
     expect((await request("/sync/v1/official")).status).toBe(200);
-    await bind("owner", secondRole);
+    await bind("owner", wulingRole);
     const newPosition = { ...position, pos: { x: 700, y: 0, z: 100 }, levelId: "wuling-factory" };
     positionFetch.mockImplementation(async (request) => {
       expect(Object.fromEntries(new URL(request.url).searchParams)).toEqual({
@@ -462,7 +463,7 @@ describe("binding ownership and lifecycle through HTTP", () => {
   it("keeps the current binding and pending selection after an unrelated exchange is rejected", async () => {
     await bind();
     const previous = storedBinding();
-    const flowId = await startFlow("owner", [secondRole]);
+    const flowId = await startFlow("owner", [wulingRole]);
     external.mockResolvedValueOnce(Response.json({ status: 1, msg: "Account token rejected" }));
     await expectError(
       await request("/binding/v1/endfield/exchange-token", {
@@ -474,17 +475,17 @@ describe("binding ownership and lifecycle through HTTP", () => {
       "ENDFIELD_AUTH_REJECTED",
     );
     expect(storedBinding()).toEqual(previous);
-    expect((await selectRole(flowId, secondRole)).status).toBe(200);
+    expect((await selectRole(flowId, wulingRole)).status).toBe(200);
     expect(storedBinding()).toMatchObject({ role_id: "wuling-role", status: "enabled" });
   });
 
   it("leaves the current binding usable when a replacement flow expires", async () => {
     await bind();
     const previous = storedBinding();
-    const flowId = await startFlow("owner", [secondRole]);
+    const flowId = await startFlow("owner", [wulingRole]);
     const expiresAt = Math.max(...[...boundary.pending.values()].map((record) => record.expiresAt));
     vi.spyOn(Date, "now").mockReturnValue(expiresAt + 1);
-    await expectError(await selectRole(flowId, secondRole), 410, "ENDFIELD_BINDING_FLOW_EXPIRED");
+    await expectError(await selectRole(flowId, wulingRole), 410, "ENDFIELD_BINDING_FLOW_EXPIRED");
     expect(storedBinding()).toEqual(previous);
     const response = await request("/locator/position?binding=1");
     expect(response.status).toBe(200);
@@ -497,19 +498,19 @@ describe("binding ownership and lifecycle through HTTP", () => {
   it("binds only an offered role for the signed-in owner and consumes that owner's flow", async () => {
     const flowId = await startFlow();
     await expectError(
-      await selectRole(flowId, secondRole, "neighbor"),
+      await selectRole(flowId, wulingRole, "neighbor"),
       410,
       "ENDFIELD_BINDING_FLOW_EXPIRED",
     );
     await expectError(
-      await selectRole(flowId, { ...secondRole, serverId: 1 }),
+      await selectRole(flowId, { ...wulingRole, serverId: 1 }),
       404,
       "ENDFIELD_ROLE_NOT_FOUND",
     );
     expect(storedBinding()).toBeUndefined();
     expect(storedBinding("neighbor")).toBeUndefined();
 
-    const selected = await selectRole(flowId, secondRole);
+    const selected = await selectRole(flowId, wulingRole);
     expect(selected.status).toBe(200);
     expect(await selected.json()).toEqual({
       ok: true,
@@ -545,7 +546,7 @@ describe("binding ownership and lifecycle through HTTP", () => {
   it.each(["disable", "unlink"])(
     "%s immediately revokes warmed position and official-mark access without affecting another owner",
     async (action) => {
-      await bind("neighbor", secondRole);
+      await bind("neighbor", wulingRole);
       await bind();
       expect((await request("/locator/position")).status).toBe(200);
       upstreamMaps();
@@ -578,7 +579,7 @@ describe("binding ownership and lifecycle through HTTP", () => {
         status: "enabled",
       });
 
-      await bind("owner", secondRole);
+      await bind("owner", wulingRole);
       const newPosition = { ...position, pos: { x: -12, y: 0, z: 200 }, levelId: "wuling-valley" };
       positionFetch.mockResolvedValueOnce(Response.json({ code: 0, data: newPosition }));
       const rebound = await request("/locator/position?binding=1");
@@ -619,7 +620,7 @@ describe("locator policy authorization through HTTP", () => {
 
   it("rejects another role, another server, and invalid consent targets before contacting the provider", async () => {
     await bind();
-    await bind("neighbor", secondRole);
+    await bind("neighbor", wulingRole);
     const previous = storedBinding();
     external.mockClear();
     for (const payload of [{ roleId: "wuling-role" }, { serverId: 2 }]) {
@@ -638,7 +639,7 @@ describe("locator policy authorization through HTTP", () => {
   });
 
   it("authorizes the owner's selected role with its stored credentials and returns a public summary", async () => {
-    await bind("owner", secondRole);
+    await bind("owner", wulingRole);
     const previous = storedBinding();
     external.mockImplementation(async (url, init) => {
       expect(new URL(String(url)).pathname).toBe("/web/v1/game/endfield/map/agree-policy");
@@ -723,7 +724,7 @@ describe("private locator access through HTTP", () => {
 
   it("keeps cached positions scoped to the authenticated owner and supports query-token clients", async () => {
     await bind();
-    await bind("neighbor", secondRole);
+    await bind("neighbor", wulingRole);
     const neighborPosition = {
       ...position,
       pos: { x: 900, y: 10, z: 250 },
@@ -755,6 +756,8 @@ describe("private locator access through HTTP", () => {
       binding: { roleId: "wuling-role", serverId: 2 },
     });
     const neighborToken = sessions.get("neighbor")!.headers.authorization.slice(7);
+    // The authenticated header takes precedence over the query token, even when
+    // that token belongs to another owner with an already-warmed position cache.
     const headerClient = await request(`/locator/position?access_token=${neighborToken}`);
     expect(headerClient.status).toBe(200);
     expect(headerClient.headers.get("x-locator-cache")).toBe("fresh");

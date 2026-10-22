@@ -14,6 +14,11 @@ import { createRoutes as createPasswordResetRoutes } from "./passwordResetRoutes
 
 vi.mock("@/lib/email/blacklist.json", () => ({ default: ["disposable.example.test"] }));
 
+interface RegisteredEmailIdentity {
+  token: string;
+  user: { id: string };
+}
+
 describe("email authentication HTTP behavior", () => {
   let database: TestDatabase;
   let env: Bindings;
@@ -124,7 +129,8 @@ describe("email authentication HTTP behavior", () => {
     };
   }
 
-  async function issueOtp(email: string, locale?: string) {
+  async function issueOtp(email: string, locale?: string): Promise<string> {
+    // Move beyond the recipient cooldown so each scenario receives a fresh code.
     vi.setSystemTime(Date.now() + 121_000);
     const response = await request("/email-otp/send-verification-otp", { email, locale });
     expect(response.status, await response.clone().text()).toBe(200);
@@ -133,6 +139,16 @@ describe("email authentication HTTP behavior", () => {
       throw new Error("Expected delivered OTP text");
     }
     return /\b\d{6}\b/.exec(message.text)![0];
+  }
+
+  async function registerEmailAccount(email: string): Promise<RegisteredEmailIdentity> {
+    const response = await request("/register", {
+      email,
+      otp: await issueOtp(email),
+      password: "Password123",
+    });
+    expect(response.status, await response.clone().text()).toBe(200);
+    return response.json() as Promise<RegisteredEmailIdentity>;
   }
 
   it("counts rejected OTP submissions toward the advertised IP budget and recovers after Retry-After", async () => {
@@ -159,6 +175,8 @@ describe("email authentication HTTP behavior", () => {
     const email = "budget@example.com";
     let exhausted = false;
     let delivered = 0;
+    // Retry-After identifies the short cooldown. The recipient budget still blocks
+    // after those cooldowns, even when every request comes from a different IP.
     // Bound the probe so removing the budget fails instead of looping indefinitely.
     for (let index = 0; index < 100; index++) {
       const response = await request(
@@ -228,11 +246,11 @@ describe("email authentication HTTP behavior", () => {
       { email: "new@sub.disposable.example.test" },
       "DISPOSABLE_EMAIL_NOT_ALLOWED",
     ],
-  ])(
+  ] as const)(
     "rejects invalid or disposable registration input at %s without creating an identity or sending mail",
     async (path, body, code) => {
       const before = storedIdentity();
-      const response = await request(path as string, body);
+      const response = await request(path, body);
       expect(response.status).toBe(422);
       expect(await response.json()).toMatchObject({ code });
       expect(storedIdentity()).toEqual(before);
@@ -332,13 +350,7 @@ describe("email authentication HTTP behavior", () => {
 
   it("retains an existing password, business profile and prior session when registration is repeated with fresh email proof", async () => {
     const email = "existing@example.com";
-    const registered = await request("/register", {
-      email,
-      otp: await issueOtp(email),
-      password: "Password123",
-    });
-    expect(registered.status).toBe(200);
-    const identity = (await registered.json()) as { token: string; user: { id: string } };
+    const identity = await registerEmailAccount(email);
     insertUser(database.sqlite, {
       uid: identity.user.id,
       email,
@@ -367,7 +379,7 @@ describe("email authentication HTTP behavior", () => {
     expect((await request("/sign-in/email", { email, password: "Password123" })).status).toBe(200);
   });
 
-  async function issueReset(email: string, locale?: string) {
+  async function issueReset(email: string, locale?: string): Promise<string> {
     vi.setSystemTime(Date.now() + 121_000);
     const response = await request("/forget-password", {
       email,
@@ -396,10 +408,7 @@ describe("email authentication HTTP behavior", () => {
 
   it("preserves password and reset token after invalid reset input, then resets successfully using the localized delivered link", async () => {
     const email = "reset@example.com";
-    expect(
-      (await request("/register", { email, otp: await issueOtp(email), password: "Password123" }))
-        .status,
-    ).toBe(200);
+    await registerEmailAccount(email);
     const beforeRequest = storedIdentity();
     const rejectedRequest = await request("/forget-password", { email, redirectTo: "not-a-url" });
     expect(rejectedRequest.status).toBe(422);
@@ -451,13 +460,7 @@ describe("email authentication HTTP behavior", () => {
 
   it("preserves the user's password and business profile after failed reset delivery and recovers with a newly delivered link", async () => {
     const email = "retry-reset@example.com";
-    const signup = await request("/register", {
-      email,
-      otp: await issueOtp(email),
-      password: "Password123",
-    });
-    expect(signup.status).toBe(200);
-    const { user } = (await signup.json()) as { user: { id: string } };
+    const { user } = await registerEmailAccount(email);
     insertUser(database.sqlite, { uid: user.id, email, nickname: "ResetOwner", points: 340 });
     const profile = database.sqlite.prepare("SELECT * FROM users").all();
     const before = storedIdentity();
@@ -495,10 +498,7 @@ describe("email authentication HTTP behavior", () => {
     "rejects reset previews for an %s token without changing surviving accounts",
     async (state) => {
       const email = "preview@example.com";
-      expect(
-        (await request("/register", { email, otp: await issueOtp(email), password: "Password123" }))
-          .status,
-      ).toBe(200);
+      await registerEmailAccount(email);
       const token = await issueReset(email);
       if (state === "expired") {
         database.sqlite

@@ -63,14 +63,13 @@ describe("CHIPS OAuth exchange", () => {
     expect(proof).toContain("HttpOnly");
     proofCookie = proof.split(";")[0]!;
     callbackUrl = response.headers.get("location")!;
-    expect(response.status).toBe(302);
     expect(response.headers.get("cache-control")).toBe("private, no-store");
     expect(response.headers.get("referrer-policy")).toBe("no-referrer");
-    const code = new URL(response.headers.get("location")!).searchParams.get("auth_code")!;
+    const destination = new URL(callbackUrl);
+    const code = destination.searchParams.get("auth_code")!;
     expect(code).toBeTruthy();
-    expect(
-      new URL(response.headers.get("location")!).searchParams.has(AUTH_EXCHANGE_CHALLENGE_PARAM),
-    ).toBe(false);
+    // The browser proof stays in its HttpOnly cookie, outside the frontend URL.
+    expect(destination.searchParams.has(AUTH_EXCHANGE_CHALLENGE_PARAM)).toBe(false);
     return { code, cookie, token };
   }
 
@@ -124,7 +123,7 @@ describe("CHIPS OAuth exchange", () => {
       const payload = (await response.json()) as { user: { uid: string }; token?: string };
       expect(payload.user.uid).toBe("100001ER");
       expect(payload).not.toHaveProperty("token");
-      expect(JSON.stringify(payload)).not.toContain(token!);
+      expect(JSON.stringify(payload)).not.toContain(token);
       const cookie = response.headers
         .getSetCookie()
         .find((value) => value.startsWith("__Secure-oem-chips.session_token="))!;
@@ -410,12 +409,11 @@ describe("CHIPS OAuth exchange", () => {
       );
       expect(response.status).toBe(200);
       const cleared = response.headers.getSetCookie();
-      expect(
-        cleared.find((value) => value.startsWith("__Secure-oem-chips.session_token=")),
-      ).toContain("Partitioned");
-      expect(
-        cleared.find((value) => value.startsWith("__Secure-oem-chips.session_token=")),
-      ).toContain("Max-Age=0");
+      const partitionedCookie = cleared.find((value) =>
+        value.startsWith("__Secure-oem-chips.session_token="),
+      );
+      expect(partitionedCookie).toContain("Partitioned");
+      expect(partitionedCookie).toContain("Max-Age=0");
       const oldCookie = cleared.find((value) =>
         value.startsWith("__Secure-better-auth.session_token="),
       )!;

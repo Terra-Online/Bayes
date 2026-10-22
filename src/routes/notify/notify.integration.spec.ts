@@ -228,6 +228,8 @@ describe("notification inbox HTTP", () => {
       { id: "message-photo-one", target: "photo-one", payload: { kind: "image" }, readAt: null },
       { id: "message-photo-two", target: "photo-two", payload: { kind: "image" }, readAt: null },
     ]);
+    // Stored payloads can contain private metadata; neither the group nor its
+    // expanded messages may expose it to the recipient.
     expect(JSON.stringify(page)).not.toContain("private@example.test");
     const read = await request("/system/messages/approval-a/read", "alice", { method: "PATCH" });
     expect(await read.json()).toMatchObject({ unread: { system: 2, community: 1, total: 3 } });
@@ -298,14 +300,14 @@ describe("notification inbox HTTP", () => {
       changed: 0,
       unread: { system: 3, community: 1, total: 4 },
     });
-    const init = {
+    const batchReadRequest: RequestInit = {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         ids: ["approval-a", "approval-b", "approval-a", "bob-approval", "reply", "missing"],
       }),
     };
-    const response = await request("/system/messages/read", "alice", init);
+    const response = await request("/system/messages/read", "alice", batchReadRequest);
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("private, no-store");
     expect(await response.json()).toEqual({
@@ -314,7 +316,7 @@ describe("notification inbox HTTP", () => {
       unread: { system: 1, community: 1, total: 2 },
     });
     vi.setSystemTime(Date.now() + 1000);
-    const retry = await request("/system/messages/read", "alice", init);
+    const retry = await request("/system/messages/read", "alice", batchReadRequest);
     expect(retry.status).toBe(200);
     // A retry must preserve the business state, regardless of the update's matched-row count.
     expect((await inbox()).items).toEqual([
@@ -373,9 +375,12 @@ describe("notification inbox HTTP", () => {
       vi.setSystemTime(Date.now() + 1000);
       const retry = await request(`/${category}/read-all`, "alice", { method: "POST" });
       expect(await retry.json()).toEqual({ ok: true, changed: 0, unread });
+      const retriedInbox = await inbox(`/${category}/messages`);
       expect(
-        (await inbox(`/${category}/messages`)).items.every((item) => item.readAt === readAt),
-      ).toBe(true);
+        retriedInbox.items
+          .map(({ id, readAt }) => ({ id, readAt }))
+          .sort((a, b) => a.id.localeCompare(b.id)),
+      ).toEqual(readIds.map((id) => ({ id, readAt })));
       expect((await inbox("/system/messages", "bob")).unread).toEqual({
         system: 1,
         community: 1,

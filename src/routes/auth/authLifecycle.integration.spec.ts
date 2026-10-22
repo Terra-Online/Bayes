@@ -106,6 +106,10 @@ describe("authenticated account and profile HTTP lifecycle", () => {
       .get(uid);
   }
 
+  function storedAccounts() {
+    return database.sqlite.prepare("SELECT * FROM auth_accounts ORDER BY id").all();
+  }
+
   function addAccount(
     id: string,
     provider: string,
@@ -232,7 +236,7 @@ describe("authenticated account and profile HTTP lifecycle", () => {
 
   it("rejects a taken nickname without applying the accompanying avatar change to either profile", async () => {
     const original = storedProfile();
-    const originalOther = storedProfile("other");
+    const otherOriginalProfile = storedProfile("other");
     const response = await jsonRequest("PATCH", "/profile", {
       nickname: "TakenName",
       avatar: 33,
@@ -240,7 +244,7 @@ describe("authenticated account and profile HTTP lifecycle", () => {
     expect(response.status).toBe(409);
     expect(await response.json()).toMatchObject({ code: "NICKNAME_TAKEN" });
     expect(storedProfile()).toEqual(original);
-    expect(storedProfile("other")).toEqual(originalOther);
+    expect(storedProfile("other")).toEqual(otherOriginalProfile);
     expect(await (await request("/session")).json()).toMatchObject({
       user: { uid: "123456AB", nickname: "OriginalName", avatar: 7 },
     });
@@ -324,13 +328,11 @@ describe("authenticated account and profile HTTP lifecycle", () => {
   it("keeps login methods after invalid link and unlink requests and a rejected rate limit", async () => {
     addAccount("github", "github");
     addAccount("discord", "discord");
-    const before = database.sqlite.prepare("SELECT * FROM auth_accounts ORDER BY id").all();
+    const originalAccounts = storedAccounts();
     for (const path of ["/link-social", "/unlink-account"]) {
       const response = await jsonRequest("POST", path, { provider: "unknown" });
       expect(response.status).toBe(422);
-      expect(database.sqlite.prepare("SELECT * FROM auth_accounts ORDER BY id").all()).toEqual(
-        before,
-      );
+      expect(storedAccounts()).toEqual(originalAccounts);
     }
     const limit = vi
       .fn<RateLimit["limit"]>()
@@ -340,9 +342,7 @@ describe("authenticated account and profile HTTP lifecycle", () => {
     const rejected = await jsonRequest("POST", "/unlink-account", { provider: "github" });
     expect(rejected.status).toBe(429);
     expect(await rejected.json()).toMatchObject({ code: "RATE_LIMITED" });
-    expect(database.sqlite.prepare("SELECT * FROM auth_accounts ORDER BY id").all()).toEqual(
-      before,
-    );
+    expect(storedAccounts()).toEqual(originalAccounts);
     expect((await jsonRequest("POST", "/unlink-account", { provider: "github" })).status).toBe(200);
     expect(database.sqlite.prepare("SELECT id FROM auth_accounts").all()).toEqual([
       { id: "discord" },
@@ -411,16 +411,12 @@ describe("authenticated account and profile HTTP lifecycle", () => {
     addAccount("owner-email", "credential");
     addAccount("owner-google", "google");
     addAccount("other-github", "github", "other");
-    const originalAccounts = database.sqlite
-      .prepare("SELECT * FROM auth_accounts ORDER BY id")
-      .all();
+    const originalAccounts = storedAccounts();
 
     const response = await jsonRequest("POST", "/unlink-account", { provider: "github" });
     expect(response.status).toBe(400);
     expect(await response.json()).toMatchObject({ code: "ACCOUNT_NOT_LINKED" });
-    expect(database.sqlite.prepare("SELECT * FROM auth_accounts ORDER BY id").all()).toEqual(
-      originalAccounts,
-    );
+    expect(storedAccounts()).toEqual(originalAccounts);
     expect(await (await request("/list-accounts", {}, other)).json()).toEqual({
       accounts: [{ provider: "github", linkedAt: "2026-09-02T00:00:00.000Z", unlinkable: false }],
     });
@@ -430,16 +426,12 @@ describe("authenticated account and profile HTTP lifecycle", () => {
     addAccount("first-github", "github");
     addAccount("second-github", "github");
     addAccount("password", "credential");
-    const originalAccounts = database.sqlite
-      .prepare("SELECT * FROM auth_accounts ORDER BY id")
-      .all();
+    const originalAccounts = storedAccounts();
 
     const response = await jsonRequest("POST", "/unlink-account", { provider: "github" });
     expect(response.status).toBe(409);
     expect(await response.json()).toMatchObject({ code: "PROVIDER_CONFLICT" });
-    expect(database.sqlite.prepare("SELECT * FROM auth_accounts ORDER BY id").all()).toEqual(
-      originalAccounts,
-    );
+    expect(storedAccounts()).toEqual(originalAccounts);
     expect((await request("/session")).status).toBe(200);
   });
 
@@ -522,9 +514,7 @@ describe("authenticated account and profile HTTP lifecycle", () => {
       }
       const credentials = session === "anonymous" ? {} : owner;
       const originalProfile = storedProfile();
-      const originalAccounts = database.sqlite
-        .prepare("SELECT * FROM auth_accounts ORDER BY id")
-        .all();
+      const originalAccounts = storedAccounts();
       const responses = [
         await request("/list-accounts", {}, credentials),
         await jsonRequest("PATCH", "/profile", { nickname: "StolenName", avatar: 55 }, credentials),
@@ -539,9 +529,7 @@ describe("authenticated account and profile HTTP lifecycle", () => {
         });
       }
       expect(storedProfile()).toEqual(originalProfile);
-      expect(database.sqlite.prepare("SELECT * FROM auth_accounts ORDER BY id").all()).toEqual(
-        originalAccounts,
-      );
+      expect(storedAccounts()).toEqual(originalAccounts);
       expect(
         database.sqlite.prepare("SELECT COUNT(*) AS count FROM auth_verifications").get()!.count,
       ).toBe(0);

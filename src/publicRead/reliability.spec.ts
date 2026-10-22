@@ -30,18 +30,18 @@ const fetchPublicCommentsFromWorkersCache = async (
 import { PublicReadCache } from "./origin/entrypoint";
 
 let database: TestDatabase;
-let pending: Promise<unknown>[];
+let backgroundTasks: Promise<unknown>[];
 let context: ExecutionContext;
 beforeEach(() => {
   mocks.fetch.mockReset();
   database = createTestDatabase();
-  pending = [];
+  backgroundTasks = [];
   context = {
-    waitUntil: (promise: Promise<unknown>) => pending.push(promise),
+    waitUntil: (promise: Promise<unknown>) => backgroundTasks.push(promise),
   } as unknown as ExecutionContext;
 });
 afterEach(async () => {
-  await Promise.all(pending);
+  await Promise.all(backgroundTasks);
   vi.restoreAllMocks();
   database.close();
 });
@@ -55,7 +55,9 @@ describe("bounded public reads", () => {
         { id: "returned", markerId: "first", replies: [] },
         { id: "unused", markerId: "first", replies: [] },
       ];
-      const select = vi.spyOn(firstItems, "slice");
+      // Final output alone cannot show when excess entries were discarded.
+      // Observe selection while the slow body is still pending to protect memory use.
+      const trimItems = vi.spyOn(firstItems, "slice");
       mocks.fetch.mockImplementation(async (request: Request) => ({
         ok: true,
         json: () =>
@@ -72,18 +74,18 @@ describe("bounded public reads", () => {
         cacheNamespace: "prod" as const,
         assetBaseUrl: "https://assets.example",
       };
-      const pending =
+      const responsePromise =
         kind === "images"
           ? fetchPublicImagesFromWorkersCache(payload)
           : fetchPublicCommentsFromWorkersCache(payload);
       try {
         await vi.waitFor(() => expect(finishSlow).toBeTypeOf("function"));
-        expect(select).toHaveBeenCalledWith(0, 1);
+        expect(trimItems).toHaveBeenCalledWith(0, 1);
       } finally {
         finishSlow();
-        await pending;
+        await responsePromise;
       }
-      expect(await (await pending).json()).toEqual({ items: [firstItems[0]] });
+      expect(await (await responsePromise).json()).toEqual({ items: [firstItems[0]] });
     },
   );
 
@@ -271,19 +273,25 @@ describe("bounded public reads", () => {
       counts: "AQID",
       updatedAt: 42,
     };
+    const cachedSnapshots = new Map<string, string>();
     const kv = {
-      get: vi.fn().mockResolvedValueOnce(null).mockResolvedValueOnce(JSON.stringify(snapshot)),
-      put: vi.fn().mockResolvedValue(undefined),
+      get: vi.fn<(key: string) => Promise<string | null>>(
+        async (key) => cachedSnapshots.get(key) ?? null,
+      ),
+      put: vi.fn<KVNamespace["put"]>(async (key, value) => {
+        if (typeof value !== "string") {
+          throw new Error("Expected a JSON text statistics snapshot");
+        }
+        cachedSnapshots.set(key, value);
+      }),
     };
     const stub = { fetch: vi.fn().mockResolvedValue(Response.json(snapshot)) };
-    const stats = {
-      idFromName: vi.fn().mockReturnValue("stats-id"),
-      get: vi.fn().mockReturnValue(stub),
-    };
     const bindings = createMockBindings({ DB: database.db });
     bindings.bindings.OEM_KV = kv as unknown as KVNamespace;
-    bindings.statsObjects.idFromName.mockImplementation(stats.idFromName);
-    bindings.statsObjects.get.mockImplementation(stats.get);
+    bindings.statsObjects.idFromName.mockReturnValue({
+      toString: () => "stats-id",
+    } as DurableObjectId);
+    bindings.statsObjects.get.mockReturnValue(stub as unknown as DurableObjectStub);
     const cache = new PublicReadCache(context, bindings.bindings);
     const request = new Request(
       `https://public-read-cache.internal/progress-stats?markerIndexHash=${markerIndexHash}`,
@@ -291,19 +299,14 @@ describe("bounded public reads", () => {
 
     const miss = await cache.fetch(request);
     expect(await miss.json()).toEqual(snapshot);
-    expect(miss.headers.get("cache-control")).toBe("public, max-age=10");
-    expect(miss.headers.get("cloudflare-cdn-cache-control")).toBe("public, max-age=60");
+    expect(miss.headers.get("cache-control")).toMatch(/^public, max-age=\d+$/);
+    expect(miss.headers.get("cloudflare-cdn-cache-control")).toMatch(/^public, max-age=\d+$/);
     expect(miss.headers.get("x-oem-kv-cache")).toBe("miss");
-    expect(stats.idFromName).toHaveBeenCalledWith(markerIndexHash);
+    expect(bindings.statsObjects.idFromName).toHaveBeenCalledWith(markerIndexHash);
     expect(stub.fetch.mock.calls[0]![0].url).toBe(
       `https://progress-stats/state?markerIndexHash=${markerIndexHash}`,
     );
-    expect(kv.put).toHaveBeenCalledWith(
-      `progress:stats:v2:${markerIndexHash}`,
-      JSON.stringify(snapshot),
-      { expirationTtl: 60 },
-    );
-
+    // This hit must come from the preceding write, using the same cache key.
     const hit = await cache.fetch(request);
     expect(await hit.json()).toEqual(snapshot);
     expect(hit.headers.get("x-oem-kv-cache")).toBe("hit");

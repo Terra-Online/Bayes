@@ -10,7 +10,7 @@ import { OEMStatsDO } from "@/services/progress/statsDo";
 import { OEMUserDO } from "@/services/progress/userDo";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { insertAuthUser, insertSession, testAuthConfig } from "@/test/fixtures/auth";
-import { createProgressTestState } from "@/test/fixtures/progressRuntime";
+import { createProgressTestState, type ProgressTestState } from "@/test/fixtures/progressRuntime";
 import { insertUser } from "@/test/fixtures/users";
 import type { AppEnv } from "@/types/app";
 
@@ -21,13 +21,13 @@ let env: AppEnv["Bindings"];
 let sessions: Record<string, { authorization: string }>;
 let users: Map<string, OEMUserDO>;
 let stats: Map<string, OEMStatsDO>;
-let statsStates: Map<string, ReturnType<typeof createProgressTestState>>;
-let pending: Promise<unknown>[];
+let statsStates: Map<string, ProgressTestState>;
+let pendingStatsDeliveries: Promise<unknown>[];
 let kv: Map<string, string>;
 let statsDelivery: (request: Request, object: OEMStatsDO) => Promise<Response>;
 let publicCache: PublicReadCache;
 
-async function indexManifest(kind: "map" | "archive", ids: string[]) {
+async function buildManifestPayload(kind: "map" | "archive", ids: string[]) {
   const hash = await sha256Hex(
     kind === "map" ? buildCanonicalMarkerManifest(ids) : buildCanonicalArchiveManifest(ids),
   );
@@ -50,7 +50,7 @@ beforeEach(() => {
   users = new Map();
   stats = new Map();
   statsStates = new Map();
-  pending = [];
+  pendingStatsDeliveries = [];
   kv = new Map();
   statsDelivery = (request, object) => object.fetch(request);
   const getStats = (name: string) => {
@@ -86,7 +86,7 @@ beforeEach(() => {
           const runtime = createProgressTestState(name);
           // Each named object has independent storage and a production queue.
           runtime.state.waitUntil = (work) => {
-            pending.push(work);
+            pendingStatsDeliveries.push(work);
           };
           object = new OEMUserDO(runtime.state, env);
           users.set(name, object);
@@ -100,14 +100,14 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
-  await settle();
+  await drainStatsDeliveries();
   vi.restoreAllMocks();
   database.close();
 });
 
-async function settle() {
-  while (pending.length) {
-    await Promise.all(pending.splice(0));
+async function drainStatsDeliveries() {
+  while (pendingStatsDeliveries.length) {
+    await Promise.all(pendingStatsDeliveries.splice(0));
   }
 }
 
@@ -124,14 +124,14 @@ function request(path: string, body?: unknown, user: string | null = "explorer")
   );
 }
 
-async function register(kind: "map" | "archive" = "map", ids = ["p1", "p2"]) {
-  const manifest = await indexManifest(kind, ids);
+async function registerManifest(kind: "map" | "archive" = "map", ids = ["p1", "p2"]) {
+  const manifest = await buildManifestPayload(kind, ids);
   const response = await request(kind === "map" ? "/manifest" : "/archive/manifest", manifest);
   expect(response.status).toBe(200);
   return ("markerIndexHash" in manifest ? manifest.markerIndexHash : manifest.archiveIndexHash)!;
 }
 
-async function state(hash: string, kind: "map" | "archive" = "map", user = "explorer") {
+async function readProgress(hash: string, kind: "map" | "archive" = "map", user = "explorer") {
   const response = await request(
     kind === "map" ? `/state?markerIndexHash=${hash}` : `/archive/state?archiveIndexHash=${hash}`,
     undefined,
@@ -145,7 +145,7 @@ async function state(hash: string, kind: "map" | "archive" = "map", user = "expl
   ).progress;
 }
 
-function sync(
+function syncProgress(
   hash: string,
   mutationId: string,
   patch: Record<string, unknown> = {},
@@ -165,14 +165,14 @@ function sync(
   );
 }
 
-async function accepted(
+async function expectAcceptedSync(
   response: Response,
 ): Promise<{ ok: boolean; progress: { revision: string }; unchanged?: boolean }> {
   expect(response.status).toBe(200);
   return response.json();
 }
 
-async function publicStats(hash: string) {
+async function readPublicStats(hash: string) {
   const response = await request(`/stats?markerIndexHash=${hash}`, undefined, null);
   expect(response.status).toBe(200);
   const body = (await response.json()) as {
@@ -193,31 +193,33 @@ async function publicStats(hash: string) {
 describe("progress community stats HTTP", () => {
   it("preserves collections in an unchanged bitmap byte while removing a point in the next byte", async () => {
     const ids = ["p01", "p02", "p03", "p04", "p05", "p06", "p07", "p08", "p09"];
-    const hash = await register("map", ids);
-    const first = await accepted(await sync(hash, "across-bytes", { setPointIds: ["p01", "p09"] }));
-    await settle();
-    await accepted(
-      await sync(hash, "remove-last", {
+    const hash = await registerManifest("map", ids);
+    const first = await expectAcceptedSync(
+      await syncProgress(hash, "across-bytes", { setPointIds: ["p01", "p09"] }),
+    );
+    await drainStatsDeliveries();
+    await expectAcceptedSync(
+      await syncProgress(hash, "remove-last", {
         baseRevision: first.progress.revision,
         clearPointIds: ["p09"],
       }),
     );
-    await settle();
-    expect(await state(hash)).toMatchObject({ pointIds: ["p01"] });
-    const result = await publicStats(hash);
+    await drainStatsDeliveries();
+    expect(await readProgress(hash)).toMatchObject({ pointIds: ["p01"] });
+    const result = await readPublicStats(hash);
     expect(result.body).toMatchObject({ pointCount: 9, sampleSize: 1, totalSyncedUsers: 1 });
     expect(result.counts).toEqual([1, 0, 0, 0, 0, 0, 0, 0, 0]);
   });
 
   it("does not cache a failed stats read and recovers on the next public request", async () => {
-    const hash = await register();
+    const hash = await registerManifest();
     statsDelivery = async () => Response.json({ code: "STATS_UNAVAILABLE" }, { status: 503 });
     const failed = await request(`/stats?markerIndexHash=${hash}`, undefined, null);
     expect(failed.status).toBe(503);
     expect(failed.headers.get("cache-control")).toBe("private, no-store");
     expect(await failed.json()).toEqual({ code: "STATS_UNAVAILABLE" });
     statsDelivery = (request, object) => object.fetch(request);
-    const recovered = await publicStats(hash);
+    const recovered = await readPublicStats(hash);
     expect(recovered.body.sampleSize).toBe(0);
     expect(recovered.response.headers.get("x-oem-kv-cache")).toBe("miss");
   });
@@ -233,7 +235,7 @@ describe("progress community stats HTTP", () => {
       expect(response.status).toBe(422);
       expect(await response.json()).toMatchObject({ code: "VALIDATION_ERROR" });
     }
-    const result = await publicStats("a".repeat(64));
+    const result = await readPublicStats("a".repeat(64));
     expect(result.body).toEqual({
       markerIndexHash: "a".repeat(64),
       pointCount: 0,
@@ -245,20 +247,24 @@ describe("progress community stats HTTP", () => {
   });
 
   it("keeps a permanently rejected stats event and later events for that owner blocked while other owners continue", async () => {
-    const hash = await register();
+    const hash = await registerManifest();
     statsDelivery = async () => new Response("dataset rejected", { status: 409 });
-    const first = await accepted(await sync(hash, "blocked-event", { setPointIds: ["p1"] }));
-    await settle();
+    const first = await expectAcceptedSync(
+      await syncProgress(hash, "blocked-event", { setPointIds: ["p1"] }),
+    );
+    await drainStatsDeliveries();
     statsDelivery = (request, object) => object.fetch(request);
-    await accepted(
-      await sync(hash, "after-blocked", {
+    await expectAcceptedSync(
+      await syncProgress(hash, "after-blocked", {
         baseRevision: first.progress.revision,
         setPointIds: ["p2"],
       }),
     );
-    await settle();
-    await accepted(await sync(hash, "unaffected-owner", { setPointIds: ["p2"] }, "map", "other"));
-    await settle();
+    await drainStatsDeliveries();
+    await expectAcceptedSync(
+      await syncProgress(hash, "unaffected-owner", { setPointIds: ["p2"] }, "map", "other"),
+    );
+    await drainStatsDeliveries();
     expect(
       database.sqlite
         .prepare("SELECT mutation_id, status, attempts FROM progress_stats_outbox ORDER BY id")
@@ -268,14 +274,14 @@ describe("progress community stats HTTP", () => {
       { mutation_id: "after-blocked", status: "pending", attempts: 0 },
       { mutation_id: "unaffected-owner", status: "processed", attempts: 0 },
     ]);
-    expect(await state(hash)).toMatchObject({ pointIds: ["p1", "p2"] });
-    const result = await publicStats(hash);
+    expect(await readProgress(hash)).toMatchObject({ pointIds: ["p1", "p2"] });
+    const result = await readPublicStats(hash);
     expect(result.body.sampleSize).toBe(1);
     expect(result.counts).toEqual([0, 1]);
   });
 
   it("retries a lost stats acknowledgement in order after object recreation without counting a collection twice", async () => {
-    const hash = await register();
+    const hash = await registerManifest();
     let loseAcknowledgement = true;
     statsDelivery = async (request, object) => {
       const response = await object.fetch(request);
@@ -285,21 +291,23 @@ describe("progress community stats HTTP", () => {
       }
       return response;
     };
-    const first = await accepted(await sync(hash, "before-offline", { setPointIds: ["p1"] }));
-    await settle();
-    const firstEvent = database.sqlite
+    const first = await expectAcceptedSync(
+      await syncProgress(hash, "before-offline", { setPointIds: ["p1"] }),
+    );
+    await drainStatsDeliveries();
+    const eventAwaitingRetry = database.sqlite
       .prepare("SELECT status, attempts, next_attempt_at FROM progress_stats_outbox")
       .get();
-    expect(firstEvent).toMatchObject({ status: "retry", attempts: 1 });
-    const second = await accepted(
-      await sync(hash, "while-offline", {
+    expect(eventAwaitingRetry).toMatchObject({ status: "retry", attempts: 1 });
+    const second = await expectAcceptedSync(
+      await syncProgress(hash, "while-offline", {
         baseRevision: first.progress.revision,
         clearPointIds: ["p1"],
         setPointIds: ["p2"],
       }),
     );
-    await settle();
-    expect(await state(hash)).toMatchObject({ pointIds: ["p2"] });
+    await drainStatsDeliveries();
+    expect(await readProgress(hash)).toMatchObject({ pointIds: ["p2"] });
     expect(
       database.sqlite
         .prepare("SELECT mutation_id, status FROM progress_stats_outbox ORDER BY id")
@@ -308,18 +316,19 @@ describe("progress community stats HTTP", () => {
       { mutation_id: "before-offline", status: "retry" },
       { mutation_id: "while-offline", status: "pending" },
     ]);
-    // Keep the object stores while replacing object instances, as on eviction.
+    // Recreate the stats object with its existing storage so its receipt must
+    // prevent the already-applied event from incrementing counts again.
     stats.clear();
     users.clear();
-    vi.spyOn(Date, "now").mockReturnValue(Number(firstEvent!.next_attempt_at) + 1);
-    const refresh = await accepted(
-      await sync(hash, "back-online", {
+    vi.spyOn(Date, "now").mockReturnValue(Number(eventAwaitingRetry!.next_attempt_at) + 1);
+    const refresh = await expectAcceptedSync(
+      await syncProgress(hash, "back-online", {
         baseRevision: second.progress.revision,
         setPointIds: ["p2"],
       }),
     );
     expect(refresh.unchanged).toBe(true);
-    await settle();
+    await drainStatsDeliveries();
     expect(
       database.sqlite
         .prepare("SELECT mutation_id, status, attempts FROM progress_stats_outbox ORDER BY id")
@@ -328,26 +337,30 @@ describe("progress community stats HTTP", () => {
       { mutation_id: "before-offline", status: "processed", attempts: 1 },
       { mutation_id: "while-offline", status: "processed", attempts: 0 },
     ]);
-    const result = await publicStats(hash);
+    const result = await readPublicStats(hash);
     expect(result.body).toMatchObject({ sampleSize: 1, totalSyncedUsers: 1 });
     expect(result.counts).toEqual([0, 1]);
   });
 
   it("reports collected point counts and sample size publicly after owners add and clear collections", async () => {
-    const hash = await register();
-    const first = await accepted(await sync(hash, "explorer-first", { setPointIds: ["p1"] }));
-    await settle();
-    await accepted(await sync(hash, "other-first", { setPointIds: ["p1", "p2"] }, "map", "other"));
-    await settle();
-    await accepted(
-      await sync(hash, "explorer-moved", {
+    const hash = await registerManifest();
+    const first = await expectAcceptedSync(
+      await syncProgress(hash, "explorer-first", { setPointIds: ["p1"] }),
+    );
+    await drainStatsDeliveries();
+    await expectAcceptedSync(
+      await syncProgress(hash, "other-first", { setPointIds: ["p1", "p2"] }, "map", "other"),
+    );
+    await drainStatsDeliveries();
+    await expectAcceptedSync(
+      await syncProgress(hash, "explorer-moved", {
         baseRevision: first.progress.revision,
         clearPointIds: ["p1"],
         setPointIds: ["p2"],
       }),
     );
-    await settle();
-    const result = await publicStats(`%20${hash.toUpperCase()}%20`);
+    await drainStatsDeliveries();
+    const result = await readPublicStats(`%20${hash.toUpperCase()}%20`);
     expect(result.body).toMatchObject({
       markerIndexHash: hash,
       pointCount: 2,
@@ -360,7 +373,7 @@ describe("progress community stats HTTP", () => {
       /^public, max-age=\d+$/,
     );
     expect(result.response.headers.get("x-oem-kv-cache")).toBe("miss");
-    const cached = await publicStats(hash);
+    const cached = await readPublicStats(hash);
     expect(cached.body).toEqual(result.body);
     expect(cached.response.headers.get("x-oem-kv-cache")).toBe("hit");
   });
@@ -368,22 +381,24 @@ describe("progress community stats HTTP", () => {
 
 describe("persisted progress HTTP sync", () => {
   it("restores collected archives when their index entries return, clears retained archives, and leaves map progress untouched", async () => {
-    const mapHash = await register();
-    await accepted(await sync(mapHash, "map-collection", { setPointIds: ["p2"] }));
-    await settle();
-    const mapBefore = await state(mapHash);
-    const original = await register("archive", ["p1", "p2"]);
-    const first = await accepted(
-      await sync(
+    const mapHash = await registerManifest();
+    await expectAcceptedSync(
+      await syncProgress(mapHash, "map-collection", { setPointIds: ["p2"] }),
+    );
+    await drainStatsDeliveries();
+    const mapBefore = await readProgress(mapHash);
+    const original = await registerManifest("archive", ["p1", "p2"]);
+    const first = await expectAcceptedSync(
+      await syncProgress(
         original,
         "archive-collection",
         { setArchiveIds: ["p1", "p2", "offline-old"] },
         "archive",
       ),
     );
-    const reduced = await register("archive", ["p2", "p3"]);
+    const reduced = await registerManifest("archive", ["p2", "p3"]);
     kv.clear();
-    const projected = await state(reduced, "archive");
+    const projected = await readProgress(reduced, "archive");
     expect(projected).toMatchObject({ archiveIndexHash: reduced, archiveIds: ["p2"] });
     // Reading a new index projects progress without committing a migration.
     expect(
@@ -391,8 +406,8 @@ describe("persisted progress HTTP sync", () => {
         .prepare("SELECT version, checksum FROM user_archive_progress WHERE uid = 'explorer'")
         .get(),
     ).toEqual({ version: 1, checksum: first.progress.revision });
-    await accepted(
-      await sync(
+    await expectAcceptedSync(
+      await syncProgress(
         reduced,
         "archive-index-update",
         {
@@ -403,43 +418,50 @@ describe("persisted progress HTTP sync", () => {
         "archive",
       ),
     );
-    expect(await state(reduced, "archive")).toMatchObject({ archiveIds: ["p2", "p3"] });
+    expect(await readProgress(reduced, "archive")).toMatchObject({ archiveIds: ["p2", "p3"] });
     expect(
       database.sqlite
         .prepare("SELECT retained_archive_ids FROM user_archive_progress WHERE uid = 'explorer'")
         .get(),
     ).toEqual({ retained_archive_ids: '["p1"]' });
-    const expanded = await register("archive", ["p1", "p2", "p3"]);
-    const restored = await state(expanded, "archive");
+    const expanded = await registerManifest("archive", ["p1", "p2", "p3"]);
+    const restored = await readProgress(expanded, "archive");
     expect(restored).toMatchObject({ archiveIds: ["p1", "p2", "p3"] });
-    await accepted(
-      await sync(expanded, "archive-return", { baseRevision: restored.revision }, "archive"),
+    await expectAcceptedSync(
+      await syncProgress(
+        expanded,
+        "archive-return",
+        { baseRevision: restored.revision },
+        "archive",
+      ),
     );
     users.clear();
     kv.clear();
-    expect(await state(expanded, "archive")).toMatchObject({ archiveIds: ["p1", "p2", "p3"] });
+    expect(await readProgress(expanded, "archive")).toMatchObject({
+      archiveIds: ["p1", "p2", "p3"],
+    });
     expect(
       database.sqlite
         .prepare("SELECT retained_archive_ids FROM user_archive_progress WHERE uid = 'explorer'")
         .get(),
     ).toEqual({ retained_archive_ids: "[]" });
-    expect(await state(mapHash)).toEqual(mapBefore);
+    expect(await readProgress(mapHash)).toEqual(mapBefore);
     expect(database.sqlite.prepare("SELECT mutation_id FROM progress_stats_outbox").all()).toEqual([
       { mutation_id: "map-collection" },
     ]);
   });
 
   it("keeps removed map points and offline unknown points acknowledged when the map index changes", async () => {
-    const original = await register();
-    const collected = await accepted(
-      await sync(original, "collected-before-map-update", {
+    const original = await registerManifest();
+    const collected = await expectAcceptedSync(
+      await syncProgress(original, "collected-before-map-update", {
         setPointIds: ["p1", "p2", "offline-old"],
       }),
     );
-    await settle();
-    const reduced = await register("map", ["p2", "p3"]);
+    await drainStatsDeliveries();
+    const reduced = await registerManifest("map", ["p2", "p3"]);
     kv.clear();
-    expect(await state(reduced)).toMatchObject({
+    expect(await readProgress(reduced)).toMatchObject({
       revision: collected.progress.revision,
       markerIndexHash: original,
       pointIds: ["p2"],
@@ -448,22 +470,22 @@ describe("persisted progress HTTP sync", () => {
     expect(
       database.sqlite.prepare("SELECT progress_version FROM users WHERE uid = 'explorer'").get(),
     ).toEqual({ progress_version: 1 });
-    const migrated = await accepted(
-      await sync(reduced, "new-map", {
+    const migrated = await expectAcceptedSync(
+      await syncProgress(reduced, "new-map", {
         baseRevision: collected.progress.revision,
         setPointIds: ["p3"],
       }),
     );
-    await settle();
+    await drainStatsDeliveries();
     users.clear();
     kv.clear();
-    expect(await state(reduced)).toMatchObject({
+    expect(await readProgress(reduced)).toMatchObject({
       revision: migrated.progress.revision,
       markerIndexHash: reduced,
       pointIds: ["p2", "p3"],
       retainedPointIds: ["offline-old", "p1"],
     });
-    const stale = await sync(reduced, "stale-new-map", { setPointIds: ["p1"] });
+    const stale = await syncProgress(reduced, "stale-new-map", { setPointIds: ["p1"] });
     expect(stale.status).toBe(409);
     expect(await stale.json()).toMatchObject({
       details: { current: { pointIds: ["p2", "p3"], retainedPointIds: ["offline-old", "p1"] } },
@@ -471,19 +493,21 @@ describe("persisted progress HTTP sync", () => {
   });
 
   it("acknowledges an additional offline point without changing the public sample or known collections", async () => {
-    const hash = await register();
-    const first = await accepted(await sync(hash, "known-point", { setPointIds: ["p1"] }));
-    await settle();
-    const saved = await accepted(
-      await sync(hash, "offline-point", {
+    const hash = await registerManifest();
+    const first = await expectAcceptedSync(
+      await syncProgress(hash, "known-point", { setPointIds: ["p1"] }),
+    );
+    await drainStatsDeliveries();
+    const saved = await expectAcceptedSync(
+      await syncProgress(hash, "offline-point", {
         baseRevision: first.progress.revision,
         setPointIds: ["offline-future"],
         clearPointIds: ["never-collected"],
       }),
     );
-    await settle();
+    await drainStatsDeliveries();
     users.clear();
-    expect(await state(hash)).toMatchObject({
+    expect(await readProgress(hash)).toMatchObject({
       revision: saved.progress.revision,
       pointIds: ["p1"],
       retainedPointIds: ["offline-future"],
@@ -491,7 +515,7 @@ describe("persisted progress HTTP sync", () => {
     expect(
       database.sqlite.prepare("SELECT count(*) AS count FROM progress_stats_outbox").get(),
     ).toEqual({ count: 1 });
-    const result = await publicStats(hash);
+    const result = await readPublicStats(hash);
     expect(result.body).toMatchObject({ sampleSize: 1, totalSyncedUsers: 1 });
     expect(result.counts).toEqual([1, 0]);
   });
@@ -499,17 +523,17 @@ describe("persisted progress HTTP sync", () => {
   it.each(["map", "archive"] as const)(
     "rolls back all %s writes on database failure and lets the identical mutation succeed on retry",
     async (kind) => {
-      const hash = await register(kind);
+      const hash = await registerManifest(kind);
       const table = kind === "map" ? "progress_stats_outbox" : "archive_progress_sync_mutations";
       // Fail a later write in a real SQLite transaction, after progress was written.
       database.sqlite.exec(`CREATE TEMP TRIGGER unavailable_sync_storage BEFORE INSERT ON ${table}
       BEGIN SELECT RAISE(ABORT, 'simulated storage failure'); END`);
       const patch = { [kind === "map" ? "setPointIds" : "setArchiveIds"]: ["p1"] };
-      const failed = await sync(hash, "retry-after-failure", patch, kind);
+      const failed = await syncProgress(hash, "retry-after-failure", patch, kind);
       expect(failed.status).toBe(500);
       expect(failed.headers.get("cache-control")).toBe("private, no-store");
       expect(await failed.json()).toMatchObject({ code: "PROGRESS_INTERNAL_ERROR" });
-      expect(await state(hash, kind)).toMatchObject({
+      expect(await readProgress(hash, kind)).toMatchObject({
         revision: "",
         [kind === "map" ? "pointIds" : "archiveIds"]: [],
       });
@@ -529,9 +553,9 @@ describe("persisted progress HTTP sync", () => {
           .get(),
       ).toEqual({ progress_version: 0, progress_cloud_synced: 0, progress_last_mutation_id: null });
       database.sqlite.exec("DROP TRIGGER unavailable_sync_storage");
-      await accepted(await sync(hash, "retry-after-failure", patch, kind));
-      await settle();
-      expect(await state(hash, kind)).toMatchObject({
+      await expectAcceptedSync(await syncProgress(hash, "retry-after-failure", patch, kind));
+      await drainStatsDeliveries();
+      expect(await readProgress(hash, kind)).toMatchObject({
         [kind === "map" ? "pointIds" : "archiveIds"]: ["p1"],
       });
     },
@@ -540,44 +564,65 @@ describe("persisted progress HTTP sync", () => {
   it.each(["map", "archive"] as const)(
     "allows only one of two %s writes based on the same revision",
     async (kind) => {
-      const hash = await register(kind);
-      const set = kind === "map" ? "setPointIds" : "setArchiveIds";
-      const ids = kind === "map" ? "pointIds" : "archiveIds";
+      const hash = await registerManifest(kind);
+      const setIdsField = kind === "map" ? "setPointIds" : "setArchiveIds";
+      const collectedIdsField = kind === "map" ? "pointIds" : "archiveIds";
       const responses = await Promise.all([
-        sync(hash, "phone", { [set]: ["p1"] }, kind),
-        sync(hash, "laptop", { [set]: ["p2"] }, kind),
+        syncProgress(hash, "phone", { [setIdsField]: ["p1"] }, kind),
+        syncProgress(hash, "laptop", { [setIdsField]: ["p2"] }, kind),
       ]);
       expect(responses.map((response) => response.status).sort()).toEqual([200, 409]);
       const winner = responses.findIndex((response) => response.status === 200);
-      const saved = await accepted(responses[winner]);
+      const saved = await expectAcceptedSync(responses[winner]);
       expect(await responses[1 - winner].json()).toMatchObject({
         details: {
-          current: { revision: saved.progress.revision, [ids]: [winner === 0 ? "p1" : "p2"] },
+          current: {
+            revision: saved.progress.revision,
+            [collectedIdsField]: [winner === 0 ? "p1" : "p2"],
+          },
         },
       });
-      expect(await state(hash, kind)).toMatchObject({
+      expect(await readProgress(hash, kind)).toMatchObject({
         revision: saved.progress.revision,
-        [ids]: [winner === 0 ? "p1" : "p2"],
+        [collectedIdsField]: [winner === 0 ? "p1" : "p2"],
       });
-      await settle();
+      await drainStatsDeliveries();
     },
   );
 
   it.each(["map", "archive"] as const)(
     "isolates %s progress and mutation IDs by authenticated owner despite a forged identity",
     async (kind) => {
-      const hash = await register(kind);
-      const set = kind === "map" ? "setPointIds" : "setArchiveIds";
-      const ids = kind === "map" ? "pointIds" : "archiveIds";
-      await accepted(await sync(hash, "device-mutation-1", { uid: "other", [set]: ["p1"] }, kind));
-      await settle();
-      expect(await state(hash, kind, "other")).toMatchObject({ revision: "", [ids]: [] });
-      await accepted(
-        await sync(hash, "device-mutation-1", { uid: "explorer", [set]: ["p2"] }, kind, "other"),
+      const hash = await registerManifest(kind);
+      const setIdsField = kind === "map" ? "setPointIds" : "setArchiveIds";
+      const collectedIdsField = kind === "map" ? "pointIds" : "archiveIds";
+      await expectAcceptedSync(
+        await syncProgress(
+          hash,
+          "device-mutation-1",
+          { uid: "other", [setIdsField]: ["p1"] },
+          kind,
+        ),
       );
-      await settle();
-      expect(await state(hash, kind)).toMatchObject({ [ids]: ["p1"] });
-      expect(await state(hash, kind, "other")).toMatchObject({ [ids]: ["p2"] });
+      await drainStatsDeliveries();
+      expect(await readProgress(hash, kind, "other")).toMatchObject({
+        revision: "",
+        [collectedIdsField]: [],
+      });
+      await expectAcceptedSync(
+        await syncProgress(
+          hash,
+          "device-mutation-1",
+          { uid: "explorer", [setIdsField]: ["p2"] },
+          kind,
+          "other",
+        ),
+      );
+      await drainStatsDeliveries();
+      expect(await readProgress(hash, kind)).toMatchObject({ [collectedIdsField]: ["p1"] });
+      expect(await readProgress(hash, kind, "other")).toMatchObject({
+        [collectedIdsField]: ["p2"],
+      });
       const table = kind === "map" ? "progress_sync_mutations" : "archive_progress_sync_mutations";
       expect(
         database.sqlite.prepare(`SELECT uid, mutation_id FROM ${table} ORDER BY uid`).all(),
@@ -591,53 +636,61 @@ describe("persisted progress HTTP sync", () => {
   it.each(["map", "archive"] as const)(
     "replays the original %s result after later changes and rejects reused keys and stale clients",
     async (kind) => {
-      const hash = await register(kind);
-      const set = kind === "map" ? "setPointIds" : "setArchiveIds";
-      const clear = kind === "map" ? "clearPointIds" : "clearArchiveIds";
-      const ids = kind === "map" ? "pointIds" : "archiveIds";
-      const firstPatch = { [set]: ["p1"] };
-      const first = await accepted(await sync(hash, "offline-1", firstPatch, kind));
-      await settle();
-      const secondPatch = { baseRevision: first.progress.revision, [clear]: ["p1"], [set]: ["p2"] };
-      const second = await accepted(await sync(hash, "offline-2", secondPatch, kind));
-      await settle();
+      const hash = await registerManifest(kind);
+      const setIdsField = kind === "map" ? "setPointIds" : "setArchiveIds";
+      const clearIdsField = kind === "map" ? "clearPointIds" : "clearArchiveIds";
+      const collectedIdsField = kind === "map" ? "pointIds" : "archiveIds";
+      const firstPatch = { [setIdsField]: ["p1"] };
+      const first = await expectAcceptedSync(
+        await syncProgress(hash, "offline-1", firstPatch, kind),
+      );
+      await drainStatsDeliveries();
+      const secondPatch = {
+        baseRevision: first.progress.revision,
+        [clearIdsField]: ["p1"],
+        [setIdsField]: ["p2"],
+      };
+      const second = await expectAcceptedSync(
+        await syncProgress(hash, "offline-2", secondPatch, kind),
+      );
+      await drainStatsDeliveries();
       // Reconstruct the user object so the replay must come from persisted receipts.
       users.clear();
-      const replay = await sync(hash, "offline-1", firstPatch, kind);
+      const replay = await syncProgress(hash, "offline-1", firstPatch, kind);
       expect(replay.headers.get("x-progress-idempotent")).toBe("true");
-      expect(await accepted(replay)).toEqual(first);
-      expect(await state(hash, kind)).toMatchObject({
+      expect(await expectAcceptedSync(replay)).toEqual(first);
+      expect(await readProgress(hash, kind)).toMatchObject({
         revision: second.progress.revision,
-        [ids]: ["p2"],
+        [collectedIdsField]: ["p2"],
       });
 
-      const reused = await sync(hash, "offline-1", { [set]: ["p2"] }, kind);
+      const reused = await syncProgress(hash, "offline-1", { [setIdsField]: ["p2"] }, kind);
       expect(reused.status).toBe(409);
       expect(await reused.json()).toMatchObject({ code: "IDEMPOTENCY_KEY_REUSED" });
-      const stale = await sync(
+      const stale = await syncProgress(
         hash,
         "stale-client",
-        { baseRevision: first.progress.revision, [set]: ["p1"] },
+        { baseRevision: first.progress.revision, [setIdsField]: ["p1"] },
         kind,
       );
       expect(stale.status).toBe(409);
       expect(await stale.json()).toMatchObject({
         code: kind === "map" ? "PROGRESS_REVISION_CONFLICT" : "ARCHIVE_PROGRESS_REVISION_CONFLICT",
-        details: { current: { revision: second.progress.revision, [ids]: ["p2"] } },
+        details: { current: { revision: second.progress.revision, [collectedIdsField]: ["p2"] } },
       });
-      const unchanged = await accepted(
-        await sync(
+      const unchanged = await expectAcceptedSync(
+        await syncProgress(
           hash,
           "already-collected",
-          { baseRevision: second.progress.revision, [set]: ["p2"] },
+          { baseRevision: second.progress.revision, [setIdsField]: ["p2"] },
           kind,
         ),
       );
       expect(unchanged).toMatchObject({
         unchanged: true,
-        progress: { revision: second.progress.revision, [ids]: ["p2"] },
+        progress: { revision: second.progress.revision, [collectedIdsField]: ["p2"] },
       });
-      await settle();
+      await drainStatsDeliveries();
       const table = kind === "map" ? "progress_sync_mutations" : "archive_progress_sync_mutations";
       expect(
         database.sqlite
@@ -662,11 +715,13 @@ describe("progress HTTP access and manifests", () => {
   it.each(["map", "archive"] as const)(
     "preserves saved %s collections after malformed requests and accepts a later valid edit",
     async (kind) => {
-      const hash = await register(kind);
-      const set = kind === "map" ? "setPointIds" : "setArchiveIds";
-      const ids = kind === "map" ? "pointIds" : "archiveIds";
-      const first = await accepted(await sync(hash, "initial", { [set]: ["p1"] }, kind));
-      await settle();
+      const hash = await registerManifest(kind);
+      const setIdsField = kind === "map" ? "setPointIds" : "setArchiveIds";
+      const collectedIdsField = kind === "map" ? "pointIds" : "archiveIds";
+      const first = await expectAcceptedSync(
+        await syncProgress(hash, "initial", { [setIdsField]: ["p1"] }, kind),
+      );
+      await drainStatsDeliveries();
       const snapshot = () => ({
         users: database.sqlite.prepare("SELECT * FROM users ORDER BY uid").all(),
         archives: database.sqlite.prepare("SELECT * FROM user_archive_progress ORDER BY uid").all(),
@@ -678,7 +733,7 @@ describe("progress HTTP access and manifests", () => {
           .all(),
         outbox: database.sqlite.prepare("SELECT * FROM progress_stats_outbox ORDER BY id").all(),
       });
-      const before = snapshot();
+      const persistedBeforeInvalidRequests = snapshot();
       const prefix = kind === "map" ? "" : "/archive";
       for (const payload of [
         null,
@@ -687,28 +742,28 @@ describe("progress HTTP access and manifests", () => {
         const response = await request(`${prefix}/sync`, payload);
         expect(response.status).toBe(422);
         expect(await response.json()).toMatchObject({ code: "VALIDATION_ERROR" });
-        expect(snapshot()).toEqual(before);
+        expect(snapshot()).toEqual(persistedBeforeInvalidRequests);
       }
       expect((await request(`${prefix}/state`)).status).toBe(422);
-      expect(snapshot()).toEqual(before);
-      await accepted(
-        await sync(
+      expect(snapshot()).toEqual(persistedBeforeInvalidRequests);
+      await expectAcceptedSync(
+        await syncProgress(
           hash,
           "after-invalid",
-          { baseRevision: first.progress.revision, [set]: ["p2"] },
+          { baseRevision: first.progress.revision, [setIdsField]: ["p2"] },
           kind,
         ),
       );
-      await settle();
-      expect(await state(hash, kind)).toMatchObject({ [ids]: ["p1", "p2"] });
-      expect(await state(hash, kind, "other")).toMatchObject({ [ids]: [] });
+      await drainStatsDeliveries();
+      expect(await readProgress(hash, kind)).toMatchObject({ [collectedIdsField]: ["p1", "p2"] });
+      expect(await readProgress(hash, kind, "other")).toMatchObject({ [collectedIdsField]: [] });
     },
   );
 
   it.each(["map", "archive"] as const)(
     "rejects invalid %s sync metadata and unregistered indexes without creating progress",
     async (kind) => {
-      const missing = await sync("f".repeat(64), "unknown-index", {}, kind);
+      const missing = await syncProgress("f".repeat(64), "unknown-index", {}, kind);
       expect(missing.status).toBe(409);
       expect(await missing.json()).toMatchObject({
         code:
@@ -716,18 +771,18 @@ describe("progress HTTP access and manifests", () => {
             ? "PROGRESS_MANIFEST_NOT_REGISTERED"
             : "ARCHIVE_PROGRESS_MANIFEST_NOT_REGISTERED",
       });
-      const hash = await register(kind);
+      const hash = await registerManifest(kind);
       for (const patch of [
         { clientMutationId: "" },
         { baseRevision: "invalid-revision" },
         { updatedAt: -1 },
         { [kind === "map" ? "setPointIds" : "setArchiveIds"]: "p1" },
       ]) {
-        const response = await sync(hash, "invalid-offline-patch", patch, kind);
+        const response = await syncProgress(hash, "invalid-offline-patch", patch, kind);
         expect(response.status).toBe(422);
         expect(await response.json()).toMatchObject({ code: "VALIDATION_ERROR" });
       }
-      expect(await state(hash, kind)).toMatchObject({
+      expect(await readProgress(hash, kind)).toMatchObject({
         revision: "",
         [kind === "map" ? "pointIds" : "archiveIds"]: [],
       });
@@ -740,12 +795,12 @@ describe("progress HTTP access and manifests", () => {
   );
 
   it("registers a map index and reads empty progress from durable manifest storage", async () => {
-    const hash = await register();
+    const hash = await registerManifest();
     expect(
       database.sqlite.prepare("SELECT point_ids, point_count FROM progress_marker_manifests").all(),
     ).toEqual([{ point_ids: '["p1","p2"]', point_count: 2 }]);
     kv.clear();
-    expect(await state(`%20${hash.toUpperCase()}%20`)).toMatchObject({
+    expect(await readProgress(`%20${hash.toUpperCase()}%20`)).toMatchObject({
       revision: "",
       pointIds: [],
       retainedPointIds: [],
@@ -833,10 +888,10 @@ describe("progress HTTP access and manifests", () => {
           ? "ARCHIVE_PROGRESS_MANIFEST_NOT_REGISTERED"
           : "PROGRESS_MANIFEST_NOT_REGISTERED",
       });
-      const validHash = await register(kind);
-      await register(kind);
+      const validHash = await registerManifest(kind);
+      await registerManifest(kind);
       kv.clear();
-      expect(await state(validHash, kind)).toMatchObject({
+      expect(await readProgress(validHash, kind)).toMatchObject({
         revision: "",
         [archive ? "archiveIds" : "pointIds"]: [],
       });

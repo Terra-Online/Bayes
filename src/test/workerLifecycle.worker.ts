@@ -110,6 +110,7 @@ function observePublicReads(env: FixtureEnv, request: Request): PublicReadObserv
   });
   return observation;
 }
+// Count native timers so a completed request cannot leave polling or deadlines alive.
 const timers = new Set<unknown>();
 const nativeTimeout = globalThis.setTimeout;
 const nativeInterval = globalThis.setInterval;
@@ -136,7 +137,7 @@ globalThis.clearInterval = ((id: ReturnType<typeof setInterval>) => {
   timers.delete(id);
   nativeClearInterval(id);
 }) as typeof clearInterval;
-const args = {
+const gameIdentity = {
   provider: "skland" as const,
   roleId: "role",
   serverId: 1,
@@ -198,14 +199,17 @@ export default {
       return Response.json({ timers: timers.size });
     }
     if (path === "/position-fallback") {
-      return Response.json({ position: await getEndfieldPosition(args), timers: timers.size });
+      return Response.json({
+        position: await getEndfieldPosition(gameIdentity),
+        timers: timers.size,
+      });
     }
     if (path === "/position-attempt" || path === "/position-fallback-attempt") {
       try {
         const position =
           path === "/position-fallback-attempt"
-            ? await getEndfieldPosition(args)
-            : await getEndfieldPositionFromSocket(args, 100);
+            ? await getEndfieldPosition(gameIdentity)
+            : await getEndfieldPositionFromSocket(gameIdentity, 100);
         return Response.json({ position, timers: timers.size });
       } catch (error) {
         if (!(error instanceof ApiError)) {
@@ -259,7 +263,7 @@ export default {
     }
     if (path === "/socket" || path === "/position") {
       if (path === "/position") {
-        const position = await getEndfieldPositionFromSocket(args);
+        const position = await getEndfieldPositionFromSocket(gameIdentity);
         return Response.json({ position, timers: timers.size });
       }
       const controller = new AbortController();
@@ -268,7 +272,7 @@ export default {
         subscribed = resolve;
       });
       const connection = await connectEndfieldPositionSocket(
-        { ...args, signal: controller.signal },
+        { ...gameIdentity, signal: controller.signal },
         { onSubscribed: subscribed },
       );
       await ready;

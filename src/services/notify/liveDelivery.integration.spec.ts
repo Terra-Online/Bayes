@@ -101,7 +101,6 @@ it("retains a recoverable inbox after failed fanout, continues delivery, and per
       expect(inbox.unread.total).toBe(ids.length);
     }
     await publishNotificationsCreated(mocks.bindings, [first]);
-    expect(fanout).toHaveBeenCalledTimes(3);
     const deliveredIds = await Promise.all(
       fanout.mock.calls.map(async ([input, init]) => {
         const request = new Request(input, init);
@@ -117,6 +116,8 @@ it("retains a recoverable inbox after failed fanout, continues delivery, and per
         return envelope.notification.id;
       }),
     );
+    // The failed first delivery must not block the second, and retry must target
+    // only the requested notification without duplicating the rest of the batch.
     expect(deliveredIds).toEqual(["first", "second", "first"]);
     expect(database.sqlite.prepare("SELECT * FROM notifications ORDER BY id").all()).toEqual(
       before,

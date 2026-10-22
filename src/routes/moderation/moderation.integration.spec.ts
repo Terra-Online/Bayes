@@ -2,8 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { onAppError } from "@/middleware/error-handler";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
-import { insertAuthUser, insertSession, testAuthConfig } from "@/test/fixtures/auth";
-import { insertSubmission, type SubmissionFixture } from "@/test/fixtures/submissions";
+import { insertAuthenticatedUser, testAuthConfig, type SessionHeaders } from "@/test/fixtures/auth";
+import {
+  insertSubmission,
+  type SeededSubmission,
+  type SubmissionFixture,
+} from "@/test/fixtures/submissions";
 import { insertUser } from "@/test/fixtures/users";
 import type { Bindings, Role } from "@/types/app";
 
@@ -135,29 +139,35 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-function login(role: Role = "p", uid: string = crypto.randomUUID()) {
+function createReviewerSession(
+  role: Role = "p",
+  uid: string = crypto.randomUUID(),
+): SessionHeaders {
   // Unique users keep the production auth and local rate-limit caches independent.
-  insertAuthUser(database.sqlite, { id: uid });
   const userCount = Number(
     database.sqlite.prepare("SELECT COUNT(*) AS count FROM users").get()!.count,
   );
-  insertUser(database.sqlite, { uid, uid_number: 1000 + userCount, role });
-  return insertSession(database.sqlite, { userId: uid }).headers;
+  return insertAuthenticatedUser(database.sqlite, {
+    uid,
+    uid_number: 1000 + userCount,
+    role,
+  }).headers;
 }
 
-function submission(input: Omit<SubmissionFixture, "userId"> & { userId?: string }) {
+type ModerationSubmissionFixture = Omit<SubmissionFixture, "userId"> & { userId?: string };
+
+function submission(input: ModerationSubmissionFixture): SeededSubmission {
   return insertSubmission(database.sqlite, { userId: "author", ...input });
 }
 
-async function request(
-  path: string,
-  options: {
-    method?: string;
-    headers?: Record<string, string>;
-    body?: unknown;
-    rawBody?: string;
-  } = {},
-) {
+interface ModerationRequestOptions {
+  method?: string;
+  headers?: Record<string, string>;
+  body?: unknown;
+  rawBody?: string;
+}
+
+async function request(path: string, options: ModerationRequestOptions = {}): Promise<Response> {
   const app = createRoutes();
   app.onError(onAppError);
   const pending: Promise<unknown>[] = [];
@@ -177,6 +187,7 @@ async function request(
       passThroughOnException() {},
     } as ExecutionContext,
   );
+  // Complete waitUntil work before asserting queue delivery and live notifications.
   await Promise.all(pending);
   return response;
 }
@@ -208,7 +219,7 @@ function notificationMessages() {
 describe("moderation recovery and preserved decisions", () => {
   it("rejects invalid moderation operations without changing review history or delivering effects", async () => {
     submission({ id: "waiting", status: "pending_audit" });
-    const headers = login("a");
+    const headers = createReviewerSession("a");
     const before = storedSubmission("waiting");
     for (const [path, method, body] of [
       ["/warnings", "POST", { publicUid: "" }],
@@ -245,7 +256,7 @@ describe("moderation recovery and preserved decisions", () => {
     };
     const response = await request("/changing/status", {
       method: "PATCH",
-      headers: login(),
+      headers: createReviewerSession(),
       body: { status: "active" },
     });
     expect(response.status).toBe(409);
@@ -274,7 +285,7 @@ describe("moderation recovery and preserved decisions", () => {
       });
       const response = await request("/photo/status", {
         method: "PATCH",
-        headers: login(),
+        headers: createReviewerSession(),
         body: { status: "active" },
       });
       expect(response.status).toBe(200);
@@ -290,9 +301,12 @@ describe("moderation recovery and preserved decisions", () => {
     },
   );
 
-  it.each(["active", "pending_audit"])(
-    "automatically approves an edit formerly %s with appropriate first-approval points and prewarm disabled",
-    async (previousStatus) => {
+  it.each([
+    { previousStatus: "active", expectedPoints: 20 },
+    { previousStatus: "pending_audit", expectedPoints: 22 },
+  ])(
+    "approves an edit formerly $previousStatus with $expectedPoints author points and prewarm disabled",
+    async ({ previousStatus, expectedPoints }) => {
       env.OPENAI_API_KEY = "synthetic-ai-key";
       env.ENABLE_COMMENT_TRANSLATION_PREWARM = "false";
       submission({
@@ -308,7 +322,7 @@ describe("moderation recovery and preserved decisions", () => {
       vi.mocked(fetch).mockResolvedValue(Response.json({ results: [{ flagged: false }] }));
       const response = await request("/run", {
         method: "POST",
-        headers: login("a"),
+        headers: createReviewerSession("a"),
         body: { ids: ["edited"] },
       });
       expect(response.status).toBe(200);
@@ -317,7 +331,8 @@ describe("moderation recovery and preserved decisions", () => {
         status: "active",
         edit_original_status: null,
       });
-      expect(authorPoints()).toBe(previousStatus === "active" ? 20 : 22);
+      // Only the first approval earns points; editing approved content cannot earn them again.
+      expect(authorPoints()).toBe(expectedPoints);
       expect(translationMessages).toEqual([]);
       expect(notificationMessages()).toHaveLength(1);
     },
@@ -325,7 +340,7 @@ describe("moderation recovery and preserved decisions", () => {
 
   it("rejects malformed status JSON without changing the submission and permits a later decision", async () => {
     submission({ id: "waiting", status: "pending_audit" });
-    const headers = login("a");
+    const headers = createReviewerSession("a");
     const before = storedSubmission("waiting");
     const response = await request("/waiting/status", { method: "PATCH", headers, rawBody: "{" });
     expect(response.status).toBe(422);
@@ -365,7 +380,7 @@ describe("moderation access", () => {
   ] as const)(
     "gives role $role its review and automatic-run permissions",
     async ({ role, review, run }) => {
-      const headers = login(role);
+      const headers = createReviewerSession(role);
       submission({ id: "waiting", status: "pending_audit" });
       expect((await request("/pending", { headers })).status).toBe(review);
       expect(
@@ -396,7 +411,7 @@ describe("moderation access", () => {
   ])("reserves %s for administrators", async (path, method) => {
     const response = await request(path, {
       method,
-      headers: login("p"),
+      headers: createReviewerSession("p"),
       body: method === "POST" ? {} : undefined,
     });
     expect(response.status).toBe(403);
@@ -405,7 +420,7 @@ describe("moderation access", () => {
 
   it("keeps review and mutation endpoints locked by default, including for administrators", async () => {
     delete env.LOCK_MODERATION_ENDPOINTS;
-    const headers = login("a");
+    const headers = createReviewerSession("a");
     submission({ id: "waiting", status: "pending_audit" });
     for (const [path, method, body] of [
       ["/pending", "GET", undefined],
@@ -451,7 +466,7 @@ describe("automatic moderation", () => {
       });
       const response = await request("/run", {
         method: "POST",
-        headers: login("a"),
+        headers: createReviewerSession("a"),
         body: { ids: ["photo"] },
       });
       expect(response.status).toBe(200);
@@ -481,7 +496,7 @@ describe("automatic moderation", () => {
 
   it("keeps a failed queue send eligible for the next backfill", async () => {
     submission({ id: "retry", status: "pending_openai" });
-    const headers = login("a");
+    const headers = createReviewerSession("a");
     const send = env.OEM_MODERATION_Q.send;
     env.OEM_MODERATION_Q.send = async () => {
       throw new Error("Queue unavailable");
@@ -522,7 +537,7 @@ describe("automatic moderation", () => {
     database.sqlite
       .prepare("UPDATE ugc_submissions SET moderation_queued_at = ? WHERE id = 'fresh'")
       .run(freshReservation);
-    const headers = login("a");
+    const headers = createReviewerSession("a");
     const first = await request("/run", { method: "POST", headers, body: { limit: 1 } });
     expect(first.status).toBe(200);
     expect(await first.json()).toEqual({
@@ -589,7 +604,7 @@ describe("automatic moderation", () => {
     });
     const response = await request("/run", {
       method: "POST",
-      headers: login("a"),
+      headers: createReviewerSession("a"),
       body: { ids: ["changing"] },
     });
     expect(response.status).toBe(200);
@@ -630,7 +645,7 @@ describe("automatic moderation", () => {
     submission({ id: "local", status: "pending_openai" });
     const response = await request("/run", {
       method: "POST",
-      headers: login("a"),
+      headers: createReviewerSession("a"),
       body: { ids: ["local"] },
     });
     expect(response.status).toBe(200);
@@ -690,7 +705,7 @@ describe("automatic moderation", () => {
     vi.mocked(fetch).mockImplementation(async () => result());
     const response = await request("/run", {
       method: "POST",
-      headers: login("a"),
+      headers: createReviewerSession("a"),
       body: { ids: ["uncertain"] },
     });
     expect(response.status).toBe(200);
@@ -737,7 +752,7 @@ describe("automatic moderation", () => {
       aiInputs.push(JSON.parse(String(init?.body)));
       return Response.json({ results: [{ flagged: false, categories: {} }] });
     });
-    const headers = login("a");
+    const headers = createReviewerSession("a");
     const response = await request("/run", {
       method: "POST",
       headers,
@@ -810,7 +825,7 @@ describe("automatic moderation", () => {
 describe("moderation review tools", () => {
   it("rejects an inverted review date range", async () => {
     const response = await request("/pending?from=2026-09-11T00:00:00Z&to=2026-09-10T00:00:00Z", {
-      headers: login(),
+      headers: createReviewerSession(),
     });
     expect(response.status).toBe(422);
     expect(await response.json()).toMatchObject({
@@ -828,7 +843,7 @@ describe("moderation review tools", () => {
         return { messageId: "warning-delivery" };
       },
     } as unknown as SendEmail;
-    const headers = login("a");
+    const headers = createReviewerSession("a");
     const response = await request("/warnings", {
       method: "POST",
       headers,
@@ -864,7 +879,10 @@ describe("moderation review tools", () => {
     submission({ id: "production", kind: "image", filePath: "production/photo.webp" });
     submission({ id: "test", kind: "image", filePath: "_test/photo.webp" });
     const before = database.sqlite.prepare("SELECT * FROM ugc_submissions ORDER BY id").all();
-    const response = await request("/test-images", { method: "DELETE", headers: login("a") });
+    const response = await request("/test-images", {
+      method: "DELETE",
+      headers: createReviewerSession("a"),
+    });
     expect(response.status).toBe(409);
     expect(await response.json()).toMatchObject({ code: "TEST_PREFIX_DISABLED" });
     expect(database.sqlite.prepare("SELECT * FROM ugc_submissions ORDER BY id").all()).toEqual(
@@ -910,7 +928,7 @@ describe("moderation review tools", () => {
         }
       },
     } as unknown as R2Bucket;
-    const headers = login("a");
+    const headers = createReviewerSession("a");
     const response = await request("/test-images", { method: "DELETE", headers });
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
@@ -1016,7 +1034,7 @@ describe("moderation review tools", () => {
             }
           : null,
     } as unknown as R2Bucket;
-    const response = await request("/images/orphans", { headers: login("a") });
+    const response = await request("/images/orphans", { headers: createReviewerSession("a") });
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({
       stats: {
@@ -1064,7 +1082,7 @@ describe("moderation review tools", () => {
     submission({ id: "unknown", kind: "image", markerId: "not-in-manifest" });
     submission({ id: "comment", markerId: "ore-two" });
     submission({ id: "test", kind: "image", markerId: "ore-two", filePath: "_test/ore.webp" });
-    const headers = login("a");
+    const headers = createReviewerSession("a");
     const response = await request("/images/coverage", { headers });
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({
@@ -1141,7 +1159,7 @@ describe("moderation review tools", () => {
   });
 
   it("shows public duplicate images in the requested namespace with independent page totals and viewer reactions", async () => {
-    const headers = login("p", "reviewer");
+    const headers = createReviewerSession("p", "reviewer");
     submission({ id: "a-old", kind: "image", markerId: "a", createdAt: "2026-09-01 00:00:00" });
     submission({
       id: "a-new",
@@ -1274,7 +1292,7 @@ describe("moderation review tools", () => {
       to: "2026-09-11T07:59:59+08:00",
       limit: "1",
     });
-    const response = await request(`/pending?${query}`, { headers: login() });
+    const response = await request(`/pending?${query}`, { headers: createReviewerSession() });
     expect(response.status).toBe(200);
     const body = (await response.json()) as {
       items: Array<{ id: string }>;
@@ -1310,7 +1328,7 @@ describe("manual moderation", () => {
     async (surge, expectedPoints) => {
       env.SURGE_MODE_ENABLED = String(surge);
       env.SURGE_BACKOFF_MULTIPLIER = "3";
-      const headers = login();
+      const headers = createReviewerSession();
       for (let index = 0; index < 5; index++) {
         const id = `approved-${index}`;
         submission({ id, status: "pending_audit" });
@@ -1329,7 +1347,7 @@ describe("manual moderation", () => {
       warmedAssets.push(String(input));
       return new Response("image");
     });
-    const headers = login();
+    const headers = createReviewerSession();
     // This fixture policy gives 2 then 1 points for comments, and 6 then 5 for
     // images. A comment approval must not consume the image reward counter.
     for (const [id, kind, points] of [
@@ -1370,7 +1388,7 @@ describe("manual moderation", () => {
         .run();
       const response = await request("/edited/status", {
         method: "PATCH",
-        headers: login(),
+        headers: createReviewerSession(),
         body: { status },
       });
       expect(response.status).toBe(200);
@@ -1389,12 +1407,13 @@ describe("manual moderation", () => {
   );
 
   it("archives an uploader recall without charging a rejection penalty, including a repeat request", async () => {
+    // The recall note distinguishes the author's withdrawal from a moderator rejection.
     submission({
       id: "recalled",
       status: "remove_request",
       moderationNote: "Recalled by uploader: outdated directions",
     });
-    const headers = login();
+    const headers = createReviewerSession();
     for (let attempt = 0; attempt < 2; attempt += 1) {
       expect(
         (await request("/recalled/status", { method: "PATCH", headers, body: { status: "stale" } }))
@@ -1428,7 +1447,7 @@ describe("manual moderation", () => {
     database.sqlite
       .prepare("INSERT INTO ugc_submission_flags (submission_id, user_id) VALUES (?, 'reporter')")
       .run("still-reported");
-    const headers = login();
+    const headers = createReviewerSession();
     expect(
       (await request("/restored/status", { method: "PATCH", headers, body: { status: "active" } }))
         .status,
@@ -1463,7 +1482,7 @@ describe("manual moderation", () => {
     const before = storedSubmission("reviewed");
     const response = await request("/reviewed/status", {
       method: "PATCH",
-      headers: login(),
+      headers: createReviewerSession(),
       body: { status: to, moderationNote: "New review" },
     });
     expect(response.status).toBe(409);
@@ -1479,7 +1498,7 @@ describe("manual moderation", () => {
   it("reports a missing submission without creating a review", async () => {
     const response = await request("/missing/status", {
       method: "PATCH",
-      headers: login(),
+      headers: createReviewerSession(),
       body: { status: "active" },
     });
     expect(response.status).toBe(404);
@@ -1503,7 +1522,7 @@ describe("manual moderation", () => {
       submission({ id: "reviewed", status: String(from) });
       const response = await request("/reviewed/status", {
         method: "PATCH",
-        headers: login(),
+        headers: createReviewerSession(),
         body: { status: to },
       });
       expect(response.status).toBe(200);
@@ -1530,7 +1549,7 @@ describe("manual moderation", () => {
     insertUser(database.sqlite, { uid: "parent-author", uid_number: 105 });
     submission({ id: "parent", userId: "parent-author" });
     submission({ id: "reply", parentId: "parent", depth: 1, status: "pending_audit" });
-    const headers = login();
+    const headers = createReviewerSession();
 
     const response = await request("/reply/status", {
       method: "PATCH",

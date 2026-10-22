@@ -5,7 +5,7 @@ import {
   createResetPasswordMagicLinkTemplate,
 } from "./templates";
 
-describe("registration and password-reset email content", () => {
+describe("password-reset email content", () => {
   it("keeps a reset link usable in text and escapes query separators in HTML", () => {
     const url =
       "https://api.opendfieldmap.org/auth/v1/reset-password/token?callbackURL=https%3A%2F%2Fopendfieldmap.org&source=email";
@@ -37,6 +37,7 @@ describe("moderation warning email template", () => {
       "This is a moderation warning. Further violations may result in account suspension.",
     );
     expect(content.text).toContain("reply to this email to appeal.");
+    // The warning describes a pattern without inventing an incident count.
     expect(content.text).not.toMatch(/\b\d+\s+(?:posts?|comments?|links?)\b/i);
     expect(content.html).toContain("moderation@opendfieldmap.org");
     expect(content.html).toContain("https://blog.opendfieldmap.org/docs/community-guidelines");
@@ -44,7 +45,7 @@ describe("moderation warning email template", () => {
     expect(content.html).toContain("10FOOO0");
   });
 
-  it("escapes user and policy values in HTML", () => {
+  it("escapes the display name and public UID in HTML", () => {
     const content = createModerationWarningEmailTemplate({
       displayName: "<name>",
       publicUid: "<uid>",

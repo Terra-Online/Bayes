@@ -14,6 +14,7 @@ beforeEach(() => {
 afterEach(() => database.close());
 
 it("keeps every referenced image path across pages, including archived images, without duplicate or comment-only references", async () => {
+  // Cross a full page so an archived reference must survive cursor pagination.
   const expectedPaths = Array.from(
     { length: 1001 },
     (_, index) => `images/${String(index).padStart(4, "0")}.webp`,
@@ -42,8 +43,6 @@ it("keeps every referenced image path across pages, including archived images, w
   const paths = await listAllImageFilePaths(database.db);
   expect(paths).toHaveLength(1001);
   expect(new Set(paths)).toEqual(new Set(expectedPaths));
-  expect(paths).toContain("images/1000.webp");
-  expect(paths).not.toContain("comment-only.webp");
   expect(database.sqlite.prepare("SELECT COUNT(*) AS count FROM ugc_submissions").get()).toEqual(
     before,
   );

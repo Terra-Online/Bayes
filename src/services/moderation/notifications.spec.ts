@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi, type Mock } from "vitest";
 
 import type { SubmissionRecord } from "@/repositories/submission/types";
 import type { Bindings } from "@/types/app";
@@ -40,6 +40,31 @@ const event: ModerationNotificationEvent = {
   source: "auto_moderation",
 };
 
+interface WebhookDeliveryFixture {
+  batch: MessageBatch<OemWebhookQueueMessage>;
+  ack: Mock<() => void>;
+  retry: Mock<() => void>;
+}
+
+function createWebhookDelivery(): WebhookDeliveryFixture {
+  const ack = vi.fn<() => void>();
+  const retry = vi.fn<() => void>();
+  const message = {
+    body: {
+      type: "discord_notification",
+      event,
+      queuedAt: "2026-09-10T00:00:00.000Z",
+    },
+    ack,
+    retry,
+  };
+  const batch = {
+    queue: "oem-webhook",
+    messages: [message],
+  } as unknown as MessageBatch<OemWebhookQueueMessage>;
+  return { batch, ack, retry };
+}
+
 afterEach(() => {
   vi.restoreAllMocks();
 });
@@ -48,23 +73,9 @@ describe("Discord moderation notifications", () => {
   it.each(["http", "network"])(
     "retries a %s delivery failure and acknowledges only successful delivery",
     async (failure) => {
-      const ack = vi.fn();
-      const retry = vi.fn();
-      const message = {
-        body: {
-          type: "discord_notification",
-          event,
-          queuedAt: "2026-09-10T00:00:00.000Z",
-        },
-        ack,
-        retry,
-      };
-      const batch = {
-        queue: "oem-webhook",
-        messages: [message],
-      } as unknown as MessageBatch<OemWebhookQueueMessage>;
+      const { batch, ack, retry } = createWebhookDelivery();
       const requests: Request[] = [];
-      const send = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const fetchWebhook = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
         requests.push(new Request(input, init));
         if (requests.length === 1) {
           if (failure === "network") {
@@ -81,17 +92,18 @@ describe("Discord moderation notifications", () => {
       await processWebhookQueueBatch(env, batch);
       expect(retry).toHaveBeenCalledOnce();
       expect(ack).not.toHaveBeenCalled();
+      // Redelivery must succeed before the queue can discard this moderation result.
       await processWebhookQueueBatch(env, batch);
       expect(ack).toHaveBeenCalledOnce();
       expect(retry).toHaveBeenCalledOnce();
-      expect(send).toHaveBeenCalledTimes(2);
+      expect(fetchWebhook).toHaveBeenCalledTimes(2);
       expect(requests[1]!.url).toBe("https://discord.example.test/webhook");
       expect(await requests[1]!.json()).toMatchObject({
         embeds: [
           expect.objectContaining({
             fields: expect.arrayContaining([
-              expect.objectContaining({ value: submission.id }),
-              expect.objectContaining({ value: "pending_openai -> pending_audit" }),
+              expect.objectContaining({ name: "submission", value: submission.id }),
+              expect.objectContaining({ name: "status", value: "pending_openai -> pending_audit" }),
             ]),
           }),
         ],
@@ -105,22 +117,8 @@ describe("Discord moderation notifications", () => {
   });
 
   it("retries the queue message instead of acknowledging missing webhook configuration", async () => {
-    const ack = vi.fn();
-    const retry = vi.fn();
+    const { batch, ack, retry } = createWebhookDelivery();
     const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    const message = {
-      body: {
-        type: "discord_notification",
-        event,
-        queuedAt: "2026-09-10T00:00:00.000Z",
-      },
-      ack,
-      retry,
-    };
-    const batch = {
-      queue: "oem-webhook",
-      messages: [message],
-    } as unknown as MessageBatch<OemWebhookQueueMessage>;
 
     await processWebhookQueueBatch({} as Bindings, batch);
 

@@ -37,7 +37,7 @@ interface StoredCredentials {
   cred_enc: string;
   token_enc: string;
 }
-interface MapCredential {
+interface SignedMapCredential {
   token: string;
   device: string;
 }
@@ -47,7 +47,7 @@ let env: Bindings;
 let identity: AuthenticatedUserFixture;
 let refresh: (device: string) => Response | Promise<Response>;
 let refreshDevices: string[];
-let mapCredentials: MapCredential[];
+let mapCredentials: SignedMapCredential[];
 let fingerprintEnabled: boolean;
 let externalFailures: unknown[];
 let gates: RefreshGate[];
@@ -96,6 +96,25 @@ async function expectStoredWinner(): Promise<void> {
   expect(await decryptSecret(stored.cred_enc, env.BETTER_AUTH_SECRET!)).toBe("cred");
   expect(await decryptSecret(stored.token_enc, env.BETTER_AUTH_SECRET!)).toBe("new-token");
 }
+// Inspect every write, since a final-row check could miss a late overwrite
+// that was subsequently repaired by another request.
+async function expectOnlyWinningTokenWasWritten(): Promise<void> {
+  const persistedTokens = await Promise.all(
+    writtenTokens.map((value) => decryptSecret(value, env.BETTER_AUTH_SECRET!)),
+  );
+  expect(persistedTokens).toEqual(["new-token"]);
+}
+
+function configureDeviceReplacementRecovery(): void {
+  fingerprintEnabled = true;
+  refresh = (device) =>
+    Response.json(
+      device === oldDevice
+        ? { code: 10001, message: "device rejected" }
+        : { code: 0, data: { token: "new-token" } },
+    );
+}
+
 function request(operation: "sync" | "unlink" = "sync"): Promise<Response> {
   const app = new Hono<AppEnv<{ requestId: string }>>()
     .onError(onAppError)
@@ -271,7 +290,7 @@ describe("request-owned credential refresh and conditional persistence", () => {
   });
 
   it("deduplicates refreshes inside the same request", async () => {
-    // No production route invokes concurrent refresh helpers on one context.
+    // Exercise request-local deduplication directly; HTTP requests each create their own context.
     const c = { env } as Context<AppEnv>;
     const binding = await getDecryptedBinding(c, "user");
     const calls = [
@@ -281,8 +300,10 @@ describe("request-owned credential refresh and conditional persistence", () => {
     pending.push(...calls);
     const result = await Promise.all(calls);
     expect(refreshDevices).toEqual([oldDevice]);
-    expect(result[0]).toBe(result[1]);
-    expect(result[0].token).toBe("new-token");
+    expect(result).toEqual([
+      expect.objectContaining({ cred: "cred", token: "new-token" }),
+      expect.objectContaining({ cred: "cred", token: "new-token" }),
+    ]);
   });
 
   it("does not block another request or let a late refresh overwrite its committed credentials", async () => {
@@ -304,11 +325,7 @@ describe("request-owned credential refresh and conditional persistence", () => {
       Array.from({ length: 4 }, () => ({ token: "new-token", device: oldDevice })),
     );
     await expectStoredWinner();
-    expect(
-      await Promise.all(
-        writtenTokens.map((value) => decryptSecret(value, env.BETTER_AUTH_SECRET!)),
-      ),
-    ).toEqual(["new-token"]);
+    await expectOnlyWinningTokenWasWritten();
   });
 
   it("cannot resurrect a binding unlinked during a refresh", async () => {
@@ -331,13 +348,7 @@ describe("request-owned credential refresh and conditional persistence", () => {
   });
 
   it("commits a recovered device profile atomically with its matching credentials", async () => {
-    fingerprintEnabled = true;
-    refresh = (device) =>
-      Response.json(
-        device === oldDevice
-          ? { code: 10001, message: "device rejected" }
-          : { code: 0, data: { token: "new-token" } },
-      );
+    configureDeviceReplacementRecovery();
     await expectSync(await request());
     expect(refreshDevices).toEqual([oldDevice, newDevice]);
     expect(JSON.parse(storedProfile())).toMatchObject({ deviceId: newDevice });
@@ -346,11 +357,7 @@ describe("request-owned credential refresh and conditional persistence", () => {
       { token: "new-token", device: newDevice },
     ]);
     await expectStoredWinner();
-    expect(
-      await Promise.all(
-        writtenTokens.map((value) => decryptSecret(value, env.BETTER_AUTH_SECRET!)),
-      ),
-    ).toEqual(["new-token"]);
+    await expectOnlyWinningTokenWasWritten();
   });
 
   it("skips a late device-profile write when another request has already refreshed credentials", async () => {
@@ -390,11 +397,7 @@ describe("request-owned credential refresh and conditional persistence", () => {
     expect(storedProfile()).toBe(oldProfile);
     expect(profileWrites).toBe(0);
     await expectStoredWinner();
-    expect(
-      await Promise.all(
-        writtenTokens.map((value) => decryptSecret(value, env.BETTER_AUTH_SECRET!)),
-      ),
-    ).toEqual(["new-token"]);
+    await expectOnlyWinningTokenWasWritten();
   });
 
   it("rolls back the credential update when device-profile persistence fails", async () => {
@@ -407,13 +410,7 @@ describe("request-owned credential refresh and conditional persistence", () => {
     database.sqlite.exec(
       "CREATE TRIGGER reject_profile BEFORE INSERT ON endfield_role_device_profiles BEGIN SELECT observe_profile_rejection(); SELECT RAISE(ABORT, 'profile write rejected'); END",
     );
-    fingerprintEnabled = true;
-    refresh = (device) =>
-      Response.json(
-        device === oldDevice
-          ? { code: 10001, message: "device rejected" }
-          : { code: 0, data: { token: "new-token" } },
-      );
+    configureDeviceReplacementRecovery();
     const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
     const response = await request();
     expect(response.status).toBe(500);

@@ -60,9 +60,9 @@ afterEach(() => {
 });
 
 // Intercept only D1 execution, keeping the origin and repository queries real.
-function interceptReads(before: (values: unknown[]) => Promise<void>) {
+function interceptReads(before: (values: unknown[]) => Promise<void>): void {
   const prepare = database.db.prepare.bind(database.db);
-  return vi.spyOn(database.db, "prepare").mockImplementation((sql) => {
+  vi.spyOn(database.db, "prepare").mockImplementation((sql) => {
     const statement = prepare(sql);
     const bind = statement.bind.bind(statement);
     statement.bind = (...values: unknown[]) => {
@@ -102,52 +102,53 @@ describe.each(["images", "comments"] as const)("%s invocation isolation", (kind)
       : listCachedPublicCommentsByMarker(payload);
   }
 
-  it("repairs malformed cached lists from stored content and reuses positive and empty entries", async () => {
+  function seedStoredSubmission(): void {
     insertUser(database.sqlite, { uid: "author" });
     insertSubmission(database.sqlite, {
       id: "stored",
       userId: "author",
       kind: kind === "images" ? "image" : "comment",
     });
-    const before = database.sqlite.prepare("SELECT * FROM ugc_submissions").all();
+  }
+
+  it("repairs malformed cached lists from stored content and reuses positive and empty entries", async () => {
+    seedStoredSubmission();
+    const storedSubmissions = database.sqlite.prepare("SELECT * FROM ugc_submissions").all();
     const kv = createMarkerKv();
     kv.get.mockResolvedValueOnce(JSON.stringify({ items: {} }));
     kv.get.mockResolvedValueOnce(JSON.stringify({ items: null }));
-    const wait = vi.fn();
+    const waitUntil = vi.fn<(promise: Promise<unknown>) => void>();
 
-    const loaded = await read(database.db, ["marker-1", "empty"], wait, kv.binding);
+    const loaded = await read(database.db, ["marker-1", "empty"], waitUntil, kv.binding);
     expect(loaded).toMatchObject([{ id: "stored", content: "Content stored" }]);
-    await Promise.all(wait.mock.calls.map(([promise]) => promise));
+    await Promise.all(waitUntil.mock.calls.map(([promise]) => promise));
     const queriesAfterMiss = database.queries.length;
-    await expect(read(database.db, ["marker-1", "empty"], wait, kv.binding)).resolves.toEqual(
+    await expect(read(database.db, ["marker-1", "empty"], waitUntil, kv.binding)).resolves.toEqual(
       loaded,
     );
     expect(database.queries).toHaveLength(queriesAfterMiss);
     kv.get.mockResolvedValueOnce("{");
-    await expect(read(database.db, ["marker-1"], wait, kv.binding)).resolves.toEqual(loaded);
-    await Promise.all(wait.mock.calls.map(([promise]) => promise));
+    await expect(read(database.db, ["marker-1"], waitUntil, kv.binding)).resolves.toEqual(loaded);
+    await Promise.all(waitUntil.mock.calls.map(([promise]) => promise));
     const queriesAfterRepair = database.queries.length;
-    await expect(read(database.db, ["marker-1"], wait, kv.binding)).resolves.toEqual(loaded);
+    await expect(read(database.db, ["marker-1"], waitUntil, kv.binding)).resolves.toEqual(loaded);
     expect(database.queries).toHaveLength(queriesAfterRepair);
-    expect(database.sqlite.prepare("SELECT * FROM ugc_submissions").all()).toEqual(before);
+    expect(database.sqlite.prepare("SELECT * FROM ugc_submissions").all()).toEqual(
+      storedSubmissions,
+    );
   });
 
   it("evicts all KV namespaces after archival even when the Workers purge fails, and permits retry", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    insertUser(database.sqlite, { uid: "author" });
-    insertSubmission(database.sqlite, {
-      id: "stored",
-      userId: "author",
-      kind: kind === "images" ? "image" : "comment",
-    });
+    seedStoredSubmission();
     const kv = createMarkerKv();
-    const wait = vi.fn();
+    const waitUntil = vi.fn<(promise: Promise<unknown>) => void>();
     const namespaces = ["default", "test", "prod"] as const;
     for (const namespace of namespaces) {
-      expect(await read(database.db, ["marker-1"], wait, kv.binding, namespace)).toMatchObject([
-        { id: "stored" },
-      ]);
-      await Promise.all(wait.mock.calls.map(([promise]) => promise));
+      expect(await read(database.db, ["marker-1"], waitUntil, kv.binding, namespace)).toMatchObject(
+        [{ id: "stored" }],
+      );
+      await Promise.all(waitUntil.mock.calls.map(([promise]) => promise));
     }
     expect(kv.values.size).toBe(3);
     database.sqlite
@@ -172,10 +173,10 @@ describe.each(["images", "comments"] as const)("%s invocation isolation", (kind)
     await invalidateUploadCaches(invalidation);
     expect(kv.values.size).toBe(0);
     for (const namespace of namespaces) {
-      await expect(read(database.db, ["marker-1"], wait, kv.binding, namespace)).resolves.toEqual(
-        [],
-      );
-      await Promise.all(wait.mock.calls.map(([promise]) => promise));
+      await expect(
+        read(database.db, ["marker-1"], waitUntil, kv.binding, namespace),
+      ).resolves.toEqual([]);
+      await Promise.all(waitUntil.mock.calls.map(([promise]) => promise));
     }
     expect(database.sqlite.prepare("SELECT * FROM ugc_submissions").all()).toEqual(archived);
 
@@ -230,16 +231,12 @@ describe.each(["images", "comments"] as const)("%s invocation isolation", (kind)
   });
 
   it("registers cache writes on each invocation's own lifetime", async () => {
-    const db = database.db;
-    const kv = {
-      get: vi.fn().mockResolvedValue(null),
-      put: vi.fn().mockResolvedValue(undefined),
-    } as unknown as KVNamespace;
+    const kv = createMarkerKv();
     const firstWaitUntil = vi.fn();
     const secondWaitUntil = vi.fn();
     await Promise.all([
-      read(db, ["same"], firstWaitUntil, kv),
-      read(db, ["same"], secondWaitUntil, kv),
+      read(database.db, ["same"], firstWaitUntil, kv.binding),
+      read(database.db, ["same"], secondWaitUntil, kv.binding),
     ]);
     expect(firstWaitUntil).toHaveBeenCalledTimes(1);
     expect(secondWaitUntil).toHaveBeenCalledTimes(1);
@@ -249,32 +246,27 @@ describe.each(["images", "comments"] as const)("%s invocation isolation", (kind)
   });
 
   it("processes every missing marker in sequential batches of at most 100", async () => {
-    const ids = Array.from({ length: 205 }, (_, index) => `marker-${index}`);
-    let active = 0;
-    let maximum = 0;
+    const markerIds = Array.from({ length: 205 }, (_, index) => `marker-${index}`);
+    let activeReads = 0;
+    let peakConcurrentReads = 0;
     interceptReads(async () => {
-      maximum = Math.max(maximum, ++active);
+      peakConcurrentReads = Math.max(peakConcurrentReads, ++activeReads);
       await Promise.resolve();
-      active--;
+      activeReads--;
     });
-    await read(database.db, [...ids, ids[0]!]);
+    await read(database.db, [...markerIds, markerIds[0]!]);
     const batches = database.queries.map(
       (query) => JSON.parse(String(query.values[0])) as string[],
     );
-    expect(batches.map((ids) => ids.length)).toEqual([100, 100, 5]);
-    expect(batches.flat()).toEqual(ids);
-    expect(maximum).toBe(1);
+    expect(batches.map((batch) => batch.length)).toEqual([100, 100, 5]);
+    expect(batches.flat()).toEqual(markerIds);
+    expect(peakConcurrentReads).toBe(1);
   });
 
   it("preserves origin results when a cache write fails and retries a failed origin on the next invocation", async () => {
-    insertUser(database.sqlite, { uid: "author" });
-    insertSubmission(database.sqlite, {
-      id: "stored",
-      userId: "author",
-      kind: kind === "images" ? "image" : "comment",
-    });
-    const before = database.sqlite.prepare("SELECT * FROM ugc_submissions").all();
-    const wait = vi.fn();
+    seedStoredSubmission();
+    const storedSubmissions = database.sqlite.prepare("SELECT * FROM ugc_submissions").all();
+    const waitUntil = vi.fn<(promise: Promise<unknown>) => void>();
     const kv = createMarkerKv();
     kv.get.mockRejectedValue(new Error("KV read unavailable"));
     kv.put.mockRejectedValue(new Error("KV write unavailable"));
@@ -284,17 +276,21 @@ describe.each(["images", "comments"] as const)("%s invocation isolation", (kind)
         throw new Error("D1 unavailable");
       }
     });
-    await expect(read(database.db, ["marker-1"], wait, kv.binding)).rejects.toThrow(
+    await expect(read(database.db, ["marker-1"], waitUntil, kv.binding)).rejects.toThrow(
       "D1 unavailable",
     );
-    expect(wait).not.toHaveBeenCalled();
-    expect(database.sqlite.prepare("SELECT * FROM ugc_submissions").all()).toEqual(before);
-    await expect(read(database.db, ["marker-1"], wait, kv.binding)).resolves.toMatchObject([
+    expect(waitUntil).not.toHaveBeenCalled();
+    expect(database.sqlite.prepare("SELECT * FROM ugc_submissions").all()).toEqual(
+      storedSubmissions,
+    );
+    await expect(read(database.db, ["marker-1"], waitUntil, kv.binding)).resolves.toMatchObject([
       { id: "stored", content: "Content stored" },
     ]);
-    await Promise.all(wait.mock.calls.map(([promise]) => promise));
+    await Promise.all(waitUntil.mock.calls.map(([promise]) => promise));
     expect(attempts).toBe(2);
-    expect(wait).toHaveBeenCalledOnce();
-    expect(database.sqlite.prepare("SELECT * FROM ugc_submissions").all()).toEqual(before);
+    expect(waitUntil).toHaveBeenCalledOnce();
+    expect(database.sqlite.prepare("SELECT * FROM ugc_submissions").all()).toEqual(
+      storedSubmissions,
+    );
   });
 });

@@ -180,34 +180,43 @@ it.each(["token", "code"] as const)(
     expect(await (await request("status", undefined, "other")).json()).toEqual({
       binding: { bound: false, enabled: false },
     });
-    expect(await (await request("disable", {})).json()).toEqual({
-      ok: true,
-      binding: { ...summary, enabled: false },
-    });
-    expect((await request("unlink", {}, "other")).status).toBe(200);
-    expect(await (await request("disable", {})).json()).toEqual({
-      ok: true,
-      binding: { ...summary, enabled: false },
-    });
-    expect(
-      database.sqlite
-        .prepare("SELECT status, role_id FROM endfield_bindings WHERE uid = ?")
-        .get("user"),
-    ).toMatchObject({ status: "disabled", role_id: "role" });
-    expect(await (await request("unlink", {})).json()).toEqual({
-      ok: true,
-      binding: { bound: false, enabled: false },
-    });
-    expect(await (await request("disable", {})).json()).toEqual({
-      ok: true,
-      binding: { bound: false, enabled: false },
-    });
-    expect(
-      database.sqlite.prepare("SELECT * FROM endfield_bindings WHERE uid = ?").get("user"),
-    ).toBeUndefined();
     expect(endfieldFetch).toHaveBeenCalledTimes(kind === "token" ? 3 : 2);
   },
 );
+
+it("disables idempotently, isolates another user's unlink, and removes only the owner's binding", async () => {
+  const flowId = await startTokenFlow();
+  const bound = await request("bind-role", { flowId, serverId: 1, roleId: "role" });
+  expect(bound.status).toBe(200);
+  const { binding: summary } = (await bound.json()) as { binding: Record<string, unknown> };
+  endfieldFetch.mockClear();
+  expect(await (await request("disable", {})).json()).toEqual({
+    ok: true,
+    binding: { ...summary, enabled: false },
+  });
+  expect((await request("unlink", {}, "other")).status).toBe(200);
+  expect(await (await request("disable", {})).json()).toEqual({
+    ok: true,
+    binding: { ...summary, enabled: false },
+  });
+  expect(
+    database.sqlite
+      .prepare("SELECT status, role_id FROM endfield_bindings WHERE uid = ?")
+      .get("user"),
+  ).toMatchObject({ status: "disabled", role_id: "role" });
+  expect(await (await request("unlink", {})).json()).toEqual({
+    ok: true,
+    binding: { bound: false, enabled: false },
+  });
+  expect(await (await request("disable", {})).json()).toEqual({
+    ok: true,
+    binding: { bound: false, enabled: false },
+  });
+  expect(
+    database.sqlite.prepare("SELECT * FROM endfield_bindings WHERE uid = ?").get("user"),
+  ).toBeUndefined();
+  expect(endfieldFetch).not.toHaveBeenCalled();
+});
 
 it("keeps token validation details and the existing malformed-JSON distinction", async () => {
   vi.spyOn(console, "error").mockImplementation(() => {});

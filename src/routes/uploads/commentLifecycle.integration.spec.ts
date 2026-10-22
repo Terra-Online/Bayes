@@ -630,7 +630,10 @@ describe("comment recall", () => {
         content: "The entrance is on the west side.",
         status: restoredStatus,
       });
+      // Editing clears flags on the old wording. Undo restores that wording without
+      // reviving those flags or the author's earlier removal request.
       expect(activeFlaggers("target")).toEqual([]);
+      // An original version still awaiting AI review needs its own job after undo.
       expect(moderation.map((message) => message.snapshotId)).toEqual(
         originalStatus === "pending_openai"
           ? [editedSnapshot, "snapshot-target"]
@@ -686,12 +689,12 @@ describe("comment removal requests", () => {
       expect(moderation).toEqual([]);
 
       const before = persistedState();
-      const notices = webhooks.length;
+      const webhookCountBeforeRetry = webhooks.length;
       const retry = await post("/comments/target/remove-request");
       expect(retry.status).toBe(409);
       expect(await retry.json()).toMatchObject({ code: "INVALID_STATUS_TRANSITION" });
       expect(persistedState()).toEqual(before);
-      expect(webhooks).toHaveLength(notices);
+      expect(webhooks).toHaveLength(webhookCountBeforeRetry);
     },
   );
 

@@ -16,7 +16,7 @@ vi.mock("cloudflare:workers", () => ({
 
 import { publicReadResponse, readPublicImagesFromWorkersCache } from "./client";
 
-describe("fetchPublicImagesFromWorkersCache", () => {
+describe("public image cache responses", () => {
   const image: PublicSubmissionImage = {
     id: "image",
     markerId: "marker",
@@ -76,6 +76,7 @@ describe("fetchPublicImagesFromWorkersCache", () => {
       }),
     );
     expect(response.status).toBe(200);
+    // Caching a partial list would hide the failed marker even after it recovers.
     expect(response.headers.get("cache-control")).toBe("private, no-store");
     expect(await response.json()).toEqual({
       items: [image],

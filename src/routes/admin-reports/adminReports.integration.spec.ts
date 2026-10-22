@@ -13,7 +13,7 @@ import { createRoutes } from "./createRoutes";
 let database: TestDatabase;
 let sessions: Map<string, ReturnType<typeof insertSession>>;
 
-function member(uid: string, role: Role = "n", createdAt = "2026-09-01T10:00:00.000Z") {
+function seedMember(uid: string, role: Role = "n", createdAt = "2026-09-01T10:00:00.000Z"): void {
   insertUser(database.sqlite, { uid, role, created_at: createdAt });
   insertAuthUser(database.sqlite, { id: uid });
   sessions.set(uid, insertSession(database.sqlite, { userId: uid }));
@@ -22,7 +22,7 @@ function member(uid: string, role: Role = "n", createdAt = "2026-09-01T10:00:00.
 beforeEach(() => {
   database = createTestDatabase();
   sessions = new Map();
-  member("admin", "a");
+  seedMember("admin", "a");
 });
 
 afterEach(() => database.close());
@@ -80,7 +80,7 @@ describe("administrator reports HTTP", () => {
 
   it("allows administrators and root users to read reports while denying every other role and anonymous callers", async () => {
     for (const role of ["n", "p", "s", "r"] as const) {
-      member(`role-${role}`, role);
+      seedMember(`role-${role}`, role);
     }
     for (const report of ["registrations", "translations", "ugc-likes"]) {
       const anonymous = await request(report, "");
@@ -98,10 +98,12 @@ describe("administrator reports HTTP", () => {
   });
 
   it("counts registered people once and attributes linked logins to the earliest account", async () => {
-    member("github-user", "n", "2026-09-02T10:00:00.000Z");
-    member("email-user", "n", "2026-09-02T11:00:00.000Z");
+    seedMember("github-user", "n", "2026-09-02T10:00:00.000Z");
+    seedMember("email-user", "n", "2026-09-02T11:00:00.000Z");
     insertUser(database.sqlite, { uid: "legacy-user", created_at: "2026-09-03T10:00:00.000Z" });
     insertAuthUser(database.sqlite, { id: "auth-only" });
+    // Linked accounts do not add people. Equal account times resolve by account
+    // ID, and an auth-only identity is excluded from business registrations.
     for (const [id, uid, provider, at] of [
       ["github-first", "github-user", "github", "2026-09-02T10:00:00.000Z"],
       ["discord-later", "github-user", "discord", "2026-09-05T10:00:00.000Z"],
@@ -230,6 +232,8 @@ describe("administrator reports HTTP", () => {
     }
     const response = await request("ugc-likes");
     expect(response.status).toBe(200);
+    // Archived images still contribute to reaction totals, but cannot be featured.
+    // The two public images tie on likes, so the newer image wins.
     expect(await response.json()).toEqual({
       generatedAt: expect.any(String),
       totalLikes: 9,

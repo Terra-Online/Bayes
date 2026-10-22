@@ -1,4 +1,4 @@
-// Runtime boundary only. Production DO classes execute against these isolated
+// Runtime adapter only. Production DO classes execute against these isolated
 // stores; native Workers scheduling, persistence and alarms need runtime tests.
 export class ProgressTestStorage {
   values = new Map<string, unknown>();
@@ -35,6 +35,8 @@ export class ProgressTestStorage {
   }
 
   async transaction<T>(closure: (transaction: ProgressTestStorage) => Promise<T>): Promise<T> {
+    // Failure injection happens before any writes, so it cannot prove rollback
+    // after a partial write in native Durable Object storage.
     if (this.failNextTransaction) {
       this.failNextTransaction = false;
       throw new Error("injected storage transaction failure");
@@ -57,14 +59,16 @@ export class ProgressTestStorage {
   }
 }
 
-export function createProgressTestState(
-  name?: string,
-  storage = new ProgressTestStorage(),
-): {
+export interface ProgressTestState {
   state: DurableObjectState;
   waits: Promise<unknown>[];
   storage: ProgressTestStorage;
-} {
+}
+
+export function createProgressTestState(
+  name?: string,
+  storage = new ProgressTestStorage(),
+): ProgressTestState {
   const waits: Promise<unknown>[] = [];
   return {
     state: {

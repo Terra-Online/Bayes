@@ -7,7 +7,7 @@ import { insertUser } from "@/test/fixtures/users";
 
 import { applyUserPointsDelta, ensureUserProfile, getUserByPublicUid } from "./users";
 
-describe("profile activity write throttling", () => {
+describe("user profiles, activity, and points", () => {
   let database: TestDatabase;
   let http: AuthCacheFixture;
   const identity = { uid: "user-1", email: "user@example.test" };
@@ -21,11 +21,15 @@ describe("profile activity write throttling", () => {
   afterEach(async () => http.close());
 
   it("uses only reads for repeated activity within an hour, without caching roles or karma", async () => {
-    const first = await ensureUserProfile(database.db, identity);
+    const originalProfile = await ensureUserProfile(database.db, identity);
     database.sqlite.exec("UPDATE users SET role = 's', karma = 1 WHERE uid = 'user-1'");
-    const second = await ensureUserProfile(database.db, identity);
-    expect(first.role).toBe("n");
-    expect(second).toMatchObject({ role: "s", karma: 1, lastActive: first.lastActive });
+    const refreshedProfile = await ensureUserProfile(database.db, identity);
+    expect(originalProfile.role).toBe("n");
+    expect(refreshedProfile).toMatchObject({
+      role: "s",
+      karma: 1,
+      lastActive: originalProfile.lastActive,
+    });
     expect(database.queries).toHaveLength(2);
     expect(
       database.queries.every((query) => query.sql.startsWith("SELECT") && query.changes === 0),
@@ -41,9 +45,9 @@ describe("profile activity write throttling", () => {
       ensureUserProfile(database.db, identity),
     ]);
     expect(database.queries.reduce((total, query) => total + query.changes, 0)).toBe(1);
-    const count = database.queries.length;
+    const queriesBeforeNextRequest = database.queries.length;
     await ensureUserProfile(database.db, identity);
-    expect(database.queries).toHaveLength(count + 1);
+    expect(database.queries).toHaveLength(queriesBeforeNextRequest + 1);
     expect(database.queries.at(-1)!.sql.startsWith("SELECT")).toBe(true);
   });
 
@@ -63,8 +67,8 @@ describe("profile activity write throttling", () => {
     ).toBe(1);
   });
 
-  it("preserves first-time profile creation", async () => {
-    // Historical bootstrap: auth identity exists before the business profile.
+  it("bootstraps a missing business profile from the first authenticated session", async () => {
+    // The compatibility bootstrap supports an auth identity without a business profile.
     insertAuthUser(database.sqlite, {
       id: "new-user",
       email: "new@example.test",
@@ -86,12 +90,12 @@ describe("profile activity write throttling", () => {
       nickname: "NewTester",
       role: "n",
     });
-    const count = database.queries.length;
+    const queriesBeforeNextRequest = database.queries.length;
     // Fresh credentials avoid the middleware's ten-second completed-user cache.
     const next = insertSession(database.sqlite, { userId: "new-user" });
     expect((await http.request("/auth/v1/session", next.headers)).status).toBe(200);
     const profileQueries = database.queries
-      .slice(count)
+      .slice(queriesBeforeNextRequest)
       .filter((query) => /\busers\b/.test(query.sql));
     expect(profileQueries).toHaveLength(1);
     expect(profileQueries[0]!.sql.startsWith("SELECT")).toBe(true);
@@ -169,7 +173,7 @@ describe("profile activity write throttling", () => {
     );
     expect(bodies[0]).toEqual(bodies[1]);
     expect(bodies[0]).toMatchObject({
-      user: { nickname: expect.any(String), uid: expect.stringMatching(/^\d+[A-Z]{2}$/) },
+      user: { nickname: expect.stringMatching(/\S/), uid: expect.stringMatching(/^\d+[A-Z]{2}$/) },
     });
     expect(
       database.sqlite
@@ -178,7 +182,6 @@ describe("profile activity write throttling", () => {
     ).toEqual([
       { uid: "concurrent-user", email: "123@example.test", nickname: bodies[0].user.nickname },
     ]);
-    expect(bodies[0].user.nickname.trim()).not.toBe("");
   });
 
   it("preserves a historical business identity matched by verified email without creating a second profile", async () => {

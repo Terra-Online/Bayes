@@ -219,7 +219,7 @@ describe("image write permissions", () => {
     expect(webhooks).toHaveLength(2);
   });
 
-  it.each(["upvote", "unvote", "flag", "unflag", "recall", "unrecall"])(
+  it.each(["upvote", "unvote", "flag", "unflag", "recall", "unrecall", "remove-request"])(
     "does not apply image %s to a missing item or a comment",
     async (action) => {
       insertSubmission(database.sqlite, { id: "comment", userId: "author" });
@@ -356,12 +356,14 @@ describe("image votes", () => {
     expect(await withdrawn.json()).toEqual({ ok: true, deleted: true, upvoteCount: 1 });
     expect(activeUsers("ugc_submission_upvotes")).toEqual(["other-reader"]);
     expect(await publicImage("reader")).toMatchObject({ upvoteCount: 1, upvoted: false });
-    expect(await (await post("photo", "unvote")).json()).toEqual({
+    const repeatedWithdrawal = await post("photo", "unvote");
+    expect(await repeatedWithdrawal.json()).toEqual({
       ok: true,
       deleted: false,
       upvoteCount: 1,
     });
-    expect(await (await post("photo", "upvote")).json()).toEqual({
+    const renewedVote = await post("photo", "upvote");
+    expect(await renewedVote.json()).toEqual({
       ok: true,
       created: true,
       upvoteCount: 2,
@@ -386,7 +388,8 @@ describe("image flags", () => {
     expect(submission("photo").status).toBe("flagged");
     expect(await publicImage("reader")).toMatchObject({ flagCount: 1, flagged: true });
     expect(await publicImage("other-reader")).toMatchObject({ flagCount: 1, flagged: false });
-    expect(await (await post("photo", "flag")).json()).toEqual({
+    const duplicateFlag = await post("photo", "flag");
+    expect(await duplicateFlag.json()).toEqual({
       ok: true,
       created: false,
       status: "flagged",
@@ -406,10 +409,12 @@ describe("image flags", () => {
       }),
     ]);
 
-    expect(await (await post("photo", "flag", "other-reader")).json()).toMatchObject({
+    const secondFlag = await post("photo", "flag", "other-reader");
+    expect(await secondFlag.json()).toMatchObject({
       flagCount: 2,
     });
-    expect(await (await post("photo", "unflag")).json()).toEqual({
+    const withdrawnFlag = await post("photo", "unflag");
+    expect(await withdrawnFlag.json()).toEqual({
       ok: true,
       deleted: true,
       status: "flagged",
@@ -417,12 +422,14 @@ describe("image flags", () => {
     });
     expect(submission("photo").status).toBe("flagged");
     expect(activeUsers("ugc_submission_flags")).toEqual(["other-reader"]);
-    expect(await (await post("photo", "unflag")).json()).toMatchObject({
+    const repeatedWithdrawal = await post("photo", "unflag");
+    expect(await repeatedWithdrawal.json()).toMatchObject({
       deleted: false,
       flagCount: 1,
     });
     expect(webhooks).toHaveLength(3);
-    expect(await (await post("photo", "unflag", "other-reader")).json()).toEqual({
+    const lastWithdrawal = await post("photo", "unflag", "other-reader");
+    expect(await lastWithdrawal.json()).toEqual({
       ok: true,
       deleted: true,
       status: "active",
@@ -443,7 +450,8 @@ describe("image flags", () => {
         flagCount: 0,
       },
     });
-    expect(await (await post("photo", "flag")).json()).toMatchObject({
+    const renewedFlag = await post("photo", "flag");
+    expect(await renewedFlag.json()).toMatchObject({
       created: true,
       flagCount: 1,
     });
@@ -453,18 +461,6 @@ describe("image flags", () => {
 });
 
 describe("image removal requests", () => {
-  it("does not let an image removal request change a comment or create a missing image", async () => {
-    insertSubmission(database.sqlite, { id: "comment", userId: "author" });
-    const original = submission("comment");
-    for (const id of ["comment", "missing"]) {
-      const response = await post(id, "remove-request", "author");
-      expect(response.status).toBe(404);
-      expect(await response.json()).toMatchObject({ code: "SUBMISSION_NOT_FOUND" });
-    }
-    expect(submission("comment")).toEqual(original);
-    expect(webhooks).toEqual([]);
-  });
-
   it.each([false, true])(
     "keeps an image visible during removal review and restores its remaining flags on cancellation (flagged: %s)",
     async (flagged) => {
@@ -490,11 +486,13 @@ describe("image removal requests", () => {
         },
       });
       // Removal review does not hide the image or disable ordinary voting.
-      expect(await (await post("photo", "upvote")).json()).toMatchObject({
+      const voteDuringReview = await post("photo", "upvote");
+      expect(await voteDuringReview.json()).toMatchObject({
         created: true,
         upvoteCount: 1,
       });
-      expect(await (await post("photo", "unvote")).json()).toMatchObject({
+      const withdrawnVote = await post("photo", "unvote");
+      expect(await withdrawnVote.json()).toMatchObject({
         deleted: true,
         upvoteCount: 0,
       });
@@ -543,7 +541,8 @@ describe("image recall", () => {
         snapshot_id: "snapshot-photo",
       });
       expect((await request("/images/photo?markerId=marker-1", null)).status).toBe(404);
-      expect(await (await request("/images/mine?markerId=marker-1")).json()).toEqual({ items: [] });
+      const authorList = await request("/images/mine?markerId=marker-1");
+      expect(await authorList.json()).toEqual({ items: [] });
       expect(
         database.sqlite
           .prepare(

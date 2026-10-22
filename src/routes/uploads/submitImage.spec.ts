@@ -101,6 +101,15 @@ describe("image submission through HTTP", () => {
     );
   }
 
+  function configureUploadPersistence(sizeBytes: number): void {
+    mocks.ugcBucket.put.mockImplementation(async (key) =>
+      createMockR2Object({ key, size: sizeBytes }),
+    );
+    mocks.moderationQueue.send.mockResolvedValue({
+      metadata: { metrics: { backlogCount: 1, backlogBytes: 64 } },
+    });
+  }
+
   function expectNoWrites() {
     expect(database.sqlite.prepare("SELECT id FROM ugc_submissions").all()).toEqual([]);
     expect(mocks.ugcBucket.put).not.toHaveBeenCalled();
@@ -108,10 +117,7 @@ describe("image submission through HTTP", () => {
   }
 
   it("accepts a camera image with generic MIME using its filename and stores the processed format", async () => {
-    mocks.ugcBucket.put.mockImplementation(async (key) => createMockR2Object({ key, size: 2 }));
-    mocks.moderationQueue.send.mockResolvedValue({
-      metadata: { metrics: { backlogCount: 1, backlogBytes: 64 } },
-    });
+    configureUploadPersistence(2);
     mocks.imageTranscoder.fetch.mockResolvedValue(
       new Response(new Uint8Array([4, 5]), { headers: { "content-type": "image/webp" } }),
     );
@@ -148,10 +154,7 @@ describe("image submission through HTTP", () => {
       markerId: "42",
       filePath: "prod/original.webp",
     });
-    mocks.ugcBucket.put.mockImplementation(async (key) => createMockR2Object({ key, size: 3 }));
-    mocks.moderationQueue.send.mockResolvedValue({
-      metadata: { metrics: { backlogCount: 1, backlogBytes: 64 } },
-    });
+    configureUploadPersistence(3);
     const betaHeaders = {
       origin: "invalid-origin",
       referer: "https://beta.opendfieldmap.org/marker/42",
@@ -195,10 +198,7 @@ describe("image submission through HTTP", () => {
   });
 
   it("keeps untrusted POI labels inside the generated object path", async () => {
-    mocks.ugcBucket.put.mockImplementation(async (key) => createMockR2Object({ key, size: 3 }));
-    mocks.moderationQueue.send.mockResolvedValue({
-      metadata: { metrics: { backlogCount: 1, backlogBytes: 64 } },
-    });
+    configureUploadPersistence(3);
     const response = await request(undefined, "image/webp", {
       fields: { poiHash: "../", poiType: "矿石" },
     });
@@ -232,10 +232,7 @@ describe("image submission through HTTP", () => {
   });
 
   it("persists one pending image and queues its moderation after a successful retry", async () => {
-    mocks.ugcBucket.put.mockImplementation(async (key) => createMockR2Object({ key, size: 2 }));
-    mocks.moderationQueue.send.mockResolvedValue({
-      metadata: { metrics: { backlogCount: 1, backlogBytes: 64 } },
-    });
+    configureUploadPersistence(2);
     const conversionRequests: Array<{
       url: string;
       method: string;
@@ -358,10 +355,7 @@ describe("image submission through HTTP", () => {
   it.each(["image/webp", "image/avif"])(
     "passes through %s without a container",
     async (mimeType) => {
-      mocks.ugcBucket.put.mockImplementation(async (key) => createMockR2Object({ key, size: 3 }));
-      mocks.moderationQueue.send.mockResolvedValue({
-        metadata: { metrics: { backlogCount: 1, backlogBytes: 64 } },
-      });
+      configureUploadPersistence(3);
       const response = await request(undefined, mimeType);
       expect(response.status).toBe(200);
       const payload = (await response.json()) as { submission: { id: string; filePath: string } };

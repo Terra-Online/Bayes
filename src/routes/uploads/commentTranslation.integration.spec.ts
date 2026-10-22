@@ -23,7 +23,7 @@ type TranslationRequest = {
   glossaryConfig?: { glossary: string };
 };
 let translationRequests: TranslationRequest[];
-let translate: (payload: TranslationRequest) => Response | Promise<Response>;
+let translationResponse: (payload: TranslationRequest) => Response | Promise<Response>;
 let tokenResponse: () => Response;
 let providerFetch: ReturnType<typeof vi.fn<typeof globalThis.fetch>>;
 let clock = Date.now();
@@ -65,7 +65,7 @@ beforeEach(() => {
   }
   kv = new Map();
   translationRequests = [];
-  translate = () =>
+  translationResponse = () =>
     Response.json({ translations: [{ translatedText, detectedLanguageCode: "zh-CN" }] });
   tokenResponse = () => Response.json({ access_token: "synthetic-google-token", expires_in: 3600 });
   providerFetch = vi.fn<typeof globalThis.fetch>().mockImplementation(async (input, init) => {
@@ -79,7 +79,7 @@ beforeEach(() => {
     ) {
       const payload = JSON.parse(String(init?.body)) as TranslationRequest;
       translationRequests.push(payload);
-      return translate(payload);
+      return translationResponse(payload);
     }
     throw new Error(`Unexpected external request: ${url}`);
   });
@@ -170,7 +170,7 @@ describe("comment translation cache", () => {
     expect(await translations({ targetLanguage: "ja-JP", cachedOnly: true }, null)).toEqual([
       expect.objectContaining({ targetLanguage: "ja-JP", error: "TRANSLATION_CACHE_MISS" }),
     ]);
-    translate = () =>
+    translationResponse = () =>
       Response.json({
         translations: [
           { translatedText: "The exit is on the west side.", detectedLanguageCode: "zh-CN" },
@@ -199,7 +199,7 @@ describe("comment translation cache", () => {
 
   it("isolates explicit source languages in KV and SQLite when the provider omits language detection", async () => {
     insertSubmission(database.sqlite, { id: "comment", userId: "author", content: originalText });
-    translate = (payload) =>
+    translationResponse = (payload) =>
       Response.json({
         translations: [
           {
@@ -393,8 +393,7 @@ describe("comment translation cache", () => {
         error: "TRANSLATION_CACHE_MISS",
       }),
     ]);
-    expect(translationRequests).toEqual([]);
-    expect(fetch).not.toHaveBeenCalled();
+    expect(providerFetch).not.toHaveBeenCalled();
     expect(storedTranslations()).toEqual([]);
     expect(kv.size).toBe(0);
     expect(database.sqlite.prepare("SELECT content, status FROM ugc_submissions").all()).toEqual([
@@ -465,7 +464,7 @@ describe("translation access", () => {
         cached: false,
       }),
     ]);
-    expect(fetch).not.toHaveBeenCalled();
+    expect(providerFetch).not.toHaveBeenCalled();
     expect(storedTranslations()).toEqual([]);
   });
 
@@ -497,7 +496,7 @@ describe("translation access", () => {
     const response = await request({ commentIds: [], targetLanguage: "en-US" }, null);
     expect(response.status).toBe(422);
     expect(await response.json()).toMatchObject({ code: "VALIDATION_ERROR" });
-    expect(fetch).not.toHaveBeenCalled();
+    expect(providerFetch).not.toHaveBeenCalled();
     expect(storedTranslations()).toEqual([]);
   });
 });
@@ -507,13 +506,18 @@ describe("translation glossary", () => {
     insertSubmission(database.sqlite, { id: "comment", userId: "author", content: originalText });
     env.GOOGLE_TRANSLATE_GLOSSARY = "projects/test-project/locations/global/glossaries/endfield";
     env.GOOGLE_TRANSLATE_GLOSSARY_VERSION = "2026 release 1";
-    let result = "First glossary wording";
-    translate = () => Response.json({ glossaryTranslations: [{ translatedText: result }] });
+    let providerWording = "First glossary wording";
+    translationResponse = () =>
+      Response.json({ glossaryTranslations: [{ translatedText: providerWording }] });
     expect(await translations({ sourceLanguage: "zh-CN" })).toEqual([
-      expect.objectContaining({ translatedContent: result, glossaryApplied: true, cached: false }),
+      expect.objectContaining({
+        translatedContent: providerWording,
+        glossaryApplied: true,
+        cached: false,
+      }),
     ]);
     env.GOOGLE_TRANSLATE_GLOSSARY_VERSION = "g2026-release-2";
-    result = "Revised glossary wording";
+    providerWording = "Revised glossary wording";
     expect(await translations({ sourceLanguage: "zh-CN" })).toEqual([
       expect.objectContaining({
         translatedContent: "First glossary wording",
@@ -527,7 +531,11 @@ describe("translation glossary", () => {
       content: "新入口在北边。",
     });
     expect(await translations({ commentIds: ["new-comment"], sourceLanguage: "zh-CN" })).toEqual([
-      expect.objectContaining({ translatedContent: result, glossaryApplied: true, cached: false }),
+      expect.objectContaining({
+        translatedContent: providerWording,
+        glossaryApplied: true,
+        cached: false,
+      }),
     ]);
     kv.clear();
     expect(await translations({ sourceLanguage: "zh-CN", cachedOnly: true }, null)).toEqual([
@@ -543,7 +551,11 @@ describe("translation glossary", () => {
         null,
       ),
     ).toEqual([
-      expect.objectContaining({ translatedContent: result, glossaryApplied: true, cached: true }),
+      expect.objectContaining({
+        translatedContent: providerWording,
+        glossaryApplied: true,
+        cached: true,
+      }),
     ]);
     expect(
       storedTranslations()
@@ -558,7 +570,7 @@ describe("translation glossary", () => {
       insertSubmission(database.sqlite, { id: "comment", userId: "author", content: originalText });
       env.GOOGLE_TRANSLATE_GLOSSARY = "projects/test-project/locations/global/glossaries/endfield";
       vi.spyOn(console, "warn").mockImplementation(() => {});
-      translate = (payload) =>
+      translationResponse = (payload) =>
         payload.glossaryConfig
           ? new Response("Glossary temporarily unavailable", { status: 503 })
           : Response.json({ translations: [{ translatedText, detectedLanguageCode: "zh-CN" }] });
@@ -594,7 +606,7 @@ describe("translation glossary", () => {
     });
     env.GOOGLE_TRANSLATE_GLOSSARY = "projects/test-project/locations/global/glossaries/endfield";
     env.GOOGLE_TRANSLATE_GLOSSARY_LANGUAGES = "zh-CN,en";
-    translate = () =>
+    translationResponse = () =>
       Response.json({
         translations: [
           { translatedText },
@@ -639,7 +651,7 @@ describe("translation glossary", () => {
     insertSubmission(database.sqlite, { id: "comment", userId: "author", content: "源石在入口。" });
     const glossary = "projects/test-project/locations/global/glossaries/endfield";
     env.GOOGLE_TRANSLATE_GLOSSARY = glossary;
-    translate = (payload) =>
+    translationResponse = (payload) =>
       payload.glossaryConfig
         ? Response.json({
             glossaryTranslations: [{ translatedText: "Originium is at the entrance." }],
@@ -864,7 +876,7 @@ describe("translation failure outcomes", () => {
 
   it("does not cache a detected source language that is already the requested target language", async () => {
     insertSubmission(database.sqlite, { id: "comment", userId: "author", content: translatedText });
-    translate = () =>
+    translationResponse = () =>
       Response.json({ translations: [{ translatedText, detectedLanguageCode: "en" }] });
     expect(await translations({})).toEqual([
       expect.objectContaining({
@@ -905,7 +917,7 @@ describe("translation failure outcomes", () => {
       userId: "author",
       content: "出口在西边。",
     });
-    translate = () =>
+    translationResponse = () =>
       Response.json({
         translations: [
           { translatedText, detectedLanguageCode: "zh-CN" },
@@ -951,7 +963,7 @@ describe("translation failure outcomes", () => {
         userId: "author",
         content: "出口在西边。",
       });
-      translate = () => {
+      translationResponse = () => {
         if (failure === "network") {
           throw new Error("Translation network unavailable");
         }
@@ -976,7 +988,7 @@ describe("translation failure outcomes", () => {
       expect(await translations({ commentIds: ["uncached"], cachedOnly: true }, null)).toEqual([
         expect.objectContaining({ error: "TRANSLATION_CACHE_MISS" }),
       ]);
-      translate = () =>
+      translationResponse = () =>
         Response.json({
           translations: [
             { translatedText: "The exit is on the west side.", detectedLanguageCode: "zh-CN" },

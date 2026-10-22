@@ -19,16 +19,28 @@ vi.mock("./karmaConfig.json", () => ({
 }));
 
 describe("review quality in karma scoring", () => {
-  it("requires enough reviewed images before rewarding approval or penalizing rejection", () => {
+  it.each([
+    { scenario: "no reviewed images", approvedImages: 0, rejectedImages: 0 },
+    { scenario: "too few approvals", approvedImages: 3, rejectedImages: 0 },
+    { scenario: "too few rejections", approvedImages: 0, rejectedImages: 3 },
+    { scenario: "approval rate at the quality baseline", approvedImages: 5, rejectedImages: 5 },
+  ])("preserves earned points with $scenario", ({ approvedImages, rejectedImages }) => {
     const now = new Date("2026-10-23T00:00:00Z");
     const input = { points: 100, createdAt: now.toISOString(), lastActive: now.toISOString() };
-    const score = (approvedImages: number, rejectedImages: number) =>
-      calculateKarmaEvaluationScore({ ...input, approvedImages, rejectedImages }, now);
-    expect(score(0, 0)).toBe(100);
-    expect(score(3, 0)).toBe(100);
-    expect(score(0, 3)).toBe(100);
-    expect(score(10, 0)).toBeGreaterThan(100);
-    expect(score(5, 5)).toBe(100);
-    expect(score(0, 10)).toBeLessThan(100);
+    expect(calculateKarmaEvaluationScore({ ...input, approvedImages, rejectedImages }, now)).toBe(
+      100,
+    );
+  });
+
+  it("rewards a reliable approval history and penalizes a reliable rejection history", () => {
+    const now = new Date("2026-10-23T00:00:00Z");
+    const input = { points: 100, createdAt: now.toISOString(), lastActive: now.toISOString() };
+    // These histories clear the minimum review count, so quality can affect earned points.
+    expect(
+      calculateKarmaEvaluationScore({ ...input, approvedImages: 10, rejectedImages: 0 }, now),
+    ).toBeGreaterThan(100);
+    expect(
+      calculateKarmaEvaluationScore({ ...input, approvedImages: 0, rejectedImages: 10 }, now),
+    ).toBeLessThan(100);
   });
 });

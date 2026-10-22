@@ -27,7 +27,7 @@ function storedState() {
   };
 }
 
-function edit(expectedSnapshotId: string, snapshotId: string, content: string) {
+function editComment(expectedSnapshotId: string, snapshotId: string, content: string) {
   return updateCommentContentForModeration(database.db, {
     id: "comment",
     expectedSnapshotId,
@@ -44,18 +44,20 @@ describe("submission snapshot conflicts", () => {
       userId: "author",
       content: "Original directions",
     });
-    expect(await edit("snapshot-comment", "first-edit", "East entrance")).toBe(true);
-    const winner = storedState();
-    expect(await edit("snapshot-comment", "late-edit", "West entrance")).toBe(false);
-    expect(storedState()).toEqual(winner);
-    expect(winner.submissions[0]).toMatchObject({
+    expect(await editComment("snapshot-comment", "first-edit", "East entrance")).toBe(true);
+    const winningEditState = storedState();
+    expect(await editComment("snapshot-comment", "late-edit", "West entrance")).toBe(false);
+    expect(storedState()).toEqual(winningEditState);
+    expect(winningEditState.submissions[0]).toMatchObject({
       content: "East entrance",
       snapshot_id: "first-edit",
       edit_original_content: "Original directions",
       edit_original_snapshot_id: "snapshot-comment",
     });
-    const refreshed = (await getSubmissionById(database.db, "comment"))!;
-    expect(await edit(refreshed.snapshotId, "retry-edit", "West entrance")).toBe(true);
+    const refreshedComment = (await getSubmissionById(database.db, "comment"))!;
+    expect(await editComment(refreshedComment.snapshotId, "retry-edit", "West entrance")).toBe(
+      true,
+    );
     expect(storedState().submissions[0]).toMatchObject({
       content: "West entrance",
       snapshot_id: "retry-edit",
@@ -71,10 +73,10 @@ describe("submission snapshot conflicts", () => {
       userId: "author",
       content: "Original directions",
     });
-    await edit("snapshot-comment", "first-edit", "East entrance");
-    const undoTarget = (await getSubmissionById(database.db, "comment"))!;
-    await edit("first-edit", "newer-edit", "West entrance");
-    const newer = storedState();
+    await editComment("snapshot-comment", "first-edit", "East entrance");
+    const staleUndoTarget = (await getSubmissionById(database.db, "comment"))!;
+    await editComment("first-edit", "newer-edit", "West entrance");
+    const newerEditState = storedState();
     const undo = (expectedSnapshotId: string) =>
       revertCommentEdit(database.db, {
         id: "comment",
@@ -82,8 +84,8 @@ describe("submission snapshot conflicts", () => {
         status: "pending_openai",
         moderationNote: "Comment edit reverted by author.",
       });
-    expect(await undo(undoTarget.snapshotId)).toBe(false);
-    expect(storedState()).toEqual(newer);
+    expect(await undo(staleUndoTarget.snapshotId)).toBe(false);
+    expect(storedState()).toEqual(newerEditState);
     expect(await undo((await getSubmissionById(database.db, "comment"))!.snapshotId)).toBe(true);
     expect(storedState().submissions[0]).toMatchObject({
       content: "East entrance",
@@ -115,7 +117,7 @@ describe("submission snapshot conflicts", () => {
           source: "user_action",
         });
       }
-      const newer = storedState();
+      const stateBeforeConflictingRecall = storedState();
       expect(
         await transitionSubmissionStatusWithNotifications(database.db, {
           submission: original,
@@ -124,7 +126,8 @@ describe("submission snapshot conflicts", () => {
           moderationNote: "Recalled by author.",
         }),
       ).toEqual({ updated: false, notifications: [] });
-      expect(storedState()).toEqual(newer);
+      // A lost status race must leave review history and notification writes untouched too.
+      expect(storedState()).toEqual(stateBeforeConflictingRecall);
       const current = (await getSubmissionById(database.db, "target"))!;
       const retry = await transitionSubmissionStatusWithNotifications(database.db, {
         submission: current,

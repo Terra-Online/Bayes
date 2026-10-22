@@ -89,10 +89,10 @@ it("serves a stale position while the game is pending, then serves the completed
   expect(cold.headers.get("x-locator-cache")).toBe("miss");
   expect(await cold.json()).toEqual({ data: position });
   vi.spyOn(Date, "now").mockReturnValue(Date.now() + POSITION_CACHE_FRESH_MS + 1);
-  let release!: (value: Response) => void;
+  let releaseGameRefresh!: (value: Response) => void;
   gameFetch.mockReturnValueOnce(
     new Promise<Response>((resolve) => {
-      release = resolve;
+      releaseGameRefresh = resolve;
     }),
   );
   let deadline: ReturnType<typeof setTimeout> | undefined;
@@ -114,7 +114,7 @@ it("serves a stale position while the game is pending, then serves the completed
       binding: { roleId: "role" },
       socketTicket: expect.any(String),
     });
-    release(Response.json({ code: 0, data: nextPosition }));
+    releaseGameRefresh(Response.json({ code: 0, data: nextPosition }));
     await Promise.all(background);
     const fresh = await request();
     expect(fresh.status).toBe(200);
@@ -126,8 +126,9 @@ it("serves a stale position while the game is pending, then serves the completed
         .get(),
     ).toMatchObject({ role_id: "role", status: "enabled" });
   } finally {
+    // Unblock teardown even when an assertion fails while the provider is held.
     clearTimeout(deadline);
-    release(Response.json({ code: 0, data: nextPosition }));
+    releaseGameRefresh(Response.json({ code: 0, data: nextPosition }));
   }
 });
 
@@ -136,6 +137,7 @@ it("keeps the last position and binding after background failure and refreshes o
   expect((await request()).status).toBe(200);
   const before = database.sqlite.prepare("SELECT * FROM endfield_bindings").get();
   vi.spyOn(Date, "now").mockReturnValue(Date.now() + POSITION_CACHE_FRESH_MS + 1);
+  // Exhaust both HTTP and socket-grant fallback so this exercises a failed refresh.
   gameFetch
     .mockResolvedValueOnce(Response.json({ code: 1 }, { status: 503 }))
     .mockResolvedValueOnce(new Response("gateway unavailable", { status: 502 }));
