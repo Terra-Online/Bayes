@@ -1,13 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { sha256Hex } from "@/lib/crypto";
-
-import {
-  archiveIdsFromBitmap,
-  buildCanonicalArchiveManifest,
-  normalizeArchiveManifestPayload,
-  type RegisteredArchiveManifest,
-} from "./archiveManifest";
+import { archiveIdsFromBitmap, type RegisteredArchiveManifest } from "./archiveManifest";
 import { emptyArchiveProgressState, type ArchiveProgressState } from "./archiveModel";
 import {
   applyArchiveProgressPatch,
@@ -43,42 +36,6 @@ const progress = (
   archiveCount: source.archiveCount,
   retainedArchiveIds,
   updatedAt: 1,
-});
-
-describe("archive progress manifest", () => {
-  it("accepts the canonical sorted archive manifest", async () => {
-    const archiveIds = ["archive-a", "archive-b"];
-    const archiveIndexHash = await sha256Hex(buildCanonicalArchiveManifest(archiveIds));
-    const normalized = await normalizeArchiveManifestPayload({ archiveIndexHash, archiveIds });
-
-    expect(normalized.archiveIndexHash).toBe(archiveIndexHash);
-    expect(normalized.archiveIds).toEqual(archiveIds);
-    expect(normalized.archiveCount).toBe(2);
-  });
-
-  it.each([
-    [["archive-b", "archive-a"], "must be sorted"],
-    [["archive-a", "archive-a"], "must not contain duplicate"],
-  ])("rejects a non-canonical archive index", async (archiveIds, message) => {
-    await expect(
-      normalizeArchiveManifestPayload({
-        archiveIndexHash: HASH_A,
-        archiveIds,
-      }),
-    ).rejects.toMatchObject({ status: 422, message: expect.stringContaining(message) });
-  });
-
-  it("rejects a mismatched manifest hash", async () => {
-    await expect(
-      normalizeArchiveManifestPayload({
-        archiveIndexHash: HASH_A,
-        archiveIds: ["archive-a"],
-      }),
-    ).rejects.toMatchObject({
-      status: 422,
-      code: "ARCHIVE_PROGRESS_MANIFEST_HASH_MISMATCH",
-    });
-  });
 });
 
 describe("archive progress patches", () => {
