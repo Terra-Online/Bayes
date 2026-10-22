@@ -3,24 +3,31 @@ import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { onAppError } from "@/middleware/error-handler";
+import { requestIdMiddleware } from "@/middleware/request-id";
 import { createMockBindings, createMockR2Object, type MockBindings } from "@/test/bindings";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
-import { insertAuthenticatedUser } from "@/test/fixtures/auth";
+import { insertAuthenticatedUser, type SessionHeaders } from "@/test/fixtures/auth";
 import type { AppEnv, Bindings } from "@/types/app";
 
 import { createRoutes } from "./createRoutes";
 
 vi.mock("@cloudflare/containers", () => ({ getRandom: vi.fn() }));
 vi.mock("cloudflare:workers", () => ({ DurableObject: class {}, exports: {} }));
-// The rate-limit middleware runs normally; only its external Redis client is replaced.
+// The middleware executes normally against a fresh external Redis client per case.
+const { redisClient } = vi.hoisted(() => ({
+  redisClient: { current: {} as UploadRedis },
+}));
+interface UploadRedis {
+  zremrangebyscore: (key: string, min: number, max: number) => Promise<number>;
+  zcard: (key: string) => Promise<number>;
+  zadd: (key: string, entry: { score: number; member: string }) => Promise<number>;
+  expire: (key: string, seconds: number) => Promise<number>;
+}
 vi.mock("@upstash/redis", () => ({
   Redis: class {
-    async zremrangebyscore() {}
-    async zcard() {
-      return 0;
+    constructor() {
+      return redisClient.current;
     }
-    async zadd() {}
-    async expire() {}
   },
 }));
 
@@ -29,9 +36,16 @@ describe("image submission through HTTP", () => {
   let app: Hono<AppEnv>;
   let database: TestDatabase;
   let env: Bindings;
-  let sessionHeaders: HeadersInit;
+  let sessionHeaders: SessionHeaders;
 
   beforeEach(() => {
+    vi.mocked(getRandom).mockReset();
+    redisClient.current = {
+      zremrangebyscore: vi.fn<UploadRedis["zremrangebyscore"]>().mockResolvedValue(0),
+      zcard: vi.fn<UploadRedis["zcard"]>().mockResolvedValue(0),
+      zadd: vi.fn<UploadRedis["zadd"]>().mockResolvedValue(1),
+      expire: vi.fn<UploadRedis["expire"]>().mockResolvedValue(1),
+    };
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     database = createTestDatabase();
@@ -45,6 +59,7 @@ describe("image submission through HTTP", () => {
     };
     app = new Hono<AppEnv>();
     app.onError(onAppError);
+    app.use(requestIdMiddleware);
     app.route("/uploads/v1", createRoutes());
   });
 
@@ -53,9 +68,9 @@ describe("image submission through HTTP", () => {
     vi.restoreAllMocks();
   });
 
-  function request(signal?: AbortSignal) {
+  function request(signal?: AbortSignal, mimeType = "image/png") {
     const form = new FormData();
-    form.set("file", new File([new Uint8Array([1, 2, 3])], "test.png", { type: "image/png" }));
+    form.set("file", new File([new Uint8Array([1, 2, 3])], "test.png", { type: mimeType }));
     form.set("markerId", "42");
     form.set("poiHash", "hash");
     form.set("poiType", "poi");
@@ -63,7 +78,7 @@ describe("image submission through HTTP", () => {
       new Request("http://localhost/uploads/v1/images", {
         method: "POST",
         body: form,
-        headers: sessionHeaders,
+        headers: { ...sessionHeaders, "x-request-id": "upload-request" },
         signal,
       }),
       undefined,
@@ -174,9 +189,13 @@ describe("image submission through HTTP", () => {
   });
 
   it.each([
+    [400, 422, "IMAGE_PROCESSING_FAILED"],
+    [413, 422, "IMAGE_PROCESSING_FAILED"],
+    [415, 422, "IMAGE_PROCESSING_FAILED"],
     [422, 422, "IMAGE_PROCESSING_FAILED"],
     [429, 503, "DEPENDENCY_OVERLOADED"],
     [500, 503, "DEPENDENCY_UNAVAILABLE"],
+    [503, 503, "DEPENDENCY_UNAVAILABLE"],
   ])("leaves no business writes after upstream HTTP %s", async (upstreamStatus, status, code) => {
     mocks.imageTranscoder.fetch.mockResolvedValue(
       new Response("private container diagnostic", { status: upstreamStatus }),
@@ -185,6 +204,96 @@ describe("image submission through HTTP", () => {
     expect(response.status).toBe(status);
     expect(response.headers.get("retry-after")).toBe(status === 503 ? "5" : null);
     expect(await response.json()).toMatchObject({ code });
+    expect(mocks.imageTranscoder.fetch).toHaveBeenCalledOnce();
+    expect(console.warn).toHaveBeenCalledWith(
+      "image preparation failed",
+      expect.objectContaining({
+        attempt: 1,
+        stage: "container_response",
+        requestId: "upload-request",
+      }),
+    );
+    expectNoWrites();
+  });
+
+  it.each(["image/webp", "image/avif"])(
+    "passes through %s without a container",
+    async (mimeType) => {
+      mocks.ugcBucket.put.mockImplementation(async (key) => createMockR2Object({ key, size: 3 }));
+      mocks.moderationQueue.send.mockResolvedValue({
+        metadata: { metrics: { backlogCount: 1, backlogBytes: 64 } },
+      });
+      const response = await request(undefined, mimeType);
+      expect(response.status).toBe(200);
+      const payload = (await response.json()) as { submission: { id: string; filePath: string } };
+      expect(mocks.ugcBucket.put).toHaveBeenCalledWith(
+        payload.submission.filePath,
+        new Uint8Array([1, 2, 3]).buffer,
+        expect.objectContaining({
+          httpMetadata: expect.objectContaining({ contentType: mimeType }),
+          customMetadata: expect.objectContaining({ convertedToWebp: "false" }),
+        }),
+      );
+      expect(
+        database.sqlite
+          .prepare("SELECT mime_type, size_bytes FROM ugc_submissions WHERE id = ?")
+          .get(payload.submission.id),
+      ).toEqual({ mime_type: mimeType, size_bytes: 3 });
+      expect(getRandom).not.toHaveBeenCalled();
+    },
+  );
+
+  it("limits disconnect retries to two attempts", async () => {
+    mocks.imageTranscoder.fetch.mockRejectedValue(new Error("The container just disconnected"));
+    const response = await request();
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({ code: "DEPENDENCY_UNAVAILABLE" });
+    expect(mocks.imageTranscoder.fetch).toHaveBeenCalledTimes(2);
+    expectNoWrites();
+  });
+
+  it("never retries a flagged overload even if its message mentions disconnect", async () => {
+    mocks.imageTranscoder.fetch.mockRejectedValue(
+      Object.assign(new Error("The container just disconnected"), { overloaded: true }),
+    );
+    const response = await request();
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({ code: "DEPENDENCY_OVERLOADED" });
+    expect(mocks.imageTranscoder.fetch).toHaveBeenCalledOnce();
+    expectNoWrites();
+  });
+
+  it("classifies an explicit container capacity limit as overload", async () => {
+    mocks.imageTranscoder.fetch.mockResolvedValue(
+      new Response("Container capacity exhausted", { status: 503 }),
+    );
+    const response = await request();
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({ code: "DEPENDENCY_OVERLOADED" });
+    expect(mocks.imageTranscoder.fetch).toHaveBeenCalledOnce();
+    expectNoWrites();
+  });
+
+  it.each(["text/html", "", "image/not-real"])(
+    "rejects malformed success MIME %j",
+    async (mimeType) => {
+      mocks.imageTranscoder.fetch.mockResolvedValue(
+        new Response("body", { headers: { "content-type": mimeType } }),
+      );
+      const response = await request();
+      expect(response.status).toBe(502);
+      expect(await response.json()).toMatchObject({ code: "IMAGE_PROCESSING_BAD_RESPONSE" });
+      expect(mocks.imageTranscoder.fetch).toHaveBeenCalledOnce();
+      expectNoWrites();
+    },
+  );
+
+  it("rejects empty successful images", async () => {
+    mocks.imageTranscoder.fetch.mockResolvedValue(
+      new Response(null, { headers: { "content-type": "image/png" } }),
+    );
+    const response = await request();
+    expect(response.status).toBe(502);
     expectNoWrites();
   });
 
