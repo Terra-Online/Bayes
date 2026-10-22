@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { SqliteD1 } from "@/test/sqliteD1";
+import { createTestDatabase } from "@/test/database/createTestDatabase";
+import type { SqliteD1 } from "@/test/database/sqliteD1";
+import { insertSubmission, type SubmissionFixture } from "@/test/fixtures/submissions";
+import { insertUser } from "@/test/fixtures/users";
 
 import { getPublicCommentContextById } from "./getPublicComment";
 
@@ -8,94 +11,33 @@ let database: SqliteD1;
 let db: D1Database;
 
 beforeEach(() => {
-  database = new SqliteD1();
+  database = createTestDatabase();
   db = database.db;
-  database.sqlite.exec(`
-    CREATE TABLE users (
-      uid TEXT PRIMARY KEY,
-      uid_number INTEGER,
-      uid_suffix TEXT,
-      role TEXT,
-      karma INTEGER,
-      nickname TEXT,
-      avt INTEGER
-    );
-    INSERT INTO users VALUES
-      ('root-author', 1, 'AA', 'n', 3, 'Root author', 1),
-      ('reply-author', 2, 'BB', 'n', 5, 'Reply author', 2);
-
-    CREATE TABLE ugc_submissions (
-      id TEXT PRIMARY KEY,
-      poi_id TEXT NOT NULL,
-      poi_hash TEXT NOT NULL,
-      poi_type TEXT NOT NULL,
-      snapshot_id TEXT NOT NULL,
-      user_id TEXT NOT NULL,
-      content TEXT,
-      file_path TEXT,
-      kind TEXT NOT NULL,
-      status TEXT NOT NULL,
-      parent_id TEXT,
-      comment_depth INTEGER NOT NULL,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
-    CREATE INDEX idx_ugc_visible_comment_parent
-      ON ugc_submissions(parent_id, created_at, id)
-      WHERE kind = 'comment'
-        AND status IN ('active', 'flagged', 'remove_request');
-    CREATE INDEX idx_ugc_comment_threads
-      ON ugc_submissions(kind, poi_id, parent_id, status, created_at);
-
-    CREATE TABLE ugc_submission_votes (
-      submission_id TEXT NOT NULL,
-      user_id TEXT NOT NULL,
-      value INTEGER NOT NULL,
-      active INTEGER NOT NULL DEFAULT 1,
-      PRIMARY KEY (submission_id, user_id)
-    );
-    CREATE TABLE ugc_submission_flags (
-      submission_id TEXT NOT NULL,
-      user_id TEXT NOT NULL,
-      active INTEGER NOT NULL DEFAULT 1,
-      PRIMARY KEY (submission_id, user_id)
-    );
-  `);
+  insertUser(database.sqlite, {
+    uid: "root-author",
+    uid_number: 1,
+    uid_suffix: "AA",
+    karma: 3,
+    nickname: "Root author",
+    avt: 1,
+  });
+  insertUser(database.sqlite, {
+    uid: "reply-author",
+    uid_number: 2,
+    uid_suffix: "BB",
+    karma: 5,
+    nickname: "Reply author",
+    avt: 2,
+  });
 });
 
-afterEach(() => database.sqlite.close());
+afterEach(() => database.close());
 
-function insertComment(payload: {
-  id: string;
-  parentId?: string | null;
-  depth?: number;
-  markerId?: string;
-  kind?: "comment" | "image";
-  status?: string;
-  content?: string;
-  userId?: string;
-  createdAt?: string;
-}) {
-  database.sqlite
-    .prepare(`
-    INSERT INTO ugc_submissions (
-      id, poi_id, poi_hash, poi_type, snapshot_id, user_id, content,
-      file_path, kind, status, parent_id, comment_depth, created_at, updated_at
-    ) VALUES (?, ?, 'hash', 'poi', ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)
-  `)
-    .run(
-      payload.id,
-      payload.markerId ?? "marker-1",
-      `snapshot-${payload.id}`,
-      payload.userId ?? "reply-author",
-      payload.content ?? `Content ${payload.id}`,
-      payload.kind ?? "comment",
-      payload.status ?? "active",
-      payload.parentId ?? null,
-      payload.depth ?? 0,
-      payload.createdAt ?? "2026-09-10T00:00:00.000Z",
-      payload.createdAt ?? "2026-09-10T00:00:00.000Z",
-    );
+function insertComment(payload: Omit<SubmissionFixture, "userId"> & { userId?: string }) {
+  return insertSubmission(database.sqlite, {
+    ...payload,
+    userId: payload.userId ?? "reply-author",
+  });
 }
 
 describe("getPublicCommentContextById", () => {
@@ -122,8 +64,11 @@ describe("getPublicCommentContextById", () => {
       content: "Target context",
       createdAt: "2026-09-10T00:02:00.000Z",
     });
+    for (const uid of ["voter-1", "voter-2", "viewer"]) {
+      insertUser(database.sqlite, { uid });
+    }
     database.sqlite.exec(`
-      INSERT INTO ugc_submission_votes VALUES
+      INSERT INTO ugc_submission_votes (submission_id, user_id, value, active) VALUES
         ('root', 'voter-1', 1, 1),
         ('root', 'voter-2', -1, 1),
         ('target', 'voter-1', 1, 1);
@@ -157,11 +102,14 @@ describe("getPublicCommentContextById", () => {
     insertComment({ id: "root", userId: "root-author" });
     insertComment({ id: "target", parentId: "root", depth: 1 });
     insertComment({ id: "reply", parentId: "target", depth: 2 });
+    for (const uid of ["voter-1", "voter-2", "viewer"]) {
+      insertUser(database.sqlite, { uid });
+    }
     database.sqlite.exec(`
-      INSERT INTO ugc_submission_votes VALUES
+      INSERT INTO ugc_submission_votes (submission_id, user_id, value, active) VALUES
         ('target', 'viewer', 1, 1),
         ('reply', 'viewer', -1, 1);
-      INSERT INTO ugc_submission_flags VALUES
+      INSERT INTO ugc_submission_flags (submission_id, user_id, active) VALUES
         ('root', 'viewer', 1),
         ('reply', 'viewer', 1);
     `);

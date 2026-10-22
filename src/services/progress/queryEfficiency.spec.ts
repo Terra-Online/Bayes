@@ -1,9 +1,10 @@
-import { readFileSync } from "node:fs";
 import type { StatementSync } from "node:sqlite";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { SqliteD1 } from "@/test/sqliteD1";
+import { createTestDatabase } from "@/test/database/createTestDatabase";
+import type { SqliteD1 } from "@/test/database/sqliteD1";
+import { insertUser } from "@/test/fixtures/users";
 
 import {
   cleanupProgressConsistencyRecords,
@@ -17,16 +18,9 @@ describe("outbox query efficiency", () => {
   const now = Date.parse("2026-09-05T12:00:00Z");
 
   beforeEach(() => {
-    database = new SqliteD1();
-    database.sqlite.exec(`
-      CREATE TABLE users (uid TEXT PRIMARY KEY, role TEXT, karma INTEGER);
-      CREATE TABLE progress_stats_snapshots (marker_index_hash TEXT PRIMARY KEY);
-      CREATE TABLE ugc_submissions (id TEXT PRIMARY KEY, user_id TEXT, kind TEXT, poi_id TEXT, created_at TEXT);
-      CREATE TABLE archive_progress_sync_mutations (uid TEXT, mutation_id TEXT, created_at INTEGER);
-      ${readFileSync(new URL("../../../migrations/0025_progress_consistency.sql", import.meta.url), "utf8")}
-      ${readFileSync(new URL("../../../migrations/0033_query_efficiency_indexes.sql", import.meta.url), "utf8")}
-      INSERT INTO users VALUES ('user-1', 'n', 1), ('blocked-user', 'n', 1);
-    `);
+    database = createTestDatabase();
+    insertUser(database.sqlite, { uid: "user-1", karma: 1 });
+    insertUser(database.sqlite, { uid: "blocked-user", karma: 1 });
     eventInsert = database.sqlite.prepare(`
       INSERT INTO progress_stats_outbox
         (event_id, uid, mutation_id, marker_index_hash, payload, status, next_attempt_at, created_at, processed_at)
@@ -38,7 +32,7 @@ describe("outbox query efficiency", () => {
     }
     database.sqlite.exec("COMMIT");
   });
-  afterEach(() => database.sqlite.close());
+  afterEach(() => database.close());
 
   function insertEvent(
     eventId: string,

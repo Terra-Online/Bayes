@@ -4,7 +4,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/lib/errors";
 import type { EndfieldBindingRow } from "@/repositories/binding/types";
 import { deleteLocatorCaches, readDecryptedBindingCache } from "@/services/locator/cache";
-import { SqliteD1 } from "@/test/sqliteD1";
+import { createTestDatabase } from "@/test/database/createTestDatabase";
+import type { SqliteD1 } from "@/test/database/sqliteD1";
+import { insertUser } from "@/test/fixtures/users";
 import type { AppEnv, Bindings } from "@/types/app";
 
 import { getDecryptedBinding, refreshBindingCredentials } from "./credentials";
@@ -43,19 +45,18 @@ describe("request-owned credential refresh and conditional persistence", () => {
   const context = () => ({ env }) as Context<AppEnv>;
   beforeEach(() => {
     vi.clearAllMocks();
-    database = new SqliteD1();
-    database.sqlite.exec(`CREATE TABLE endfield_bindings (
-      uid TEXT PRIMARY KEY, provider TEXT, server_id INTEGER, role_id TEXT,
-      cred_enc TEXT, token_enc TEXT, account_token_enc TEXT, status TEXT, updated_at TEXT
-    ); CREATE TABLE endfield_role_device_profiles (role_id TEXT PRIMARY KEY, device_profile TEXT, updated_at TEXT);
-    INSERT INTO endfield_bindings VALUES ('user', 'skland', 1, 'role', 'sealed:cred', 'sealed:token', NULL, 'enabled', 'old');`);
+    database = createTestDatabase();
+    insertUser(database.sqlite, { uid: "user" });
+    database.sqlite.exec(`INSERT INTO endfield_bindings
+      (uid, provider, server_id, role_id, cred_enc, token_enc, status, updated_at)
+      VALUES ('user', 'skland', 1, 'role', 'sealed:cred', 'sealed:token', 'enabled', 'old')`);
     env = {
       DB: database.db,
       ENDFIELD_CREDENTIAL_SECRET: "test-secret-at-least-16-characters",
     } as Bindings;
     mocks.refresh.mockResolvedValue({ token: "new-token" });
   });
-  afterEach(() => database.sqlite.close());
+  afterEach(() => database.close());
 
   it("deduplicates refreshes inside the same request", async () => {
     const c = context();

@@ -1,6 +1,8 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { SqliteD1 } from "@/test/sqliteD1";
+import { createTestDatabase } from "@/test/database/createTestDatabase";
+import type { SqliteD1 } from "@/test/database/sqliteD1";
+import { insertUser } from "@/test/fixtures/users";
 import type { Bindings } from "@/types/app";
 
 const sendEmail = vi.hoisted(() => vi.fn());
@@ -16,19 +18,17 @@ describe("moderation warning service", () => {
 
   beforeEach(() => {
     sendEmail.mockReset().mockResolvedValue({ provider: "cloudflare", id: "message-1" });
-    database = new SqliteD1();
-    database.sqlite.exec(`
-      CREATE TABLE users (
-        uid TEXT PRIMARY KEY, email TEXT UNIQUE, password_hash TEXT, role TEXT, karma INTEGER DEFAULT 0,
-        avt INTEGER, nickname TEXT UNIQUE, nickname_customized INTEGER, uid_number INTEGER UNIQUE,
-        uid_suffix TEXT, email_verified TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-        last_active TEXT DEFAULT CURRENT_TIMESTAMP
-      );
-      INSERT INTO users (
-        uid, email, password_hash, role, nickname, nickname_customized, uid_number, uid_suffix
-      ) VALUES ('user-1', 'user@example.test', 'managed', 'n', 'Tester', 1, 103427, 'VA');
-    `);
+    database = createTestDatabase();
+    insertUser(database.sqlite, {
+      uid: "user-1",
+      email: "user@example.test",
+      nickname: "Tester",
+      uid_number: 103427,
+      uid_suffix: "VA",
+    });
   });
+
+  afterEach(() => database.close());
 
   it("sends a warning using the resolved account and moderation sender", async () => {
     await expect(

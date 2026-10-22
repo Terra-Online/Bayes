@@ -2,7 +2,10 @@ import { Hono } from "hono";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 import { ApiError } from "@/lib/errors";
-import { SqliteD1 } from "@/test/sqliteD1";
+import { createTestDatabase } from "@/test/database/createTestDatabase";
+import type { SqliteD1 } from "@/test/database/sqliteD1";
+import { insertAuthUser, insertSession, testAuthConfig } from "@/test/fixtures/auth";
+import { insertUser } from "@/test/fixtures/users";
 import type { AppEnv, AuthUser, Bindings } from "@/types/app";
 
 const redis = vi.hoisted(() => ({
@@ -26,15 +29,6 @@ vi.mock("@upstash/redis", () => ({
     }
   },
 }));
-// Authentication and rate limiting have their own tests. These requests supply a known identity.
-vi.mock("@/middleware/auth", () => ({
-  requireAuth: async (c: { get(key: string): unknown }, next: () => Promise<void>) => {
-    if (!c.get("authUser")) {
-      throw new ApiError(401, "SESSION_REQUIRED", "Session is required.");
-    }
-    await next();
-  },
-}));
 vi.mock("@/middleware/rate-limit", () => ({
   rateLimit: () => async (_c: unknown, next: () => Promise<void>) => next(),
 }));
@@ -43,6 +37,7 @@ import { createRoutes } from "./createRoutes";
 
 let database: SqliteD1;
 let env: Bindings;
+let sessions: Map<string, ReturnType<typeof insertSession>>;
 const external = vi.fn<typeof fetch>();
 const role = {
   serverId: 1,
@@ -56,20 +51,23 @@ const role = {
 const deviceId = "a".repeat(32);
 
 beforeEach(() => {
-  database = new SqliteD1();
-  database.sqlite.exec(`CREATE TABLE endfield_bindings (
-    uid TEXT PRIMARY KEY, provider TEXT, server_id INTEGER, role_id TEXT, role_nickname TEXT,
-    server_name TEXT, cred_enc TEXT, token_enc TEXT, account_token_enc TEXT, status TEXT, updated_at TEXT
-  ); CREATE TABLE endfield_role_device_profiles (
-    role_id TEXT PRIMARY KEY, device_profile TEXT, updated_at TEXT
-  );`);
-  env = { DB: database.db, BETTER_AUTH_SECRET: "test-secret-at-least-16-characters" } as Bindings;
+  database = createTestDatabase();
+  insertUser(database.sqlite, { uid: "user" });
+  sessions = new Map();
+  for (const uid of ["user", "other"]) {
+    if (uid === "other") {
+      insertUser(database.sqlite, { uid });
+    }
+    const user = insertAuthUser(database.sqlite, { id: uid });
+    sessions.set(uid, insertSession(database.sqlite, { userId: user.id }));
+  }
+  env = { DB: database.db, ...testAuthConfig } as Bindings;
   redis.records.clear();
   external.mockReset();
   vi.stubGlobal("fetch", external);
 });
 afterEach(() => {
-  database.sqlite.close();
+  database.close();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
@@ -90,19 +88,23 @@ function request(path: string, payload?: unknown, uid: string | null = "user") {
   });
   if (uid) {
     app.use("*", async (c, next) => {
-      c.set("authUser", { uid } as AuthUser);
       c.set("requestId", "binding-request");
       await next();
     });
   }
   app.route("/binding/v1", createRoutes());
+  const headers = {
+    ...(uid ? sessions.get(uid)!.headers : {}),
+    "content-type": "application/json",
+    "user-agent": "test-browser",
+  };
   return app.request(
     `http://localhost/binding/v1/endfield/${path}`,
     payload === undefined
-      ? {}
+      ? { headers }
       : {
           method: "POST",
-          headers: { "content-type": "application/json", "user-agent": "test-browser" },
+          headers,
           body: typeof payload === "string" ? payload : JSON.stringify(payload),
         },
     env,

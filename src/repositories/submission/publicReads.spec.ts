@@ -1,10 +1,12 @@
-import { readFileSync } from "node:fs";
-import { DatabaseSync, type SQLInputValue } from "node:sqlite";
+import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { markNotificationsRead } from "@/repositories/notifications";
-import { UGC_COMPETING_INDEXES_SQL } from "@/test/ugcIndexes";
+import { createTestDatabase } from "@/test/database/createTestDatabase";
+import { insertNotification } from "@/test/fixtures/notifications";
+import { insertSubmission } from "@/test/fixtures/submissions";
+import { insertUser } from "@/test/fixtures/users";
 
 import {
   listActiveCommentsByMarker,
@@ -19,79 +21,29 @@ import {
 import { getVisibleCommentsByIds } from "./statusSubmission";
 
 describe("public read SQL under D1 limits", () => {
+  let connection: ReturnType<typeof createTestDatabase>;
   let sqlite: DatabaseSync;
   let database: D1Database;
   let queries: Array<{ sql: string; values: SQLInputValue[] }>;
   const markerIds = Array.from({ length: 100 }, (_, index) => `marker-${index}`);
 
   beforeEach(() => {
-    sqlite = new DatabaseSync(":memory:");
-    queries = [];
-    sqlite.exec(`
-      CREATE TABLE users (
-        uid TEXT PRIMARY KEY, uid_number INTEGER, uid_suffix TEXT,
-        role TEXT, karma INTEGER, nickname TEXT, avt INTEGER
-      );
-      INSERT INTO users VALUES ('viewer', 1, 'test', 'n', 0, 'Viewer', 1);
-      CREATE TABLE ugc_submissions (
-        id TEXT PRIMARY KEY, poi_id TEXT, poi_hash TEXT, poi_type TEXT, snapshot_id TEXT,
-        user_id TEXT, content TEXT, file_path TEXT, kind TEXT, status TEXT,
-        parent_id TEXT, comment_depth INTEGER, created_at TEXT, updated_at TEXT
-      );
-      CREATE INDEX idx_marker ON ugc_submissions(poi_id, kind, status);
-      CREATE INDEX idx_ugc_user_kind_poi_created
-        ON ugc_submissions(user_id, kind, poi_id, created_at DESC, id DESC);
-      ${UGC_COMPETING_INDEXES_SQL}
-      CREATE TABLE ugc_submission_votes (
-        submission_id TEXT, user_id TEXT, value INTEGER, active INTEGER,
-        created_at TEXT DEFAULT '2026-09-05',
-        PRIMARY KEY (submission_id, user_id)
-      );
-      CREATE INDEX idx_ugc_submission_votes_active_created
-        ON ugc_submission_votes(active, created_at);
-      CREATE TABLE ugc_submission_flags (
-        submission_id TEXT, user_id TEXT, active INTEGER,
-        PRIMARY KEY (submission_id, user_id)
-      );
-      CREATE TABLE ugc_submission_upvotes (
-        submission_id TEXT, user_id TEXT, active INTEGER,
-        created_at TEXT DEFAULT '2026-09-05',
-        PRIMARY KEY (submission_id, user_id)
-      );
-      CREATE INDEX idx_ugc_submission_upvotes_active_created
-        ON ugc_submission_upvotes(active, created_at);
-      CREATE TABLE notifications (id TEXT PRIMARY KEY, recipient_user_id TEXT, category TEXT, read_at TEXT);
-      ${readFileSync(new URL("../../../migrations/0032_visible_comment_parent_index.sql", import.meta.url), "utf8")}
-      ${readFileSync(new URL("../../../migrations/0034_pending_comment_overlay_index.sql", import.meta.url), "utf8")}
-    `);
-    const prepare = (sql: string, values: SQLInputValue[] = []): D1PreparedStatement =>
-      ({
-        bind: (...bindings: unknown[]) => {
-          expect(bindings.length).toBeLessThanOrEqual(100);
-          return prepare(sql, bindings as SQLInputValue[]);
-        },
-        run: async () => {
-          queries.push({ sql, values });
-          const named = Object.fromEntries(values.map((value, index) => [`${index + 1}`, value]));
-          const result = sqlite.prepare(sql).run(named);
-          return { success: true, results: [], meta: { changes: Number(result.changes) } };
-        },
-        all: async () => {
-          queries.push({ sql, values });
-          const statement = sqlite.prepare(sql);
-          statement.setAllowBareNamedParameters(true);
-          const named = Object.fromEntries(values.map((value, index) => [`${index + 1}`, value]));
-          return { success: true, results: statement.all(named), meta: {} };
-        },
-      }) as unknown as D1PreparedStatement;
-    database = {
-      prepare,
-      batch: (statements: D1PreparedStatement[]) =>
-        Promise.all(statements.map((statement) => statement.all())),
-    } as unknown as D1Database;
+    connection = createTestDatabase();
+    sqlite = connection.sqlite;
+    database = connection.db;
+    queries = connection.queries;
+    insertUser(sqlite, {
+      uid: "viewer",
+      uid_number: 1,
+      uid_suffix: "test",
+      nickname: "Viewer",
+      avt: 1,
+    });
+    insertUser(sqlite, { uid: "other-user" });
+    insertUser(sqlite, { uid: "another-user" });
   });
 
-  afterEach(() => sqlite.close());
+  afterEach(() => connection.close());
 
   function insert(
     id: string,
@@ -104,20 +56,18 @@ describe("public read SQL under D1 limits", () => {
       filePath?: string;
     } = {},
   ) {
-    sqlite
-      .prepare(`INSERT INTO ugc_submissions VALUES (
-      ?, ?, 'hash', 'poi', ?, 'viewer', 'content', ?, ?, ?, ?, ?, '2026-09-05', '2026-09-05'
-    )`)
-      .run(
-        id,
-        markerId,
-        `snapshot-${id}`,
-        options.filePath ?? `prod/${id}.webp`,
-        options.kind ?? "comment",
-        options.status ?? "active",
-        options.parentId ?? null,
-        options.depth ?? 0,
-      );
+    insertSubmission(sqlite, {
+      id,
+      userId: "viewer",
+      markerId,
+      filePath: options.filePath ?? `prod/${id}.webp`,
+      kind: (options.kind ?? "comment") as "comment" | "image",
+      status: options.status ?? "active",
+      parentId: options.parentId ?? null,
+      depth: options.depth ?? 0,
+      content: "content",
+      createdAt: "2026-09-05",
+    });
   }
 
   it("loads 100 markers and more than 100 reply roots without excess SQL parameters", async () => {
@@ -152,7 +102,7 @@ describe("public read SQL under D1 limits", () => {
     sqlite.exec(`
       INSERT INTO ugc_submission_votes (submission_id, user_id, value, active)
         VALUES ('root-high', 'viewer', 1, 1), ('reply', 'viewer', -1, 1), ('unrelated', 'viewer', 1, 1);
-      INSERT INTO ugc_submission_flags VALUES ('root-high', 'viewer', 1);
+      INSERT INTO ugc_submission_flags (submission_id, user_id, active) VALUES ('root-high', 'viewer', 1);
     `);
     const comments = await listActiveCommentsByMarker(database, {
       markerId: "marker-1",
@@ -232,7 +182,7 @@ describe("public read SQL under D1 limits", () => {
     insert("root", "marker-1");
     insert("reply", "marker-1", { parentId: "root", depth: 1 });
     insert("nested", "marker-1", { parentId: "reply", depth: 2 });
-    insert("hidden", "marker-1", { parentId: "root", depth: 1, status: "rejected" });
+    insert("hidden", "marker-1", { parentId: "root", depth: 1, status: "stale" });
     const comments = await listActiveCommentsByMarker(database, {
       markerId: "marker-1",
       replyLimit: 0,
@@ -283,8 +233,8 @@ describe("public read SQL under D1 limits", () => {
       WITH RECURSIVE sequence(number) AS (
         SELECT 1 UNION ALL SELECT number + 1 FROM sequence WHERE number < 10000
       )
-      INSERT INTO ugc_submissions (id, poi_id, user_id, kind, status, created_at)
-        SELECT 'history-' || number, 'marker-1', 'viewer', 'comment', 'active', '2026-09-05'
+      INSERT INTO ugc_submissions (id, poi_id, user_id, kind, status, created_at, poi_hash, poi_type, snapshot_id, content)
+        SELECT 'history-' || number, 'marker-1', 'viewer', 'comment', 'active', '2026-09-05', 'hash', 'poi', 'snapshot-' || number, 'content'
         FROM sequence;
     `);
     insert("pending", "marker-1", { status: "pending_openai" });
@@ -309,12 +259,12 @@ describe("public read SQL under D1 limits", () => {
     for (const kind of ["image", "comment"]) {
       insert(`${kind}-shown`, "marker-1", { kind });
       insert(`${kind}-omitted`, "marker-1", { kind });
-      insert(`${kind}-hidden`, "marker-1", { kind, status: "rejected" });
+      insert(`${kind}-hidden`, "marker-1", { kind, status: "stale" });
       insert(`${kind}-outside`, "outside", { kind });
     }
     insert("test-image", "marker-1", { kind: "image", filePath: "_test/image.webp" });
     sqlite.exec(`
-      INSERT INTO ugc_submission_flags
+      INSERT INTO ugc_submission_flags (submission_id, user_id, active)
         SELECT id, 'viewer', 1 FROM ugc_submissions;
       INSERT INTO ugc_submission_votes (submission_id, user_id, value, active) VALUES ('comment-shown', 'other-user', 1, 1);
       INSERT INTO ugc_submission_upvotes (submission_id, user_id, active) VALUES ('image-shown', 'other-user', 1);
@@ -377,8 +327,8 @@ describe("public read SQL under D1 limits", () => {
       WITH RECURSIVE sequence(number) AS (
         SELECT 1 UNION ALL SELECT number + 1 FROM sequence WHERE number < 10000
       )
-      INSERT INTO ugc_submissions (id, poi_id, user_id, kind, status, comment_depth, created_at)
-        SELECT 'outside-' || number, 'outside', 'viewer', 'comment', 'active', 0, '2026-09-05'
+      INSERT INTO ugc_submissions (id, poi_id, user_id, kind, status, comment_depth, created_at, poi_hash, poi_type, snapshot_id, content)
+        SELECT 'outside-' || number, 'outside', 'viewer', 'comment', 'active', 0, '2026-09-05', 'hash', 'poi', 'snapshot-' || number, 'content'
         FROM sequence;
       INSERT INTO ugc_submission_votes (submission_id, user_id, value, active)
         SELECT id, 'viewer', 1, 1 FROM ugc_submissions;
@@ -408,12 +358,23 @@ describe("public read SQL under D1 limits", () => {
   );
 
   it("marks 100 notification ids without crossing recipient/category boundaries", async () => {
-    const insertNotification = sqlite.prepare("INSERT INTO notifications VALUES (?, ?, ?, NULL)");
     for (const notificationId of markerIds) {
-      insertNotification.run(notificationId, "viewer", "community");
+      insertNotification(sqlite, {
+        id: notificationId,
+        recipientUserId: "viewer",
+        category: "community",
+      });
     }
-    insertNotification.run("other-user", "another-user", "community");
-    insertNotification.run("other-category", "viewer", "system");
+    insertNotification(sqlite, {
+      id: "other-user",
+      recipientUserId: "another-user",
+      category: "community",
+    });
+    insertNotification(sqlite, {
+      id: "other-category",
+      recipientUserId: "viewer",
+      category: "system",
+    });
     expect(
       await markNotificationsRead(database, {
         userId: "viewer",

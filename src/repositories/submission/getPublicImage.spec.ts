@@ -1,19 +1,22 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { createUGCImageDatabase } from "@/test/ugcImageDatabase";
+import { createTestDatabase } from "@/test/database/createTestDatabase";
+import { seedImageReadScenario } from "@/test/fixtures/imageReadScenario";
 
 import { getPublicImageById } from "./getPublicImage";
 
-let sqlite: ReturnType<typeof createUGCImageDatabase>["sqlite"];
+let database: ReturnType<typeof createTestDatabase>;
+let sqlite: ReturnType<typeof createTestDatabase>["sqlite"];
 let db: D1Database;
 
 beforeEach(() => {
-  const database = createUGCImageDatabase();
+  database = createTestDatabase();
+  seedImageReadScenario(database.sqlite);
   sqlite = database.sqlite;
   db = database.db;
 });
 
-afterEach(() => sqlite.close());
+afterEach(() => database.close());
 
 const imageQuery = {
   id: "photo",

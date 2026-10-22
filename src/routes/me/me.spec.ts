@@ -1,38 +1,29 @@
-import { readFileSync } from "node:fs";
-
 import { Hono } from "hono";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 import { ApiError } from "@/lib/errors";
-import { createUGCImageDatabase } from "@/test/ugcImageDatabase";
+import { createTestDatabase } from "@/test/database/createTestDatabase";
+import { insertAuthUser, insertSession, testAuthConfig } from "@/test/fixtures/auth";
+import { seedImageReadScenario } from "@/test/fixtures/imageReadScenario";
 import type { AppEnv, AuthUser } from "@/types/app";
 
-vi.mock("@/middleware/auth", () => ({
-  requireAuth: async (c: { get: (key: string) => unknown }, next: () => Promise<void>) => {
-    if (!c.get("authUser")) {
-      throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
-    }
-    await next();
-  },
-}));
 vi.mock("@/middleware/rate-limit", () => ({
   rateLimit: () => async (_c: unknown, next: () => Promise<void>) => next(),
 }));
 import { createRoutes } from "./createRoutes";
 
-let database: ReturnType<typeof createUGCImageDatabase>;
+let database: ReturnType<typeof createTestDatabase>;
 const get = vi.fn();
+let sessions: Map<string, ReturnType<typeof insertSession>>;
 beforeEach(() => {
-  database = createUGCImageDatabase();
-  database.sqlite.exec(`
-    ALTER TABLE ugc_submissions ADD COLUMN mime_type TEXT DEFAULT 'image/webp';
-    ALTER TABLE ugc_submissions ADD COLUMN poi_type TEXT DEFAULT 'sample';
-    ALTER TABLE ugc_submissions ADD COLUMN moderation_note TEXT;
-    ALTER TABLE ugc_submissions ADD COLUMN snapshot_id TEXT DEFAULT 'current';
-    ALTER TABLE ugc_submissions ADD COLUMN updated_at TEXT DEFAULT '2026-09-05T12:00:00Z';
-    ${readFileSync(new URL("../../../migrations/0035_ugc_review_events.sql", import.meta.url), "utf8")}
-    CREATE TABLE notification_messages (submission_id TEXT, dedupe_key TEXT UNIQUE, created_at TEXT);
-  `);
+  database = createTestDatabase();
+  seedImageReadScenario(database.sqlite);
+  sessions = new Map();
+  for (const uid of ["author", "other"]) {
+    const user = insertAuthUser(database.sqlite, { id: uid });
+    sessions.set(uid, insertSession(database.sqlite, { userId: user.id }));
+  }
+
   get.mockReset();
   get.mockResolvedValue({
     body: new Uint8Array([82, 73, 70, 70]),
@@ -42,7 +33,7 @@ beforeEach(() => {
   });
 });
 afterEach(() => {
-  database.sqlite.close();
+  database.close();
   vi.restoreAllMocks();
 });
 
@@ -57,18 +48,17 @@ function requestPath(path: string, uid?: string, headers?: HeadersInit) {
     }
     throw error;
   });
-  if (uid) {
-    app.use("*", async (c, next) => {
-      c.set("authUser", { uid } as AuthUser);
-      await next();
-    });
-  }
   app.route("/me/v1", createRoutes());
+  const requestHeaders = new Headers(headers);
+  if (uid) {
+    requestHeaders.set("authorization", sessions.get(uid)!.headers.authorization);
+  }
   return app.request(
     `http://localhost/me/v1${path}`,
-    { headers },
+    { headers: requestHeaders },
     {
       DB: database.db,
+      ...testAuthConfig,
       UGC_BUCKET: { get } as unknown as R2Bucket,
     },
   );
@@ -117,14 +107,17 @@ it("revalidates an owner's cached preview without sending image bytes", async ()
 });
 
 it("caches completed overview counts and pages separately by owner and filter", async () => {
+  // Warm authentication so both concurrent requests enter the business query together.
+  await request("missing", "author");
   const prepare = vi.spyOn(database.db, "prepare");
+  const businessQueries = () => prepare.mock.calls.filter(([sql]) => /ugc_submissions/.test(sql));
   const responses = await Promise.all([
     requestPath("/overview", "author"),
     requestPath("/overview", "author"),
   ]);
-  expect(prepare).toHaveBeenCalledTimes(2);
+  expect(businessQueries()).toHaveLength(2);
   await requestPath("/overview", "author");
-  expect(prepare).toHaveBeenCalledTimes(2);
+  expect(businessQueries()).toHaveLength(2);
   type Summary = {
     contributions: { imageCount: number; recent?: unknown };
     loginMethods?: unknown;
@@ -140,16 +133,17 @@ it("caches completed overview counts and pages separately by owner and filter", 
   const image = await requestPath("/contributions?kind=image&limit=1", "author");
   expect(((await image.json()) as { items: unknown[] }).items).toHaveLength(1);
   await requestPath("/contributions?kind=image&limit=1", "author");
-  expect(prepare).toHaveBeenCalledOnce();
+  expect(businessQueries()).toHaveLength(1);
   await requestPath("/contributions?kind=comment&limit=1", "author");
   await requestPath("/contributions?kind=image&limit=1", "other");
-  expect(prepare).toHaveBeenCalledTimes(3);
+  expect(businessQueries()).toHaveLength(3);
   vi.spyOn(Date, "now").mockReturnValue(Date.now() + 15_001);
   await requestPath("/contributions?kind=image&limit=1", "author");
-  expect(prepare).toHaveBeenCalledTimes(4);
+  expect(businessQueries()).toHaveLength(4);
 });
 
 it("keeps concurrent overview queries independent when the first query fails", async () => {
+  await request("missing", "author");
   const prepare = database.db.prepare.bind(database.db);
   let rejectFirst!: (error: Error) => void;
   vi.spyOn(database.db, "prepare")

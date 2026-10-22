@@ -1,5 +1,3 @@
-import { DatabaseSync, type SQLInputValue } from "node:sqlite";
-
 import { memoryAdapter } from "better-auth/adapters/memory";
 import { getCookies } from "better-auth/cookies";
 import { Hono } from "hono";
@@ -12,6 +10,7 @@ import {
 } from "@/lib/auth/browserSession";
 import { createAuth } from "@/lib/auth/createAuth";
 import { onAppError } from "@/middleware/error-handler";
+import { createTestDatabase } from "@/test/database/createTestDatabase";
 import type { AppEnv, Bindings } from "@/types/app";
 
 import { attachSessionExchangeCode } from "./callbacks";
@@ -53,7 +52,7 @@ const CN_API_ORIGIN = "https://api.opendfieldmap.cn";
 const CN_ORIGIN = "https://opendfieldmap.cn";
 
 describe("CHIPS OAuth exchange", () => {
-  let sqlite: DatabaseSync;
+  let database: ReturnType<typeof createTestDatabase>;
   let auth: ReturnType<typeof createAuth>;
   let env: Bindings;
   let app: Hono<AppEnv<{ requestId: string }>>;
@@ -77,28 +76,9 @@ describe("CHIPS OAuth exchange", () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-09-05T00:00:00.000Z"));
-    sqlite = new DatabaseSync(":memory:");
-    sqlite.exec(
-      "CREATE TABLE auth_verifications (id TEXT PRIMARY KEY, identifier TEXT UNIQUE, value TEXT, expiresAt TEXT, createdAt TEXT, updatedAt TEXT)",
-    );
-    const database = {
-      prepare(query: string) {
-        return {
-          bind(...values: SQLInputValue[]) {
-            return {
-              async first() {
-                return sqlite.prepare(query).get(...values) ?? null;
-              },
-              async run() {
-                return sqlite.prepare(query).run(...values);
-              },
-            };
-          },
-        };
-      },
-    };
+    database = createTestDatabase();
     env = {
-      DB: database as unknown as D1Database,
+      DB: database.db,
       BETTER_AUTH_SECRET: "test-only-chips-secret-at-least-32-characters",
       BETTER_AUTH_URL: API_ORIGIN,
     } as Bindings;
@@ -143,7 +123,7 @@ describe("CHIPS OAuth exchange", () => {
   });
 
   afterEach(() => {
-    sqlite.close();
+    database.close();
     vi.useRealTimers();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();

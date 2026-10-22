@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { onAppError } from "@/middleware/error-handler";
-import { createAuthDatabase } from "@/test/authDatabase";
+import { createTestDatabase } from "@/test/database/createTestDatabase";
 import type { AppEnv, AuthUser, Bindings } from "@/types/app";
 
 import { createRoutes as createAccountAuthRoutes } from "./accountRoutes";
@@ -15,12 +15,12 @@ vi.mock("@/middleware/rate-limit", () => ({
 }));
 
 describe("provider-based unlink compatibility", () => {
-  let database: ReturnType<typeof createAuthDatabase>;
+  let database: ReturnType<typeof createTestDatabase>;
   let app: Hono<AppEnv<{ authUser?: AuthUser; requestId: string }>>;
   const forward = vi.fn(async () => new Response("{}"));
   beforeEach(() => {
     forward.mockClear();
-    database = createAuthDatabase();
+    database = createTestDatabase();
     database.sqlite.exec(
       "INSERT INTO auth_users(id,name,email) VALUES ('owner','Owner','owner@example.com'),('other','Other','other@example.com')",
     );
@@ -32,7 +32,7 @@ describe("provider-based unlink compatibility", () => {
     });
     app.route("/", createAccountAuthRoutes({ forwardToAuthJsonPath: forward }));
   });
-  afterEach(() => database.sqlite.close());
+  afterEach(() => database.close());
   function request(provider: string) {
     return app.request(
       "/unlink-account",

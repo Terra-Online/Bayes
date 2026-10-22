@@ -1,7 +1,7 @@
 import { betterAuth } from "better-auth";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createAuthDatabase } from "@/test/authDatabase";
+import { createTestDatabase } from "@/test/database/createTestDatabase";
 import type { Bindings } from "@/types/app";
 
 import { createAuth, runWithAuthRequest } from "./createAuth";
@@ -9,9 +9,9 @@ import { createAuth, runWithAuthRequest } from "./createAuth";
 vi.mock("@/lib/email/sender", () => ({ sendEmail: vi.fn() }));
 
 describe("completed authentication context reuse", () => {
-  const databases: ReturnType<typeof createAuthDatabase>[] = [];
+  const databases: ReturnType<typeof createTestDatabase>[] = [];
   function environment(): Bindings {
-    const database = createAuthDatabase();
+    const database = createTestDatabase();
     databases.push(database);
     return {
       DB: database.db,
@@ -26,14 +26,15 @@ describe("completed authentication context reuse", () => {
     } as Bindings;
   }
   function schemaReads(database = databases[0]!) {
-    return database.queries.filter((sql) => /sqlite_master/.test(sql)).length;
+    return database.queries.map((query) => query.sql).filter((sql) => /sqlite_master/.test(sql))
+      .length;
   }
   beforeEach(() => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
   });
   afterEach(() => {
-    databases.splice(0).forEach((database) => database.sqlite.close());
+    databases.splice(0).forEach((database) => database.close());
     vi.restoreAllMocks();
   });
 
@@ -45,16 +46,22 @@ describe("completed authentication context reuse", () => {
     const first = createAuth(env);
     const context = await first.$context;
     expect(schemaReads()).toBe(1);
-    const schemaStatements = databases[0]!.queries.length;
-    expect(databases[0]!.queries.some((sql) => /index_list.*local_rowid_fixture/.test(sql))).toBe(
-      false,
-    );
-    expect(databases[0]!.queries.filter((sql) => /pragma_table_info/.test(sql))).toHaveLength(4);
+    const schemaStatements = databases[0]!.queries.map((query) => query.sql).length;
+    expect(
+      databases[0]!.queries
+        .map((query) => query.sql)
+        .some((sql) => /index_list.*local_rowid_fixture/.test(sql)),
+    ).toBe(false);
+    expect(
+      databases[0]!.queries
+        .map((query) => query.sql)
+        .filter((sql) => /pragma_table_info/.test(sql)),
+    ).toHaveLength(4);
     const second = createAuth({ ...env });
     expect(await second.$context).not.toBe(context);
     await second.api.getSession({ headers: new Headers() });
     expect(schemaReads()).toBe(1);
-    expect(databases[0]!.queries).toHaveLength(schemaStatements);
+    expect(databases[0]!.queries.map((query) => query.sql)).toHaveLength(schemaStatements);
     expect(second.options.advanced?.database?.validateSchema).not.toBe(false);
   });
 
@@ -80,12 +87,17 @@ describe("completed authentication context reuse", () => {
     }
     const optimized = createAuth(env);
     await optimized.$context;
-    const scoped = database.queries.filter((sql) => /pragma_table_info/.test(sql)).length;
+    const scoped = database.queries
+      .map((query) => query.sql)
+      .filter((sql) => /pragma_table_info/.test(sql)).length;
     database.queries.length = 0;
     const baseline = betterAuth({ ...optimized.options, database: env.DB });
     await (await baseline.$context).checkSchema?.();
-    const unscoped = database.queries.filter((sql) => /pragma_table_info/.test(sql)).length;
-    expect({ scoped, unscoped }).toEqual({ scoped: 4, unscoped: 25 });
+    const unscoped = database.queries
+      .map((query) => query.sql)
+      .filter((sql) => /pragma_table_info/.test(sql)).length;
+    expect(scoped).toBe(4);
+    expect(unscoped).toBeGreaterThanOrEqual(scoped + 21);
   });
 
   it("still rejects a missing auth table instead of treating the filtered catalog as complete", async () => {

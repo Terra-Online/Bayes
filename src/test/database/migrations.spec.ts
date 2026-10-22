@@ -1,12 +1,8 @@
-import { readFileSync, readdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-const directory = new URL("../../migrations/", import.meta.url);
-const migrations = readdirSync(directory)
-  .filter((name) => name.endsWith(".sql"))
-  .sort();
+import { applyMigrations, migrations } from "./migrations";
 
 describe("D1 migration chain", () => {
   let database: DatabaseSync;
@@ -17,11 +13,7 @@ describe("D1 migration chain", () => {
 
   afterEach(() => database.close());
 
-  function apply(files: string[]) {
-    for (const file of files) {
-      database.exec(readFileSync(new URL(file, directory), "utf8"));
-    }
-  }
+  const apply = (files: string[]) => applyMigrations(database, files);
 
   function columns() {
     return database

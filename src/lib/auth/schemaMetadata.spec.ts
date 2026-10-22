@@ -1,14 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { createAuthDatabase } from "@/test/authDatabase";
+import { createTestDatabase } from "@/test/database/createTestDatabase";
 
 import { authSchemaDatabase } from "./schemaMetadata";
 
 describe("validated D1 metadata isolation", () => {
-  const databases: ReturnType<typeof createAuthDatabase>[] = [];
-  afterEach(() => databases.splice(0).forEach((database) => database.sqlite.close()));
+  const databases: ReturnType<typeof createTestDatabase>[] = [];
+  afterEach(() => databases.splice(0).forEach((database) => database.close()));
   function setup() {
-    const database = createAuthDatabase();
+    const database = createTestDatabase();
     databases.push(database);
     database.sqlite.exec(
       "INSERT INTO auth_users (id, name, email) VALUES ('user', 'First', 'first@example.test')",
@@ -35,7 +35,7 @@ describe("validated D1 metadata isolation", () => {
       (await warm.db.prepare("SELECT * FROM pragma_table_info(?)").bind("auth_users").all())
         .results[0]!.name,
     ).toBe("id");
-    expect(database.queries).toHaveLength(1);
+    expect(database.queries.map((query) => query.sql)).toHaveLength(1);
     expect(cached.meta.rows_read).toBe(0);
   });
 
@@ -62,7 +62,11 @@ describe("validated D1 metadata isolation", () => {
       warm.db.prepare(query).bind("user"),
     ]);
     expect(result[1]!.results).toMatchObject([{ name: "Changed" }]);
-    expect(database.queries.filter((sql) => sql === query)).toHaveLength(2);
-    expect(database.queries.filter((sql) => /pragma_table_info/.test(sql))).toHaveLength(2);
+    expect(database.queries.map((query) => query.sql).filter((sql) => sql === query)).toHaveLength(
+      2,
+    );
+    expect(
+      database.queries.map((query) => query.sql).filter((sql) => /pragma_table_info/.test(sql)),
+    ).toHaveLength(2);
   });
 });
