@@ -1,21 +1,37 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ images: vi.fn(), comments: vi.fn() }));
-vi.mock("@/repositories/submission/listImages", () => ({
-  listActiveImagesByMarker: mocks.images,
-  listImageViewerReactionsByMarker: vi.fn(),
-  listUserImagesByMarker: vi.fn(),
-}));
-vi.mock("@/repositories/submission/listComments", () => ({
-  listActiveCommentsByMarker: mocks.comments,
-  listCommentViewerStateByMarker: vi.fn(),
-  listUserCommentsByMarker: vi.fn(),
-}));
+import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 
 import { listCachedPublicCommentsByMarker } from "./markerComments";
 import { listCachedPublicImagesByMarker } from "./markerImages";
 
-beforeEach(() => vi.resetAllMocks());
+let database: TestDatabase;
+beforeEach(() => {
+  database = createTestDatabase();
+});
+afterEach(() => {
+  vi.restoreAllMocks();
+  database.close();
+});
+
+// Intercept only D1 execution, keeping the origin and repository queries real.
+function interceptReads(before: (values: unknown[]) => Promise<void>) {
+  const prepare = database.db.prepare.bind(database.db);
+  return vi.spyOn(database.db, "prepare").mockImplementation((sql) => {
+    const statement = prepare(sql);
+    const bind = statement.bind.bind(statement);
+    statement.bind = (...values: unknown[]) => {
+      const bound = bind(...values);
+      const all = bound.all.bind(bound);
+      bound.all = async <T>() => {
+        await before(values);
+        return all<T>();
+      };
+      return bound;
+    };
+    return statement;
+  });
+}
 
 describe.each(["images", "comments"] as const)("%s invocation isolation", (kind) => {
   function read(db: D1Database, markerIds: string[], waitUntil = vi.fn(), kv?: KVNamespace) {
@@ -38,49 +54,52 @@ describe.each(["images", "comments"] as const)("%s invocation isolation", (kind)
   it.each(["same", "different"])(
     "does not block a %s-marker request behind another invocation",
     async (relation) => {
-      const db = {} as D1Database;
-      const query = mocks[kind];
-      let finishFirst!: (value: []) => void;
-      query
-        .mockImplementationOnce(
-          () =>
-            new Promise<[]>((resolve) => {
-              finishFirst = resolve;
-            }),
-        )
-        .mockResolvedValue([]);
-      const first = read(db, ["first"]);
-      await vi.waitFor(() => expect(query).toHaveBeenCalledTimes(1));
-      const second = read(db, [relation === "same" ? "first" : "second"]);
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let calls = 0;
+      interceptReads(async () => {
+        if (++calls === 1) {
+          await gate;
+        }
+      });
+      const first = read(database.db, ["first"]);
+      const requests: Promise<unknown>[] = [first];
       try {
-        await vi.waitFor(() => expect(query).toHaveBeenCalledTimes(2), { timeout: 100 });
+        await vi.waitFor(() => expect(calls).toBe(1));
+        let secondFinished = false;
+        const second = read(database.db, [relation === "same" ? "first" : "second"]).then(
+          (items) => {
+            secondFinished = true;
+            return items;
+          },
+        );
+        requests.push(second);
+        await vi.waitFor(() => expect(secondFinished).toBe(true), { timeout: 100 });
+        expect(calls).toBe(2);
         await expect(second).resolves.toEqual([]);
       } finally {
-        finishFirst([]);
-        await Promise.all([first, second]);
+        release();
+        await Promise.all(requests);
       }
     },
   );
 
   it("still batches and deduplicates misses inside one invocation", async () => {
-    const query = mocks[kind].mockResolvedValue([]);
-    await expect(read({} as D1Database, ["first", "second", "first"])).resolves.toEqual([]);
-    expect(query).toHaveBeenCalledTimes(1);
-    expect(query).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({ markerIds: ["first", "second"] }),
-    );
+    await expect(read(database.db, ["first", "second", "first"])).resolves.toEqual([]);
+    expect(database.queries).toHaveLength(1);
+    expect(JSON.parse(String(database.queries[0]!.values[0]))).toEqual(["first", "second"]);
   });
 
   it("registers cache writes on each invocation's own lifetime", async () => {
-    const db = {} as D1Database;
+    const db = database.db;
     const kv = {
       get: vi.fn().mockResolvedValue(null),
       put: vi.fn().mockResolvedValue(undefined),
     } as unknown as KVNamespace;
     const firstWaitUntil = vi.fn();
     const secondWaitUntil = vi.fn();
-    mocks[kind].mockResolvedValue([]);
     await Promise.all([
       read(db, ["same"], firstWaitUntil, kv),
       read(db, ["same"], secondWaitUntil, kv),
@@ -96,15 +115,17 @@ describe.each(["images", "comments"] as const)("%s invocation isolation", (kind)
     const ids = Array.from({ length: 205 }, (_, index) => `marker-${index}`);
     let active = 0;
     let maximum = 0;
-    mocks[kind].mockImplementation(async () => {
+    interceptReads(async () => {
       maximum = Math.max(maximum, ++active);
       await Promise.resolve();
       active--;
-      return [];
     });
-    await read({} as D1Database, [...ids, ids[0]!]);
-    expect(mocks[kind].mock.calls.map(([, args]) => args.markerIds.length)).toEqual([100, 100, 5]);
-    expect(mocks[kind].mock.calls.flatMap(([, args]) => args.markerIds)).toEqual(ids);
+    await read(database.db, [...ids, ids[0]!]);
+    const batches = database.queries.map(
+      (query) => JSON.parse(String(query.values[0])) as string[],
+    );
+    expect(batches.map((ids) => ids.length)).toEqual([100, 100, 5]);
+    expect(batches.flat()).toEqual(ids);
     expect(maximum).toBe(1);
   });
 
@@ -114,12 +135,17 @@ describe.each(["images", "comments"] as const)("%s invocation isolation", (kind)
       get: vi.fn().mockResolvedValue(null),
       put: vi.fn().mockRejectedValue(new Error("KV unavailable")),
     } as unknown as KVNamespace;
-    mocks[kind].mockRejectedValueOnce(new Error("D1 unavailable")).mockResolvedValue([]);
-    await expect(read({} as D1Database, ["marker"], wait, kv)).rejects.toThrow("D1 unavailable");
+    let attempts = 0;
+    interceptReads(async () => {
+      if (++attempts === 1) {
+        throw new Error("D1 unavailable");
+      }
+    });
+    await expect(read(database.db, ["marker"], wait, kv)).rejects.toThrow("D1 unavailable");
     expect(wait).not.toHaveBeenCalled();
-    await expect(read({} as D1Database, ["marker"], wait, kv)).resolves.toEqual([]);
+    await expect(read(database.db, ["marker"], wait, kv)).resolves.toEqual([]);
     await Promise.all(wait.mock.calls.map(([promise]) => promise));
-    expect(mocks[kind]).toHaveBeenCalledTimes(2);
+    expect(attempts).toBe(2);
     expect(wait).toHaveBeenCalledOnce();
   });
 });

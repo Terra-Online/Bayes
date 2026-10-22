@@ -1,9 +1,11 @@
 import { Hono } from "hono";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createAuth } from "@/lib/auth/createAuth";
-import { ensureUserProfile } from "@/repositories/users";
-import type { AppEnv, Bindings } from "@/types/app";
+import * as authFactory from "@/lib/auth/createAuth";
+import { createMockBindings } from "@/test/bindings";
+import { insertAuthenticatedUser, type AuthenticatedUserFixture } from "@/test/fixtures/auth";
+import { createAuthCacheFixture, type AuthCacheFixture } from "@/test/fixtures/authCache";
+import type { AppEnv } from "@/types/app";
 
 import {
   invalidateAuthUserCache,
@@ -12,165 +14,211 @@ import {
   resolveContextAuthUser,
 } from "./auth";
 
-vi.mock("@/lib/auth/createAuth", () => ({ createAuth: vi.fn() }));
-vi.mock("@/lib/auth/browserSession", () => ({
-  resolveBrowserSessionHeaders: (_auth: unknown, headers: Headers) => ({ headers }),
-}));
-vi.mock("@/repositories/users", () => ({
-  ensureUserProfile: vi.fn(),
-  formatPublicUid: () => "100001AA",
-}));
-
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  let reject!: (reason: unknown) => void;
-  const promise = new Promise<T>((yes, no) => {
-    resolve = yes;
-    reject = no;
-  });
-  return { promise, resolve, reject };
-}
-const identity = { uid: "first", email: "first@example.test" };
-const session = { user: { id: identity.uid, email: identity.email, name: "First" } };
-function environment() {
-  return { DB: {} } as Bindings;
-}
-function headers() {
-  return new Headers({ authorization: "Bearer same-token" });
-}
+const overview = "/me/v1/overview";
+const status = "/binding/v1/endfield/status";
 
 describe("request-owned auth lookups", () => {
-  const getSession = vi.fn();
+  let fixture: AuthCacheFixture;
+  let owner: AuthenticatedUserFixture;
   beforeEach(() => {
-    vi.mocked(createAuth).mockClear();
-    getSession.mockReset().mockResolvedValue(session);
-    vi.mocked(createAuth).mockReturnValue({ api: { getSession } } as unknown as ReturnType<
-      typeof createAuth
-    >);
-    vi.mocked(ensureUserProfile)
-      .mockReset()
-      .mockImplementation(
-        async (_db, input) =>
-          ({
-            ...input,
-            role: "n",
-            karma: 0,
-            avt: 1,
-            nickname: "First",
-            nicknameCustomized: true,
-          }) as Awaited<ReturnType<typeof ensureUserProfile>>,
-      );
+    fixture = createAuthCacheFixture();
+    owner = insertAuthenticatedUser(fixture.database.sqlite, {
+      uid: crypto.randomUUID(),
+      uid_number: 100001,
+      email: "first@example.test",
+      nickname: "First",
+    });
   });
+  afterEach(async () => {
+    await fixture.close();
+    vi.restoreAllMocks();
+  });
+  const sessionReads = () =>
+    fixture.database.queries.filter((q) => /from "auth_sessions"/i.test(q.sql));
+  const profileReads = () =>
+    fixture.database.queries.filter((q) => /^SELECT \* FROM users WHERE uid =/i.test(q.sql));
 
   it.each([undefined, "analytics=abc; cf_clearance=xyz"])(
     "avoids auth initialization without credentials (%s)",
     async (cookie) => {
       const requestHeaders = new Headers(cookie ? { cookie } : undefined);
-      await expect(resolveAuthIdentity(environment(), requestHeaders)).rejects.toMatchObject({
-        code: "SESSION_REQUIRED",
-      });
+      // Observational spy: construction is itself the precheck contract.
+      const createAuth = vi.spyOn(authFactory, "createAuth");
+      await expect(
+        resolveAuthIdentity(fixture.external.bindings, requestHeaders),
+      ).rejects.toMatchObject({ code: "SESSION_REQUIRED" });
+      const response = await fixture.request(overview, requestHeaders);
+      expect(response.status).toBe(401);
+      expect(await response.json()).toMatchObject({ code: "SESSION_REQUIRED" });
       expect(createAuth).not.toHaveBeenCalled();
-      expect(getSession).not.toHaveBeenCalled();
+      expect(fixture.database.queries).toHaveLength(0);
     },
   );
 
   it("does not join another request's pending identity lookup, and can retry failure", async () => {
-    const env = environment();
-    const blocked = deferred<typeof session>();
-    getSession.mockReturnValueOnce(blocked.promise);
-    const first = resolveAuthIdentity(env, headers());
-    const failed = expect(first).rejects.toThrow("owner canceled");
-    await expect(resolveAuthIdentity(env, headers())).resolves.toMatchObject(identity);
-    expect(getSession).toHaveBeenCalledTimes(2);
-    blocked.reject(new Error("owner canceled"));
-    await failed;
-    // Completed identities retain the existing short TTL.
-    await resolveAuthIdentity(env, headers());
-    expect(getSession).toHaveBeenCalledTimes(2);
+    const gate = fixture.pauseRead("auth_sessions");
+    const first = fixture.request(status, owner.headers);
+    await gate.entered;
+    // The identity-only helper is intentional: a completed HTTP profile would
+    // mask a broken identity cache with the separate completed-user cache.
+    let secondUid: string | undefined;
+    const next = authFactory.runWithAuthRequest(async () => {
+      const identity = await resolveAuthIdentity(
+        fixture.external.bindings,
+        new Headers(owner.headers),
+      );
+      expect(identity).toMatchObject({ uid: owner.user.uid, email: owner.user.email });
+      secondUid = identity.uid;
+    });
+    await vi.waitFor(() => expect(secondUid).toBe(owner.user.uid));
+    await next;
+    expect(sessionReads()).toHaveLength(2);
+    gate.fail(new Error("owner canceled"));
+    expect((await first).status).toBe(500);
+    await expect(
+      resolveAuthIdentity(fixture.external.bindings, new Headers(owner.headers)),
+    ).resolves.toMatchObject({ uid: owner.user.uid });
+    expect(sessionReads()).toHaveLength(2);
+    const completed = await fixture.request(status, owner.headers);
+    expect(completed.status).toBe(200);
+    expect(sessionReads()).toHaveLength(2);
   });
 
   it("does not join another request's pending profile lookup", async () => {
-    const env = environment();
-    const blocked = deferred<Awaited<ReturnType<typeof ensureUserProfile>>>();
-    vi.mocked(ensureUserProfile).mockReturnValueOnce(blocked.promise);
-    const first = resolveAuthUser(env, headers(), identity);
-    await expect(resolveAuthUser(env, headers(), identity)).resolves.toMatchObject(identity);
-    expect(ensureUserProfile).toHaveBeenCalledTimes(2);
-    const failed = expect(first).rejects.toThrow("owner canceled");
-    blocked.reject(new Error("owner canceled"));
-    await failed;
+    const gate = fixture.pauseRead("users");
+    const first = fixture.request(overview, owner.headers);
+    await gate.entered;
+    let second: Response | undefined;
+    const next = fixture.request(overview, owner.headers).then((response) => {
+      second = response;
+    });
+    await vi.waitFor(() => expect(second?.status).toBe(200));
+    await next;
+    expect(await second!.json()).toMatchObject({ user: { email: owner.user.email } });
+    expect(profileReads()).toHaveLength(2);
+    gate.fail(new Error("owner canceled"));
+    expect((await first).status).toBe(500);
+    const completed = await fixture.request(overview, owner.headers);
+    expect(completed.status).toBe(200);
+    expect(await completed.json()).toMatchObject({ user: { email: owner.user.email } });
+    expect(profileReads()).toHaveLength(2);
   });
 
   it("deduplicates concurrent helpers within a Hono request", async () => {
-    const env = environment();
+    // No public endpoint calls these helpers concurrently; keep the context seam.
     const app = new Hono<AppEnv>();
     app.get("/", async (c) => {
       const users = await Promise.all([resolveContextAuthUser(c), resolveContextAuthUser(c)]);
       expect(users[0]).toBe(users[1]);
       return c.json({ uid: users[0]!.uid });
     });
-    expect((await app.request("/", { headers: headers() }, env)).status).toBe(200);
-    expect(getSession).toHaveBeenCalledTimes(1);
-    expect(ensureUserProfile).toHaveBeenCalledTimes(1);
+    const response = await authFactory.runWithAuthRequest(() =>
+      app.request("/", { headers: owner.headers }, fixture.external.bindings),
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ uid: owner.user.uid });
+    expect(sessionReads()).toHaveLength(1);
+    expect(profileReads()).toHaveLength(1);
   });
 
   it("isolates completed values by bindings/configuration and invalidates the right environment", async () => {
-    const env = environment();
-    await resolveAuthIdentity(env, headers());
-    const other = environment();
-    getSession.mockResolvedValue({ user: { id: "second", email: "second@example.test" } });
-    expect(await resolveAuthIdentity(other, headers())).toMatchObject({ uid: "second" });
-    expect(await resolveAuthIdentity(env, headers())).toMatchObject({ uid: "first" });
-    invalidateAuthUserCache(headers(), env);
-    getSession.mockResolvedValue(null);
-    await expect(resolveAuthIdentity(env, headers())).rejects.toMatchObject({
-      code: "TOKEN_EXPIRED",
-    });
-    expect(await resolveAuthIdentity(other, headers())).toMatchObject({ uid: "second" });
-    other.BETTER_AUTH_SECRET = "rotated";
-    await expect(resolveAuthIdentity(other, headers())).rejects.toMatchObject({
-      code: "TOKEN_EXPIRED",
-    });
+    const other = createAuthCacheFixture();
+    try {
+      const second = insertAuthenticatedUser(other.database.sqlite, {
+        uid: "second",
+        uid_number: 100002,
+        email: "second@example.test",
+      });
+      // The exact credential is intentionally shared across distinct databases.
+      other.database.sqlite
+        .prepare("UPDATE auth_sessions SET token = ?")
+        .run(owner.headers.authorization.slice(7));
+      const env = fixture.external.bindings;
+      const headers = new Headers(owner.headers);
+      await expect(resolveAuthIdentity(env, headers)).resolves.toMatchObject({
+        uid: owner.user.uid,
+      });
+      await expect(resolveAuthIdentity(other.external.bindings, headers)).resolves.toMatchObject({
+        uid: second.user.uid,
+      });
+      await expect(resolveAuthIdentity(env, headers)).resolves.toMatchObject({
+        uid: owner.user.uid,
+      });
+      invalidateAuthUserCache(headers, env);
+      fixture.database.sqlite.exec("DELETE FROM auth_sessions");
+      other.database.sqlite.exec("DELETE FROM auth_sessions");
+      await expect(resolveAuthIdentity(env, headers)).rejects.toMatchObject({
+        code: "TOKEN_EXPIRED",
+      });
+      await expect(resolveAuthIdentity(other.external.bindings, headers)).resolves.toMatchObject({
+        uid: "second",
+      });
+      other.external.bindings.BETTER_AUTH_SECRET = "rotated-secret-at-least-32-characters-long";
+      await expect(resolveAuthIdentity(other.external.bindings, headers)).rejects.toMatchObject({
+        code: "TOKEN_EXPIRED",
+      });
+    } finally {
+      await other.close();
+    }
   });
 
   it("keeps completed auth values when an unrelated binding wrapper changes", async () => {
-    const env = environment();
-    await resolveAuthIdentity(env, headers());
+    const env = fixture.external.bindings;
+    const headers = new Headers(owner.headers);
+    await resolveAuthIdentity(env, headers);
     const next = {
       ...env,
       OEM_KV: {} as KVNamespace,
-      OEM_ID_MAILS: {} as Bindings["OEM_ID_MAILS"],
+      OEM_ID_MAILS: createMockBindings({ DB: env.DB }).idMails,
       UPSTASH_REDIS_REST_URL: "https://unrelated.example",
       UPSTASH_REDIS_REST_TOKEN: "unrelated-token",
     };
-    getSession.mockResolvedValue(null);
-    await expect(resolveAuthIdentity(next, headers())).resolves.toMatchObject(identity);
-    expect(getSession).toHaveBeenCalledTimes(1);
+    fixture.database.sqlite.exec("DELETE FROM auth_sessions");
+    await expect(resolveAuthIdentity(next, headers)).resolves.toMatchObject({
+      uid: owner.user.uid,
+      email: owner.user.email,
+    });
+    expect(sessionReads()).toHaveLength(1);
   });
 
   it("never substitutes a warm cached account for a freshly verified different user", async () => {
-    const env = environment();
-    await resolveAuthUser(env, headers(), identity);
-    const second = await resolveAuthUser(env, headers(), {
+    expect((await fixture.request(overview, owner.headers)).status).toBe(200);
+    const second = insertAuthenticatedUser(fixture.database.sqlite, {
       uid: "second",
+      uid_number: 100002,
       email: "second@example.test",
     });
-    expect(second.uid).toBe("second");
-    expect(getSession).not.toHaveBeenCalled();
+    fixture.database.sqlite
+      .prepare("UPDATE auth_sessions SET userId = ? WHERE token = ?")
+      .run(second.user.uid, owner.headers.authorization.slice(7));
+    const response = await fixture.request("/auth/v1/session", owner.headers);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      user: { uid: "100002AA", email: second.user.email },
+    });
+    // Also retain the helper's verified-identity protocol: it must not reauthenticate.
+    const createAuth = vi.spyOn(authFactory, "createAuth");
+    const user = await resolveAuthUser(fixture.external.bindings, new Headers(owner.headers), {
+      uid: owner.user.uid,
+      email: owner.user.email,
+    });
+    expect(user.uid).toBe(owner.user.uid);
+    expect(createAuth).not.toHaveBeenCalled();
   });
 
   it("does not repopulate a revoked cache from an older pending lookup", async () => {
-    const env = environment();
-    const blocked = deferred<typeof session>();
-    getSession.mockReturnValueOnce(blocked.promise);
-    const first = resolveAuthIdentity(env, headers());
-    invalidateAuthUserCache(headers(), env);
-    blocked.resolve(session);
-    await first;
-    getSession.mockResolvedValue(null);
-    await expect(resolveAuthIdentity(env, headers())).rejects.toMatchObject({
-      code: "TOKEN_EXPIRED",
-    });
-    expect(getSession).toHaveBeenCalledTimes(2);
+    const gate = fixture.pauseRead("auth_sessions");
+    const first = fixture.request(status, owner.headers);
+    await gate.entered;
+    const revoked = await fixture.request("/auth/v1/sign-out", owner.headers, "POST");
+    expect(revoked.status).toBe(200);
+    expect(fixture.database.sqlite.prepare("SELECT id FROM auth_sessions").all()).toEqual([]);
+    const readsAfterSignOut = sessionReads().length;
+    gate.release();
+    expect((await first).status).toBe(200);
+    const response = await fixture.request(status, owner.headers);
+    expect(response.status).toBe(401);
+    expect(await response.json()).toMatchObject({ code: "TOKEN_EXPIRED" });
+    expect(sessionReads()).toHaveLength(readsAfterSignOut + 1);
   });
 });

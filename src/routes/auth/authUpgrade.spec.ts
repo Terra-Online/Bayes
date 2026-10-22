@@ -1,24 +1,91 @@
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createAuth } from "@/lib/auth/createAuth";
-import { sendEmail } from "@/lib/email/sender";
+import { createAuth, runWithAuthRequest } from "@/lib/auth/createAuth";
 import { onAppError } from "@/middleware/error-handler";
+import { createMockBindings, type MockBindings } from "@/test/bindings";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import type { AppEnv, Bindings } from "@/types/app";
 
 import { createRoutes as createEmailAuthRoutes } from "./emailRoutes";
-import { forwardToAuthJsonPath, forwardToAuthRawRequest } from "./forwarding";
 import { createRoutes as createPasswordResetRoutes } from "./passwordResetRoutes";
+import { createRoutes as createSocialAuthRoutes } from "./socialRoutes";
 
-vi.mock("@/lib/email/sender", () => ({ sendEmail: vi.fn() }));
-vi.mock("@/middleware/rate-limit", () => ({
-  rateLimit: () => async (_context: unknown, next: () => Promise<void>) => next(),
+// The external Redis boundary supports only the commands used by the real rate limiter.
+// Keep TTL/NX and sorted-set counts real so repeated sends require elapsed cooldowns.
+interface AuthRateRedis {
+  zremrangebyscore(key: string, min: number, max: number): Promise<number>;
+  zcard(key: string): Promise<number>;
+  zadd(key: string, entry: { score: number; member: string }): Promise<number>;
+  expire(key: string, seconds: number): Promise<number>;
+  set(key: string, value: string, options: { nx: true; ex: number }): Promise<string | null>;
+  ttl(key: string): Promise<number>;
+}
+
+function createAuthRateRedis(): AuthRateRedis {
+  const sets = new Map<string, Map<string, number>>();
+  const expires = new Map<string, number>();
+  function prune(key: string) {
+    if ((expires.get(key) ?? Infinity) <= Date.now()) {
+      expires.delete(key);
+      sets.delete(key);
+    }
+  }
+  return {
+    zremrangebyscore: vi.fn(async (key, min, max) => {
+      prune(key);
+      let removed = 0;
+      for (const [member, score] of sets.get(key) ?? []) {
+        if (score >= min && score <= max) {
+          sets.get(key)!.delete(member);
+          removed += 1;
+        }
+      }
+      return removed;
+    }),
+    zcard: vi.fn(async (key) => {
+      prune(key);
+      return sets.get(key)?.size ?? 0;
+    }),
+    zadd: vi.fn(async (key, entry) => {
+      prune(key);
+      const set = sets.get(key) ?? new Map<string, number>();
+      const added = set.has(entry.member) ? 0 : 1;
+      set.set(entry.member, entry.score);
+      sets.set(key, set);
+      return added;
+    }),
+    expire: vi.fn(async (key, seconds) => {
+      expires.set(key, Date.now() + seconds * 1000);
+      return 1;
+    }),
+    set: vi.fn(async (key, _value, options) => {
+      prune(key);
+      if (expires.has(key)) {
+        return null;
+      }
+      expires.set(key, Date.now() + options.ex * 1000);
+      return "OK";
+    }),
+    ttl: vi.fn(async (key) => {
+      prune(key);
+      return Math.ceil(((expires.get(key) ?? Date.now()) - Date.now()) / 1000);
+    }),
+  };
+}
+let redis: AuthRateRedis;
+vi.mock("@upstash/redis", () => ({
+  Redis: class {
+    constructor() {
+      return redis;
+    }
+  },
 }));
 
 describe("Better Auth 1.7 with the production D1 table layout", () => {
   let database: TestDatabase;
   let env: Bindings;
+  let external: MockBindings;
   let auth: ReturnType<typeof createAuth>;
   let app: Hono<AppEnv<{ requestId: string }>>;
   const email = "otp@example.com";
@@ -28,51 +95,66 @@ describe("Better Auth 1.7 with the production D1 table layout", () => {
     testIp = `192.0.2.${++testNumber}`;
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    vi.mocked(sendEmail).mockClear();
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      throw new Error(`Unconfigured external fetch: ${String(input)}`);
+    });
+    vi.useFakeTimers({ toFake: ["Date"] });
+    redis = createAuthRateRedis();
     database = createTestDatabase();
+    external = createMockBindings({ DB: database.db });
+    external.publicRateLimit.limit.mockResolvedValue({ success: true });
+    external.authRateLimit.limit.mockResolvedValue({ success: true });
+    external.idMails.send.mockResolvedValue({ messageId: "test-message" });
     env = {
-      DB: database.db,
+      ...external.bindings,
       BETTER_AUTH_URL: "https://api.opendfieldmap.org",
-      BETTER_AUTH_SECRET: "test-only-upgrade-secret-at-least-32-characters",
-      GOOGLE_CLIENT_ID: "test-google",
-      GOOGLE_CLIENT_SECRET: "test-secret",
-      GITHUB_CLIENT_ID: "test-github",
-      GITHUB_CLIENT_SECRET: "test-secret",
-      DISCORD_CLIENT_ID: "test-discord",
-      DISCORD_CLIENT_SECRET: "test-secret",
-    } as Bindings;
+      EMAIL_PROVIDER_MODE: "cloudflare_only",
+    };
     auth = createAuth(env);
     app = new Hono<AppEnv<{ requestId: string }>>();
     app.onError(onAppError);
-    app.route("/", createEmailAuthRoutes({ forwardToAuthJsonPath, forwardToAuthRawRequest }));
-    app.route("/", createPasswordResetRoutes({ forwardToAuthJsonPath }));
+    app.route("/auth/v1", createEmailAuthRoutes());
+    app.route("/auth/v1", createPasswordResetRoutes());
+    app.route("/auth/v1", createSocialAuthRoutes());
   });
   afterEach(() => {
     database.close();
     vi.restoreAllMocks();
+    vi.useRealTimers();
   });
 
+  async function request(path: string, body?: Record<string, unknown>): Promise<Response> {
+    return runWithAuthRequest(() =>
+      app.request(
+        `https://api.opendfieldmap.org/auth/v1${path}`,
+        {
+          method: body ? "POST" : "GET",
+          headers: {
+            "content-type": "application/json",
+            origin: "https://opendfieldmap.org",
+            "cf-connecting-ip": testIp,
+          },
+          body: body ? JSON.stringify(body) : undefined,
+        },
+        env,
+      ),
+    );
+  }
   async function issueOTP() {
-    await auth.api.sendVerificationOTP({ body: { email, type: "sign-in" } });
-    const content = vi.mocked(sendEmail).mock.calls.at(-1)![0].text!;
-    const otp = /\b\d{6}\b/.exec(content)![0];
+    // Existing direct-API scenarios could resend immediately. Public sends honor cooldown.
+    vi.setSystemTime(Date.now() + 121_000);
+    const response = await request("/email-otp/send-verification-otp", { email, type: "sign-in" });
+    expect(response.status).toBe(200);
+    const message = external.idMails.send.mock.calls.at(-1)![0];
+    if (!("text" in message) || typeof message.text !== "string") {
+      throw new Error("Expected text OTP mail");
+    }
+    const otp = /\b\d{6}\b/.exec(message.text)![0];
     expect(otp).toHaveLength(6);
     return otp;
   }
   function register(otp: string) {
-    return app.request(
-      "https://api.opendfieldmap.org/register",
-      {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          origin: "https://opendfieldmap.org",
-          "cf-connecting-ip": testIp,
-        },
-        body: JSON.stringify({ email, otp, password: "New-password123" }),
-      },
-      env,
-    );
+    return request("/register", { email, otp, password: "New-password123" });
   }
   function count(table: string) {
     return database.sqlite.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get()!.n;
@@ -90,14 +172,16 @@ describe("Better Auth 1.7 with the production D1 table layout", () => {
     expect(count("auth_users")).toBe(1);
     expect(count("auth_sessions")).toBe(1);
     expect(count("auth_accounts")).toBe(1);
+    // Adapter protocol guarantee: the consumed OTP is returned by the atomic delete.
     expect(
       database.queries
         .map((query) => query.sql)
         .some((query) => /^delete from "auth_verifications".*returning \*/i.test(query)),
     ).toBe(true);
     expect((await register(otp)).status).toBe(400);
-    const login = await auth.api.signInEmail({ body: { email, password: "New-password123" } });
-    expect(login.user.email).toBe(email);
+    const login = await request("/sign-in/email", { email, password: "New-password123" });
+    expect(login.status).toBe(200);
+    expect(await login.json()).toMatchObject({ user: { email } });
   });
 
   it("rejects wrong OTPs without creating a user and preserves the attempt budget", async () => {
@@ -132,21 +216,14 @@ describe("Better Auth 1.7 with the production D1 table layout", () => {
         );
       }
     };
-    const response = await app.request(
-      "https://api.opendfieldmap.org/email-otp/send-verification-otp",
-      {
-        method: "POST",
-        headers: { "content-type": "application/json", origin: "https://opendfieldmap.org" },
-        body: JSON.stringify({ email, type: "sign-in" }),
-      },
-      env,
-    );
+    const response = await request("/email-otp/send-verification-otp", { email, type: "sign-in" });
     expect(response.status).toBe(429);
     expect(response.headers.get("retry-after")).toBe("1");
     expect(await response.json()).toMatchObject({ code: "RATE_LIMITED" });
-    expect(sendEmail).not.toHaveBeenCalled();
+    expect(external.idMails.send).not.toHaveBeenCalled();
   });
 
+  // No public OTP-only login endpoint exists. Keep this real Better Auth API contract.
   it("preserves confirmed accounts and old sessions on OTP sign-in", async () => {
     const signup = await register(await issueOTP());
     const previous = (await signup.json()) as { token: string; user: { id: string } };
@@ -168,36 +245,26 @@ describe("Better Auth 1.7 with the production D1 table layout", () => {
 
   it("preserves password reset preview, reset and single-use token behavior", async () => {
     expect((await register(await issueOTP())).status).toBe(200);
-    await auth.api.requestPasswordReset({
-      body: { email, redirectTo: "https://opendfieldmap.org" },
-    });
+    expect(
+      (await request("/forget-password", { email, redirectTo: "https://opendfieldmap.org" }))
+        .status,
+    ).toBe(200);
     const row = database.sqlite
       .prepare("SELECT identifier FROM auth_verifications WHERE identifier LIKE 'reset-password:%'")
       .get()!;
     const token = String(row.identifier).replace("reset-password:", "");
-    const preview = await app.request(
-      `/reset-password-preview?token=${encodeURIComponent(token)}`,
-      undefined,
-      env,
-    );
+    const preview = await request(`/reset-password-preview?token=${encodeURIComponent(token)}`);
     expect(preview.status).toBe(200);
     expect(await preview.json()).toMatchObject({ tokenValid: true, email });
-    await auth.api.resetPassword({ body: { token, newPassword: "Reset-password123" } });
-    await expect(
-      auth.api.signInEmail({ body: { email, password: "Reset-password123" } }),
-    ).resolves.toMatchObject({ user: { email } });
+    const reset = { token, newPassword: "Reset-password123", repeatPassword: "Reset-password123" };
+    expect((await request("/reset-password", reset)).status).toBe(200);
+    const login = await request("/sign-in/email", { email, password: "Reset-password123" });
+    expect(login.status).toBe(200);
+    expect(await login.json()).toMatchObject({ user: { email } });
     expect(
-      (
-        await app.request(
-          `/reset-password-preview?token=${encodeURIComponent(token)}`,
-          undefined,
-          env,
-        )
-      ).status,
+      (await request(`/reset-password-preview?token=${encodeURIComponent(token)}`)).status,
     ).toBe(400);
-    await expect(
-      auth.api.resetPassword({ body: { token, newPassword: "Reset-password123" } }),
-    ).rejects.toMatchObject({ statusCode: 400 });
+    expect((await request("/reset-password", reset)).status).toBe(400);
   });
 
   it("revokes only this session when password storage fails and retains the verified user", async () => {
@@ -252,6 +319,7 @@ describe("Better Auth 1.7 with the production D1 table layout", () => {
       providerId: "github",
     });
     expect(linked.userId).toBe(user.id);
+    // Public unlink accepts a provider, so only the library API can distinguish these IDs.
     const headers = new Headers({ authorization: `Bearer ${login.token}` });
     await expect(
       auth.api.unlinkAccount({ body: { accountId: linked.id }, headers }),
@@ -275,17 +343,11 @@ describe("Better Auth 1.7 with the production D1 table layout", () => {
     ["github", "github.com"],
     ["discord", "discord.com"],
   ] as const)("preserves %s authorization URLs and database state", async (provider, host) => {
-    const response = await auth.handler(
-      new Request("https://api.opendfieldmap.org/auth/v1/sign-in/social", {
-        method: "POST",
-        headers: { "content-type": "application/json", origin: "https://opendfieldmap.org" },
-        body: JSON.stringify({
-          provider,
-          callbackURL: "https://opendfieldmap.org",
-          disableRedirect: true,
-        }),
-      }),
-    );
+    const response = await request("/sign-in/social", {
+      provider,
+      callbackURL: "https://opendfieldmap.org",
+      disableRedirect: true,
+    });
     expect(response.status).toBe(200);
     const body = (await response.json()) as { url: string };
     const url = new URL(body.url);
@@ -297,7 +359,7 @@ describe("Better Auth 1.7 with the production D1 table layout", () => {
     expect(count("auth_verifications")).toBe(1);
     const profile = { sub: "google-subject", email, email_verified: true, name: "Google User" };
     const idToken = `${Buffer.from(JSON.stringify({ alg: "RS256" })).toString("base64url")}.${Buffer.from(JSON.stringify(profile)).toString("base64url")}.synthetic-signature`;
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    vi.mocked(globalThis.fetch).mockImplementation(async (input) => {
       const requested = String(input instanceof Request ? input.url : input);
       let data: unknown;
       if (
@@ -339,9 +401,14 @@ describe("Better Auth 1.7 with the production D1 table layout", () => {
     const callbackURL = new URL(`https://api.opendfieldmap.org/auth/v1/callback/${provider}`);
     callbackURL.searchParams.set("state", url.searchParams.get("state")!);
     callbackURL.searchParams.set("code", "synthetic-code");
-    const callback = await auth.handler(new Request(callbackURL));
+    const callback = await request(
+      `${callbackURL.pathname.replace("/auth/v1", "")}${callbackURL.search}`,
+    );
     expect(callback.status, JSON.stringify(vi.mocked(console.error).mock.calls)).toBe(302);
-    expect(callback.headers.get("location")).toBe("https://opendfieldmap.org");
+    const redirect = new URL(callback.headers.get("location")!);
+    // The production callback adds its exchange code to the same frontend destination.
+    expect(redirect.origin + redirect.pathname).toBe("https://opendfieldmap.org/");
+    expect(redirect.searchParams.get("auth_code")).toBeTruthy();
     const cookie = callback.headers
       .getSetCookie()
       .find((value) => value.startsWith("__Secure-oem-chips.session_token="));
@@ -353,7 +420,7 @@ describe("Better Auth 1.7 with the production D1 table layout", () => {
       .get()!;
     expect(account.providerId).toBe(provider);
     expect(account.id).not.toBe(account.accountId);
-    await auth.handler(new Request(callbackURL));
+    await request(`${callbackURL.pathname.replace("/auth/v1", "")}${callbackURL.search}`);
     expect(count("auth_sessions")).toBe(1);
   });
 });

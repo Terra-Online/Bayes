@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
+import { migrateNativeDatabase } from "./native-test-database.mjs";
 import {
   bundleFixture,
   compatibility,
@@ -65,6 +66,13 @@ try {
       return response.json();
     };
     try {
+      const db = await worker.getD1Database("DB", "main");
+      await migrateNativeDatabase(db);
+      await db
+        .prepare(
+          "INSERT INTO users (uid, email, password_hash, nickname) VALUES ('user', 'native@example.test', '', 'NativeUser')",
+        )
+        .run();
       for (const kind of ["images", "comments"]) {
         await t.test(`${kind}: independent cold reads and completed KV reuse`, async () => {
           const first = read(`${kind}-cold`, { "x-test-kind": kind, "x-test-block": "1" });
@@ -95,27 +103,33 @@ try {
           timers: 0,
         });
       });
+      await db
+        .prepare(
+          `INSERT INTO progress_stats_outbox
+         (event_id, uid, mutation_id, marker_index_hash, payload, next_attempt_at, created_at)
+         VALUES ('event', 'user', 'mutation', 'hash', ?1, 0, 0)`,
+        )
+        .bind(
+          JSON.stringify({
+            eventId: "event",
+            markerIndexHash: "hash",
+            pointCount: 1,
+            increments: [0],
+            decrements: [],
+            firstSync: true,
+          }),
+        )
+        .run();
       await t.test("outbox acknowledgements clear the ten-second deadline", async () => {
         assert.deepEqual(await read("outbox"), { delivered: true, timers: 0 });
       });
-      const db = await worker.getD1Database("DB", "main");
-      await db
-        .prepare(
-          "CREATE TABLE endfield_bindings (uid TEXT PRIMARY KEY, provider TEXT, role_id TEXT, server_id INTEGER, cred_enc TEXT, token_enc TEXT, status TEXT, updated_at TEXT)",
-        )
-        .run();
-      await db
-        .prepare(
-          "CREATE TABLE endfield_role_device_profiles (role_id TEXT PRIMARY KEY, device_profile TEXT, updated_at TEXT)",
-        )
-        .run();
       for (const mode of ["success", "stale", "rollback"]) {
         await t.test(`native D1 credential/profile transaction: ${mode}`, async () => {
           await db.prepare("DELETE FROM endfield_bindings").run();
           await db.prepare("DELETE FROM endfield_role_device_profiles").run();
           await db
             .prepare(
-              "INSERT INTO endfield_bindings VALUES ('user', 'skland', 'role', 1, 'cred', 'token', 'enabled', 'old')",
+              "INSERT INTO endfield_bindings (uid, provider, role_id, server_id, cred_enc, token_enc, status, updated_at) VALUES ('user', 'skland', 'role', 1, 'cred', 'token', 'enabled', 'old')",
             )
             .run();
           if (mode === "rollback") {
