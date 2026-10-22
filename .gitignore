@@ -173,3 +173,6 @@ src/data
 
 # Archived local performance experiment output (not part of the active test suite)
 benchmark/results/
+
+# Local implementation notes and audit records
+/.scratch/

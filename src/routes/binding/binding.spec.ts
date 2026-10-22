@@ -228,11 +228,39 @@ it("keeps token validation details and the existing malformed-JSON distinction",
   expect(endfieldFetch).not.toHaveBeenCalled();
 });
 
+it.each([
+  ["exchange-code", { provider: "skland", code: "" }],
+  ["bind-role", { flowId: "flow", serverId: -1, roleId: "role" }],
+])(
+  "rejects an invalid %s request without provider or binding side effects",
+  async (path, payload) => {
+    const response = await request(path, payload);
+    expect(response.status).toBe(422);
+    expect(await response.json()).toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(endfieldFetch).not.toHaveBeenCalled();
+    expect(redis.records.size).toBe(0);
+    expect(database.sqlite.prepare("SELECT * FROM endfield_bindings").all()).toEqual([]);
+  },
+);
+
 it("requires a site identity before exchanging external credentials", async () => {
   expect(
     (await request("exchange-token", { provider: "skland", token: "external-value" }, null)).status,
   ).toBe(401);
   expect(endfieldFetch).not.toHaveBeenCalled();
+});
+
+it("leaves the flow retryable when credential encryption is misconfigured", async () => {
+  const flowId = await startTokenFlow();
+  env.ENDFIELD_CREDENTIAL_SECRET = "";
+  const failed = await request("bind-role", { flowId, serverId: 1, roleId: "role" });
+  expect(failed.status).toBe(503);
+  expect(await failed.json()).toMatchObject({ code: "ENDFIELD_CREDENTIAL_SECRET_MISSING" });
+  expect(database.sqlite.prepare("SELECT * FROM endfield_bindings").all()).toEqual([]);
+  delete env.ENDFIELD_CREDENTIAL_SECRET;
+  const retried = await request("bind-role", { flowId, serverId: 1, roleId: "role" });
+  expect(retried.status).toBe(200);
+  expect(await retried.json()).toMatchObject({ binding: { enabled: true, roleId: "role" } });
 });
 
 it("expires an unconfirmed binding flow after ten minutes", async () => {
@@ -289,6 +317,193 @@ it("does not start a flow when the external account has no Endfield roles", asyn
     message: "No Endfield roles found on this account.",
   });
   expect(redis.records.size).toBe(0);
+});
+
+it("returns the provider's CAPTCHA challenge and can start a new flow after verification", async () => {
+  const challenge = { geetestId: "captcha-site", challenge: "challenge-id", riskType: "slide" };
+  endfieldFetch.mockResolvedValueOnce(Response.json({ status: 1, data: { captcha: challenge } }));
+  const rejected = await request("exchange-token", {
+    provider: "skland",
+    token: "account-token",
+    deviceId,
+  });
+  expect(rejected.status).toBe(409);
+  expect(await rejected.json()).toMatchObject({
+    code: "ENDFIELD_CAPTCHA_REQUIRED",
+    details: challenge,
+  });
+  expect(redis.records.size).toBe(0);
+  const flowId = await startTokenFlow();
+  expect((await request("bind-role", { flowId, serverId: 1, roleId: "role" })).status).toBe(200);
+  expect(
+    database.sqlite.prepare("SELECT status FROM endfield_bindings WHERE uid = 'user'").get(),
+  ).toMatchObject({ status: "enabled" });
+});
+
+it("explains the required Gryphline token source when Skport rejects a token", async () => {
+  endfieldFetch.mockResolvedValueOnce(Response.json({ status: 1 }));
+  const response = await request("exchange-token", {
+    provider: "skport",
+    token: "wrong-source-token",
+    deviceId,
+  });
+  expect(response.status).toBe(401);
+  expect(await response.json()).toMatchObject({
+    code: "ENDFIELD_GRYPHLINE_TOKEN_INVALID",
+    details: {
+      expectedTokenSource: "https://web-api.gryphline.com/cookie_store/account_token",
+      rejectedAuthBaseUrl: "https://as.gryphline.com",
+    },
+  });
+  expect(redis.records.size).toBe(0);
+  expect(database.sqlite.prepare("SELECT * FROM endfield_bindings").all()).toEqual([]);
+});
+
+it("keeps an unreadable Gryphline response distinct from an invalid account token", async () => {
+  endfieldFetch.mockResolvedValueOnce(new Response("gateway unavailable", { status: 502 }));
+  const response = await request("exchange-token", {
+    provider: "skport",
+    token: "account-token",
+    deviceId,
+  });
+  expect(response.status).toBe(502);
+  expect(await response.json()).toMatchObject({ code: "ENDFIELD_BAD_RESPONSE" });
+  expect(redis.records.size).toBe(0);
+  expect(database.sqlite.prepare("SELECT * FROM endfield_bindings").all()).toEqual([]);
+});
+
+it("keeps a bound account and its pending selection when OAuth omits the granted code", async () => {
+  const current = await startTokenFlow();
+  expect(
+    (await request("bind-role", { flowId: current, serverId: 1, roleId: "role" })).status,
+  ).toBe(200);
+  const before = database.sqlite.prepare("SELECT * FROM endfield_bindings").all();
+  const pending = await startTokenFlow();
+  endfieldFetch.mockResolvedValueOnce(Response.json({ status: 0, data: {} }));
+  const response = await request("exchange-token", {
+    provider: "skland",
+    token: "account-token",
+    deviceId,
+  });
+  expect(response.status).toBe(502);
+  expect(await response.json()).toMatchObject({ code: "ENDFIELD_CODE_MISSING" });
+  expect(database.sqlite.prepare("SELECT * FROM endfield_bindings").all()).toEqual(before);
+  expect(
+    (await request("bind-role", { flowId: pending, serverId: 1, roleId: "role" })).status,
+  ).toBe(200);
+});
+
+it.each([
+  {
+    name: "missing signing token",
+    response: () => Response.json({ code: 0, data: { cred: "incomplete" } }),
+    code: "ENDFIELD_CREDENTIAL_MISSING",
+  },
+  {
+    name: "non-JSON credential response",
+    response: () => new Response("upstream proxy unavailable", { status: 502 }),
+    code: "ENDFIELD_BAD_RESPONSE",
+  },
+])(
+  "does not replace valid credentials after $name and accepts a later exchange",
+  async ({ response, code }) => {
+    const original = await startTokenFlow();
+    expect(
+      (await request("bind-role", { flowId: original, serverId: 1, roleId: "role" })).status,
+    ).toBe(200);
+    const before = database.sqlite.prepare("SELECT * FROM endfield_bindings").all();
+    endfieldFetch.mockResolvedValueOnce(response());
+    const failed = await request("exchange-code", {
+      provider: "skland",
+      code: "oauth-code",
+      deviceId,
+    });
+    expect(failed.status).toBe(502);
+    expect(await failed.json()).toMatchObject({ code });
+    expect(database.sqlite.prepare("SELECT * FROM endfield_bindings").all()).toEqual(before);
+    const retried = await startTokenFlow({ cred: "replacement-cred", token: "replacement-token" });
+    expect(
+      (await request("bind-role", { flowId: retried, serverId: 1, roleId: "role" })).status,
+    ).toBe(200);
+    const stored = database.sqlite
+      .prepare("SELECT cred_enc FROM endfield_bindings WHERE uid = 'user'")
+      .get()!;
+    expect(await decryptSecret(String(stored.cred_enc), env.BETTER_AUTH_SECRET!)).toBe(
+      "replacement-cred",
+    );
+  },
+);
+
+it("offers only usable provider roles and binds a role with absent display metadata", async () => {
+  endfieldFetch
+    .mockResolvedValueOnce(Response.json({ code: 0, data: { cred: "cred", token: "token" } }))
+    .mockResolvedValueOnce(
+      Response.json({
+        code: 0,
+        data: {
+          list: [
+            { appCode: "arknights", bindingList: [] },
+            {
+              appCode: "endfield",
+              bindingList: [
+                {
+                  roles: [
+                    { roleId: "", serverId: "1" },
+                    { roleId: "bad-server", serverId: "not-a-server" },
+                    { roleId: "valid-role", serverId: "2" },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      }),
+    );
+  const response = await request("exchange-code", {
+    provider: "skland",
+    code: "oauth-code",
+    deviceId,
+  });
+  expect(response.status).toBe(200);
+  const flow = (await response.json()) as { flowId: string; roles: EndfieldRoleOption[] };
+  expect(flow.roles).toEqual([
+    expect.objectContaining({
+      serverId: 2,
+      roleId: "valid-role",
+    }),
+  ]);
+  const bound = await request("bind-role", {
+    flowId: flow.flowId,
+    serverId: 2,
+    roleId: "valid-role",
+  });
+  expect(bound.status).toBe(200);
+  expect(await bound.json()).toMatchObject({
+    binding: { roleId: "valid-role", enabled: true },
+  });
+  expect(
+    database.sqlite.prepare("SELECT role_id, server_id FROM endfield_bindings").get(),
+  ).toMatchObject({ role_id: "valid-role", server_id: 2 });
+});
+
+it("keeps the existing account usable when device fingerprint generation is unavailable", async () => {
+  const flowId = await startTokenFlow();
+  expect((await request("bind-role", { flowId, serverId: 1, roleId: "role" })).status).toBe(200);
+  const before = database.sqlite.prepare("SELECT * FROM endfield_bindings").all();
+  endfieldFetch.mockResolvedValueOnce(
+    Response.json({ code: 1902, message: "Fingerprint service unavailable" }),
+  );
+  const failed = await request("exchange-code", { provider: "skland", code: "oauth-code" });
+  expect(failed.status).toBe(502);
+  expect(await failed.json()).toMatchObject({ code: "ENDFIELD_DEVICE_ID_GENERATION_FAILED" });
+  expect(database.sqlite.prepare("SELECT * FROM endfield_bindings").all()).toEqual(before);
+  const retried = await startTokenFlow();
+  expect(
+    (await request("bind-role", { flowId: retried, serverId: 1, roleId: "role" })).status,
+  ).toBe(200);
+  expect(await (await request("status")).json()).toMatchObject({
+    binding: { bound: true, enabled: true },
+  });
 });
 
 interface TokenFlowFixture {
@@ -354,6 +569,45 @@ it("retains a pending flow after a binding write fails so it can be retried", as
   expect(
     database.sqlite.prepare("SELECT status FROM endfield_bindings WHERE uid = ?").get("user"),
   ).toMatchObject({ status: "enabled" });
+});
+
+it("can finish an older pending flow that predates device-profile storage", async () => {
+  const flowId = await startTokenFlow();
+  for (const record of redis.records.values()) {
+    const payload = record.value as Record<string, unknown>;
+    const { deviceProfile: _profile, ...legacy } = payload;
+    record.value = JSON.stringify(legacy);
+  }
+  const bound = await request("bind-role", { flowId, serverId: 1, roleId: "role" });
+  expect(bound.status).toBe(200);
+  expect(await bound.json()).toMatchObject({ binding: { enabled: true, roleId: "role" } });
+  const stored = database.sqlite
+    .prepare("SELECT device_profile FROM endfield_role_device_profiles WHERE role_id = 'role'")
+    .get()!;
+  expect(JSON.parse(String(stored.device_profile))).toMatchObject({
+    deviceId: expect.any(String),
+  });
+  expect(redis.records.size).toBe(0);
+});
+
+it("rejects corrupt pending storage without replacing the account and accepts a fresh flow", async () => {
+  const original = await startTokenFlow();
+  expect(
+    (await request("bind-role", { flowId: original, serverId: 1, roleId: "role" })).status,
+  ).toBe(200);
+  const before = database.sqlite.prepare("SELECT * FROM endfield_bindings").all();
+  const corrupted = await startTokenFlow();
+  for (const record of redis.records.values()) {
+    record.value = "{broken JSON";
+  }
+  const response = await request("bind-role", { flowId: corrupted, serverId: 1, roleId: "role" });
+  expect(response.status).toBe(410);
+  expect(await response.json()).toMatchObject({ code: "ENDFIELD_BINDING_FLOW_INVALID" });
+  expect(database.sqlite.prepare("SELECT * FROM endfield_bindings").all()).toEqual(before);
+  const retried = await startTokenFlow();
+  expect(
+    (await request("bind-role", { flowId: retried, serverId: 1, roleId: "role" })).status,
+  ).toBe(200);
 });
 
 it("preserves the account token when creating and replacing a binding", async () => {

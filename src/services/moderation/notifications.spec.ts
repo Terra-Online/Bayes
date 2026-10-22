@@ -45,6 +45,59 @@ afterEach(() => {
 });
 
 describe("Discord moderation notifications", () => {
+  it.each(["http", "network"])(
+    "retries a %s delivery failure and acknowledges only successful delivery",
+    async (failure) => {
+      const ack = vi.fn();
+      const retry = vi.fn();
+      const message = {
+        body: {
+          type: "discord_notification",
+          event,
+          queuedAt: "2026-09-10T00:00:00.000Z",
+        },
+        ack,
+        retry,
+      };
+      const batch = {
+        queue: "oem-webhook",
+        messages: [message],
+      } as unknown as MessageBatch<OemWebhookQueueMessage>;
+      const requests: Request[] = [];
+      const send = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+        requests.push(new Request(input, init));
+        if (requests.length === 1) {
+          if (failure === "network") {
+            throw new Error("connection reset");
+          }
+          return new Response("temporarily unavailable", { status: 503 });
+        }
+        return new Response(null, { status: 204 });
+      });
+      vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      const env = {
+        DISCORD_MODERATION_WEBHOOK_URL: "https://discord.example.test/webhook",
+      } as Bindings;
+      await processWebhookQueueBatch(env, batch);
+      expect(retry).toHaveBeenCalledOnce();
+      expect(ack).not.toHaveBeenCalled();
+      await processWebhookQueueBatch(env, batch);
+      expect(ack).toHaveBeenCalledOnce();
+      expect(retry).toHaveBeenCalledOnce();
+      expect(send).toHaveBeenCalledTimes(2);
+      expect(requests[1]!.url).toBe("https://discord.example.test/webhook");
+      expect(await requests[1]!.json()).toMatchObject({
+        embeds: [
+          expect.objectContaining({
+            fields: expect.arrayContaining([
+              expect.objectContaining({ value: submission.id }),
+              expect.objectContaining({ value: "pending_openai -> pending_audit" }),
+            ]),
+          }),
+        ],
+      });
+    },
+  );
   it("fails when the webhook secret is missing", async () => {
     await expect(sendModerationNotificationNow({} as Bindings, event)).rejects.toThrow(
       "DISCORD_MODERATION_WEBHOOK_URL is not configured",

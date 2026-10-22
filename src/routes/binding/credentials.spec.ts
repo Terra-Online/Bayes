@@ -256,6 +256,20 @@ afterEach(async () => {
 });
 
 describe("request-owned credential refresh and conditional persistence", () => {
+  it("preserves valid stored credentials after incomplete provider refresh and retries on a later sync", async () => {
+    const before = storedCredentials();
+    refresh = () => Response.json({ code: 0, data: {} });
+    const failed = await request();
+    expect(failed.status).toBe(502);
+    expect(await failed.json()).toMatchObject({ code: "ENDFIELD_REFRESH_TOKEN_MISSING" });
+    expect(storedCredentials()).toEqual(before);
+    expect(storedProfile()).toBe(oldProfile);
+    refresh = () => Response.json({ code: 0, data: { token: "new-token" } });
+    await expectSync(await request());
+    await expectStoredWinner();
+    expect(storedProfile()).toBe(oldProfile);
+  });
+
   it("deduplicates refreshes inside the same request", async () => {
     // No production route invokes concurrent refresh helpers on one context.
     const c = { env } as Context<AppEnv>;

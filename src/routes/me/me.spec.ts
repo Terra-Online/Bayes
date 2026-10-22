@@ -77,6 +77,35 @@ it("serves an owner's image bytes with private cache headers", async () => {
   });
 });
 
+it.each([
+  ["image/jpeg", "image/jpeg"],
+  [null, "application/octet-stream"],
+])("serves legacy preview MIME %s when object metadata is absent", async (mimeType, expected) => {
+  database.sqlite
+    .prepare("UPDATE ugc_submissions SET mime_type = ? WHERE id = 'photo'")
+    .run(mimeType);
+  const response = new Response(new Uint8Array([1, 2, 3]));
+  mocks.ugcBucket.get.mockResolvedValueOnce({
+    ...createMockR2Object({ key: "images/photo.webp", size: 3 }),
+    httpMetadata: {},
+    writeHttpMetadata: () => {},
+    body: response.body!,
+    bodyUsed: false,
+    arrayBuffer: () => response.arrayBuffer(),
+    bytes: () => response.bytes(),
+    text: () => response.text(),
+    json: () => response.json(),
+    blob: () => response.blob(),
+  });
+  expect((await requestPath("/contributions", "author")).status).toBe(200);
+  const preview = await request("photo", "author");
+  expect(preview.status).toBe(200);
+  expect(preview.headers.get("content-type")).toBe(expected);
+  expect(preview.headers.get("cache-control")).toMatch(/^private, max-age=\d+, must-revalidate$/);
+  expect(new Uint8Array(await preview.arrayBuffer())).toEqual(new Uint8Array([1, 2, 3]));
+  expect((await request("photo", "other")).status).toBe(404);
+});
+
 it("keeps historical previews available to their owner only", async () => {
   database.sqlite.exec("UPDATE ugc_submissions SET status = 'stale' WHERE id = 'photo'");
   expect((await request("photo", "author")).status).toBe(200);
@@ -325,6 +354,41 @@ it("recognizes an ongoing manual review before any notification is available", a
   });
 });
 
+it("does not present a historical recall during manual review as a completed manual decision", async () => {
+  insertLegacyReviewNotification({
+    submissionId: "photo",
+    from: "pending_openai",
+    to: "pending_audit",
+  });
+  database.sqlite.exec(
+    "UPDATE ugc_submissions SET status = 'stale', moderation_note = 'Recalled by uploader: withdrawn' WHERE id = 'photo'",
+  );
+  const review = (await list()).items.find((item) => item.id === "photo")?.review;
+  expect(review?.path).toEqual([
+    { key: "uploaded", at: "2026-09-01" },
+    { key: "ai", at: "2026-09-04T12:00:00Z" },
+    { key: "archived", at: "2026-09-05T12:00:00Z" },
+  ]);
+  expect(review?.manual).toBe(false);
+  expect(review?.published).toBe(false);
+});
+
+it("rejects decoded contribution cursors with missing fields without changing history", async () => {
+  const before = database.sqlite.prepare("SELECT * FROM ugc_submissions ORDER BY id").all();
+  for (const value of [
+    { createdAt: 123, id: "photo" },
+    { createdAt: "2026-09-01", id: "" },
+  ]) {
+    const cursor = encodeURIComponent(btoa(JSON.stringify(value)));
+    const response = await requestPath(`/contributions?cursor=${cursor}`, "author");
+    expect(response.status).toBe(422);
+    expect(await response.json()).toMatchObject({ code: "INVALID_CURSOR" });
+  }
+  expect(database.sqlite.prepare("SELECT * FROM ugc_submissions ORDER BY id").all()).toEqual(
+    before,
+  );
+});
+
 it("returns real decision times without borrowing a previous snapshot's timestamps", async () => {
   insertLegacyReviewNotification({
     submissionId: "photo",
@@ -360,6 +424,13 @@ it("returns real decision times without borrowing a previous snapshot's timestam
 });
 
 const paths: Array<[string, Array<[string, string, string]>, string[]]> = [
+  [
+    "active",
+    [["stale", "active", "manual_moderation"]],
+    ["uploaded", "archived", "manual", "public"],
+  ],
+  ["active", [["pending_audit", "active", "manual_moderation"]], ["uploaded", "manual", "public"]],
+  ["stale", [["active", "stale", "user_action"]], ["uploaded", "public", "archived"]],
   ["stale", [["pending_openai", "stale", "manual_moderation"]], ["uploaded", "manual", "archived"]],
   ["stale", [["pending_openai", "stale", "auto_moderation"]], ["uploaded", "ai", "archived"]],
   ["stale", [["pending_openai", "stale", "user_action"]], ["uploaded", "archived"]],
@@ -433,6 +504,17 @@ it("keeps a historical publication with an unknown approval time, without invent
   expect(review?.path).toEqual([
     { key: "uploaded", at: "2026-09-01" },
     { key: "public", at: null },
+  ]);
+});
+
+it("retains the archival time of an old AI rejection without inventing a review completion time", async () => {
+  database.sqlite.exec(
+    "UPDATE ugc_submissions SET status = 'stale', moderation_note = 'OpenAI moderation flagged: unsafe' WHERE id = 'photo'",
+  );
+  expect((await list()).items.find((item) => item.id === "photo")?.review.path).toEqual([
+    { key: "uploaded", at: "2026-09-01" },
+    { key: "ai", at: null },
+    { key: "archived", at: "2026-09-05T12:00:00Z" },
   ]);
 });
 

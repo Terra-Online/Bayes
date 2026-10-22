@@ -5,7 +5,7 @@ import { insertAuthUser, insertSession } from "@/test/fixtures/auth";
 import { createAuthCacheFixture, type AuthCacheFixture } from "@/test/fixtures/authCache";
 import { insertUser } from "@/test/fixtures/users";
 
-import { ensureUserProfile, getUserByPublicUid } from "./users";
+import { applyUserPointsDelta, ensureUserProfile, getUserByPublicUid } from "./users";
 
 describe("profile activity write throttling", () => {
   let database: TestDatabase;
@@ -97,6 +97,33 @@ describe("profile activity write throttling", () => {
     expect(profileQueries[0]!.sql.startsWith("SELECT")).toBe(true);
   });
 
+  it("bootstraps a usable unique nickname when the provider's preferred name is already taken", async () => {
+    insertAuthUser(database.sqlite, {
+      id: "new-user",
+      email: "new@example.test",
+      name: "Tester",
+    });
+    const session = insertSession(database.sqlite, { userId: "new-user" });
+    const response = await http.request("/auth/v1/session", session.headers);
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { user: { uid: string; nickname: string } };
+    expect(body.user.nickname).not.toBe("Tester");
+    expect(body.user.nickname.trim()).not.toBe("");
+    expect(body.user.uid).toMatch(/^\d+[A-Z]{2}$/);
+    expect(
+      database.sqlite.prepare("SELECT nickname FROM users WHERE uid = 'user-1'").get(),
+    ).toEqual({
+      nickname: "Tester",
+    });
+    const retry = insertSession(database.sqlite, { userId: "new-user" });
+    expect(await (await http.request("/auth/v1/session", retry.headers)).json()).toMatchObject(
+      body,
+    );
+    expect(
+      database.sqlite.prepare("SELECT COUNT(*) AS count FROM users WHERE uid = 'new-user'").get(),
+    ).toEqual({ count: 1 });
+  });
+
   it("resolves users by their public UID", async () => {
     database.sqlite.exec(
       "UPDATE users SET uid_number = 103427, uid_suffix = 'VA' WHERE uid = 'user-1'",
@@ -109,5 +136,77 @@ describe("profile activity write throttling", () => {
       uidSuffix: "VA",
     });
     await expect(getUserByPublicUid(database.db, "not-a-public-uid")).resolves.toBeNull();
+  });
+
+  it("keeps earned points for a zero reward and limits a larger penalty to the user's balance", async () => {
+    database.sqlite.exec("UPDATE users SET points = 31 WHERE uid = 'user-1'");
+    await applyUserPointsDelta(database.db, "user-1", 0);
+    expect(database.sqlite.prepare("SELECT points FROM users WHERE uid = 'user-1'").get()).toEqual({
+      points: 31,
+    });
+    await applyUserPointsDelta(database.db, "user-1", -50);
+    expect(database.sqlite.prepare("SELECT points FROM users WHERE uid = 'user-1'").get()).toEqual({
+      points: 0,
+    });
+  });
+
+  it("creates one stable business identity when two first sessions bootstrap concurrently", async () => {
+    insertAuthUser(database.sqlite, {
+      id: "concurrent-user",
+      email: "123@example.test",
+      name: "旅行者",
+    });
+    const sessions = [
+      insertSession(database.sqlite, { userId: "concurrent-user" }),
+      insertSession(database.sqlite, { userId: "concurrent-user" }),
+    ];
+    const responses = await Promise.all(
+      sessions.map((session) => http.request("/auth/v1/session", session.headers)),
+    );
+    expect(responses.map((response) => response.status)).toEqual([200, 200]);
+    const bodies = await Promise.all(
+      responses.map((response) => response.json() as Promise<{ user: { nickname: string } }>),
+    );
+    expect(bodies[0]).toEqual(bodies[1]);
+    expect(bodies[0]).toMatchObject({
+      user: { nickname: expect.any(String), uid: expect.stringMatching(/^\d+[A-Z]{2}$/) },
+    });
+    expect(
+      database.sqlite
+        .prepare("SELECT uid, email, nickname FROM users WHERE uid = 'concurrent-user'")
+        .all(),
+    ).toEqual([
+      { uid: "concurrent-user", email: "123@example.test", nickname: bodies[0].user.nickname },
+    ]);
+    expect(bodies[0].user.nickname.trim()).not.toBe("");
+  });
+
+  it("preserves a historical business identity matched by verified email without creating a second profile", async () => {
+    const before = database.sqlite
+      .prepare(
+        "SELECT uid, uid_number, uid_suffix, nickname, points, karma FROM users WHERE uid = 'user-1'",
+      )
+      .get();
+    insertAuthUser(database.sqlite, {
+      id: "new-login-id",
+      email: identity.email,
+      name: "ReplacementName",
+    });
+    const session = insertSession(database.sqlite, { userId: "new-login-id" });
+    const response = await http.request("/auth/v1/session", session.headers);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      user: { nickname: "Tester", email: identity.email },
+    });
+    expect(
+      database.sqlite
+        .prepare(
+          "SELECT uid, uid_number, uid_suffix, nickname, points, karma FROM users WHERE uid = 'user-1'",
+        )
+        .get(),
+    ).toEqual(before);
+    expect(database.sqlite.prepare("SELECT uid FROM users ORDER BY uid").all()).toEqual([
+      { uid: "user-1" },
+    ]);
   });
 });

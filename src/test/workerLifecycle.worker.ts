@@ -1,22 +1,53 @@
 // Local workerd fixture for public reads, upstream sockets, and outbox delivery.
+import { Hono } from "hono";
+
+import { runWithAuthRequest } from "@/lib/auth/createAuth";
+import { decryptSecret, encryptSecret } from "@/lib/crypto";
+import {
+  createEndfieldDeviceProfile,
+  serializeEndfieldDeviceProfile,
+} from "@/lib/endfieldClient/deviceProfile";
 import {
   connectEndfieldPositionSocket,
+  getEndfieldPosition,
   getEndfieldPositionFromSocket,
 } from "@/lib/endfieldClient/positionSocket";
 import type { EndfieldDeviceProfile } from "@/lib/endfieldClient/types";
+import { ApiError } from "@/lib/errors";
+import { onAppError } from "@/middleware/error-handler";
+import { requestIdMiddleware } from "@/middleware/request-id";
 import { listCachedPublicCommentsByMarker } from "@/publicRead/origin/markerComments";
 import { listCachedPublicImagesByMarker } from "@/publicRead/origin/markerImages";
 import { updateBindingCredentials } from "@/repositories/binding/repository";
 import type { EndfieldBindingRow } from "@/repositories/binding/types";
+import { getNotificationById } from "@/repositories/notifications";
+import { createRoutes as positionRoutes } from "@/routes/locator/positionRoutes";
+import { createRoutes as notificationRoutes } from "@/routes/notify/createRoutes";
+import { handleNotificationLiveUpgrade } from "@/routes/notify/liveUpgrade";
+import { deleteLocatorCaches } from "@/services/locator/cache";
+import { publishNotificationsCreated } from "@/services/notify/live";
 import { drainUserProgressStatsOutbox } from "@/services/progress/outbox";
-import type { Bindings } from "@/types/app";
+import type { AppEnv, Bindings } from "@/types/app";
 
-interface FixtureEnv {
+// Exercise the production entrypoint through a native service binding, rather
+// than constructing a Node stand-in for WorkerEntrypoint.
+export { PublicReadCache } from "@/publicRead/origin/entrypoint";
+export { OEMNotificationDO } from "@/services/notify/live";
+
+interface FixtureEnv extends Bindings {
+  PUBLIC_ORIGIN: Fetcher;
   TEST_GATE: Fetcher;
   STATS: Fetcher;
   KV: KVNamespace;
   DB: D1Database;
 }
+
+// Production HTTP/auth and real notification DOs; only the remote game is replaced.
+const connectionApp = new Hono<AppEnv>()
+  .use("*", requestIdMiddleware)
+  .onError(onAppError)
+  .route("/locator", positionRoutes())
+  .route("/notify/v1", notificationRoutes());
 
 // Only external Stats routing is substituted. Unconfigured binding access fails loudly.
 function outboxBindings(env: FixtureEnv): Bindings {
@@ -116,6 +147,81 @@ const args = {
 export default {
   async fetch(request: Request, env: FixtureEnv, ctx: ExecutionContext) {
     const path = new URL(request.url).pathname;
+    if (path.startsWith("/locator/") || path.startsWith("/notify/")) {
+      return runWithAuthRequest(async () => {
+        const upgrade = await handleNotificationLiveUpgrade(request, env);
+        return upgrade ?? connectionApp.fetch(request, env, ctx);
+      });
+    }
+    if (path === "/seed-binding") {
+      // Scenario setup uses production encryption, not a second crypto implementation.
+      const profile = createEndfieldDeviceProfile("native-browser-device-1234567890");
+      await env.DB.prepare(
+        `INSERT INTO endfield_bindings
+         (uid, provider, role_id, server_id, cred_enc, token_enc, status)
+         VALUES ('user', 'skland', 'role', 1, ?1, ?2, 'enabled')`,
+      )
+        .bind(
+          await encryptSecret("cred", env.BETTER_AUTH_SECRET!),
+          await encryptSecret("token", env.BETTER_AUTH_SECRET!),
+        )
+        .run();
+      await env.DB.prepare(
+        "INSERT INTO endfield_role_device_profiles (role_id, device_profile) VALUES ('role', ?1)",
+      )
+        .bind(serializeEndfieldDeviceProfile(profile))
+        .run();
+      deleteLocatorCaches(env, "user");
+      return Response.json({ ok: true });
+    }
+    if (path.startsWith("/publish/")) {
+      const notification = await getNotificationById(env.DB, path.slice("/publish/".length));
+      if (!notification) {
+        throw new Error("Missing notification fixture");
+      }
+      await publishNotificationsCreated(env, [notification]);
+      return Response.json({ ok: true });
+    }
+    if (path === "/binding-credentials") {
+      const row = await env.DB.prepare(
+        "SELECT * FROM endfield_bindings WHERE uid = 'user'",
+      ).first<EndfieldBindingRow>();
+      if (!row) {
+        throw new Error("Missing binding fixture");
+      }
+      return Response.json({
+        cred: await decryptSecret(row.cred_enc, env.BETTER_AUTH_SECRET!),
+        token: await decryptSecret(row.token_enc, env.BETTER_AUTH_SECRET!),
+      });
+    }
+    if (path === "/timers") {
+      return Response.json({ timers: timers.size });
+    }
+    if (path === "/position-fallback") {
+      return Response.json({ position: await getEndfieldPosition(args), timers: timers.size });
+    }
+    if (path === "/position-attempt" || path === "/position-fallback-attempt") {
+      try {
+        const position =
+          path === "/position-fallback-attempt"
+            ? await getEndfieldPosition(args)
+            : await getEndfieldPositionFromSocket(args, 100);
+        return Response.json({ position, timers: timers.size });
+      } catch (error) {
+        if (!(error instanceof ApiError)) {
+          throw error;
+        }
+        return Response.json({
+          error: { code: error.code, status: error.status, details: error.details },
+          timers: timers.size,
+        });
+      }
+    }
+    if (path.startsWith("/origin/")) {
+      const url = new URL(request.url);
+      url.pathname = path.slice("/origin".length);
+      return env.PUBLIC_ORIGIN.fetch(new Request(url, request));
+    }
     if (path.startsWith("/credential/")) {
       const binding = await env.DB.prepare(
         "SELECT * FROM endfield_bindings WHERE uid = 'user'",

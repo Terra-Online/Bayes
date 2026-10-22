@@ -509,6 +509,46 @@ describe("OEMStatsDO event receipts", () => {
     expect([...parseStatsCountsBase64(snapshot?.counts ?? "", 2)]).toEqual([1, 0]);
   });
 
+  it("retries a failed stats backup and restores the accepted collection from D1 in a fresh object", async () => {
+    const database = databaseForTest();
+    const { object } = createStatsDo(undefined, database);
+    const response = await object.fetch(
+      new Request("https://progress-stats/apply", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      }),
+    );
+    expect(response.status).toBe(200);
+    database.sqlite
+      .exec(`CREATE TRIGGER reject_stats_backup BEFORE INSERT ON progress_stats_snapshots
+      BEGIN SELECT RAISE(ABORT, 'backup unavailable'); END`);
+    // Execute application alarm logic against the runtime storage boundary.
+    // This does not establish native alarm scheduling or platform durability.
+    await object.alarm();
+    expect(database.sqlite.prepare("SELECT * FROM progress_stats_snapshots").all()).toEqual([]);
+    database.sqlite.exec("DROP TRIGGER reject_stats_backup");
+    await object.alarm();
+    const recovered = createStatsDo(undefined, database);
+    const state = await recovered.object.fetch(
+      new Request(`https://progress-stats/state?markerIndexHash=${markerIndexHash}`),
+    );
+    expect(state.status).toBe(200);
+    const restored = (await state.json()) as {
+      counts: string;
+      totalSyncedUsers: number;
+      sampleSize: number;
+    };
+    expect(restored).toMatchObject({ totalSyncedUsers: 1, sampleSize: 1 });
+    expect([...parseStatsCountsBase64(restored.counts, 2)]).toEqual([1, 0]);
+    expect(
+      database.sqlite
+        .prepare(
+          "SELECT marker_index_hash, point_count, total_synced_users FROM progress_stats_snapshots",
+        )
+        .all(),
+    ).toEqual([{ marker_index_hash: markerIndexHash, point_count: 2, total_synced_users: 1 }]);
+  });
+
   it("does not replace memory or storage when the transaction fails", async () => {
     const storage = new FakeStorage();
     storage.failNextTransaction = true;

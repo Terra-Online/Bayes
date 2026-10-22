@@ -350,6 +350,56 @@ describe("12-hour resumable karma evaluation", () => {
     });
   });
 
+  it("stops before writing if its lease expires during selection and evaluates successfully on retry", async () => {
+    insertUser("first");
+    database.hooks.beforeQuery = (sql) => {
+      if (sql.includes("ORDER BY uid")) {
+        database.hooks.beforeQuery = undefined;
+        vi.setSystemTime(START + 181_000);
+      }
+    };
+    await expect(evaluateKarmaIfDue(database.db, redis.redis)).rejects.toThrow(
+      "KARMA_EVALUATION_LEASE_LOST",
+    );
+    expect(database.sqlite.prepare("SELECT karma FROM users WHERE uid='first'").get()).toEqual({
+      karma: 0,
+    });
+    expect(await redis.get(CYCLE_KEY)).toMatchObject({ cursor: "" });
+    expect(await evaluateKarmaIfDue(database.db, redis.redis)).toMatchObject({
+      selected: 1,
+      updated: 1,
+      cycleComplete: true,
+    });
+    expect(database.sqlite.prepare("SELECT karma FROM users WHERE uid='first'").get()).toEqual({
+      karma: 2,
+    });
+  });
+
+  it("honors a cycle another worker completed before this worker acquired the lease", async () => {
+    insertUser("first");
+    const set = redis.set.bind(redis);
+    vi.spyOn(redis, "set").mockImplementation(async (key, value, options) => {
+      const result = await set(key, value, options);
+      if (key === LEASE_KEY && result === "OK") {
+        redis.records.set(CYCLE_KEY, {
+          value: { cursor: null, startedAt: START, nextRunAt: START + INTERVAL },
+        });
+      }
+      return result;
+    });
+    expect(await evaluateKarmaIfDue(database.db, redis.redis)).toMatchObject({ evaluated: false });
+    expect(database.sqlite.prepare("SELECT karma FROM users WHERE uid='first'").get()).toEqual({
+      karma: 0,
+    });
+    expect(await redis.get(LEASE_KEY)).toBeNull();
+    vi.restoreAllMocks();
+    vi.setSystemTime(START + INTERVAL);
+    expect(await evaluateKarmaIfDue(database.db, redis.redis)).toMatchObject({
+      selected: 1,
+      updated: 1,
+    });
+  });
+
   it("cannot checkpoint or release a newer worker's lease", async () => {
     insertUser("first");
     let saves = 0;

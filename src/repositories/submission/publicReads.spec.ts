@@ -1,11 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { markNotificationsRead } from "@/repositories/notifications";
+import {
+  getDuplicateImageMarkerSummary,
+  listDuplicateImageMarkers,
+  listDuplicateMarkerImages,
+} from "@/repositories/submission-duplicates";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { insertNotification } from "@/test/fixtures/notifications";
 import { insertSubmission } from "@/test/fixtures/submissions";
 import { insertUser } from "@/test/fixtures/users";
 
+import { listVisibleImageCountsByMarker } from "./imageCoverage";
 import {
   listActiveCommentsByMarker,
   listCommentViewerStateByMarker,
@@ -61,6 +67,88 @@ describe("public read SQL under D1 limits", () => {
       createdAt: "2026-09-05",
     });
   }
+
+  it("treats image namespace prefixes literally in public, private and viewer reads", async () => {
+    for (const [id, filePath] of [
+      ["test", "_test/image.webp"],
+      ["similar", "xtest/image.webp"],
+      ["sibling", "_test-other/image.webp"],
+    ]) {
+      insert(id, "marker-1", { kind: "image", filePath });
+      connection.sqlite
+        .prepare("INSERT INTO ugc_submission_flags (submission_id, user_id) VALUES (?, 'viewer')")
+        .run(id);
+    }
+    const base = {
+      markerId: "marker-1",
+      assetBaseUrl: "https://assets.example",
+      privateAssetBaseUrl: "https://private.example",
+      userId: "viewer",
+    };
+    for (const [scope, ids] of [
+      [{ pathPrefix: "_test" }, ["test"]],
+      [{ excludePathPrefix: "_test" }, ["sibling", "similar"]],
+    ] as const) {
+      expect(
+        (await listActiveImagesByMarker(connection.db, { ...base, ...scope }))
+          .map((item) => item.id)
+          .sort(),
+      ).toEqual([...ids]);
+      expect(
+        (await listUserImagesByMarker(connection.db, { ...base, ...scope }))
+          .map((item) => item.id)
+          .sort(),
+      ).toEqual([...ids]);
+      expect(
+        [
+          ...(
+            await listImageViewerReactionsByMarker(connection.db, {
+              ...base,
+              ...scope,
+              markerIds: ["marker-1"],
+              submissionIds: ["test", "similar", "sibling"],
+            })
+          ).keys(),
+        ].sort(),
+      ).toEqual([...ids]);
+    }
+    expect(
+      await getDuplicateImageMarkerSummary(connection.db, {
+        markerId: "marker-1",
+        pathPrefix: "_test",
+      }),
+    ).toBeNull();
+    expect(
+      await listDuplicateImageMarkers(connection.db, { ...base, pathPrefix: "_test" }),
+    ).toEqual({ items: [], total: 0 });
+    expect(
+      await listDuplicateMarkerImages(connection.db, { ...base, pathPrefix: "_test" }),
+    ).toEqual({ items: [], total: 1 });
+    expect(
+      await getDuplicateImageMarkerSummary(connection.db, {
+        markerId: "marker-1",
+        excludePathPrefix: "_test",
+      }),
+    ).toEqual({ markerId: "marker-1", imageCount: 2 });
+    expect(
+      await listDuplicateImageMarkers(connection.db, { ...base, excludePathPrefix: "_test" }),
+    ).toMatchObject({
+      total: 1,
+      items: [{ markerId: "marker-1", imageCount: 2, latestImage: { id: "similar" } }],
+    });
+    const duplicates = await listDuplicateMarkerImages(connection.db, {
+      ...base,
+      excludePathPrefix: "_test",
+    });
+    expect(duplicates.total).toBe(2);
+    expect(duplicates.items.map((item) => item.id).sort()).toEqual(["sibling", "similar"]);
+    expect(await listVisibleImageCountsByMarker(connection.db, { pathPrefix: "_test" })).toEqual([
+      { markerId: "marker-1", imageCount: 1 },
+    ]);
+    expect(
+      await listVisibleImageCountsByMarker(connection.db, { excludePathPrefix: "_test" }),
+    ).toEqual([{ markerId: "marker-1", imageCount: 2 }]);
+  });
 
   it("loads 100 markers and more than 100 reply roots without excess SQL parameters", async () => {
     for (const markerId of markerIds) {

@@ -413,7 +413,7 @@ export function createRoutes() {
         throw new ApiError(422, "VALIDATION_ERROR", "Submission id is required.");
       }
 
-      const parsed = updateSchema.safeParse(await c.req.json());
+      const parsed = updateSchema.safeParse(await c.req.json().catch(() => null));
       if (!parsed.success) {
         throw new ApiError(
           422,

@@ -7,6 +7,7 @@ import { requestIdMiddleware } from "@/middleware/request-id";
 import { createMockBindings, createMockR2Object, type MockBindings } from "@/test/bindings";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { insertAuthenticatedUser, type SessionHeaders } from "@/test/fixtures/auth";
+import { insertSubmission } from "@/test/fixtures/submissions";
 import type { AppEnv, Bindings } from "@/types/app";
 
 import { createRoutes } from "./createRoutes";
@@ -68,17 +69,31 @@ describe("image submission through HTTP", () => {
     vi.restoreAllMocks();
   });
 
-  function request(signal?: AbortSignal, mimeType = "image/png") {
+  function request(
+    signal?: AbortSignal,
+    mimeType = "image/png",
+    options: {
+      fileName?: string;
+      headers?: Record<string, string>;
+      fields?: Record<string, string>;
+    } = {},
+  ) {
     const form = new FormData();
-    form.set("file", new File([new Uint8Array([1, 2, 3])], "test.png", { type: mimeType }));
+    form.set(
+      "file",
+      new File([new Uint8Array([1, 2, 3])], options.fileName ?? "test.png", { type: mimeType }),
+    );
     form.set("markerId", "42");
     form.set("poiHash", "hash");
     form.set("poiType", "poi");
+    for (const [key, value] of Object.entries(options.fields ?? {})) {
+      form.set(key, value);
+    }
     return app.request(
       new Request("http://localhost/uploads/v1/images", {
         method: "POST",
         body: form,
-        headers: { ...sessionHeaders, "x-request-id": "upload-request" },
+        headers: { ...sessionHeaders, "x-request-id": "upload-request", ...options.headers },
         signal,
       }),
       undefined,
@@ -91,6 +106,130 @@ describe("image submission through HTTP", () => {
     expect(mocks.ugcBucket.put).not.toHaveBeenCalled();
     expect(mocks.moderationQueue.send).not.toHaveBeenCalled();
   }
+
+  it("accepts a camera image with generic MIME using its filename and stores the processed format", async () => {
+    mocks.ugcBucket.put.mockImplementation(async (key) => createMockR2Object({ key, size: 2 }));
+    mocks.moderationQueue.send.mockResolvedValue({
+      metadata: { metrics: { backlogCount: 1, backlogBytes: 64 } },
+    });
+    mocks.imageTranscoder.fetch.mockResolvedValue(
+      new Response(new Uint8Array([4, 5]), { headers: { "content-type": "image/webp" } }),
+    );
+    const response = await request(undefined, "application/octet-stream", {
+      fileName: "Camera.HEIC",
+    });
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as { submission: { id: string; filePath: string } };
+    const conversion = new Request(mocks.imageTranscoder.fetch.mock.calls[0]![0]);
+    expect(conversion.headers.get("content-type")).toBe("image/heic");
+    expect(conversion.headers.get("x-source-mime")).toBe("image/heic");
+    expect(new Uint8Array(await conversion.arrayBuffer())).toEqual(new Uint8Array([1, 2, 3]));
+    expect(mocks.ugcBucket.put).toHaveBeenCalledWith(
+      payload.submission.filePath,
+      new Uint8Array([4, 5]).buffer,
+      expect.objectContaining({
+        customMetadata: expect.objectContaining({ sourceMimeType: "image/heic" }),
+      }),
+    );
+    expect(
+      database.sqlite
+        .prepare("SELECT mime_type, status FROM ugc_submissions WHERE id = ?")
+        .get(payload.submission.id),
+    ).toEqual({ mime_type: "image/webp", status: "pending_openai" });
+    expect(mocks.moderationQueue.send).toHaveBeenCalledOnce();
+  });
+
+  it("keeps beta uploads and private lists in the test namespace while local demo reads select production", async () => {
+    env.UGC_UPLOAD_TEST_PREFIX = "prod";
+    insertSubmission(database.sqlite, {
+      id: "production",
+      userId: "u",
+      kind: "image",
+      markerId: "42",
+      filePath: "prod/original.webp",
+    });
+    mocks.ugcBucket.put.mockImplementation(async (key) => createMockR2Object({ key, size: 3 }));
+    mocks.moderationQueue.send.mockResolvedValue({
+      metadata: { metrics: { backlogCount: 1, backlogBytes: 64 } },
+    });
+    const betaHeaders = {
+      origin: "invalid-origin",
+      referer: "https://beta.opendfieldmap.org/marker/42",
+    };
+    const response = await request(undefined, "image/webp", { headers: betaHeaders });
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as {
+      submission: { id: string; filePath: string };
+      duplicatePoi: unknown;
+    };
+    expect(payload.submission.filePath).toMatch(/^_test\/poi\/poi\/hash\//);
+    expect(payload.duplicatePoi).toBeNull();
+    expect(
+      database.sqlite
+        .prepare("SELECT file_path, status FROM ugc_submissions WHERE id = ?")
+        .get(payload.submission.id),
+    ).toEqual({ file_path: payload.submission.filePath, status: "pending_openai" });
+    const read = (query = "") =>
+      app.request(
+        `http://localhost/uploads/v1/images/mine?markerId=42${query}`,
+        { headers: { ...sessionHeaders, ...betaHeaders } },
+        env,
+      );
+    const testRead = await read();
+    expect(testRead.status).toBe(200);
+    expect(await testRead.json()).toMatchObject({ items: [{ id: payload.submission.id }] });
+    const demoRead = await read("&demoLocal=1");
+    expect(demoRead.status).toBe(200);
+    expect(await demoRead.json()).toMatchObject({ items: [{ id: "production" }] });
+    expect(mocks.moderationQueue.send).toHaveBeenCalledOnce();
+    expect(getRandom).not.toHaveBeenCalled();
+  });
+
+  it("keeps uploads disabled until the deployment explicitly enables them", async () => {
+    env.LOCK_UPLOAD_ENDPOINTS = undefined;
+    const response = await request(undefined, "image/webp");
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({ code: "UPLOADS_TEMPORARILY_DISABLED" });
+    expectNoWrites();
+    expect(getRandom).not.toHaveBeenCalled();
+  });
+
+  it("keeps untrusted POI labels inside the generated object path", async () => {
+    mocks.ugcBucket.put.mockImplementation(async (key) => createMockR2Object({ key, size: 3 }));
+    mocks.moderationQueue.send.mockResolvedValue({
+      metadata: { metrics: { backlogCount: 1, backlogBytes: 64 } },
+    });
+    const response = await request(undefined, "image/webp", {
+      fields: { poiHash: "../", poiType: "矿石" },
+    });
+    expect(response.status).toBe(200);
+    const { submission } = (await response.json()) as {
+      submission: { id: string; snapshotId: string; filePath: string };
+    };
+    expect(submission.filePath).toBe(`_test/poi/unknown/unknown/${submission.snapshotId}.webp`);
+    expect(
+      database.sqlite
+        .prepare("SELECT poi_hash, poi_type, file_path, status FROM ugc_submissions WHERE id = ?")
+        .get(submission.id),
+    ).toEqual({
+      poi_hash: "unknown",
+      poi_type: "unknown",
+      file_path: submission.filePath,
+      status: "pending_openai",
+    });
+    expect(mocks.ugcBucket.put).toHaveBeenCalledOnce();
+    expect(mocks.moderationQueue.send).toHaveBeenCalledWith(
+      expect.objectContaining({ submissionId: submission.id, snapshotId: submission.snapshotId }),
+    );
+  });
+
+  it("rejects missing marker identity before processing or storing the image", async () => {
+    const response = await request(undefined, "image/webp", { fields: { markerId: "" } });
+    expect(response.status).toBe(422);
+    expect(await response.json()).toMatchObject({ code: "VALIDATION_ERROR" });
+    expectNoWrites();
+    expect(getRandom).not.toHaveBeenCalled();
+  });
 
   it("persists one pending image and queues its moderation after a successful retry", async () => {
     mocks.ugcBucket.put.mockImplementation(async (key) => createMockR2Object({ key, size: 2 }));

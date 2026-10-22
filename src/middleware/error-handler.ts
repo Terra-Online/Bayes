@@ -1,4 +1,5 @@
 import type { Context } from "hono";
+import type { StatusCode } from "hono/utils/http-status";
 
 import { toSerializableError } from "@/lib/auth/errors";
 import { ApiError, isApiError, transientDependencyError } from "@/lib/errors";
@@ -11,7 +12,7 @@ function errorJson<E extends AppEnv<{ requestId?: string }>>(
   message: string,
   details?: unknown,
 ) {
-  return new Response(
+  return c.newResponse(
     JSON.stringify({
       code,
       message,
@@ -25,7 +26,7 @@ function errorJson<E extends AppEnv<{ requestId?: string }>>(
       },
     }),
     {
-      status,
+      status: status as StatusCode,
       headers: {
         "content-type": "application/json; charset=utf-8",
         "cache-control": "private, no-store",

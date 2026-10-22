@@ -216,6 +216,31 @@ describe("translation reuse across glossary revisions", () => {
     },
   );
 
+  it("does not present a cached same-language detection as a translation", async () => {
+    seed({ version: currentVersion });
+    await translate("zh-CN", true);
+    const before = database.sqlite.prepare("SELECT * FROM ugc_text_translations").all();
+    // A stale/corrupt KV record is reachable even though migration 0028 rejects
+    // same-language SQL rows. Do not bypass that migration to construct this case.
+    for (const [key, value] of kv) {
+      const record = JSON.parse(value);
+      if (record.translatedText) {
+        kv.set(key, JSON.stringify({ ...record, detectedSourceLanguage: "en" }));
+      }
+    }
+    const result = await translate("zh-CN", true);
+    expect(result.items).toEqual([
+      expect.objectContaining({
+        sourceLanguage: "en",
+        cached: true,
+        error: "Target language cannot be equal to source language.",
+      }),
+    ]);
+    expect(result.items[0]).not.toHaveProperty("translatedContent");
+    expect(fetch).not.toHaveBeenCalled();
+    expect(database.sqlite.prepare("SELECT * FROM ugc_text_translations").all()).toEqual(before);
+  });
+
   it("preserves the no-glossary fallback", async () => {
     seed({ version: "g0", glossary: "" });
     expect((await translate()).items[0]).toMatchObject({

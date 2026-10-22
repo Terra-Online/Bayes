@@ -1282,8 +1282,8 @@ export function createRoutes() {
       async (c) => {
         const { user, submissionId } = requireUserAndSubmissionId(c);
         const submission = await getSubmissionById(c.env.DB, submissionId);
-        if (!submission) {
-          throw new ApiError(404, "SUBMISSION_NOT_FOUND", "Submission was not found.");
+        if (!submission || submission.kind !== "image") {
+          throw new ApiError(404, "SUBMISSION_NOT_FOUND", "Image submission was not found.");
         }
         if (submission.userId !== user.uid) {
           throw new ApiError(

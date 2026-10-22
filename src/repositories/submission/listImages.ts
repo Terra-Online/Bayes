@@ -11,14 +11,19 @@ export function buildImageScopeFilters(
   const clauses: string[] = [];
   const bindings: string[] = [];
   if (payload.pathPrefix) {
-    bindings.push(`${payload.pathPrefix}/%`);
-    clauses.push(`file_path LIKE ?${bindingOffset + bindings.length}`);
+    bindings.push(`${escapeLikePattern(payload.pathPrefix)}/%`);
+    clauses.push(`file_path LIKE ?${bindingOffset + bindings.length} ESCAPE '\\'`);
   }
   if (payload.excludePathPrefix) {
-    bindings.push(`${payload.excludePathPrefix}/%`);
-    clauses.push(`file_path NOT LIKE ?${bindingOffset + bindings.length}`);
+    bindings.push(`${escapeLikePattern(payload.excludePathPrefix)}/%`);
+    clauses.push(`file_path NOT LIKE ?${bindingOffset + bindings.length} ESCAPE '\\'`);
   }
   return { clauses, bindings };
+}
+
+// SQL LIKE treats underscores and percent signs as wildcards; namespace names are literal.
+function escapeLikePattern(value: string): string {
+  return value.replace(/[\\%_]/g, (character) => `\\${character}`);
 }
 
 export async function listActiveImagesByMarker(
@@ -146,15 +151,9 @@ export async function listUserImagesByMarker(
     "kind = 'image'",
     "status IN ('pending_openai', 'pending_audit', 'active', 'flagged', 'remove_request')",
   ];
-  const extraBindings: Array<string | number> = [];
-  if (payload.pathPrefix) {
-    filters.push(`file_path LIKE ?${extraBindings.length + 3}`);
-    extraBindings.push(`${payload.pathPrefix}/%`);
-  }
-  if (payload.excludePathPrefix) {
-    filters.push(`file_path NOT LIKE ?${extraBindings.length + 3}`);
-    extraBindings.push(`${payload.excludePathPrefix}/%`);
-  }
+  const scope = buildImageScopeFilters(payload, 2);
+  filters.push(...scope.clauses);
+  const extraBindings = scope.bindings;
   const limitBindingOffset = extraBindings.length + 2;
 
   const result = await db
