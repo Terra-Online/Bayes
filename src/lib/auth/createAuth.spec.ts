@@ -26,8 +26,7 @@ describe("completed authentication context reuse", () => {
     } as Bindings;
   }
   function schemaReads(database = databases[0]!) {
-    return database.queries.map((query) => query.sql).filter((sql) => /sqlite_master/.test(sql))
-      .length;
+    return database.queries.filter(({ sql }) => /sqlite_master/.test(sql)).length;
   }
   beforeEach(() => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -46,22 +45,18 @@ describe("completed authentication context reuse", () => {
     const first = createAuth(env);
     const context = await first.$context;
     expect(schemaReads()).toBe(1);
-    const schemaStatements = databases[0]!.queries.map((query) => query.sql).length;
+    const schemaStatements = databases[0]!.queries.length;
     expect(
-      databases[0]!.queries
-        .map((query) => query.sql)
-        .some((sql) => /index_list.*local_rowid_fixture/.test(sql)),
+      databases[0]!.queries.some(({ sql }) => /index_list.*local_rowid_fixture/.test(sql)),
     ).toBe(false);
-    expect(
-      databases[0]!.queries
-        .map((query) => query.sql)
-        .filter((sql) => /pragma_table_info/.test(sql)),
-    ).toHaveLength(4);
+    expect(databases[0]!.queries.filter(({ sql }) => /pragma_table_info/.test(sql))).toHaveLength(
+      4,
+    );
     const second = createAuth({ ...env });
     expect(await second.$context).not.toBe(context);
     await second.api.getSession({ headers: new Headers() });
     expect(schemaReads()).toBe(1);
-    expect(databases[0]!.queries.map((query) => query.sql)).toHaveLength(schemaStatements);
+    expect(databases[0]!.queries).toHaveLength(schemaStatements);
     expect(second.options.advanced?.database?.validateSchema).not.toBe(false);
   });
 
@@ -87,15 +82,11 @@ describe("completed authentication context reuse", () => {
     }
     const optimized = createAuth(env);
     await optimized.$context;
-    const scoped = database.queries
-      .map((query) => query.sql)
-      .filter((sql) => /pragma_table_info/.test(sql)).length;
+    const scoped = database.queries.filter(({ sql }) => /pragma_table_info/.test(sql)).length;
     database.queries.length = 0;
     const baseline = betterAuth({ ...optimized.options, database: env.DB });
     await (await baseline.$context).checkSchema?.();
-    const unscoped = database.queries
-      .map((query) => query.sql)
-      .filter((sql) => /pragma_table_info/.test(sql)).length;
+    const unscoped = database.queries.filter(({ sql }) => /pragma_table_info/.test(sql)).length;
     expect(scoped).toBe(4);
     expect(unscoped).toBeGreaterThanOrEqual(scoped + 21);
   });
