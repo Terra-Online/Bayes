@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 
-type UserFixture = {
+export type UserFixture = {
   uid: string;
   email?: string;
   nickname?: string;
@@ -15,8 +15,23 @@ type UserFixture = {
   last_active?: string;
 };
 
-export function insertUser(sqlite: DatabaseSync, input: UserFixture) {
-  const user = {
+export interface SeededUser {
+  uid: string;
+  email: string;
+  nickname: string;
+  role: string;
+  karma: number;
+  points: number;
+  avt: number;
+  uid_number: number | null;
+  uid_suffix: string;
+  nickname_customized: number;
+  created_at: string;
+  last_active: string;
+}
+
+export function insertUser(sqlite: DatabaseSync, input: UserFixture): SeededUser {
+  const user: SeededUser = {
     email: `${input.uid}@example.test`,
     nickname: input.uid,
     role: "n",
