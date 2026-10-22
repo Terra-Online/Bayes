@@ -1,15 +1,21 @@
 import type { DatabaseSync } from "node:sqlite";
 
+export interface NotificationFixture {
+  id: string;
+  recipientUserId: string;
+  category?: "system" | "community";
+  type?: string;
+  createdAt?: string;
+}
+
+export interface SeededNotification {
+  id: string;
+}
+
 export function insertNotification(
   sqlite: DatabaseSync,
-  input: {
-    id: string;
-    recipientUserId: string;
-    category?: "system" | "community";
-    type?: string;
-    createdAt?: string;
-  },
-) {
+  input: NotificationFixture,
+): SeededNotification {
   sqlite
     .prepare(`INSERT INTO notifications
     (id, recipient_user_id, category, type, dedupe_key, created_at)

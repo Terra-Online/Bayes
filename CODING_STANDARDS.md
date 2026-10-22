@@ -43,6 +43,27 @@ when the task explicitly concerns those documents.
     atomicity; identifying historical workarounds; keeping business types with owners.
   - Not responsible for: combining responsibility extraction with behavior changes.
 
+## Testing
+
+- **NO TAUTOLOGICAL TESTS OR TESTS THAT REPEAT THE IMPLEMENTATION.**
+- Prefer business regression tests through `app.request()` with production routes,
+  authentication middleware, and error handling. Check HTTP status, payload, and
+  relevant headers; inspect database state to verify persistence and failure side effects.
+- Use migration-backed, isolated databases with explicit cleanup. Fixtures may seed
+  users, sessions, and scenario data directly; authentication-flow tests exercise the
+  actual flow. Historical migration tests use explicit migration ranges.
+- Execute internal business code normally. Mock external dependencies with fresh,
+  typed mocks that fail on unconfigured operations; reuse `createMockBindings`.
+- Assert mock call counts, arguments, or ordering only to verify business orchestration
+  or external contracts, such as retry, cancellation, duplicate prevention, or request
+  payloads. Distinguish these guarantees from incidental internal calls; explain
+  non-obvious expectations in test names or comments.
+- Give shared fixtures explicit, named input and return types. Group related results
+  by responsibility, such as `{ user, headers }`, and name mocks by their dependency.
+- Retain focused unit tests for complex pure logic and specialized tests for migrations,
+  transactions, query plans, and native Workers behavior. Keep business assertions
+  visible and derive expectations from business rules or external contracts.
+
 ## Working guidance
 
 Agents should keep changes focused and explain compatibility changes and

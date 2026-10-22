@@ -1,20 +1,24 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
+import { type TestDatabase } from "@/test/database/createTestDatabase";
+import { insertAuthUser, insertSession } from "@/test/fixtures/auth";
+import { createAuthCacheFixture, type AuthCacheFixture } from "@/test/fixtures/authCache";
 import { insertUser } from "@/test/fixtures/users";
 
 import { ensureUserProfile, getUserByPublicUid } from "./users";
 
 describe("profile activity write throttling", () => {
   let database: TestDatabase;
+  let http: AuthCacheFixture;
   const identity = { uid: "user-1", email: "user@example.test" };
 
   beforeEach(() => {
-    database = createTestDatabase();
+    http = createAuthCacheFixture();
+    database = http.database;
     insertUser(database.sqlite, { ...identity, karma: 2, nickname: "Tester" });
     database.sqlite.exec("UPDATE users SET last_active = datetime('now', '-5 minutes')");
   });
-  afterEach(() => database.close());
+  afterEach(async () => http.close());
 
   it("uses only reads for repeated activity within an hour, without caching roles or karma", async () => {
     const first = await ensureUserProfile(database.db, identity);
@@ -44,27 +48,53 @@ describe("profile activity write throttling", () => {
   });
 
   it("persists an email change immediately even when activity was just written", async () => {
+    insertAuthUser(database.sqlite, { id: identity.uid, email: "NEW@example.test" });
+    const session = insertSession(database.sqlite, { userId: identity.uid });
+    const response = await http.request("/auth/v1/session", session.headers);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ user: { email: "new@example.test" } });
+    expect(database.sqlite.prepare("SELECT uid, email FROM users").all()).toEqual([
+      { uid: identity.uid, email: "new@example.test" },
+    ]);
     expect(
-      await ensureUserProfile(database.db, { ...identity, email: "NEW@example.test" }),
-    ).toMatchObject({ uid: identity.uid, email: "new@example.test" });
-    expect(database.queries.reduce((total, query) => total + query.changes, 0)).toBe(1);
+      database.queries
+        .filter((query) => /^UPDATE users/.test(query.sql))
+        .reduce((total, query) => total + query.changes, 0),
+    ).toBe(1);
   });
 
   it("preserves first-time profile creation", async () => {
-    const created = await ensureUserProfile(database.db, {
-      uid: "new-user",
+    // Historical bootstrap: auth identity exists before the business profile.
+    insertAuthUser(database.sqlite, {
+      id: "new-user",
       email: "new@example.test",
-      displayName: "NewTester",
+      name: "NewTester",
     });
-    expect(created).toMatchObject({
+    const session = insertSession(database.sqlite, { userId: "new-user" });
+    const response = await http.request("/auth/v1/session", session.headers);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      user: { email: "new@example.test", nickname: "NewTester", role: "n" },
+    });
+    expect(
+      database.sqlite
+        .prepare("SELECT uid, email, nickname, role FROM users WHERE uid = ?")
+        .get("new-user"),
+    ).toEqual({
       uid: "new-user",
       email: "new@example.test",
       nickname: "NewTester",
       role: "n",
     });
     const count = database.queries.length;
-    await ensureUserProfile(database.db, { uid: "new-user", email: "new@example.test" });
-    expect(database.queries).toHaveLength(count + 1);
+    // Fresh credentials avoid the middleware's ten-second completed-user cache.
+    const next = insertSession(database.sqlite, { userId: "new-user" });
+    expect((await http.request("/auth/v1/session", next.headers)).status).toBe(200);
+    const profileQueries = database.queries
+      .slice(count)
+      .filter((query) => /\busers\b/.test(query.sql));
+    expect(profileQueries).toHaveLength(1);
+    expect(profileQueries[0]!.sql.startsWith("SELECT")).toBe(true);
   });
 
   it("resolves users by their public UID", async () => {

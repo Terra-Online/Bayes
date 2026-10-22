@@ -1,134 +1,144 @@
 import { Hono } from "hono";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { runWithAuthRequest } from "@/lib/auth/createAuth";
+import { onAppError } from "@/middleware/error-handler";
+import { PublicReadCache } from "@/publicRead/origin/entrypoint";
 import type { PublicSubmissionComment } from "@/repositories/submission/types";
-import type { AppEnv, AuthUser, Bindings } from "@/types/app";
+import { createMockBindings, type MockBindings } from "@/test/bindings";
+import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
+import { insertAuthenticatedUser, type SessionHeaders } from "@/test/fixtures/auth";
+import { insertSubmission } from "@/test/fixtures/submissions";
+import { insertUser } from "@/test/fixtures/users";
+import type { AppEnv, Bindings } from "@/types/app";
 
 import { createRoutes } from "./createRoutes";
 
-const mocks = vi.hoisted(() => ({
-  identity: vi.fn(),
-  imagesCache: vi.fn(),
-  commentsCache: vi.fn(),
-  mine: vi.fn(),
-  imageReactions: vi.fn(),
-  commentState: vi.fn(),
+const workersCache = vi.hoisted(() => ({ fetch: vi.fn() }));
+vi.mock("cloudflare:workers", () => ({
+  DurableObject: class {},
+  exports: { PublicReadCache: workersCache },
+  WorkerEntrypoint: class {
+    constructor(
+      protected ctx: ExecutionContext,
+      protected env: Bindings,
+    ) {}
+  },
 }));
+vi.mock("@cloudflare/containers", () => ({ getRandom: vi.fn() }));
 
-vi.mock("@/middleware/auth", () => ({
-  resolveAuthIdentity: mocks.identity,
-  resolveContextAuthUser: async (c: { get: (key: string) => unknown }) => c.get("authUser"),
-}));
-vi.mock("cloudflare:workers", () => ({ DurableObject: class {}, exports: {} }));
-vi.mock("@/publicRead/client/client", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/publicRead/client/client")>()),
-  readPublicImagesFromWorkersCache: mocks.imagesCache,
-  readPublicCommentsFromWorkersCache: mocks.commentsCache,
-}));
-vi.mock("@/repositories/submission/listImages", () => ({
-  listImageViewerReactionsByMarker: mocks.imageReactions,
-  listActiveImagesByMarker: vi.fn(),
-  listUserImagesByMarker: mocks.mine,
-}));
-vi.mock("@/repositories/submission/listComments", () => ({
-  listCommentViewerStateByMarker: mocks.commentState,
-  listActiveCommentsByMarker: vi.fn(),
-  listUserCommentsByMarker: vi.fn(),
-}));
-
-function cached(payload: unknown, options?: { headers: Record<string, string> }) {
-  return { payload, headers: options?.headers ?? {} };
-}
-
-const env = { DB: {} } as Bindings;
-const app = new Hono<AppEnv<{ authUser?: AuthUser; requestId: string }>>();
-app.get("/images", async (c, next) => {
-  if (c.req.query("includeMine") !== "1") {
-    return next();
-  }
-  c.set("authUser", { uid: "viewer", role: "n" } as AuthUser);
-  return next();
-});
-app.route("/", createRoutes());
-
-function comment(
-  id: string,
-  parentId: string | null,
-  replies: PublicSubmissionComment[] = [],
-): PublicSubmissionComment {
-  return {
-    id,
-    parentId,
-    markerId: "marker-1",
-    replies,
-    depth: parentId ? 1 : 0,
-    createdAt: "2026-09-05",
-    content: id,
-    replyCount: replies.length,
-    score: 0,
-    viewerVote: 0,
-    flagged: false,
-    poiHash: "hash",
-    poiType: "poi",
-    editUndoAvailable: false,
-    author: null,
-    status: "active",
-  };
-}
+let database: TestDatabase;
+let bindings: MockBindings;
+let app: Hono<AppEnv>;
+let viewerHeaders: SessionHeaders;
+let lifetimes: Promise<unknown>[][];
 
 beforeEach(() => {
-  vi.resetAllMocks();
-  mocks.identity.mockResolvedValue({ uid: "viewer" });
-  mocks.imageReactions.mockResolvedValue(new Map());
-  mocks.commentState.mockResolvedValue({ pendingComments: [], reactions: new Map() });
+  workersCache.fetch.mockReset();
+  database = createTestDatabase();
+  viewerHeaders = insertAuthenticatedUser(database.sqlite, { uid: "viewer" }).headers;
+  insertUser(database.sqlite, { uid: "other" });
+  bindings = createMockBindings({ DB: database.db });
+  bindings.bindings.UGC_ASSET_BASE_URL = "https://assets.example";
+  bindings.bindings.UGC_UPLOAD_TEST_PREFIX = "";
+  app = new Hono<AppEnv>().onError(onAppError).route("/uploads/v1", createRoutes());
+  lifetimes = [];
+  // Simulate the external Workers transport while executing the actual origin and SQL.
+  workersCache.fetch.mockImplementation((request: Request) => {
+    const pending: Promise<unknown>[] = [];
+    lifetimes.push(pending);
+    const ctx = {
+      waitUntil: (promise: Promise<unknown>) => pending.push(promise),
+    } as unknown as ExecutionContext;
+    return new PublicReadCache(ctx, bindings.bindings).fetch(request);
+  });
+});
+afterEach(async () => {
+  await Promise.all(lifetimes.flat());
+  vi.restoreAllMocks();
+  database.close();
 });
 
+async function request(path: string, headers?: HeadersInit) {
+  const pending: Promise<unknown>[] = [];
+  lifetimes.push(pending);
+  return runWithAuthRequest(() =>
+    app.request(`https://api.example.com/uploads/v1${path}`, { headers }, bindings.bindings, {
+      waitUntil: (promise: Promise<unknown>) => pending.push(promise),
+    } as unknown as ExecutionContext),
+  );
+}
+function businessQueries() {
+  return database.queries.filter(({ sql }) => /ugc_submissions/.test(sql));
+}
+function reactionQueries() {
+  return businessQueries().filter(
+    ({ sql }) => /AS viewer_(upvoted|vote)/.test(sql) && !/WITH/.test(sql),
+  );
+}
+
+// Returned-ID SQL observation protects the read budget; authentication queries are separate.
 describe("personalized UGC cache overlays", () => {
   it("only requests reactions for images returned by the public cache", async () => {
-    mocks.imagesCache.mockResolvedValue(
-      cached({ items: [{ id: "image-1", markerId: "marker-1" }] }),
-    );
-    mocks.imageReactions.mockResolvedValue(
-      new Map([["image-1", { upvoted: true, flagged: false }]]),
-    );
-    const response = await app.request(
-      "/images?markerIds=marker-1,marker-2&scope=prod",
-      {
-        headers: { cookie: "session=test" },
-      },
-      env,
-    );
-    expect(mocks.imageReactions).toHaveBeenCalledWith(env.DB, {
-      userId: "viewer",
-      markerIds: ["marker-1", "marker-2"],
-      submissionIds: ["image-1"],
-      pathPrefix: undefined,
-      excludePathPrefix: "_test",
+    insertSubmission(database.sqlite, { id: "image-1", userId: "other", kind: "image" });
+    insertSubmission(database.sqlite, {
+      id: "not-returned",
+      userId: "other",
+      kind: "image",
+      createdAt: "2026-09-01",
     });
+    database.sqlite.exec(
+      "INSERT INTO ugc_submission_upvotes (submission_id, user_id, active) VALUES ('image-1', 'viewer', 1), ('not-returned', 'viewer', 1)",
+    );
+    const response = await request(
+      "/images?markerIds=marker-1,marker-2&scope=prod&limit=1",
+      viewerHeaders,
+    );
+    expect(reactionQueries()).toHaveLength(1);
+    expect(reactionQueries()[0]!.values).toEqual([
+      "viewer",
+      '["marker-1","marker-2"]',
+      '["image-1"]',
+      "_test/%",
+    ]);
     expect(response.headers.get("cache-control")).toBe("private, no-store");
-    expect(await response.json()).toMatchObject({ items: [{ id: "image-1", upvoted: true }] });
+    expect(await response.json()).toMatchObject({
+      items: [{ id: "image-1", upvoted: true, flagged: false }],
+    });
   });
 
   it("includes returned nested replies in reaction lookups while preserving pending roots", async () => {
-    const root = comment("root", null, [comment("reply", "root", [comment("nested", "reply")])]);
-    mocks.commentsCache.mockResolvedValue(cached({ items: [root] }));
-    mocks.commentState.mockResolvedValue({
-      pendingComments: [{ ...comment("pending", null), status: "pending_audit" }],
-      reactions: new Map([["nested", { viewerVote: -1, flagged: true }]]),
+    for (const [id, parentId, depth] of [
+      ["root", null, 0],
+      ["reply", "root", 1],
+      ["nested", "reply", 2],
+    ] as const) {
+      insertSubmission(database.sqlite, { id, parentId, depth, userId: "other" });
+    }
+    insertSubmission(database.sqlite, { id: "pending", userId: "viewer", status: "pending_audit" });
+    insertSubmission(database.sqlite, {
+      id: "other-pending",
+      userId: "other",
+      status: "pending_audit",
     });
-    const response = await app.request(
-      "/comments?markerId=marker-1",
-      { headers: { cookie: "session=test" } },
-      env,
-    );
-    expect(mocks.commentState).toHaveBeenCalledWith(env.DB, {
-      userId: "viewer",
-      markerIds: ["marker-1"],
-      submissionIds: ["root", "reply", "nested"],
-      pendingLimit: 200,
-    });
+    database.sqlite
+      .exec(`INSERT INTO ugc_submission_votes (submission_id, user_id, value) VALUES ('nested', 'viewer', -1), ('root', 'other', 1);
+      INSERT INTO ugc_submission_flags (submission_id, user_id, active) VALUES ('nested', 'viewer', 1), ('root', 'other', 1);`);
+    const response = await request("/comments?markerId=marker-1", viewerHeaders);
+    expect(reactionQueries()).toHaveLength(1);
+    expect(reactionQueries()[0]!.values).toEqual([
+      "viewer",
+      '["marker-1"]',
+      '["root","reply","nested"]',
+    ]);
+    expect(businessQueries().find(({ sql }) => /LIMIT \?3/.test(sql))!.values).toEqual([
+      "viewer",
+      '["marker-1"]',
+      200,
+    ]);
     const payload = (await response.json()) as { items: PublicSubmissionComment[] };
-    expect(payload.items.map((item) => item.id)).toContain("pending");
+    expect(payload.items.map((item) => item.id)).toEqual(["pending", "root"]);
+    expect(payload.items[1]).toMatchObject({ viewerVote: 0, flagged: false });
     expect(payload.items.find((item) => item.id === "root")!.replies[0]!.replies[0]).toMatchObject({
       id: "nested",
       viewerVote: -1,
@@ -140,128 +150,131 @@ describe("personalized UGC cache overlays", () => {
   it.each(["images", "comments"])(
     "keeps partial metadata for authenticated %s responses",
     async (kind) => {
-      const cache = kind === "images" ? mocks.imagesCache : mocks.commentsCache;
-      cache.mockResolvedValue(
-        cached(
-          { items: [], partial: true },
-          {
-            headers: { "x-oem-partial-response": "true", "x-oem-failed-marker-count": "2" },
-          },
-        ),
+      workersCache.fetch.mockImplementation(async (request: Request) =>
+        new URL(request.url).searchParams.get("markerId") === "marker-1"
+          ? Response.json({ items: [] })
+          : Response.json({}, { status: 503 }),
       );
-      const response = await app.request(
-        `/${kind}?markerId=marker-1`,
-        { headers: { cookie: "session=test" } },
-        env,
+      const response = await request(
+        `/${kind}?markerIds=marker-1,failed-1,failed-2`,
+        viewerHeaders,
       );
-      expect(await response.json()).toEqual({ items: [], partial: true });
+      expect(await response.json()).toEqual({
+        items: [],
+        partial: true,
+        failedMarkerIds: ["failed-1", "failed-2"],
+      });
       expect(response.headers.get("x-oem-partial-response")).toBe("true");
       expect(response.headers.get("x-oem-failed-marker-count")).toBe("2");
       expect(response.headers.get("cache-control")).toBe("private, no-store");
-      const overlay = kind === "images" ? mocks.imageReactions : mocks.commentState;
-      expect(overlay).toHaveBeenCalledWith(env.DB, expect.objectContaining({ submissionIds: [] }));
+      expect(reactionQueries()).toEqual([]);
+      // An empty public result still reads the viewer's pending comments.
+      expect(businessQueries()).toHaveLength(kind === "comments" ? 1 : 0);
     },
   );
 
   it.each(["images", "comments"])(
     "preserves %s origin errors without a viewer lookup",
     async (kind) => {
-      const cache = kind === "images" ? mocks.imagesCache : mocks.commentsCache;
-      cache.mockResolvedValue(
-        Response.json(
-          { code: "PUBLIC_CACHE_READ_FAILED" },
-          {
-            status: 503,
-            headers: { "cache-control": "private, no-store", "retry-after": "5" },
-          },
-        ),
-      );
-      const response = await app.request(
-        `/${kind}?markerId=marker-1`,
-        { headers: { cookie: "session=test" } },
-        env,
-      );
+      workersCache.fetch.mockImplementation(async () => Response.json({}, { status: 503 }));
+      const response = await request(`/${kind}?markerId=marker-1`, viewerHeaders);
       expect(response.status).toBe(503);
       expect(response.headers.get("retry-after")).toBe("5");
-      expect(mocks.imageReactions).not.toHaveBeenCalled();
-      expect(mocks.commentState).not.toHaveBeenCalled();
+      expect(businessQueries()).toEqual([]);
     },
   );
 
   it.each(["images", "comments"])(
     "keeps public cache policy when %s identity is absent",
     async (kind) => {
-      mocks.identity.mockResolvedValue(null);
-      const cache = kind === "images" ? mocks.imagesCache : mocks.commentsCache;
-      cache.mockResolvedValue(
-        cached({ items: [] }, { headers: { "cache-control": "public, max-age=5" } }),
-      );
-      const response = await app.request(
-        `/${kind}?markerId=marker-1`,
-        { headers: { cookie: "session=test" } },
-        env,
-      );
+      workersCache.fetch.mockImplementation(async () => Response.json({ items: [] }));
+      const response = await request(`/${kind}?markerId=marker-1`, {
+        authorization: "Bearer invalid-session",
+      });
       expect(await response.json()).toEqual({ items: [] });
-      expect(response.headers.get("cache-control")).toBe("public, max-age=5");
-      expect(mocks.imageReactions).not.toHaveBeenCalled();
-      expect(mocks.commentState).not.toHaveBeenCalled();
+      // Real client policies: empty images live 10 seconds; empty comments live 5.
+      expect(response.headers.get("cache-control")).toBe(
+        kind === "images" ? "public, max-age=10" : "public, max-age=5",
+      );
+      expect(businessQueries()).toEqual([]);
     },
   );
 
   it.each(["images", "comments"])(
     "does not read viewer state for anonymous or public-only %s",
     async (kind) => {
-      const cache = kind === "images" ? mocks.imagesCache : mocks.commentsCache;
-      cache.mockImplementation(async () =>
-        cached({ items: [] }, { headers: { "cache-control": "public, max-age=15" } }),
-      );
+      workersCache.fetch.mockImplementation(async () => Response.json({ items: [] }));
       for (const publicOnly of [false, true]) {
-        const response = await app.request(
+        const response = await request(
           `/${kind}?markerId=marker-1${publicOnly ? "&publicOnly=1" : ""}`,
-          {
-            headers: publicOnly ? { cookie: "session=test" } : {},
-          },
-          env,
+          publicOnly ? viewerHeaders : undefined,
         );
         expect(response.status).toBe(200);
-        expect(response.headers.get("cache-control")).toBe("public, max-age=15");
+        expect(response.headers.get("cache-control")).toBe(
+          kind === "images" ? "public, max-age=10" : "public, max-age=5",
+        );
       }
-      expect(mocks.identity).not.toHaveBeenCalled();
-      expect(mocks.imageReactions).not.toHaveBeenCalled();
-      expect(mocks.commentState).not.toHaveBeenCalled();
+      expect(database.queries).toEqual([]);
     },
   );
 });
 
 describe("combined point image reads", () => {
   it("shares the authenticated user, keeps private results outside the public cache", async () => {
-    mocks.imagesCache.mockResolvedValue(cached({ items: [{ id: "public", markerId: "m" }] }));
-    mocks.mine.mockResolvedValue([{ id: "pending", markerId: "m", status: "pending_audit" }]);
-    const response = await app.request("/images?includeMine=1&markerId=m&scope=test", {}, env);
+    insertSubmission(database.sqlite, {
+      id: "public",
+      userId: "other",
+      kind: "image",
+      markerId: "m",
+      filePath: "_test/public.webp",
+    });
+    insertSubmission(database.sqlite, {
+      id: "pending",
+      userId: "viewer",
+      kind: "image",
+      markerId: "m",
+      status: "pending_audit",
+      filePath: "_test/pending.webp",
+    });
+    const response = await request("/images?includeMine=1&markerId=m&scope=test", viewerHeaders);
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("private, no-store");
     expect(await response.json()).toMatchObject({
       images: { items: [{ id: "public" }] },
       mine: { items: [{ id: "pending" }] },
     });
-    expect(mocks.mine).toHaveBeenCalledWith(
-      env.DB,
-      expect.objectContaining({ userId: "viewer", pathPrefix: "_test", limit: 6 }),
-    );
-    expect(mocks.imageReactions).toHaveBeenCalledWith(
-      env.DB,
-      expect.objectContaining({ userId: "viewer", submissionIds: ["public"] }),
-    );
-    expect(mocks.imagesCache.mock.calls[0]![0]).not.toHaveProperty("userId");
-    expect(mocks.identity).not.toHaveBeenCalled();
+    expect(
+      businessQueries().find(({ sql }) => /idx_ugc_user_kind_poi_created/.test(sql))!.values,
+    ).toEqual(["viewer", '["m"]', "_test/%", 6]);
+    expect(reactionQueries()[0]!.values).toEqual(["viewer", '["m"]', '["public"]', "_test/%"]);
+    const cachedRequest = workersCache.fetch.mock.calls[0]![0] as Request;
+    expect([...new URL(cachedRequest.url).searchParams.keys()]).toEqual([
+      "markerId",
+      "limit",
+      "namespace",
+      "assetBaseUrl",
+    ]);
+    const headerNames: string[] = [];
+    cachedRequest.headers.forEach((_value, name) => headerNames.push(name));
+    expect(headerNames).toEqual([]);
   });
+
   it.each(["images", "mine"])("preserves the other section when %s fails", async (part) => {
-    mocks.imagesCache.mockResolvedValue(cached({ items: [] }));
-    mocks.mine.mockResolvedValue([]);
-    (part === "images" ? mocks.imagesCache : mocks.mine).mockRejectedValue(
-      new Error("private diagnostic"),
+    // A generic public-section error is a D1 overlay failure (500). External
+    // fetch failures are translated by the real client and would yield section 503.
+    workersCache.fetch.mockImplementation(async () =>
+      Response.json({ items: part === "images" ? [{ id: "public", markerId: "m" }] : [] }),
     );
-    const response = await app.request("/images?includeMine=1&markerId=m", {}, env);
+    database.hooks.beforeQuery = (sql) => {
+      if (
+        part === "images"
+          ? /AS viewer_upvoted/.test(sql)
+          : /idx_ugc_user_kind_poi_created/.test(sql)
+      ) {
+        throw new Error("private diagnostic");
+      }
+    };
+    const response = await request("/images?includeMine=1&markerId=m", viewerHeaders);
     expect(response.status).toBe(207);
     expect(response.headers.get("x-oem-partial-response")).toBe("true");
     const body = (await response.json()) as Record<string, unknown>;
@@ -269,12 +282,21 @@ describe("combined point image reads", () => {
     expect(body[part === "images" ? "mine" : "images"]).toEqual({ items: [] });
     expect(JSON.stringify(body)).not.toContain("private diagnostic");
   });
+
   it("preserves failed marker IDs alongside pending images", async () => {
-    mocks.imagesCache.mockResolvedValue(
-      cached({ items: [], partial: true, failedMarkerIds: ["m"] }),
+    workersCache.fetch.mockImplementation(async (request: Request) =>
+      new URL(request.url).searchParams.get("markerId") === "m"
+        ? Response.json({}, { status: 503 })
+        : Response.json({ items: [] }),
     );
-    mocks.mine.mockResolvedValue([{ id: "pending", markerId: "m" }]);
-    const response = await app.request("/images?includeMine=1&markerId=m", {}, env);
+    insertSubmission(database.sqlite, {
+      id: "pending",
+      userId: "viewer",
+      kind: "image",
+      markerId: "m",
+      status: "pending_audit",
+    });
+    const response = await request("/images?includeMine=1&markerIds=m,empty", viewerHeaders);
     expect(response.status).toBe(207);
     expect(await response.json()).toMatchObject({
       images: { failedMarkerIds: ["m"] },
@@ -283,7 +305,69 @@ describe("combined point image reads", () => {
   });
 });
 
-vi.mock("@cloudflare/containers", () => ({ getRandom: vi.fn() }));
-vi.mock("@/middleware/rate-limit", () => ({
-  rateLimit: () => async (_c: unknown, next: () => Promise<void>) => next(),
-}));
+describe("public list cache failures through HTTP", () => {
+  it("returns successful markers as an uncacheable partial response", async () => {
+    workersCache.fetch.mockImplementation((request: Request) => {
+      const markerId = new URL(request.url).searchParams.get("markerId");
+      if (markerId === "failed") {
+        return Promise.reject(new Error("Network connection lost."));
+      }
+      return Promise.resolve(
+        Response.json({
+          items: [{ id: "image-1", markerId }],
+        }),
+      );
+    });
+
+    const response = await request("/images?markerIds=success,failed");
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+    expect(response.headers.get("x-oem-partial-response")).toBe("true");
+    expect(response.headers.get("x-oem-failed-marker-count")).toBe("1");
+    await expect(response.json()).resolves.toEqual({
+      items: [{ id: "image-1", markerId: "success" }],
+      partial: true,
+      failedMarkerIds: ["failed"],
+    });
+  });
+
+  it("returns an error when every marker read fails", async () => {
+    workersCache.fetch.mockRejectedValue(new Error("Network connection lost."));
+
+    const response = await request("/images?markerIds=first,second");
+
+    expect(response.status).toBe(502);
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+    await expect(response.json()).resolves.toMatchObject({
+      code: "PUBLIC_CACHE_READ_FAILED",
+    });
+  });
+  it("keeps partial responses uncacheable and propagates overload backoff without retries", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    workersCache.fetch.mockImplementation(async (request: Request) => {
+      if (new URL(request.url).searchParams.get("markerId") === "failed") {
+        return Response.json({}, { status: 503 });
+      }
+      return Response.json({ items: [] });
+    });
+    const partial = await request("/comments?markerIds=empty,failed");
+    expect(partial.status).toBe(200);
+    expect(partial.headers.get("cache-control")).toBe("private, no-store");
+    expect(await partial.json()).toEqual({ items: [], partial: true, failedMarkerIds: ["failed"] });
+    const failed = await request("/comments?markerId=failed");
+    expect(failed.status).toBe(503);
+    expect(failed.headers.get("retry-after")).toBe("5");
+    expect(workersCache.fetch).toHaveBeenCalledTimes(3);
+  });
+
+  it("handles platform overload before the cache entrypoint is reached", async () => {
+    workersCache.fetch.mockRejectedValue(
+      Object.assign(new Error("Too much work queued"), { overloaded: true }),
+    );
+    const response = await request("/images?markerId=failed");
+    expect(response.status).toBe(503);
+    expect(response.headers.get("retry-after")).toBe("5");
+    expect(workersCache.fetch).toHaveBeenCalledTimes(1);
+  });
+});

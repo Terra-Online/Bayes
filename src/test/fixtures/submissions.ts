@@ -19,8 +19,27 @@ export type SubmissionFixture = {
   moderationNote?: string | null;
 };
 
-export function insertSubmission(sqlite: DatabaseSync, input: SubmissionFixture) {
-  const item = {
+export interface SeededSubmission {
+  id: string;
+  userId: string;
+  kind: "image" | "comment";
+  markerId: string;
+  poiHash: string;
+  poiType: string;
+  snapshotId: string;
+  status: string;
+  content: string | null;
+  filePath: string | null;
+  parentId: string | null;
+  depth: number;
+  createdAt: string;
+  updatedAt: string;
+  mimeType: string | null;
+  moderationNote: string | null;
+}
+
+export function insertSubmission(sqlite: DatabaseSync, input: SubmissionFixture): SeededSubmission {
+  const item: SeededSubmission = {
     kind: "comment",
     markerId: "marker-1",
     poiHash: "hash",

@@ -1,47 +1,42 @@
 import { Hono } from "hono";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { runWithAuthRequest } from "@/lib/auth/createAuth";
 import { onAppError } from "@/middleware/error-handler";
+import { createMockBindings, type MockBindings } from "@/test/bindings";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
-import type { AppEnv, AuthUser, Bindings } from "@/types/app";
+import { insertAuthenticatedUser, type AuthenticatedUserFixture } from "@/test/fixtures/auth";
+import type { AppEnv } from "@/types/app";
 
 import { createRoutes as createAccountAuthRoutes } from "./accountRoutes";
 
-vi.mock("@/middleware/auth", () => ({
-  requireAuth: async (_c: unknown, next: () => Promise<void>) => next(),
-}));
-vi.mock("@/middleware/rate-limit", () => ({
-  rateLimit: () => async (_c: unknown, next: () => Promise<void>) => next(),
-}));
-
 describe("provider-based unlink compatibility", () => {
   let database: TestDatabase;
-  let app: Hono<AppEnv<{ authUser?: AuthUser; requestId: string }>>;
-  const forward = vi.fn(async () => new Response("{}"));
+  let app: Hono<AppEnv<{ requestId: string }>>;
+  let external: MockBindings;
+  let owner: AuthenticatedUserFixture;
   beforeEach(() => {
-    forward.mockClear();
     database = createTestDatabase();
-    database.sqlite.exec(
-      "INSERT INTO auth_users(id,name,email) VALUES ('owner','Owner','owner@example.com'),('other','Other','other@example.com')",
-    );
-    app = new Hono<AppEnv<{ authUser?: AuthUser; requestId: string }>>();
+    external = createMockBindings({ DB: database.db });
+    external.authRateLimit.limit.mockResolvedValue({ success: true });
+    owner = insertAuthenticatedUser(database.sqlite, { uid: crypto.randomUUID() });
+    insertAuthenticatedUser(database.sqlite, { uid: "other" });
+    app = new Hono<AppEnv<{ requestId: string }>>();
     app.onError(onAppError);
-    app.use("*", async (c, next) => {
-      c.set("authUser", { uid: "owner" } as AuthUser);
-      await next();
-    });
-    app.route("/", createAccountAuthRoutes({ forwardToAuthJsonPath: forward }));
+    app.route("/auth/v1", createAccountAuthRoutes());
   });
   afterEach(() => database.close());
   function request(provider: string) {
-    return app.request(
-      "/unlink-account",
-      {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ provider }),
-      },
-      { DB: database.db } as Bindings,
+    return runWithAuthRequest(() =>
+      app.request(
+        "/auth/v1/unlink-account",
+        {
+          method: "POST",
+          headers: { "content-type": "application/json", ...owner.headers },
+          body: JSON.stringify({ provider }),
+        },
+        external.bindings,
+      ),
     );
   }
   it.each(["github", "google", "discord", "email"])(
@@ -50,14 +45,26 @@ describe("provider-based unlink compatibility", () => {
       const storedProvider = provider === "email" ? "credential" : provider;
       database.sqlite
         .prepare("INSERT INTO auth_accounts(id,accountId,providerId,userId) VALUES (?,?,?,?)")
-        .run("local-id", "external-id", storedProvider, "owner");
+        .run("local-id", "external-id", storedProvider, owner.user.uid);
       database.sqlite
         .prepare("INSERT INTO auth_accounts(id,accountId,providerId,userId) VALUES (?,?,?,?)")
         .run("other-local", "other-external", storedProvider, "other");
-      expect((await request(provider)).status).toBe(200);
-      expect(forward).toHaveBeenCalledWith(expect.anything(), "/unlink-account", {
-        accountId: "local-id",
-      });
+      // Better Auth refuses the final login method, so retain a different provider.
+      database.sqlite
+        .prepare("INSERT INTO auth_accounts(id,accountId,providerId,userId) VALUES (?,?,?,?)")
+        .run(
+          "alternate",
+          "alternate-external",
+          provider === "github" ? "google" : "github",
+          owner.user.uid,
+        );
+      const response = await request(provider);
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ status: true });
+      expect(database.sqlite.prepare("SELECT id FROM auth_accounts ORDER BY id").all()).toEqual([
+        { id: "alternate" },
+        { id: "other-local" },
+      ]);
     },
   );
   it("does not select another user's account", async () => {
@@ -67,15 +74,22 @@ describe("provider-based unlink compatibility", () => {
     const response = await request("github");
     expect(response.status).toBe(400);
     expect(await response.json()).toMatchObject({ code: "ACCOUNT_NOT_LINKED" });
-    expect(forward).not.toHaveBeenCalled();
+    expect(database.sqlite.prepare("SELECT id FROM auth_accounts ORDER BY id").all()).toEqual([
+      { id: "other-id" },
+    ]);
   });
   it("rejects ambiguous provider bindings", async () => {
-    database.sqlite.exec(
-      "INSERT INTO auth_accounts(id,accountId,providerId,userId) VALUES ('a','external-a','github','owner'),('b','external-b','github','owner')",
-    );
+    database.sqlite
+      .prepare(
+        "INSERT INTO auth_accounts(id,accountId,providerId,userId) VALUES ('a','external-a','github',?),('b','external-b','github',?)",
+      )
+      .run(owner.user.uid, owner.user.uid);
     const response = await request("github");
     expect(response.status).toBe(409);
     expect(await response.json()).toMatchObject({ code: "PROVIDER_CONFLICT" });
-    expect(forward).not.toHaveBeenCalled();
+    expect(database.sqlite.prepare("SELECT id FROM auth_accounts ORDER BY id").all()).toEqual([
+      { id: "a" },
+      { id: "b" },
+    ]);
   });
 });

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 
+import { executeNativeSql as sql } from "./native-test-database.mjs";
 import { bundleFixture, deferred, Miniflare, root, within } from "./worker-test-runtime.mjs";
 
 const temporary = await mkdtemp(join(tmpdir(), "bayes-auth-regression-"));
@@ -14,15 +15,6 @@ const migration = await readFile(
   join(root, "migrations/0036_file_path_and_vote_indexes.sql"),
   "utf8",
 );
-
-async function sql(database, source) {
-  for (const text of source
-    .split(";")
-    .map((part) => part.trim())
-    .filter(Boolean)) {
-    await database.prepare(text).run();
-  }
-}
 
 async function runtime() {
   const fixture = await bundleFixture(temporary, "authRuntime");
@@ -56,6 +48,8 @@ async function runtime() {
   try {
     for (const binding of ["DB", "DB_SECOND"]) {
       const database = await worker.getD1Database(binding);
+      // Keep this specialist schema: cold enumeration counts measure auth initialization,
+      // and the index probe below needs tables without 0036 already applied.
       for (const name of [
         "0002_better_auth.sql",
         "0005_auth_verifications_unique_identifier.sql",
@@ -218,13 +212,7 @@ try {
             };
           }
           const before = await inspect();
-          const applied = [];
-          for (const statement of migration
-            .split(";")
-            .map((part) => part.trim())
-            .filter(Boolean)) {
-            applied.push((await db.prepare(statement).run()).meta);
-          }
+          const applied = (await sql(db, migration)).map((result) => result.meta);
           await sql(db, migration); // Idempotency on native D1 too.
           const after = await inspect();
           assert.deepEqual(after.file.results, before.file.results);

@@ -1,124 +1,62 @@
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { ApiError } from "@/lib/errors";
 import { onAppError } from "@/middleware/error-handler";
+import { createMockBindings, type MockBindings } from "@/test/bindings";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
+import {
+  insertAuthenticatedUser,
+  insertAuthUser,
+  insertSession,
+  type SeededSession,
+} from "@/test/fixtures/auth";
 import { seedImageReadScenario } from "@/test/fixtures/imageReadScenario";
-import type { AppEnv, AuthUser } from "@/types/app";
-
-vi.mock("cloudflare:workers", () => ({ DurableObject: class {}, exports: {} }));
-vi.mock("@cloudflare/containers", () => ({ getRandom: vi.fn() }));
-vi.mock("@/lib/auth/createAuth", () => ({
-  createAuth: () => ({
-    api: {
-      getSession: async ({ headers }: { headers: Headers }) =>
-        headers.get("authorization") === "Bearer viewer"
-          ? { user: { id: "viewer", email: "viewer@example.com", name: "Viewer" } }
-          : null,
-    },
-  }),
-}));
-vi.mock("@/middleware/auth", async () => {
-  const { ApiError } = await import("@/lib/errors");
-  return {
-    resolveContextAuthUser: async (c: { get: (key: string) => unknown }) => {
-      const user = c.get("authUser") as AuthUser | undefined;
-      if (!user) {
-        throw new ApiError(401, "AUTH_REQUIRED", "Authentication required.");
-      }
-      return user;
-    },
-  };
-});
-vi.mock("@/services/upload/commentTranslation", () => ({
-  translateVisibleComments: vi.fn(async () => ({ items: [] })),
-}));
+import type { AppEnv } from "@/types/app";
 
 import { createRoutes } from "./createRoutes";
 
-const activeUser: AuthUser = {
-  uid: "author",
-  publicUid: "000001AA",
-  role: "n",
-  karma: 0,
-  avatar: 0,
-  email: "active@example.com",
-  nickname: "Active",
-  needsProfileSetup: false,
-};
-
-const suspendedUser: AuthUser = {
-  ...activeUser,
-  uid: "suspended-user",
-  role: "s",
-};
+vi.mock("cloudflare:workers", () => ({ DurableObject: class {}, exports: {} }));
+vi.mock("@cloudflare/containers", () => ({ getRandom: vi.fn() }));
 
 let database: TestDatabase;
-let db: D1Database;
+let mocks: MockBindings;
+let app: Hono<AppEnv>;
+let activeSession: SeededSession;
+let suspendedSession: SeededSession;
 
 beforeEach(() => {
+  vi.spyOn(console, "error").mockImplementation(() => undefined);
   database = createTestDatabase();
   seedImageReadScenario(database.sqlite);
-  db = database.db;
+  insertAuthUser(database.sqlite, { id: "author" });
+  activeSession = insertSession(database.sqlite, { userId: "author" });
+  suspendedSession = insertAuthenticatedUser(database.sqlite, { uid: "suspended-user", role: "s" });
+  mocks = createMockBindings({ DB: database.db });
+  mocks.publicRateLimit.limit.mockResolvedValue({ success: true });
+  app = new Hono<AppEnv>();
+  app.onError(onAppError);
+  app.route("/uploads/v1", createRoutes());
 });
 
-afterEach(() => database.close());
+afterEach(() => {
+  database.close();
+  vi.restoreAllMocks();
+});
 
-function request(
-  path: string,
-  options: {
-    method?: string;
-    headers?: Record<string, string>;
-    body?: string;
-    prefix?: string;
-    user?: AuthUser;
-    locked?: string;
-    productionErrors?: boolean;
-  } = {},
-) {
-  const app = new Hono<AppEnv<{ authUser?: AuthUser; requestId?: string }>>();
-  app.onError(
-    options.productionErrors
-      ? onAppError
-      : (error, _c) => {
-          if (error instanceof ApiError) {
-            return new Response(JSON.stringify({ code: error.code }), { status: error.status });
-          }
-          throw error;
-        },
-  );
-  if (options.user) {
-    app.use("*", async (c, next) => {
-      c.set("authUser", options.user!);
-      await next();
-    });
-  }
-  app.route("/uploads/v1", createRoutes());
-  return app.request(
-    "http://localhost/uploads/v1" + path,
-    {
-      method: options.method ?? "GET",
-      headers: options.headers,
-      body: options.body,
-    },
-    {
-      DB: db,
-      LOCK_UPLOAD_ENDPOINTS: options.locked ?? "true",
-      UGC_UPLOAD_TEST_PREFIX: options.prefix ?? "",
-      UGC_ASSET_BASE_URL: "https://assets.example.com",
-      BETTER_AUTH_URL: "https://api.example.com",
-      OEM_PUBLIC_RATE_LIMIT: { limit: async () => ({ success: true }) },
-    } as unknown as AppEnv["Bindings"],
-  );
+function request(path: string, options: RequestInit = {}) {
+  return app.request("http://localhost/uploads/v1" + path, options, {
+    ...mocks.bindings,
+    LOCK_UPLOAD_ENDPOINTS: "true",
+    UGC_UPLOAD_TEST_PREFIX: "",
+    UGC_ASSET_BASE_URL: "https://assets.example.com",
+  });
 }
 
 describe("upload route policies", () => {
   it('keeps "/images/mine" authenticated even when an image has ID "mine"', async () => {
     expect((await request("/images/mine")).status).toBe(401);
     const response = await request("/images/mine?markerId=42", {
-      headers: { authorization: "Bearer owner" },
-      user: activeUser,
+      headers: activeSession.headers,
     });
     expect(response.status).toBe(200);
     const payload = (await response.json()) as { items: Array<{ id: string }> };
@@ -145,20 +83,28 @@ describe("upload route policies", () => {
     ["POST", "/images/photo/recall"],
     ["GET", "/images/photo/extra"],
   ])("applies explicit middleware to %s %s", async (method, path) => {
+    const before = database.sqlite.prepare("SELECT * FROM ugc_submissions ORDER BY id").all();
     const anonymous = await request(path, { method });
     expect(anonymous.status).toBe(method === "GET" ? 404 : 401);
-    const active = await request(path, { method, user: activeUser });
+    const active = await request(path, { method, headers: activeSession.headers });
     expect(active.status).toBe(method === "GET" ? 404 : 503);
-    const suspended = await request(path, { method, user: suspendedUser });
+    const suspended = await request(path, { method, headers: suspendedSession.headers });
     expect(suspended.status).toBe(method === "GET" ? 404 : 403);
+    expect(database.sqlite.prepare("SELECT * FROM ugc_submissions ORDER BY id").all()).toEqual(
+      before,
+    );
+    expect(mocks.moderationQueue.send).not.toHaveBeenCalled();
+    expect(mocks.ugcBucket.put).not.toHaveBeenCalled();
   });
 
   it("allows public reads for a suspended user while uploads are locked", async () => {
-    expect((await request("/images/photo?markerId=42", { user: suspendedUser })).status).toBe(200);
+    expect(
+      (await request("/images/photo?markerId=42", { headers: suspendedSession.headers })).status,
+    ).toBe(200);
   });
 
   it("registers direct comment context as a public no-store read", async () => {
-    const response = await request("/comments/target", { productionErrors: true });
+    const response = await request("/comments/target");
 
     expect(response.status).toBe(422);
     expect(response.headers.get("Cache-Control")).toBe("private, no-store");
@@ -169,7 +115,7 @@ describe("upload route policies", () => {
     "protects private read %s",
     async (path) => {
       expect((await request(path)).status).toBe(401);
-      expect((await request(path, { user: suspendedUser })).status).toBe(403);
+      expect((await request(path, { headers: suspendedSession.headers })).status).toBe(403);
     },
   );
 
@@ -186,6 +132,7 @@ describe("upload route policies", () => {
   });
 
   it("keeps cached translation public and protects live translation", async () => {
+    // No matching comment is seeded: exercise real translation policy without a provider call.
     const body = JSON.stringify({ commentIds: ["comment"], targetLanguage: "en-US" });
     const cached = await request("/comments/translations", {
       method: "POST",
@@ -204,9 +151,8 @@ describe("upload route policies", () => {
       (
         await request("/comments/translations", {
           method: "POST",
-          user: suspendedUser,
           body,
-          headers: { "content-type": "application/json" },
+          headers: { ...suspendedSession.headers, "content-type": "application/json" },
         })
       ).status,
     ).toBe(403);
@@ -214,9 +160,8 @@ describe("upload route policies", () => {
       (
         await request("/comments/translations", {
           method: "POST",
-          user: activeUser,
           body,
-          headers: { "content-type": "application/json" },
+          headers: { ...activeSession.headers, "content-type": "application/json" },
         })
       ).status,
     ).toBe(200);
@@ -233,9 +178,8 @@ describe("upload route policies", () => {
       (
         await request("/comments/translations", {
           method: "POST",
-          user: suspendedUser,
           body: JSON.stringify({ commentIds: [] }),
-          headers: { "content-type": "application/json" },
+          headers: { ...suspendedSession.headers, "content-type": "application/json" },
         })
       ).status,
     ).toBe(422);
