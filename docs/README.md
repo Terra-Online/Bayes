@@ -1,28 +1,24 @@
 # Bayes documentation
 
-These guides describe the checked-in backend implementation. Start with the task
-you want to do; use source contracts and co-located tests for exact field rules.
+`docs/` is for human readers. These guides may explain context and walk through
+steps in detail, including requirements also stated in agent guidance when useful.
+Agent instructions live in `CODING_STANDARDS.md` at the repository root.
+
+Start with the task you want to do:
 
 | Task | Guide |
 | --- | --- |
-| Understand the project | [Repository README](../README.md) |
-| Make your first contribution | [Contributing](../CONTRIBUTING.md) |
 | Configure and run a public checkout | [Local development](development.md) |
-| Understand data flow and module ownership | [Architecture](architecture.md) |
+| Understand runtime data flow | [Architecture](architecture.md) |
 | Call or change an endpoint | [API guide](api.md) |
 | Operate or deploy your own installation | [Operations](operations.md) |
 | Set up local data files | [Data templates](../templates/README.md) |
-| Review code against repository rules | [Coding standards](../CODING_STANDARDS.md) |
 | Work on HTTP modules | [Route conventions](../src/routes/README.md) |
 | Work on cached public reads | [Public read conventions](../src/publicRead/README.md) |
 | Work on error logging | [Tail Worker](../oem-logger/README.md) |
 | Work on image processing | [Transcoder](../containers/oem_imgTrans/README.md) |
 
 ## Maintaining these guides
-
-Route mounting lives in `src/routes/route.ts`; each topic has a `createRoutes.ts`.
-HTTP schemas, domain contracts, and tests define the detailed behavior. Update
-the relevant guide in the same pull request when those contracts change.
 
 Keep maintained guides directly under `docs/`. Put temporary reports, migration
 plans, and measurement evidence in a subdirectory such as `docs/local/`.

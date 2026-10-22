@@ -1,42 +1,13 @@
 # Local development
 
-Run commands from the Bayes repository root. Requirements are Node.js 22.12.0+
-and pnpm; Docker is needed for local container image conversion.
+Run commands from the repository root after completing environment setup and
+local data initialization.
 
-## Install and prepare data
+## Install dependencies
 
 ```sh
 pnpm install --frozen-lockfile
 ```
-
-Three JSON modules imported by the backend are intentionally absent from a
-public checkout. Copy the committed templates only if the destination is absent:
-
-```sh
-cp -n src/lib/karma/karmaConfig.template.json src/lib/karma/karmaConfig.json
-cp -n src/routes/binding/officialMarkerHashToPointId.template.json src/routes/binding/officialMarkerHashToPointId.json
-mkdir -p src/data
-cp -n templates/imageCoverageManifest.template.json src/data/imageCoverageManifest.json
-```
-
-See [data templates](../templates/README.md) for field contracts and limitations.
-The empty mapping returns no mapped official point IDs; the empty coverage
-manifest returns no coverage regions. Neither is a current game dataset.
-The karma template uses zero placeholders for configurable policy values.
-Fill in your own thresholds, rewards, limits, and evaluation parameters before
-testing karma behavior. It is a schema example, not an operational policy;
-code may clamp some zero values to a minimum. Tests that assume particular
-policy values need an appropriate local test configuration.
-
-With the Atlos game data available, regenerate the real coverage manifest:
-
-```sh
-pnpm run coverage-manifest:update -- ../Atlos/talos
-```
-
-The generator reads Atlos region, marker, type, and game translation data and
-writes the ignored `src/data/imageCoverageManifest.json`. Review the generated
-source metadata and totals before using it for operational coverage reports.
 
 ## Configure the Worker
 
@@ -122,9 +93,6 @@ integration run may need Docker and additional provider configuration. Review
 curl http://127.0.0.1:8787/health/v1/status
 ```
 
-A `200` here confirms the HTTP entrypoint responds. It does not validate email,
-Redis, image conversion, queues, or upstream Endfield access.
-
 For the local Google translation proxy, use `pnpm run dev:local`. This wrapper
 starts Wrangler with `--env local` and uses `.dev.vars.local` when present.
 Prepare that file from the example and apply local migrations for that environment:
@@ -159,24 +127,13 @@ entrypoints and are not stopped by `LOCK_SCHEDULED_JOBS`.
 use them only deliberately in an isolated development setup. They are not needed
 for source checks.
 
-## Verification
+## WAF changes
 
-| Command | Coverage |
-| --- | --- |
-| `pnpm run typecheck` | Backend TypeScript |
-| `pnpm run lint` | ESLint rules |
-| `pnpm test` | Vitest suites |
-| `pnpm run test:auth-runtime` | Auth and D1 regressions in local workerd/Miniflare |
-| `pnpm run test:worker-lifecycle` | Worker resource lifetimes and WebSocket cleanup |
-| `pnpm run logger:check` | Logger types, lint, tests, and dry-run bundle |
-| `pnpm run check` | Formatting, WAF artifact, both typechecks, lint, Vitest, native runtime suites, and logger dry-run bundle |
+When adding a route prefix, update `src/routes/route.ts`, run `pnpm run waf:sync`,
+and include the generated `config/waf-allowlist.json` diff. If `pnpm run waf:check`
+reports drift, regenerate and review the allowlist. Authentication and permissions
+still belong to route middleware; the allowlist only covers route prefixes.
 
-Native runtime fixtures use local resources and synthetic credentials rather than
-production services. Container checks are documented in
-[`containers/oem_imgTrans/README.md`](../containers/oem_imgTrans/README.md).
-The full check does not run those Docker checks or exercise live integrations.
-
-If a check reports a missing JSON import, finish the template setup first.
-If `waf:check` reports drift after changing route mounts, run `pnpm run waf:sync`
-and review the generated allowlist. `pnpm run check` does not apply remote WAF
-rules or remote database migrations.
+Generating the allowlist is local. To apply it remotely, prepare `.waf.vars` from
+`.waf.vars.example` and run `pnpm run waf:sync:apply`. For deployment integration,
+use `WAF_SYNC=1 pnpm run deploy` with the setup in [operations](operations.md).
