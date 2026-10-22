@@ -8,6 +8,12 @@ vi.mock("cloudflare:workers", () => ({
   exports: {},
 }));
 
+interface ContainerLifecycleFixture {
+  fetch(request: Request): Promise<Response>;
+  isActivityExpired(): boolean;
+  inflightRequests: number;
+}
+
 describe("container SDK lifecycle", () => {
   afterEach(() => {
     vi.useRealTimers();
@@ -30,7 +36,15 @@ describe("container SDK lifecycle", () => {
     for (const response of responses) {
       Object.defineProperty(response, "webSocket", { value: null });
     }
-    const destroy = vi.fn();
+    const destroy = vi.fn<Container["destroy"]>(() => {
+      throw new Error("Unconfigured container.destroy");
+    });
+    const containerFetch = vi
+      .fn<Fetcher["fetch"]>(() => {
+        throw new Error("Unconfigured container transport fetch");
+      })
+      .mockResolvedValueOnce(responses[0]!)
+      .mockResolvedValueOnce(responses[1]!);
     // Run the real SDK proxy and inflight accounting with stubbed runtime transport.
     const instance = Object.assign(Object.create(oem_imgTrans.prototype), {
       defaultPort: 8080,
@@ -41,13 +55,9 @@ describe("container SDK lifecycle", () => {
       container: {
         running: true,
         destroy,
-        getTcpPort: () => ({ fetch: vi.fn(async () => responses.shift()!) }),
+        getTcpPort: () => ({ fetch: containerFetch }),
       },
-    }) as {
-      fetch(request: Request): Promise<Response>;
-      isActivityExpired(): boolean;
-      inflightRequests: number;
-    };
+    }) as ContainerLifecycleFixture;
     const [first, second] = await Promise.all([
       instance.fetch(new Request("http://container/prepare")),
       instance.fetch(new Request("http://container/prepare")),

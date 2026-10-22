@@ -1,12 +1,11 @@
 import { betterAuth } from "better-auth";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { createMockBindings } from "@/test/bindings";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import type { Bindings } from "@/types/app";
 
 import { createAuth, runWithAuthRequest } from "./createAuth";
-
-vi.mock("@/lib/email/sender", () => ({ sendEmail: vi.fn() }));
 
 describe("completed authentication context reuse", () => {
   const databases: TestDatabase[] = [];
@@ -14,7 +13,9 @@ describe("completed authentication context reuse", () => {
     const database = createTestDatabase();
     databases.push(database);
     return {
-      DB: database.db,
+      ...createMockBindings({ DB: database.db }).bindings,
+      // These paths fail before delivery; unexpected mail must fail at the binding.
+      EMAIL_PROVIDER_MODE: "cloudflare_only",
       BETTER_AUTH_URL: "https://api.opendfieldmap.org",
       BETTER_AUTH_SECRET: "test-context-secret-at-least-32-characters",
       GOOGLE_CLIENT_ID: "test-google",
@@ -23,7 +24,7 @@ describe("completed authentication context reuse", () => {
       GITHUB_CLIENT_SECRET: "test-secret",
       DISCORD_CLIENT_ID: "test-discord",
       DISCORD_CLIENT_SECRET: "test-secret",
-    } as Bindings;
+    };
   }
   function schemaReads(database = databases[0]!) {
     return database.queries.filter(({ sql }) => /sqlite_master/.test(sql)).length;
