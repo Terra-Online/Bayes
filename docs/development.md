@@ -43,6 +43,14 @@ Empty external credentials do not emulate the corresponding service. Unit tests
 and isolated runtime fixtures provide a way to work without those services.
 Never commit `.dev.vars`, `.dev.vars.local`, provider keys, or account credentials.
 
+Comment translation caches prefer the configured `GOOGLE_TRANSLATE_GLOSSARY_VERSION`.
+If that revision has no translation, they reuse the latest stored result for the
+same normalized text, target language, provider, and glossary resource. Explicit
+source-language requests also require the same source language. A glossary revision
+therefore applies to new translations without forcing existing comments to be
+translated again. Reused results retain their original version and translation
+time; cache repair only writes KV and does not add or update D1 report records.
+
 ## Migrate and run
 
 ```sh

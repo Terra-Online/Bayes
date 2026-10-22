@@ -25,6 +25,7 @@ export async function getTextTranslationByTarget(
     provider: string;
     glossaryVersion: string;
     glossaryKey: string;
+    sourceLanguage?: string;
   },
 ): Promise<TextTranslationRecord | null> {
   const row = await db
@@ -34,9 +35,12 @@ export async function getTextTranslationByTarget(
        WHERE text_hash = ?1
          AND target_language = ?2
          AND provider = ?3
-         AND glossary_version = ?4
          AND glossary_key = ?5
-       ORDER BY translated_at DESC
+         AND (?6 IS NULL OR source_language = ?6)
+         AND LENGTH(TRIM(translated_content)) > 0
+       ORDER BY CASE WHEN glossary_version = ?4 THEN 0 ELSE 1 END,
+                translated_at DESC,
+                cache_key ASC
        LIMIT 1`,
     )
     .bind(
@@ -45,6 +49,7 @@ export async function getTextTranslationByTarget(
       payload.provider,
       payload.glossaryVersion,
       payload.glossaryKey,
+      payload.sourceLanguage ?? null,
     )
     .first<Record<string, unknown>>();
 

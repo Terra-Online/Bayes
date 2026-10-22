@@ -140,6 +140,7 @@ type TextTranslationDetectionCacheRecord = {
   provider: string;
   glossaryVersion: string;
   glossaryKey: string;
+  translationGlossaryVersion?: string;
   createdAt: string;
 };
 
@@ -623,7 +624,10 @@ async function getDetectedSourceFromKv(
     record.textHash !== descriptor.textHash ||
     record.targetLanguage !== descriptor.targetLanguage ||
     record.glossaryVersion !== descriptor.glossaryVersion ||
-    record.glossaryKey !== descriptor.glossaryKey
+    record.glossaryKey !== descriptor.glossaryKey ||
+    (record.translationGlossaryVersion !== undefined &&
+      (typeof record.translationGlossaryVersion !== "string" ||
+        record.translationGlossaryVersion.length === 0))
   ) {
     return null;
   }
@@ -636,6 +640,7 @@ async function getDetectedSourceFromKv(
     provider: record.provider,
     glossaryVersion: record.glossaryVersion,
     glossaryKey: record.glossaryKey,
+    translationGlossaryVersion: record.translationGlossaryVersion,
     createdAt: typeof record.createdAt === "string" ? record.createdAt : "",
   };
 }
@@ -680,6 +685,7 @@ async function putDetectedSourceToKv(
     provider: GOOGLE_TRANSLATION_PROVIDER,
     glossaryVersion: targetDescriptor.glossaryVersion,
     glossaryKey: targetDescriptor.glossaryKey,
+    translationGlossaryVersion: translationDescriptor.glossaryVersion,
     createdAt: new Date().toISOString(),
   };
   await putJsonToKv(kv, targetDescriptor.detectionCacheKey, record);
@@ -746,7 +752,21 @@ async function getCachedOrStoredTextTranslationByDescriptor(
     return textCached;
   }
 
-  const storedTextTranslation = await getTextTranslation(env.DB, descriptor.cacheKey);
+  // A glossary revision applies to new translations; it must not discard existing ones.
+  const exactTranslation = await getTextTranslation(env.DB, descriptor.cacheKey);
+  const storedTextTranslation =
+    exactTranslation?.translatedContent.trim() &&
+    exactTranslation.provider === GOOGLE_TRANSLATION_PROVIDER &&
+    exactTranslation.glossaryKey === descriptor.glossaryKey
+      ? exactTranslation
+      : await getTextTranslationByTarget(env.DB, {
+          textHash: descriptor.textHash,
+          sourceLanguage: descriptor.sourceLanguage,
+          targetLanguage: descriptor.targetLanguage,
+          provider: GOOGLE_TRANSLATION_PROVIDER,
+          glossaryVersion: descriptor.glossaryVersion,
+          glossaryKey: descriptor.glossaryKey,
+        });
   if (!storedTextTranslation?.translatedContent) {
     return null;
   }
@@ -780,6 +800,22 @@ async function getCachedOrStoredAutoTextTranslation(
     const record = await getCachedTextTranslation(env.OEM_KV, descriptor);
     if (record?.translatedText) {
       return record;
+    }
+
+    if (
+      detectedSource.translationGlossaryVersion &&
+      detectedSource.translationGlossaryVersion !== targetDescriptor.glossaryVersion
+    ) {
+      const historicalDescriptor = getTextTranslationCacheDescriptorFromTarget(
+        detectedSource.sourceLanguage,
+        { ...targetDescriptor, glossaryVersion: detectedSource.translationGlossaryVersion },
+      );
+      if (historicalDescriptor.cacheKey === detectedSource.cacheKey) {
+        const historical = await getCachedTextTranslation(env.OEM_KV, historicalDescriptor);
+        if (historical?.translatedText) {
+          return historical;
+        }
+      }
     }
   }
 
