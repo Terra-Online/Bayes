@@ -460,7 +460,7 @@ describe("binding ownership and lifecycle through HTTP", () => {
     });
   });
 
-  it("keeps the current binding and pending selection after an unrelated exchange is rejected", async () => {
+  it("keeps the current binding and pending selection when the provider rejects a new account token", async () => {
     await bind();
     const previous = storedBinding();
     const flowId = await startFlow("owner", [wulingRole]);

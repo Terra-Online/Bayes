@@ -360,6 +360,8 @@ describe("progress community stats HTTP", () => {
       }),
     );
     await drainStatsDeliveries();
+    const readStatsObject = vi.fn(statsDelivery);
+    statsDelivery = readStatsObject;
     const result = await readPublicStats(`%20${hash.toUpperCase()}%20`);
     expect(result.body).toMatchObject({
       markerIndexHash: hash,
@@ -373,9 +375,12 @@ describe("progress community stats HTTP", () => {
       /^public, max-age=\d+$/,
     );
     expect(result.response.headers.get("x-oem-kv-cache")).toBe("miss");
+    expect(readStatsObject).toHaveBeenCalledOnce();
+    // Repeated public reads must not spend another statistics-object request.
     const cached = await readPublicStats(hash);
     expect(cached.body).toEqual(result.body);
     expect(cached.response.headers.get("x-oem-kv-cache")).toBe("hit");
+    expect(readStatsObject).toHaveBeenCalledOnce();
   });
 });
 

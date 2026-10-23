@@ -199,7 +199,8 @@ describe("email delivery through provider interfaces", () => {
     expect(resendMessages).toEqual([{ ...message, from: "Mail Team <sender@example.com>" }]);
   });
 
-  it.each(["quota reservation", "success metrics"])(
+  // Success metrics follow delivery, so their failure must not trigger a second provider.
+  it.each(["quota reservation", "post-delivery success metrics"])(
     "keeps successful delivery available during a Redis %s outage",
     async (outage) => {
       failsRedisCommand = ([operation, key]) =>
@@ -223,7 +224,8 @@ describe("email delivery through provider interfaces", () => {
     },
   );
 
-  it.each(["reservation release", "quota marking", "fallback metrics"])(
+  // Fallback metrics precede delivery, so their failure must not prevent sending.
+  it.each(["reservation release", "quota marking", "pre-delivery fallback metrics"])(
     "keeps fallback delivery available during a Redis %s outage",
     async (outage) => {
       const quotaFailure = outage === "quota marking";

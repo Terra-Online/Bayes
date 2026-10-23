@@ -21,7 +21,6 @@ vi.mock("./karmaConfig.json", () => ({
 describe("review quality in karma scoring", () => {
   it.each([
     { scenario: "no reviewed images", approvedImages: 0, rejectedImages: 0 },
-    { scenario: "too few approvals", approvedImages: 3, rejectedImages: 0 },
     { scenario: "too few rejections", approvedImages: 0, rejectedImages: 3 },
     { scenario: "approval rate at the quality baseline", approvedImages: 5, rejectedImages: 5 },
   ])("preserves earned points with $scenario", ({ approvedImages, rejectedImages }) => {

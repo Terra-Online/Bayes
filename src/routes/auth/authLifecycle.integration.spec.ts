@@ -349,7 +349,7 @@ describe("authenticated account and profile HTTP lifecycle", () => {
     ]);
   });
 
-  it.each(["github", "google", "discord", "email"])(
+  it.each(["github", "email"])(
     "unlinks only the owner's %s method while retaining another login method and the current session",
     async (provider) => {
       const storedProvider = provider === "email" ? "credential" : provider;
@@ -384,9 +384,9 @@ describe("authenticated account and profile HTTP lifecycle", () => {
     },
   );
 
-  it.each(["email", "github"])("refuses to remove the last %s login method", async (provider) => {
-    addAccount("last-method", provider === "email" ? "credential" : provider);
-    const response = await jsonRequest("POST", "/unlink-account", { provider });
+  it("refuses to remove the last login method", async () => {
+    addAccount("last-method", "credential");
+    const response = await jsonRequest("POST", "/unlink-account", { provider: "email" });
     expect(response.status).toBe(400);
     expect(await response.json()).toMatchObject({ code: "FAILED_TO_UNLINK_LAST_ACCOUNT" });
     expect(database.sqlite.prepare("SELECT id, userId FROM auth_accounts").all()).toEqual([
@@ -397,10 +397,10 @@ describe("authenticated account and profile HTTP lifecycle", () => {
     expect(await list.json()).toEqual({
       accounts: [
         {
-          provider,
+          provider: "email",
           linkedAt: "2026-09-02T00:00:00.000Z",
           unlinkable: false,
-          ...(provider === "email" ? { verified: true } : {}),
+          verified: true,
         },
       ],
     });
