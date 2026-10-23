@@ -285,15 +285,13 @@ describe("authenticated account and profile HTTP lifecycle", () => {
 
   it("rejects unsupported profile encodings, then decodes a modern form avatar", async () => {
     const original = storedProfile();
-    for (const [contentType, body, status] of [["text/plain", "nickname=Changed", 415]] as const) {
-      const response = await request("/profile", {
-        method: "PATCH",
-        headers: { "content-type": contentType },
-        body,
-      });
-      expect(response.status).toBe(status);
-      expect(storedProfile()).toEqual(original);
-    }
+    const unsupported = await request("/profile", {
+      method: "PATCH",
+      headers: { "content-type": "text/plain" },
+      body: "nickname=Changed",
+    });
+    expect(unsupported.status).toBe(415);
+    expect(storedProfile()).toEqual(original);
     const response = await request("/profile", {
       method: "PATCH",
       body: new URLSearchParams({ nickname: "ModernForm", avatar: "17" }),
