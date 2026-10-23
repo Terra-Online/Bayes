@@ -6,7 +6,7 @@ const require = createRequire(import.meta.url);
 const runtimeRequire = createRequire(require.resolve("wrangler/package.json"));
 export const { Miniflare } = runtimeRequire("miniflare");
 const { build } = runtimeRequire("esbuild");
-export const root = resolve(import.meta.dirname, "..");
+export const root = resolve(import.meta.dirname, "../..");
 export const compatibility = {
   compatibilityDate: "2026-07-22",
   compatibilityFlags: ["nodejs_compat"],
