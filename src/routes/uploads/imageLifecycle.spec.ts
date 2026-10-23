@@ -254,6 +254,92 @@ describe("image votes", () => {
   });
 });
 
+describe("image flags", () => {
+  it("keeps the image flagged until the last reader withdraws and accepts a later flag again", async () => {
+    insertSubmission(database.sqlite, { id: "photo", kind: "image", userId: "author" });
+    const first = await post("photo", "flag");
+    expect(first.status).toBe(200);
+    expect(await first.json()).toEqual({
+      ok: true,
+      created: true,
+      status: "flagged",
+      flagCount: 1,
+    });
+    expect(submission("photo").status).toBe("flagged");
+    expect(await publicImage("reader")).toMatchObject({ flagCount: 1, flagged: true });
+    expect(await publicImage("other-reader")).toMatchObject({ flagCount: 1, flagged: false });
+    const duplicateFlag = await post("photo", "flag");
+    expect(await duplicateFlag.json()).toEqual({
+      ok: true,
+      created: false,
+      status: "flagged",
+      flagCount: 1,
+    });
+    expect(activeUsers("ugc_submission_flags")).toEqual(["reader"]);
+    expect(webhooks).toEqual([
+      expect.objectContaining({
+        event: expect.objectContaining({
+          type: "flag_created",
+          actor: expect.objectContaining({ uid: "reader" }),
+          submission: expect.objectContaining({ id: "photo", kind: "image" }),
+          previousStatus: "active",
+          nextStatus: "flagged",
+          flagCount: 1,
+        }),
+      }),
+    ]);
+
+    const secondFlag = await post("photo", "flag", "other-reader");
+    expect(await secondFlag.json()).toMatchObject({
+      flagCount: 2,
+    });
+    const withdrawnFlag = await post("photo", "unflag");
+    expect(await withdrawnFlag.json()).toEqual({
+      ok: true,
+      deleted: true,
+      status: "flagged",
+      flagCount: 1,
+    });
+    expect(submission("photo").status).toBe("flagged");
+    expect(activeUsers("ugc_submission_flags")).toEqual(["other-reader"]);
+    const repeatedWithdrawal = await post("photo", "unflag");
+    expect(await repeatedWithdrawal.json()).toMatchObject({
+      deleted: false,
+      flagCount: 1,
+    });
+    expect(webhooks).toHaveLength(3);
+    const lastWithdrawal = await post("photo", "unflag", "other-reader");
+    expect(await lastWithdrawal.json()).toEqual({
+      ok: true,
+      deleted: true,
+      status: "active",
+      flagCount: 0,
+    });
+    expect(submission("photo").status).toBe("active");
+    expect(activeUsers("ugc_submission_flags")).toEqual([]);
+    expect(await publicImage("reader")).toMatchObject({
+      status: "active",
+      flagCount: 0,
+      flagged: false,
+    });
+    expect(webhooks.at(-1)).toMatchObject({
+      event: {
+        type: "flag_removed",
+        previousStatus: "flagged",
+        nextStatus: "active",
+        flagCount: 0,
+      },
+    });
+    const renewedFlag = await post("photo", "flag");
+    expect(await renewedFlag.json()).toMatchObject({
+      created: true,
+      flagCount: 1,
+    });
+    expect(activeUsers("ugc_submission_flags")).toEqual(["reader"]);
+    expect(moderation).toEqual([]);
+  });
+});
+
 vi.mock("cloudflare:workers", () => ({
   DurableObject: class {},
   exports: { PublicReadCache: { purgeMarker: async () => ({ success: true }) } },
