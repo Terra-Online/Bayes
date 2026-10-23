@@ -84,6 +84,29 @@ describe("email delivery through provider interfaces", () => {
     vi.restoreAllMocks();
   });
 
+  it("reports both providers failing and can deliver the unchanged message on retry", async () => {
+    resendResponse.mockResolvedValueOnce(
+      Response.json({ name: "internal_server_error", message: "Unavailable" }, { status: 503 }),
+    );
+    cloudflareSend.mockRejectedValueOnce(
+      Object.assign(new Error("Delivery rejected"), { code: "EMAIL_SEND_FAILED" }),
+    );
+    await expect(sendEmail(message, env)).rejects.toMatchObject({
+      provider: "cloudflare",
+      providerCode: "both_providers_failed",
+      message: expect.stringContaining("EMAIL_SEND_FAILED"),
+    });
+    expect(cloudflareSend).toHaveBeenCalledWith({ ...message, from: "noreply@example.com" });
+    await expect(sendEmail(message, env)).resolves.toEqual({
+      provider: "resend",
+      id: "primary-id",
+    });
+    expect(resendMessages).toEqual([
+      { ...message, from: "noreply@example.com" },
+      { ...message, from: "noreply@example.com" },
+    ]);
+  });
+
   it("avoids duplicate delivery when the real Resend SDK loses a timed-out response, and permits a later explicit retry", async () => {
     // Acceptance is unknown after a timeout; automatic fallback could send the same mail twice.
     resendResponse.mockRejectedValueOnce(new DOMException("The request timed out", "TimeoutError"));
@@ -97,4 +120,144 @@ describe("email delivery through provider interfaces", () => {
       id: "primary-id",
     });
   });
+
+  it("enforces the configured daily allowance and keeps later messages on fallback", async () => {
+    env.EMAIL_RESEND_DAILY_LIMIT = "2";
+    await expect(sendEmail(message, env)).resolves.toMatchObject({ provider: "resend" });
+    await expect(sendEmail(message, env)).resolves.toMatchObject({ provider: "resend" });
+    await expect(sendEmail(message, env)).resolves.toMatchObject({ provider: "cloudflare" });
+    await expect(sendEmail(message, env)).resolves.toMatchObject({ provider: "cloudflare" });
+    expect(resendMessages).toHaveLength(2);
+    expect(cloudflareSend.mock.calls.map(([payload]) => payload)).toEqual([
+      { ...message, from: "noreply@example.com" },
+      { ...message, from: "noreply@example.com" },
+    ]);
+  });
+
+  it("reports exhausted quota when fallback is unavailable and recovers when the binding is supplied", async () => {
+    env.EMAIL_RESEND_DAILY_LIMIT = "1";
+    Reflect.deleteProperty(env, "OEM_ID_MAILS");
+    await sendEmail(message, env);
+    await expect(sendEmail(message, env)).rejects.toMatchObject({
+      kind: "quota",
+      providerCode: "daily_quota_exceeded",
+    });
+    env.OEM_ID_MAILS = { send: cloudflareSend };
+    await expect(sendEmail(message, env)).resolves.toMatchObject({ provider: "cloudflare" });
+    expect(resendMessages).toHaveLength(1);
+  });
+
+  it("does not use fallback when the supported legacy setting disables it", async () => {
+    env.EMAIL_PROVIDER_MODE = undefined;
+    env.EMAIL_FALLBACK_ENABLED = "false";
+    resendResponse.mockResolvedValueOnce(
+      Response.json(
+        { name: "internal_server_error", message: "Unavailable", statusCode: 503 },
+        { status: 503 },
+      ),
+    );
+    await expect(sendEmail(message, env)).rejects.toMatchObject({
+      provider: "resend",
+      kind: "temporary",
+    });
+    expect(cloudflareSend).not.toHaveBeenCalled();
+    await expect(sendEmail(message, env)).resolves.toMatchObject({ provider: "resend" });
+  });
+
+  it("requires a Cloudflare binding for the legacy Cloudflare-primary setting and delivers after configuration is repaired", async () => {
+    env.EMAIL_PROVIDER_MODE = undefined;
+    env.EMAIL_PRIMARY_PROVIDER = "cloudflare";
+    Reflect.deleteProperty(env, "OEM_ID_MAILS");
+    await expect(sendEmail(message, env)).rejects.toThrow("CLOUDFLARE_EMAIL_NOT_CONFIGURED");
+    expect(resendMessages).toEqual([]);
+    env.OEM_ID_MAILS = { send: cloudflareSend };
+    await expect(sendEmail(message, env)).resolves.toEqual({
+      provider: "cloudflare",
+      id: "fallback-id",
+    });
+    expect(cloudflareSend).toHaveBeenCalledWith({ ...message, from: "noreply@example.com" });
+  });
+
+  it("safely rejects malformed provider error details without sending a duplicate through fallback", async () => {
+    resendResponse.mockResolvedValueOnce(Response.json({}, { status: 400 }));
+    await expect(sendEmail(message, env)).rejects.toMatchObject({
+      provider: "resend",
+      kind: "permanent",
+      providerCode: "unknown_error",
+    });
+    expect(cloudflareSend).not.toHaveBeenCalled();
+    await expect(sendEmail(message, env)).resolves.toEqual({
+      provider: "resend",
+      id: "primary-id",
+    });
+  });
+
+  it("preserves a configured sender's display name when environment quoting is removed", async () => {
+    env.EMAIL_FROM_EMAIL = "'\"Mail Team\" <sender@example.com>'";
+    env.EMAIL_FROM_NAME = "Unused default name";
+    await expect(sendEmail(message, env)).resolves.toMatchObject({ provider: "resend" });
+    expect(resendMessages).toEqual([{ ...message, from: "Mail Team <sender@example.com>" }]);
+  });
+
+  // Success metrics follow delivery, so their failure must not trigger a second provider.
+  it.each(["quota reservation", "post-delivery success metrics"])(
+    "keeps successful delivery available during a Redis %s outage",
+    async (outage) => {
+      failsRedisCommand = ([operation, key]) =>
+        outage === "quota reservation"
+          ? operation === "get"
+          : operation === "incr" && String(key).endsWith(":success");
+      await expect(sendEmail(message, env)).resolves.toEqual({
+        provider: "resend",
+        id: "primary-id",
+      });
+      failsRedisCommand = () => false;
+      await expect(sendEmail(message, env)).resolves.toEqual({
+        provider: "resend",
+        id: "primary-id",
+      });
+      expect(resendMessages).toEqual([
+        { ...message, from: "noreply@example.com" },
+        { ...message, from: "noreply@example.com" },
+      ]);
+      expect(cloudflareSend).not.toHaveBeenCalled();
+    },
+  );
+
+  // Fallback metrics precede delivery, so their failure must not prevent sending.
+  it.each(["reservation release", "quota marking", "pre-delivery fallback metrics"])(
+    "keeps fallback delivery available during a Redis %s outage",
+    async (outage) => {
+      const quotaFailure = outage === "quota marking";
+      resendResponse.mockResolvedValueOnce(
+        Response.json(
+          {
+            name: quotaFailure ? "daily_quota_exceeded" : "internal_server_error",
+            message: quotaFailure ? "Daily quota exceeded" : "Unavailable",
+            statusCode: quotaFailure ? 429 : 503,
+          },
+          { status: quotaFailure ? 429 : 503 },
+        ),
+      );
+      failsRedisCommand = ([operation, key]) => {
+        if (outage === "reservation release") {
+          return operation === "decr";
+        }
+        if (outage === "quota marking") {
+          return operation === "set" && String(key).endsWith(":exhausted");
+        }
+        return operation === "incr" && String(key).endsWith(":fallback");
+      };
+      await expect(sendEmail(message, env)).resolves.toEqual({
+        provider: "cloudflare",
+        id: "fallback-id",
+      });
+      expect(cloudflareSend).toHaveBeenCalledWith({ ...message, from: "noreply@example.com" });
+      failsRedisCommand = () => false;
+      await expect(sendEmail(message, env)).resolves.toEqual({
+        provider: "resend",
+        id: "primary-id",
+      });
+    },
+  );
 });
