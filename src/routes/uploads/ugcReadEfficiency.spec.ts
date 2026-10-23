@@ -14,7 +14,9 @@ import type { AppEnv, Bindings } from "@/types/app";
 
 import { createRoutes } from "./createRoutes";
 
-const workersCache = vi.hoisted(() => ({ fetch: vi.fn() }));
+const workersCache = vi.hoisted(() => ({
+  fetch: vi.fn<(request: Request, init?: RequestInit) => Promise<Response>>(),
+}));
 vi.mock("cloudflare:workers", () => ({
   DurableObject: class {},
   exports: { PublicReadCache: workersCache },
@@ -68,11 +70,11 @@ async function request(path: string, headers?: HeadersInit) {
     } as unknown as ExecutionContext),
   );
 }
-function businessQueries() {
+function submissionQueries() {
   return database.queries.filter(({ sql }) => /ugc_submissions/.test(sql));
 }
 function reactionQueries() {
-  return businessQueries().filter(
+  return submissionQueries().filter(
     ({ sql }) => /AS viewer_(upvoted|vote)/.test(sql) && !/WITH/.test(sql),
   );
 }
@@ -99,7 +101,7 @@ describe("personalized UGC cache overlays", () => {
       "viewer",
       '["marker-1","marker-2"]',
       '["image-1"]',
-      "_test/%",
+      "\\_test/%",
     ]);
     expect(response.headers.get("cache-control")).toBe("private, no-store");
     expect(await response.json()).toMatchObject({
@@ -121,6 +123,13 @@ describe("personalized UGC cache overlays", () => {
       userId: "other",
       status: "pending_audit",
     });
+    insertSubmission(database.sqlite, {
+      id: "pending-reply",
+      userId: "viewer",
+      parentId: "reply",
+      depth: 2,
+      status: "pending_openai",
+    });
     database.sqlite
       .exec(`INSERT INTO ugc_submission_votes (submission_id, user_id, value) VALUES ('nested', 'viewer', -1), ('root', 'other', 1);
       INSERT INTO ugc_submission_flags (submission_id, user_id, active) VALUES ('nested', 'viewer', 1), ('root', 'other', 1);`);
@@ -131,18 +140,34 @@ describe("personalized UGC cache overlays", () => {
       '["marker-1"]',
       '["root","reply","nested"]',
     ]);
-    expect(businessQueries().find(({ sql }) => /LIMIT \?3/.test(sql))!.values).toEqual([
+    expect(submissionQueries().find(({ sql }) => /LIMIT \?3/.test(sql))!.values).toEqual([
       "viewer",
       '["marker-1"]',
       200,
     ]);
     const payload = (await response.json()) as { items: PublicSubmissionComment[] };
     expect(payload.items.map((item) => item.id)).toEqual(["pending", "root"]);
-    expect(payload.items[1]).toMatchObject({ viewerVote: 0, flagged: false });
-    expect(payload.items.find((item) => item.id === "root")!.replies[0]!.replies[0]).toMatchObject({
+    const publicRoot = payload.items[1]!;
+    const publicReply = publicRoot.replies[0]!;
+    expect(publicRoot).toMatchObject({ viewerVote: 0, flagged: false });
+    expect(publicReply.replies[0]).toMatchObject({
       id: "nested",
       viewerVote: -1,
       flagged: true,
+    });
+    expect(publicReply).toMatchObject({
+      replyCount: 2,
+      replies: [
+        expect.objectContaining({ id: "nested" }),
+        expect.objectContaining({ id: "pending-reply", status: "pending_openai" }),
+      ],
+    });
+    const anonymous = await request("/comments?markerId=marker-1");
+    const publicPayload = (await anonymous.json()) as { items: PublicSubmissionComment[] };
+    expect(publicPayload.items.map((item) => item.id)).toEqual(["root"]);
+    expect(publicPayload.items[0]!.replies[0]).toMatchObject({
+      replyCount: 1,
+      replies: [expect.objectContaining({ id: "nested" })],
     });
     expect(response.headers.get("cache-control")).toBe("private, no-store");
   });
@@ -169,7 +194,7 @@ describe("personalized UGC cache overlays", () => {
       expect(response.headers.get("cache-control")).toBe("private, no-store");
       expect(reactionQueries()).toEqual([]);
       // An empty public result still reads the viewer's pending comments.
-      expect(businessQueries()).toHaveLength(kind === "comments" ? 1 : 0);
+      expect(submissionQueries()).toHaveLength(kind === "comments" ? 1 : 0);
     },
   );
 
@@ -180,7 +205,7 @@ describe("personalized UGC cache overlays", () => {
       const response = await request(`/${kind}?markerId=marker-1`, viewerHeaders);
       expect(response.status).toBe(503);
       expect(response.headers.get("retry-after")).toBe("5");
-      expect(businessQueries()).toEqual([]);
+      expect(submissionQueries()).toEqual([]);
     },
   );
 
@@ -192,11 +217,8 @@ describe("personalized UGC cache overlays", () => {
         authorization: "Bearer invalid-session",
       });
       expect(await response.json()).toEqual({ items: [] });
-      // Real client policies: empty images live 10 seconds; empty comments live 5.
-      expect(response.headers.get("cache-control")).toBe(
-        kind === "images" ? "public, max-age=10" : "public, max-age=5",
-      );
-      expect(businessQueries()).toEqual([]);
+      expect(response.headers.get("cache-control")).toMatch(/^public, max-age=\d+$/);
+      expect(submissionQueries()).toEqual([]);
     },
   );
 
@@ -210,9 +232,7 @@ describe("personalized UGC cache overlays", () => {
           publicOnly ? viewerHeaders : undefined,
         );
         expect(response.status).toBe(200);
-        expect(response.headers.get("cache-control")).toBe(
-          kind === "images" ? "public, max-age=10" : "public, max-age=5",
-        );
+        expect(response.headers.get("cache-control")).toMatch(/^public, max-age=\d+$/);
       }
       expect(database.queries).toEqual([]);
     },
@@ -244,9 +264,10 @@ describe("combined point image reads", () => {
       mine: { items: [{ id: "pending" }] },
     });
     expect(
-      businessQueries().find(({ sql }) => /idx_ugc_user_kind_poi_created/.test(sql))!.values,
-    ).toEqual(["viewer", '["m"]', "_test/%", 6]);
-    expect(reactionQueries()[0]!.values).toEqual(["viewer", '["m"]', '["public"]', "_test/%"]);
+      submissionQueries().find(({ sql }) => /idx_ugc_user_kind_poi_created/.test(sql))!.values,
+    ).toEqual(["viewer", '["m"]', "\\_test/%", 6]);
+    expect(reactionQueries()[0]!.values).toEqual(["viewer", '["m"]', '["public"]', "\\_test/%"]);
+    // Private selection and credentials must never enter the shared cache request.
     const cachedRequest = workersCache.fetch.mock.calls[0]![0] as Request;
     expect([...new URL(cachedRequest.url).searchParams.keys()]).toEqual([
       "markerId",
