@@ -1,116 +1,46 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { onAppError } from "@/middleware/error-handler";
 import type { CommentTranslationItem } from "@/services/upload/commentTranslation";
-import { createMockBindings } from "@/test/bindings";
-import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
-import { insertAuthUser, insertSession } from "@/test/fixtures/auth";
+import {
+  createCommentTranslationFixture,
+  createTranslationSigningKey,
+  type CommentTranslationFixture,
+  type TranslationProvider,
+} from "@/test/fixtures/commentTranslation";
 import { insertSubmission } from "@/test/fixtures/submissions";
-import { insertUser } from "@/test/fixtures/users";
-import type { AppEnv } from "@/types/app";
 
-import { createRoutes } from "./createRoutes";
-
-let database: TestDatabase;
-let env: AppEnv["Bindings"];
-let sessions: Record<string, { authorization: string }>;
-let kv: Map<string, string>;
+let database: CommentTranslationFixture["database"];
+let env: CommentTranslationFixture["env"];
+let kv: CommentTranslationFixture["kv"];
+let translationRequests: CommentTranslationFixture["translationRequests"];
+let providerFetch: CommentTranslationFixture["providerFetch"];
+let request: CommentTranslationFixture["request"];
+let storedTranslations: CommentTranslationFixture["storedTranslations"];
+let provider: TranslationProvider;
 let privateKey: string;
-type TranslationRequest = {
-  contents: string[];
-  sourceLanguageCode?: string;
-  targetLanguageCode: string;
-  glossaryConfig?: { glossary: string };
-};
-let translationRequests: TranslationRequest[];
-let translationResponse: (payload: TranslationRequest) => Response | Promise<Response>;
-let tokenResponse: () => Response;
-let providerFetch: ReturnType<typeof vi.fn<typeof globalThis.fetch>>;
 let clock = Date.now();
 const originalText = "入口在东边。";
 const translatedText = "The entrance is on the east side.";
 
 beforeAll(async () => {
-  // A disposable signing key exercises real JWT preparation without any credentials.
-  const pair = await crypto.subtle.generateKey(
-    {
-      name: "RSASSA-PKCS1-v1_5",
-      modulusLength: 2048,
-      publicExponent: new Uint8Array([1, 0, 1]),
-      hash: "SHA-256",
-    },
-    true,
-    ["sign", "verify"],
-  );
-  const encoded = Buffer.from(await crypto.subtle.exportKey("pkcs8", pair.privateKey)).toString(
-    "base64",
-  );
-  privateKey = `-----BEGIN PRIVATE KEY-----\n${encoded}\n-----END PRIVATE KEY-----`;
+  privateKey = await createTranslationSigningKey();
 });
 
 beforeEach(() => {
   // Expire the process-local OAuth token between cases without resetting internal modules.
   clock += 2 * 60 * 60 * 1000;
   vi.spyOn(Date, "now").mockReturnValue(clock);
-  database = createTestDatabase();
-  sessions = {};
-  for (const [uid, role] of [
-    ["author", "n"],
-    ["reader", "n"],
-    ["suspended", "s"],
-  ]) {
-    insertUser(database.sqlite, { uid, role });
-    insertAuthUser(database.sqlite, { id: uid });
-    sessions[uid] = insertSession(database.sqlite, { userId: uid }).headers;
-  }
-  kv = new Map();
-  translationRequests = [];
-  translationResponse = () =>
-    Response.json({ translations: [{ translatedText, detectedLanguageCode: "zh-CN" }] });
-  tokenResponse = () => Response.json({ access_token: "synthetic-google-token", expires_in: 3600 });
-  providerFetch = vi.fn<typeof globalThis.fetch>().mockImplementation(async (input, init) => {
-    const url = String(input);
-    if (url === "https://oauth2.googleapis.com/token") {
-      return tokenResponse();
-    }
-    if (
-      url ===
-      "https://translation.googleapis.com/v3/projects/test-project/locations/global:translateText"
-    ) {
-      const payload = JSON.parse(String(init?.body)) as TranslationRequest;
-      translationRequests.push(payload);
-      return translationResponse(payload);
-    }
-    throw new Error(`Unexpected external request: ${url}`);
-  });
+  ({
+    database,
+    env,
+    kv,
+    translationRequests,
+    provider,
+    providerFetch,
+    request,
+    storedTranslations,
+  } = createCommentTranslationFixture({ privateKey, translatedText }));
   vi.stubGlobal("fetch", providerFetch);
-  const mocks = createMockBindings({ DB: database.db });
-  mocks.publicRateLimit.limit.mockResolvedValue({ success: true });
-  mocks.authRateLimit.limit.mockResolvedValue({ success: true });
-  env = {
-    ...mocks.bindings,
-    LOCK_UPLOAD_ENDPOINTS: "false",
-    OEM_KV: {
-      // This suite uses KV's text-only overload. Other KV operations fail explicitly.
-      get: vi.fn<(key: string) => Promise<string | null>>(async (key) => kv.get(key) ?? null),
-      put: vi.fn<KVNamespace["put"]>().mockImplementation(async (key, value) => {
-        if (typeof value !== "string") {
-          throw new Error("Expected JSON text in translation KV");
-        }
-        kv.set(key, value);
-      }),
-      delete: vi.fn<KVNamespace["delete"]>().mockImplementation(async (key) => {
-        kv.delete(key);
-      }),
-      getWithMetadata: vi
-        .fn<KVNamespace["getWithMetadata"]>()
-        .mockRejectedValue(new Error("Unconfigured KV metadata read")),
-      list: vi.fn<KVNamespace["list"]>().mockRejectedValue(new Error("Unconfigured KV list")),
-    } as unknown as KVNamespace,
-    GOOGLE_TRANSLATE_PROJECT_ID: "test-project",
-    GOOGLE_TRANSLATE_CLIENT_EMAIL: "translation@example.test",
-    GOOGLE_TRANSLATE_PRIVATE_KEY: privateKey,
-  };
 });
 
 afterEach(() => {
@@ -120,24 +50,6 @@ afterEach(() => {
   database.close();
 });
 
-async function request(body: unknown, user: string | null = "reader") {
-  const app = createRoutes();
-  app.onError(onAppError);
-  const pending: Promise<unknown>[] = [];
-  const response = await app.request(
-    "http://localhost/comments/translations",
-    {
-      method: "POST",
-      headers: { ...((user && sessions[user]) || {}), "content-type": "application/json" },
-      body: JSON.stringify(body),
-    },
-    env,
-    { waitUntil: (work: Promise<unknown>) => pending.push(work) } as unknown as ExecutionContext,
-  );
-  await Promise.all(pending);
-  return response;
-}
-
 async function translations(body: object, user: string | null = "reader") {
   const response = await request(
     { commentIds: ["comment"], targetLanguage: "en-US", ...body },
@@ -145,14 +57,6 @@ async function translations(body: object, user: string | null = "reader") {
   );
   expect(response.status).toBe(200);
   return ((await response.json()) as { items: CommentTranslationItem[] }).items;
-}
-
-function storedTranslations() {
-  return database.sqlite
-    .prepare(
-      "SELECT source_language, detected_source_language, target_language, translated_content, glossary_applied FROM ugc_text_translations ORDER BY cache_key",
-    )
-    .all();
 }
 
 describe("comment translation cache", () => {
@@ -170,7 +74,7 @@ describe("comment translation cache", () => {
     expect(await translations({ targetLanguage: "ja-JP", cachedOnly: true }, null)).toEqual([
       expect.objectContaining({ targetLanguage: "ja-JP", error: "TRANSLATION_CACHE_MISS" }),
     ]);
-    translationResponse = () =>
+    provider.translationResponse = () =>
       Response.json({
         translations: [
           { translatedText: "The exit is on the west side.", detectedLanguageCode: "zh-CN" },
@@ -199,7 +103,7 @@ describe("comment translation cache", () => {
 
   it("isolates explicit source languages in KV and SQLite when the provider omits language detection", async () => {
     insertSubmission(database.sqlite, { id: "comment", userId: "author", content: originalText });
-    translationResponse = (payload) =>
+    provider.translationResponse = (payload) =>
       Response.json({
         translations: [
           {
@@ -483,7 +387,7 @@ describe("translation glossary", () => {
     env.GOOGLE_TRANSLATE_GLOSSARY = "projects/test-project/locations/global/glossaries/endfield";
     env.GOOGLE_TRANSLATE_GLOSSARY_VERSION = "2026 release 1";
     let providerWording = "First glossary wording";
-    translationResponse = () =>
+    provider.translationResponse = () =>
       Response.json({ glossaryTranslations: [{ translatedText: providerWording }] });
     expect(await translations({ sourceLanguage: "zh-CN" })).toEqual([
       expect.objectContaining({
@@ -546,7 +450,7 @@ describe("translation glossary", () => {
       insertSubmission(database.sqlite, { id: "comment", userId: "author", content: originalText });
       env.GOOGLE_TRANSLATE_GLOSSARY = "projects/test-project/locations/global/glossaries/endfield";
       vi.spyOn(console, "warn").mockImplementation(() => {});
-      translationResponse = (payload) =>
+      provider.translationResponse = (payload) =>
         payload.glossaryConfig
           ? new Response("Glossary temporarily unavailable", { status: 503 })
           : Response.json({ translations: [{ translatedText, detectedLanguageCode: "zh-CN" }] });
@@ -582,7 +486,7 @@ describe("translation glossary", () => {
     });
     env.GOOGLE_TRANSLATE_GLOSSARY = "projects/test-project/locations/global/glossaries/endfield";
     env.GOOGLE_TRANSLATE_GLOSSARY_LANGUAGES = "zh-CN,en";
-    translationResponse = () =>
+    provider.translationResponse = () =>
       Response.json({
         translations: [
           { translatedText },
@@ -627,7 +531,7 @@ describe("translation glossary", () => {
     insertSubmission(database.sqlite, { id: "comment", userId: "author", content: "源石在入口。" });
     const glossary = "projects/test-project/locations/global/glossaries/endfield";
     env.GOOGLE_TRANSLATE_GLOSSARY = glossary;
-    translationResponse = (payload) =>
+    provider.translationResponse = (payload) =>
       payload.glossaryConfig
         ? Response.json({
             glossaryTranslations: [{ translatedText: "Originium is at the entrance." }],
@@ -671,316 +575,6 @@ describe("translation glossary", () => {
     ]);
     expect(translationRequests).toHaveLength(2);
   });
-});
-
-describe("translation failure outcomes", () => {
-  it.each([
-    {
-      name: "rejected OAuth credentials",
-      response: () => new Response(null, { status: 401 }),
-      error: "Google token request failed (401).",
-    },
-    {
-      name: "a token response without an access token",
-      response: () => Response.json({ expires_in: 3600 }),
-      error: "Google token response did not include access_token.",
-    },
-  ])("keeps the comment retryable after $name", async ({ response, error }) => {
-    insertSubmission(database.sqlite, { id: "comment", userId: "author", content: originalText });
-    const before = database.sqlite.prepare("SELECT * FROM ugc_submissions").all();
-    tokenResponse = response;
-    expect(await translations({ sourceLanguage: "zh-CN" })).toEqual([
-      expect.objectContaining({ error, cached: false }),
-    ]);
-    expect(translationRequests).toEqual([]);
-    expect(storedTranslations()).toEqual([]);
-    expect(kv.size).toBe(0);
-    expect(database.sqlite.prepare("SELECT * FROM ugc_submissions").all()).toEqual(before);
-
-    // A missing expires_in is accepted by the provider contract; retry obtains a usable token.
-    tokenResponse = () => Response.json({ access_token: "recovered-token" });
-    expect(await translations({ sourceLanguage: "zh-CN" })).toEqual([
-      expect.objectContaining({ translatedContent: translatedText, cached: false }),
-    ]);
-    expect(await translations({ sourceLanguage: "zh-CN", cachedOnly: true }, null)).toEqual([
-      expect.objectContaining({ translatedContent: translatedText, cached: true }),
-    ]);
-    expect(translationRequests).toHaveLength(1);
-    expect(storedTranslations()).toHaveLength(1);
-    expect(database.sqlite.prepare("SELECT * FROM ugc_submissions").all()).toEqual(before);
-  });
-
-  it.each([
-    {
-      binding: "GOOGLE_TRANSLATE_PRIVATE_KEY" as const,
-      error: "Google Translation service account is not configured.",
-    },
-    {
-      binding: "GOOGLE_TRANSLATE_PROJECT_ID" as const,
-      error: "Google Translation project id is not configured.",
-    },
-  ])(
-    "reports missing $binding without caching a result or changing the comment",
-    async ({ binding, error }) => {
-      insertSubmission(database.sqlite, { id: "comment", userId: "author", content: originalText });
-      const before = database.sqlite.prepare("SELECT * FROM ugc_submissions").all();
-      env[binding] = undefined;
-      expect(await translations({ sourceLanguage: "zh-CN" })).toEqual([
-        expect.objectContaining({ error, cached: false }),
-      ]);
-      expect(providerFetch).not.toHaveBeenCalled();
-      expect(storedTranslations()).toEqual([]);
-      expect(kv.size).toBe(0);
-      expect(database.sqlite.prepare("SELECT * FROM ugc_submissions").all()).toEqual(before);
-    },
-  );
-
-  it("translates through the configured local Google proxy and reuses the persisted result", async () => {
-    insertSubmission(database.sqlite, { id: "comment", userId: "author", content: originalText });
-    env.GOOGLE_TRANSLATE_FETCH_PROXY_URL = "http://127.0.0.1:9090/google";
-    const forwarded: Array<{
-      url: string;
-      method: string;
-      headers: Record<string, string>;
-      body: string;
-    }> = [];
-    providerFetch.mockImplementation(async (url, init) => {
-      if (String(url) !== env.GOOGLE_TRANSLATE_FETCH_PROXY_URL) {
-        throw new Error(`Unexpected direct request: ${url}`);
-      }
-      const payload = JSON.parse(String(init?.body));
-      forwarded.push(payload);
-      return Response.json({
-        status: 200,
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(
-          forwarded.length === 1
-            ? { access_token: "proxy-token", expires_in: 3600 }
-            : { translations: [{ translatedText, detectedLanguageCode: "zh-CN" }] },
-        ),
-      });
-    });
-    expect(await translations({})).toEqual([
-      expect.objectContaining({ translatedContent: translatedText, cached: false }),
-    ]);
-    expect(forwarded.map(({ url, method }) => ({ url, method }))).toEqual([
-      { url: "https://oauth2.googleapis.com/token", method: "POST" },
-      {
-        url: "https://translation.googleapis.com/v3/projects/test-project/locations/global:translateText",
-        method: "POST",
-      },
-    ]);
-    expect(new URLSearchParams(forwarded[0]!.body).get("grant_type")).toBe(
-      "urn:ietf:params:oauth:grant-type:jwt-bearer",
-    );
-    expect(forwarded[1]!.headers.authorization).toBe("Bearer proxy-token");
-    expect(JSON.parse(forwarded[1]!.body)).toMatchObject({
-      contents: [originalText],
-      targetLanguageCode: "en",
-    });
-    expect(await translations({ cachedOnly: true }, null)).toEqual([
-      expect.objectContaining({ translatedContent: translatedText, cached: true }),
-    ]);
-    expect(storedTranslations()).toHaveLength(1);
-    expect(forwarded).toHaveLength(2);
-  });
-
-  // HTTP isolates the host restriction: a remote address must not receive Google credentials.
-  it.each(["http://remote.example.test/proxy", "not a URL"])(
-    "keeps Google credentials on the direct provider connection when proxy configuration %s is disallowed",
-    async (proxy) => {
-      insertSubmission(database.sqlite, { id: "comment", userId: "author", content: originalText });
-      env.GOOGLE_TRANSLATE_FETCH_PROXY_URL = proxy;
-      expect(await translations({})).toEqual([
-        expect.objectContaining({ translatedContent: translatedText, cached: false }),
-      ]);
-      expect(providerFetch.mock.calls.map(([url]) => String(url))).toEqual([
-        "https://oauth2.googleapis.com/token",
-        "https://translation.googleapis.com/v3/projects/test-project/locations/global:translateText",
-      ]);
-    },
-  );
-
-  it("reports a provider timeout without caching failure and succeeds when the reader retries", async () => {
-    insertSubmission(database.sqlite, { id: "comment", userId: "author", content: originalText });
-    const before = database.sqlite.prepare("SELECT * FROM ugc_submissions").all();
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    const externalFetch = providerFetch.getMockImplementation()!;
-    let started!: () => void;
-    const translationStarted = new Promise<void>((resolve) => {
-      started = resolve;
-    });
-    providerFetch.mockImplementation((url, init) => {
-      if (String(url).includes("translation.googleapis.com")) {
-        return new Promise<Response>((_resolve, reject) => {
-          init!.signal!.addEventListener(
-            "abort",
-            () => reject(new DOMException("Aborted", "AbortError")),
-            { once: true },
-          );
-          started();
-        });
-      }
-      return externalFetch(url, init);
-    });
-    const response = translations({ sourceLanguage: "zh-CN" });
-    await translationStarted;
-    await vi.advanceTimersToNextTimerAsync();
-    expect(await response).toEqual([
-      expect.objectContaining({
-        error: "Google Translation google-translate request timed out.",
-        cached: false,
-      }),
-    ]);
-    expect(storedTranslations()).toEqual([]);
-    expect(kv.size).toBe(0);
-    expect(database.sqlite.prepare("SELECT * FROM ugc_submissions").all()).toEqual(before);
-
-    providerFetch.mockImplementation(externalFetch);
-    expect(await translations({ sourceLanguage: "zh-CN" })).toEqual([
-      expect.objectContaining({ translatedContent: translatedText, cached: false }),
-    ]);
-    expect(await translations({ sourceLanguage: "zh-CN", cachedOnly: true }, null)).toEqual([
-      expect.objectContaining({ translatedContent: translatedText, cached: true }),
-    ]);
-    expect(storedTranslations()).toHaveLength(1);
-  });
-
-  it("does not cache a detected source language that is already the requested target language", async () => {
-    insertSubmission(database.sqlite, { id: "comment", userId: "author", content: translatedText });
-    translationResponse = () =>
-      Response.json({ translations: [{ translatedText, detectedLanguageCode: "en" }] });
-    expect(await translations({})).toEqual([
-      expect.objectContaining({
-        commentId: "comment",
-        sourceLanguage: "en",
-        error: "Target language cannot be equal to source language.",
-        cached: false,
-      }),
-    ]);
-    expect(storedTranslations()).toEqual([]);
-    expect(kv.size).toBe(0);
-    expect(await translations({ cachedOnly: true }, null)).toEqual([
-      expect.objectContaining({ error: "TRANSLATION_CACHE_MISS" }),
-    ]);
-  });
-
-  it("keeps a completed translation available when KV writes fail", async () => {
-    insertSubmission(database.sqlite, { id: "comment", userId: "author", content: originalText });
-    vi.spyOn(console, "warn").mockImplementation(() => {});
-    env.OEM_KV!.put = async () => {
-      throw new Error("KV unavailable");
-    };
-    expect(await translations({})).toEqual([
-      expect.objectContaining({ translatedContent: translatedText, cached: false }),
-    ]);
-    expect(kv.size).toBe(0);
-    expect(storedTranslations()).toHaveLength(1);
-    expect(await translations({ cachedOnly: true }, null)).toEqual([
-      expect.objectContaining({ translatedContent: translatedText, cached: true }),
-    ]);
-    expect(translationRequests).toHaveLength(1);
-  });
-
-  it("saves successful batch items while reporting an empty translation for another comment", async () => {
-    insertSubmission(database.sqlite, { id: "comment", userId: "author", content: originalText });
-    insertSubmission(database.sqlite, {
-      id: "empty-result",
-      userId: "author",
-      content: "出口在西边。",
-    });
-    translationResponse = () =>
-      Response.json({
-        translations: [
-          { translatedText, detectedLanguageCode: "zh-CN" },
-          { translatedText: "", detectedLanguageCode: "zh-CN" },
-        ],
-      });
-    expect(await translations({ commentIds: ["comment", "empty-result"] })).toEqual([
-      expect.objectContaining({
-        commentId: "comment",
-        translatedContent: translatedText,
-        cached: false,
-      }),
-      expect.objectContaining({
-        commentId: "empty-result",
-        error: "TRANSLATION_EMPTY",
-        cached: false,
-      }),
-    ]);
-    expect(storedTranslations()).toHaveLength(1);
-    expect(
-      await translations({ commentIds: ["comment", "empty-result"], cachedOnly: true }, null),
-    ).toEqual([
-      expect.objectContaining({
-        commentId: "comment",
-        translatedContent: translatedText,
-        cached: true,
-      }),
-      expect.objectContaining({
-        commentId: "empty-result",
-        error: "TRANSLATION_CACHE_MISS",
-        cached: false,
-      }),
-    ]);
-  });
-
-  it.each(["http", "network"])(
-    "preserves cached translations during a provider %s failure and leaves misses retryable",
-    async (failure) => {
-      insertSubmission(database.sqlite, { id: "comment", userId: "author", content: originalText });
-      await translations({});
-      insertSubmission(database.sqlite, {
-        id: "uncached",
-        userId: "author",
-        content: "出口在西边。",
-      });
-      translationResponse = () => {
-        if (failure === "network") {
-          throw new Error("Translation network unavailable");
-        }
-        return new Response("Provider unavailable", { status: 503 });
-      };
-      const items = await translations({ commentIds: ["comment", "uncached"] });
-      expect(items[0]).toMatchObject({
-        commentId: "comment",
-        translatedContent: translatedText,
-        cached: true,
-      });
-      expect(items[1]).toMatchObject({
-        commentId: "uncached",
-        cached: false,
-        error:
-          failure === "network"
-            ? "Translation network unavailable"
-            : "Google Translation request failed (503). Provider unavailable",
-      });
-      expect(items[1]).not.toHaveProperty("translatedContent");
-      expect(storedTranslations()).toHaveLength(1);
-      expect(await translations({ commentIds: ["uncached"], cachedOnly: true }, null)).toEqual([
-        expect.objectContaining({ error: "TRANSLATION_CACHE_MISS" }),
-      ]);
-      translationResponse = () =>
-        Response.json({
-          translations: [
-            { translatedText: "The exit is on the west side.", detectedLanguageCode: "zh-CN" },
-          ],
-        });
-      expect(await translations({ commentIds: ["uncached"] })).toEqual([
-        expect.objectContaining({
-          translatedContent: "The exit is on the west side.",
-          cached: false,
-        }),
-      ]);
-      expect(await translations({ commentIds: ["uncached"], cachedOnly: true }, null)).toEqual([
-        expect.objectContaining({
-          translatedContent: "The exit is on the west side.",
-          cached: true,
-        }),
-      ]);
-      expect(storedTranslations()).toHaveLength(2);
-    },
-  );
 });
 
 vi.mock("cloudflare:workers", () => ({

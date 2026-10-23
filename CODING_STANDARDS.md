@@ -64,6 +64,22 @@ when the task explicitly concerns those documents.
   transactions, query plans, and native Workers behavior. Keep business assertions
   visible and derive expectations from business rules or external contracts.
 
+### Test naming and organization
+
+- Use `<module-or-business-behavior>.spec.ts` for TypeScript tests. Do not add
+  `.integration` or alternate `.test.ts` suffixes. Describe the exercised behavior
+  in suite and test names; distinct runtime suites belong in their own runners.
+- Split unusually long test files when independent business or domain groups need
+  different fixtures or preparation. Group tests with similar setup and dependencies
+  together. Line count is a prompt to inspect cohesion, not a mandatory size limit.
+- Keep each lifecycle, failure-and-retry sequence, and its assertions together.
+  Do not split a cohesive scenario into tests that depend on execution order, or
+  fragment a cohesive file only to shorten it.
+- Reuse existing fixtures. Extract shared preparation only when multiple test files
+  actually need it; put shared facilities under `src/test/fixtures/`. Keep domain
+  data and dependency responses local to the groups that need them. Avoid a generic
+  scenario DSL, hidden hook registration, or a shared mutable database across tests.
+
 ### Schema and invalid-input tests
 
 - Integration tests exercise business behavior. Bad inputs are not a required
