@@ -1,11 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { markNotificationsRead } from "@/repositories/notifications";
+import {
+  getDuplicateImageMarkerSummary,
+  listDuplicateImageMarkers,
+  listDuplicateMarkerImages,
+} from "@/repositories/submission-duplicates";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { insertNotification } from "@/test/fixtures/notifications";
 import { insertSubmission } from "@/test/fixtures/submissions";
 import { insertUser } from "@/test/fixtures/users";
 
+import { listVisibleImageCountsByMarker } from "./imageCoverage";
 import {
   listActiveCommentsByMarker,
   listCommentViewerStateByMarker,
@@ -17,6 +23,14 @@ import {
   listUserImagesByMarker,
 } from "./listImages";
 import { getVisibleCommentsByIds } from "./statusSubmission";
+
+interface SubmissionScenarioOptions {
+  parentId?: string;
+  depth?: number;
+  kind?: "comment" | "image";
+  status?: string;
+  filePath?: string;
+}
 
 describe("public read SQL under D1 limits", () => {
   let connection: TestDatabase;
@@ -37,17 +51,11 @@ describe("public read SQL under D1 limits", () => {
 
   afterEach(() => connection.close());
 
-  function insert(
+  function seedSubmission(
     id: string,
     markerId: string,
-    options: {
-      parentId?: string;
-      depth?: number;
-      kind?: "comment" | "image";
-      status?: string;
-      filePath?: string;
-    } = {},
-  ) {
+    options: SubmissionScenarioOptions = {},
+  ): void {
     insertSubmission(connection.sqlite, {
       id,
       userId: "viewer",
@@ -62,12 +70,97 @@ describe("public read SQL under D1 limits", () => {
     });
   }
 
+  it("treats image namespace prefixes literally in public, private and viewer reads", async () => {
+    // An underscore is a SQL LIKE wildcard unless escaped; a namespace also
+    // ends at a slash, so neither xtest nor _test-other belongs to _test.
+    for (const [id, filePath] of [
+      ["test", "_test/image.webp"],
+      ["similar", "xtest/image.webp"],
+      ["sibling", "_test-other/image.webp"],
+    ]) {
+      seedSubmission(id, "marker-1", { kind: "image", filePath });
+      connection.sqlite
+        .prepare("INSERT INTO ugc_submission_flags (submission_id, user_id) VALUES (?, 'viewer')")
+        .run(id);
+    }
+    const base = {
+      markerId: "marker-1",
+      assetBaseUrl: "https://assets.example",
+      privateAssetBaseUrl: "https://private.example",
+      userId: "viewer",
+    };
+    for (const [scope, ids] of [
+      [{ pathPrefix: "_test" }, ["test"]],
+      [{ excludePathPrefix: "_test" }, ["sibling", "similar"]],
+    ] as const) {
+      expect(
+        (await listActiveImagesByMarker(connection.db, { ...base, ...scope }))
+          .map((item) => item.id)
+          .sort(),
+      ).toEqual([...ids]);
+      expect(
+        (await listUserImagesByMarker(connection.db, { ...base, ...scope }))
+          .map((item) => item.id)
+          .sort(),
+      ).toEqual([...ids]);
+      expect(
+        [
+          ...(
+            await listImageViewerReactionsByMarker(connection.db, {
+              ...base,
+              ...scope,
+              markerIds: ["marker-1"],
+              submissionIds: ["test", "similar", "sibling"],
+            })
+          ).keys(),
+        ].sort(),
+      ).toEqual([...ids]);
+    }
+    expect(
+      await getDuplicateImageMarkerSummary(connection.db, {
+        markerId: "marker-1",
+        pathPrefix: "_test",
+      }),
+    ).toBeNull();
+    expect(
+      await listDuplicateImageMarkers(connection.db, { ...base, pathPrefix: "_test" }),
+    ).toEqual({ items: [], total: 0 });
+    // A single image is counted but is not shown as a duplicate candidate.
+    expect(
+      await listDuplicateMarkerImages(connection.db, { ...base, pathPrefix: "_test" }),
+    ).toEqual({ items: [], total: 1 });
+    expect(
+      await getDuplicateImageMarkerSummary(connection.db, {
+        markerId: "marker-1",
+        excludePathPrefix: "_test",
+      }),
+    ).toEqual({ markerId: "marker-1", imageCount: 2 });
+    expect(
+      await listDuplicateImageMarkers(connection.db, { ...base, excludePathPrefix: "_test" }),
+    ).toMatchObject({
+      total: 1,
+      items: [{ markerId: "marker-1", imageCount: 2, latestImage: { id: "similar" } }],
+    });
+    const duplicates = await listDuplicateMarkerImages(connection.db, {
+      ...base,
+      excludePathPrefix: "_test",
+    });
+    expect(duplicates.total).toBe(2);
+    expect(duplicates.items.map((item) => item.id).sort()).toEqual(["sibling", "similar"]);
+    expect(await listVisibleImageCountsByMarker(connection.db, { pathPrefix: "_test" })).toEqual([
+      { markerId: "marker-1", imageCount: 1 },
+    ]);
+    expect(
+      await listVisibleImageCountsByMarker(connection.db, { excludePathPrefix: "_test" }),
+    ).toEqual([{ markerId: "marker-1", imageCount: 2 }]);
+  });
+
   it("loads 100 markers and more than 100 reply roots without excess SQL parameters", async () => {
     for (const markerId of markerIds) {
       for (const suffix of ["a", "b"]) {
         const rootId = `${markerId}-${suffix}`;
-        insert(rootId, markerId);
-        insert(`${rootId}-reply`, markerId, { parentId: rootId, depth: 1 });
+        seedSubmission(rootId, markerId);
+        seedSubmission(`${rootId}-reply`, markerId, { parentId: rootId, depth: 1 });
       }
     }
     const comments = await listActiveCommentsByMarker(connection.db, {
@@ -77,20 +170,27 @@ describe("public read SQL under D1 limits", () => {
       viewerUserId: "viewer",
     });
     expect(comments).toHaveLength(200);
-    expect(
-      comments.every((comment) => comment.replyCount === 1 && comment.replies.length === 1),
-    ).toBe(true);
+    for (const comment of comments) {
+      expect(comment.replyCount).toBe(1);
+      expect(comment.replies).toHaveLength(1);
+    }
     expect(connection.queries).toHaveLength(1);
-    expect(connection.queries.every((query) => query.values.length === 4)).toBe(true);
+    for (const query of connection.queries) {
+      expect(query.values).toHaveLength(4);
+    }
   });
 
   it("preserves vote ranking, nested replies, visibility, and indexed reaction lookups", async () => {
-    insert("root-low", "marker-1");
-    insert("root-high", "marker-1");
-    insert("reply", "marker-1", { parentId: "root-high", depth: 1 });
-    insert("nested", "marker-1", { parentId: "reply", depth: 2 });
-    insert("hidden", "marker-1", { parentId: "root-high", depth: 1, status: "pending_audit" });
-    insert("unrelated", "outside");
+    seedSubmission("root-low", "marker-1");
+    seedSubmission("root-high", "marker-1");
+    seedSubmission("reply", "marker-1", { parentId: "root-high", depth: 1 });
+    seedSubmission("nested", "marker-1", { parentId: "reply", depth: 2 });
+    seedSubmission("hidden", "marker-1", {
+      parentId: "root-high",
+      depth: 1,
+      status: "pending_audit",
+    });
+    seedSubmission("unrelated", "outside");
     connection.sqlite.exec(`
       INSERT INTO ugc_submission_votes (submission_id, user_id, value, active)
         VALUES ('root-high', 'viewer', 1, 1), ('reply', 'viewer', -1, 1), ('unrelated', 'viewer', 1, 1);
@@ -120,10 +220,10 @@ describe("public read SQL under D1 limits", () => {
   });
 
   it("supports 100 markers for private lists and viewer overlays", async () => {
-    insert("public-comment", "marker-99");
-    insert("pending-comment", "marker-99", { status: "pending_audit" });
-    insert("public-image", "marker-99", { kind: "image" });
-    insert("test-image", "marker-99", { kind: "image", filePath: "_test/image.webp" });
+    seedSubmission("public-comment", "marker-99");
+    seedSubmission("pending-comment", "marker-99", { status: "pending_audit" });
+    seedSubmission("public-image", "marker-99", { kind: "image" });
+    seedSubmission("test-image", "marker-99", { kind: "image", filePath: "_test/image.webp" });
     connection.sqlite.exec(`
       INSERT INTO ugc_submission_votes (submission_id, user_id, value, active) VALUES ('public-comment', 'viewer', 1, 1);
       INSERT INTO ugc_submission_upvotes (submission_id, user_id, active) VALUES ('public-image', 'viewer', 1);
@@ -164,10 +264,10 @@ describe("public read SQL under D1 limits", () => {
   });
 
   it("counts direct visible replies without loading reply trees when the limit is zero", async () => {
-    insert("root", "marker-1");
-    insert("reply", "marker-1", { parentId: "root", depth: 1 });
-    insert("nested", "marker-1", { parentId: "reply", depth: 2 });
-    insert("hidden", "marker-1", { parentId: "root", depth: 1, status: "stale" });
+    seedSubmission("root", "marker-1");
+    seedSubmission("reply", "marker-1", { parentId: "root", depth: 1 });
+    seedSubmission("nested", "marker-1", { parentId: "reply", depth: 2 });
+    seedSubmission("hidden", "marker-1", { parentId: "root", depth: 1, status: "stale" });
     const comments = await listActiveCommentsByMarker(connection.db, {
       markerId: "marker-1",
       replyLimit: 0,
@@ -179,14 +279,14 @@ describe("public read SQL under D1 limits", () => {
   });
 
   it("preserves per-parent reply limits, ordering, and hidden-ancestor exclusion", async () => {
-    insert("root", "marker-1");
+    seedSubmission("root", "marker-1");
     for (const suffix of ["a", "b", "c"]) {
-      insert(`reply-${suffix}`, "marker-1", { parentId: "root", depth: 1 });
-      insert(`nested-${suffix}`, "marker-1", { parentId: "reply-a", depth: 2 });
+      seedSubmission(`reply-${suffix}`, "marker-1", { parentId: "root", depth: 1 });
+      seedSubmission(`nested-${suffix}`, "marker-1", { parentId: "reply-a", depth: 2 });
     }
-    insert("hidden", "marker-1", { parentId: "root", depth: 1, status: "pending_audit" });
-    insert("hidden-child", "marker-1", { parentId: "hidden", depth: 2 });
-    insert("excluded-child", "marker-1", { parentId: "reply-c", depth: 2 });
+    seedSubmission("hidden", "marker-1", { parentId: "root", depth: 1, status: "pending_audit" });
+    seedSubmission("hidden-child", "marker-1", { parentId: "hidden", depth: 2 });
+    seedSubmission("excluded-child", "marker-1", { parentId: "reply-c", depth: 2 });
     const comments = await listActiveCommentsByMarker(connection.db, {
       markerId: "marker-1",
       replyLimit: 2,
@@ -198,12 +298,13 @@ describe("public read SQL under D1 limits", () => {
       "nested-a",
       "nested-b",
     ]);
+    // A visible descendant must not bypass a hidden or paginated-out ancestor.
     expect(JSON.stringify(comments)).not.toContain("hidden-child");
     expect(JSON.stringify(comments)).not.toContain("excluded-child");
   });
 
   it("skips empty image reactions but still loads the viewer's pending comments", async () => {
-    insert("pending", "marker-1", { status: "pending_audit" });
+    seedSubmission("pending", "marker-1", { status: "pending_audit" });
     const payload = { userId: "viewer", markerIds: ["marker-1"], submissionIds: [] };
     expect(await listImageViewerReactionsByMarker(connection.db, payload)).toEqual(new Map());
     expect(connection.queries).toHaveLength(0);
@@ -222,7 +323,7 @@ describe("public read SQL under D1 limits", () => {
         SELECT 'history-' || number, 'marker-1', 'viewer', 'comment', 'active', '2026-09-05', 'hash', 'poi', 'snapshot-' || number, 'content'
         FROM sequence;
     `);
-    insert("pending", "marker-1", { status: "pending_openai" });
+    seedSubmission("pending", "marker-1", { status: "pending_openai" });
     const state = await listCommentViewerStateByMarker(connection.db, {
       userId: "viewer",
       markerIds: ["marker-1"],
@@ -237,12 +338,12 @@ describe("public read SQL under D1 limits", () => {
 
   it("limits viewer reactions to returned IDs without leaking hidden, wrong-scope, or other-user state", async () => {
     for (const kind of ["image", "comment"] as const) {
-      insert(`${kind}-shown`, "marker-1", { kind });
-      insert(`${kind}-omitted`, "marker-1", { kind });
-      insert(`${kind}-hidden`, "marker-1", { kind, status: "stale" });
-      insert(`${kind}-outside`, "outside", { kind });
+      seedSubmission(`${kind}-shown`, "marker-1", { kind });
+      seedSubmission(`${kind}-omitted`, "marker-1", { kind });
+      seedSubmission(`${kind}-hidden`, "marker-1", { kind, status: "stale" });
+      seedSubmission(`${kind}-outside`, "outside", { kind });
     }
-    insert("test-image", "marker-1", { kind: "image", filePath: "_test/image.webp" });
+    seedSubmission("test-image", "marker-1", { kind: "image", filePath: "_test/image.webp" });
     connection.sqlite.exec(`
       INSERT INTO ugc_submission_flags (submission_id, user_id, active)
         SELECT id, 'viewer', 1 FROM ugc_submissions;
@@ -268,17 +369,19 @@ describe("public read SQL under D1 limits", () => {
     );
     const state = await listCommentViewerStateByMarker(connection.db, payload);
     expect(state.reactions).toEqual(new Map([["comment-shown", { flagged: true, viewerVote: 0 }]]));
-    for (const query of [connection.queries[0]!, connection.queries[2]!]) {
+    // Comment viewer state first loads pending comments, then reactions.
+    const [imageReactionsQuery, , commentReactionsQuery] = connection.queries;
+    for (const query of [imageReactionsQuery!, commentReactionsQuery!]) {
       const detail = connection.explain(query);
       expect(detail).toContain("SEARCH s USING INDEX sqlite_autoindex_ugc_submissions_1 (id=?)");
     }
   });
 
   it("checks translation visibility with one narrow submission lookup and no author join", async () => {
-    insert("shown", "marker-1");
-    insert("flagged", "marker-1", { status: "flagged" });
-    insert("hidden", "marker-1", { status: "pending_audit" });
-    insert("image", "marker-1", { kind: "image" });
+    seedSubmission("shown", "marker-1");
+    seedSubmission("flagged", "marker-1", { status: "flagged" });
+    seedSubmission("hidden", "marker-1", { status: "pending_audit" });
+    seedSubmission("image", "marker-1", { kind: "image" });
     const comments = await getVisibleCommentsByIds(connection.db, [
       "shown",
       "flagged",
@@ -308,8 +411,8 @@ describe("public read SQL under D1 limits", () => {
       INSERT INTO ugc_submission_votes (submission_id, user_id, value, active)
         SELECT id, 'viewer', 1, 1 FROM ugc_submissions;
     `);
-      insert("selected-root", "requested");
-      insert("selected-reply", "requested", { parentId: "selected-root", depth: 1 });
+      seedSubmission("selected-root", "requested");
+      seedSubmission("selected-reply", "requested", { parentId: "selected-root", depth: 1 });
       const result = await listActiveCommentsByMarker(connection.db, {
         markerId,
         limit: 1,
@@ -364,6 +467,8 @@ describe("public read SQL under D1 limits", () => {
         .prepare("SELECT COUNT(*) AS count FROM notifications WHERE read_at IS NULL")
         .get()?.count,
     ).toBe(2);
-    expect(connection.queries.every((query) => query.values.length === 4)).toBe(true);
+    for (const query of connection.queries) {
+      expect(query.values).toHaveLength(4);
+    }
   });
 });

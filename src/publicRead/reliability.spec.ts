@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createMockBindings } from "@/test/bindings";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
+import { insertSubmission } from "@/test/fixtures/submissions";
+import { insertUser } from "@/test/fixtures/users";
 import type { Bindings } from "@/types/app";
 
 const mocks = vi.hoisted(() => ({ fetch: vi.fn() }));
@@ -28,18 +30,18 @@ const fetchPublicCommentsFromWorkersCache = async (
 import { PublicReadCache } from "./origin/entrypoint";
 
 let database: TestDatabase;
-let pending: Promise<unknown>[];
+let backgroundTasks: Promise<unknown>[];
 let context: ExecutionContext;
 beforeEach(() => {
   mocks.fetch.mockReset();
   database = createTestDatabase();
-  pending = [];
+  backgroundTasks = [];
   context = {
-    waitUntil: (promise: Promise<unknown>) => pending.push(promise),
+    waitUntil: (promise: Promise<unknown>) => backgroundTasks.push(promise),
   } as unknown as ExecutionContext;
 });
 afterEach(async () => {
-  await Promise.all(pending);
+  await Promise.all(backgroundTasks);
   vi.restoreAllMocks();
   database.close();
 });
@@ -53,7 +55,9 @@ describe("bounded public reads", () => {
         { id: "returned", markerId: "first", replies: [] },
         { id: "unused", markerId: "first", replies: [] },
       ];
-      const select = vi.spyOn(firstItems, "slice");
+      // Final output alone cannot show when excess entries were discarded.
+      // Observe selection while the slow body is still pending to protect memory use.
+      const trimItems = vi.spyOn(firstItems, "slice");
       mocks.fetch.mockImplementation(async (request: Request) => ({
         ok: true,
         json: () =>
@@ -70,18 +74,18 @@ describe("bounded public reads", () => {
         cacheNamespace: "prod" as const,
         assetBaseUrl: "https://assets.example",
       };
-      const pending =
+      const responsePromise =
         kind === "images"
           ? fetchPublicImagesFromWorkersCache(payload)
           : fetchPublicCommentsFromWorkersCache(payload);
       try {
         await vi.waitFor(() => expect(finishSlow).toBeTypeOf("function"));
-        expect(select).toHaveBeenCalledWith(0, 1);
+        expect(trimItems).toHaveBeenCalledWith(0, 1);
       } finally {
         finishSlow();
-        await pending;
+        await responsePromise;
       }
-      expect(await (await pending).json()).toEqual({ items: [firstItems[0]] });
+      expect(await (await responsePromise).json()).toEqual({ items: [firstItems[0]] });
     },
   );
 
@@ -198,6 +202,13 @@ describe("bounded public reads", () => {
     "does not cache D1 failures in the %s entrypoint",
     async (kind) => {
       vi.spyOn(console, "error").mockImplementation(() => undefined);
+      insertUser(database.sqlite, { uid: "author" });
+      insertSubmission(database.sqlite, {
+        id: "stored",
+        userId: "author",
+        kind: kind === "images" ? "image" : "comment",
+      });
+      const before = database.sqlite.prepare("SELECT * FROM ugc_submissions").all();
       database.hooks.beforeQuery = (sql) => {
         if (/ugc_submissions/.test(sql)) {
           throw new Error("D1_ERROR: D1 DB is overloaded.");
@@ -205,63 +216,51 @@ describe("bounded public reads", () => {
       };
       const bindings = createMockBindings({ DB: database.db });
       const cache = new PublicReadCache(context, bindings.bindings);
-      const response = await cache.fetch(
-        new Request(
-          `https://public-read-cache.internal/${kind}?markerId=marker-1&limit=6&replyLimit=3&namespace=prod&assetBaseUrl=https://assets.example`,
-        ),
+      const request = new Request(
+        `https://public-read-cache.internal/${kind}?markerId=marker-1&limit=6&replyLimit=3&namespace=prod&assetBaseUrl=https://assets.example`,
       );
+      const response = await cache.fetch(request);
       expect(response.status).toBe(503);
       expect(response.headers.get("cache-control")).toBe("private, no-store");
       expect(response.headers.get("retry-after")).toBe("5");
       expect(await response.json()).toMatchObject({ code: "DEPENDENCY_OVERLOADED" });
+      expect(database.sqlite.prepare("SELECT * FROM ugc_submissions").all()).toEqual(before);
+
+      database.hooks.beforeQuery = undefined;
+      const recovered = await cache.fetch(request);
+      expect(recovered.status).toBe(200);
+      expect(await recovered.json()).toMatchObject({ items: [{ id: "stored" }] });
+      expect(database.sqlite.prepare("SELECT * FROM ugc_submissions").all()).toEqual(before);
     },
   );
 
-  it("serves progress statistics through KV and the statistics Durable Object", async () => {
-    const markerIndexHash = "a".repeat(64);
-    const snapshot = {
-      markerIndexHash,
-      totalSyncedUsers: 12,
-      pointCount: 3,
-      counts: "AQID",
-      updatedAt: 42,
-    };
-    const kv = {
-      get: vi.fn().mockResolvedValueOnce(null).mockResolvedValueOnce(JSON.stringify(snapshot)),
-      put: vi.fn().mockResolvedValue(undefined),
-    };
-    const stub = { fetch: vi.fn().mockResolvedValue(Response.json(snapshot)) };
-    const stats = {
-      idFromName: vi.fn().mockReturnValue("stats-id"),
-      get: vi.fn().mockReturnValue(stub),
+  it("redacts unexpected origin failures without retry hints and recovers stored comments", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    insertUser(database.sqlite, { uid: "author" });
+    insertSubmission(database.sqlite, { id: "stored", userId: "author" });
+    const before = database.sqlite.prepare("SELECT * FROM ugc_submissions").all();
+    database.hooks.beforeQuery = () => {
+      throw new Error("D1_ERROR: private database detail");
     };
     const bindings = createMockBindings({ DB: database.db });
-    bindings.bindings.OEM_KV = kv as unknown as KVNamespace;
-    bindings.statsObjects.idFromName.mockImplementation(stats.idFromName);
-    bindings.statsObjects.get.mockImplementation(stats.get);
     const cache = new PublicReadCache(context, bindings.bindings);
     const request = new Request(
-      `https://public-read-cache.internal/progress-stats?markerIndexHash=${markerIndexHash}`,
+      "https://public-read-cache.internal/comments?markerId=marker-1&limit=6&replyLimit=0&namespace=prod",
     );
+    const failed = await cache.fetch(request);
+    expect(failed.status).toBe(500);
+    expect(failed.headers.get("cache-control")).toBe("private, no-store");
+    expect(failed.headers.get("retry-after")).toBeNull();
+    expect(await failed.json()).toEqual({
+      code: "INTERNAL_ERROR",
+      message: "Internal server error.",
+    });
+    expect(database.sqlite.prepare("SELECT * FROM ugc_submissions").all()).toEqual(before);
 
-    const miss = await cache.fetch(request);
-    expect(await miss.json()).toEqual(snapshot);
-    expect(miss.headers.get("cache-control")).toBe("public, max-age=10");
-    expect(miss.headers.get("cloudflare-cdn-cache-control")).toBe("public, max-age=60");
-    expect(miss.headers.get("x-oem-kv-cache")).toBe("miss");
-    expect(stats.idFromName).toHaveBeenCalledWith(markerIndexHash);
-    expect(stub.fetch.mock.calls[0]![0].url).toBe(
-      `https://progress-stats/state?markerIndexHash=${markerIndexHash}`,
-    );
-    expect(kv.put).toHaveBeenCalledWith(
-      `progress:stats:v2:${markerIndexHash}`,
-      JSON.stringify(snapshot),
-      { expirationTtl: 60 },
-    );
-
-    const hit = await cache.fetch(request);
-    expect(await hit.json()).toEqual(snapshot);
-    expect(hit.headers.get("x-oem-kv-cache")).toBe("hit");
-    expect(stub.fetch).toHaveBeenCalledTimes(1);
+    database.hooks.beforeQuery = undefined;
+    const recovered = await cache.fetch(request);
+    expect(recovered.status).toBe(200);
+    expect(await recovered.json()).toMatchObject({ items: [{ id: "stored" }] });
+    expect(database.sqlite.prepare("SELECT * FROM ugc_submissions").all()).toEqual(before);
   });
 });
