@@ -10,86 +10,11 @@ import type { TestDatabase } from "@/test/database/createTestDatabase";
 import { insertAuthUser, insertSession } from "@/test/fixtures/auth";
 import type { AppEnv } from "@/types/app";
 
-/** DO storage protocol stand-in. Failure injection rejects before the closure,
- * so this does not claim native partial-write transaction rollback coverage. */
-export class FakeStorage {
-  values = new Map<string, unknown>();
-  alarm: number | null = null;
-  failNextTransaction = false;
-
-  async get<T>(key: string): Promise<T | undefined> {
-    return this.values.get(key) as T | undefined;
-  }
-
-  async put<T>(key: string, value: T): Promise<void> {
-    this.values.set(key, value);
-  }
-
-  async delete(keyOrKeys: string | string[]): Promise<boolean | number> {
-    if (Array.isArray(keyOrKeys)) {
-      let deleted = 0;
-      keyOrKeys.forEach((key) => {
-        if (this.values.delete(key)) {
-          deleted += 1;
-        }
-      });
-      return deleted;
-    }
-    return this.values.delete(keyOrKeys);
-  }
-
-  async list<T>(options?: { prefix?: string; limit?: number }): Promise<Map<string, T>> {
-    const entries = [...this.values.entries()]
-      .filter(([key]) => !options?.prefix || key.startsWith(options.prefix))
-      .sort(([left], [right]) => left.localeCompare(right))
-      .slice(0, options?.limit);
-    return new Map(entries) as Map<string, T>;
-  }
-
-  async transaction<T>(closure: (transaction: FakeStorage) => Promise<T>): Promise<T> {
-    if (this.failNextTransaction) {
-      this.failNextTransaction = false;
-      throw new Error("injected storage transaction failure");
-    }
-    const transaction = new FakeStorage();
-    transaction.values = structuredClone(this.values);
-    transaction.alarm = this.alarm;
-    const result = await closure(transaction);
-    this.values = transaction.values;
-    this.alarm = transaction.alarm;
-    return result;
-  }
-
-  async getAlarm(): Promise<number | null> {
-    return this.alarm;
-  }
-
-  async setAlarm(value: number | Date): Promise<void> {
-    this.alarm = Number(value);
-  }
-}
-
-export interface ProgressState {
-  state: DurableObjectState;
-  waits: Promise<unknown>[];
-  storage: FakeStorage;
-}
-export function createProgressState(name?: string, storage = new FakeStorage()): ProgressState {
-  const waits: Promise<unknown>[] = [];
-  return {
-    state: {
-      id: { name },
-      storage,
-      waitUntil: (promise: Promise<unknown>) => waits.push(promise),
-    } as unknown as DurableObjectState,
-    waits,
-    storage,
-  };
-}
+import { createProgressTestState, type ProgressTestState } from "./progressRuntime";
 
 interface ProgressObject {
   object: OEMUserDO;
-  state: ProgressState;
+  state: ProgressTestState;
 }
 
 export interface ProgressFixture {
@@ -97,7 +22,7 @@ export interface ProgressFixture {
   object: OEMUserDO;
   markerIndexHash: string;
   archiveIndexHash: string;
-  state: ProgressState;
+  state: ProgressTestState;
 }
 
 export function insertProgressManifest(
@@ -164,7 +89,7 @@ export function createProgressFixture(
   function namedObject(name: string): ProgressObject {
     let entry = objects.get(name);
     if (!entry) {
-      const state = createProgressState(name);
+      const state = createProgressTestState(name);
       entry = { object: new OEMUserDO(state.state, mocks.bindings), state };
       objects.set(name, entry);
     }

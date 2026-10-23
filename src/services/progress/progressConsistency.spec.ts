@@ -4,11 +4,10 @@ import { createMockBindings } from "@/test/bindings";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import {
   createProgressFixture,
-  createProgressState,
-  FakeStorage,
   insertProgressManifest,
   type ProgressFixture,
 } from "@/test/fixtures/progress";
+import { createProgressTestState, ProgressTestStorage } from "@/test/fixtures/progressRuntime";
 import { insertUser } from "@/test/fixtures/users";
 
 import { buildStatsCountsBase64, parseStatsCountsBase64 } from "./bitmap";
@@ -271,7 +270,7 @@ describe("OEMUserDO progress consistency", () => {
 
   it("fails closed when the DO has no named identity", async () => {
     const database = databaseForTest();
-    const { state } = createProgressState();
+    const { state } = createProgressTestState();
     const object = new OEMUserDO(state, createMockBindings({ DB: database.db }).bindings);
     const response = await object.fetch(
       new Request(`https://progress-user/state?markerIndexHash=${"a".repeat(64)}`),
@@ -488,11 +487,14 @@ describe("OEMStatsDO event receipts", () => {
 
   interface StatsFixture {
     object: OEMStatsDO;
-    storage: FakeStorage;
+    storage: ProgressTestStorage;
   }
 
-  function createStatsDo(storage = new FakeStorage(), database = databaseForTest()): StatsFixture {
-    const state = createProgressState(markerIndexHash, storage);
+  function createStatsDo(
+    storage = new ProgressTestStorage(),
+    database = databaseForTest(),
+  ): StatsFixture {
+    const state = createProgressTestState(markerIndexHash, storage);
     return {
       object: new OEMStatsDO(state.state, createMockBindings({ DB: database.db }).bindings),
       storage,
@@ -548,7 +550,7 @@ describe("OEMStatsDO event receipts", () => {
   });
 
   it("leaves a failed stats event retryable when its storage transaction is rejected", async () => {
-    const storage = new FakeStorage();
+    const storage = new ProgressTestStorage();
     storage.failNextTransaction = true;
     const { object } = createStatsDo(storage);
     expect((await object.fetch(statsEventRequest())).status).toBe(500);
@@ -559,7 +561,7 @@ describe("OEMStatsDO event receipts", () => {
   });
 
   it("replaces a stale DO snapshot with a newer authoritative D1 rebuild", async () => {
-    const storage = new FakeStorage();
+    const storage = new ProgressTestStorage();
     await storage.put("stats:snapshot:v2", {
       markerIndexHash,
       pointCount: 2,
