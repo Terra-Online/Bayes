@@ -13,6 +13,7 @@ export const updateSchema = z.object({
 });
 
 export const listSchema = z.object({
+  submissionId: z.string().trim().min(1).max(64).optional(),
   status: z.string().max(200).optional(),
   from: z.iso.datetime({ offset: true }).optional(),
   to: z.iso.datetime({ offset: true }).optional(),

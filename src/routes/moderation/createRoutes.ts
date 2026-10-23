@@ -250,6 +250,7 @@ export function createRoutes() {
     })
     .get("/pending", requireAuth, requireRole(["p", "a"]), rateLimit("auth"), async (c) => {
       const parsed = listSchema.safeParse({
+        submissionId: c.req.query("submissionId"),
         status: c.req.query("status"),
         from: c.req.query("from"),
         to: c.req.query("to"),
@@ -273,6 +274,7 @@ export function createRoutes() {
       }
 
       const filters = {
+        submissionId: parsed.data.submissionId,
         statuses: parseStatuses(parsed.data.status),
         createdFrom: fromDate ? toSqlTimestamp(fromDate) : undefined,
         createdTo: toDate ? toSqlTimestamp(toDate) : undefined,

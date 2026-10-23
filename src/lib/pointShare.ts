@@ -42,6 +42,12 @@ export function buildPointShareUrl(submission: SubmissionRecord): string {
   return buildPointShareUrlForMarker(submission.markerId, submission.poiType);
 }
 
+export function buildSubmissionShareUrl(submission: SubmissionRecord): string {
+  const url = new URL(buildPointShareUrl(submission));
+  url.searchParams.set(submission.kind === "image" ? "imageId" : "commentId", submission.id);
+  return url.toString();
+}
+
 export function buildPointShareUrlForMarker(markerId: string, poiType?: string): string {
   const token = encodePointIdToken(markerId);
   if (token) {
