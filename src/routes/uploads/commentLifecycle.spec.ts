@@ -686,6 +686,93 @@ describe("comment removal requests", () => {
   );
 });
 
+describe("comment write permissions", () => {
+  it.each([
+    ["reader", "recall", "RECALL_OWNER_ONLY"],
+    ["admin", "recall", "RECALL_OWNER_ONLY"],
+    ["reader", "remove-request", "REMOVE_REQUEST_OWNER_ONLY"],
+    ["admin", "remove-request", "REMOVE_REQUEST_OWNER_ONLY"],
+  ])("prevents %s from using %s on another author's comment", async (user, action, code) => {
+    insertSubmission(database.sqlite, { id: "target", userId: "author" });
+    await post("/comments/target/flag", "reader");
+    const before = persistedState();
+    const response = await post(`/comments/target/${action}`, user);
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({ code });
+    expect(persistedState()).toEqual(before);
+    expect(webhooks).toHaveLength(1);
+    expect(liveNotifications).toEqual([]);
+  });
+
+  it.each(["edit", "flag", "unflag", "recall", "remove-request"])(
+    "does not apply comment %s to a missing submission or an image",
+    async (action) => {
+      insertSubmission(database.sqlite, { id: "image", kind: "image", userId: "author" });
+      const before = persistedState();
+      for (const id of ["missing", "image"]) {
+        const response = await post(`/comments/${id}/${action}`, "author", {
+          content: comment.content,
+        });
+        expect(response.status).toBe(404);
+        expect(await response.json()).toMatchObject({ code: "SUBMISSION_NOT_FOUND" });
+      }
+      expect(persistedState()).toEqual(before);
+      expect(moderation).toEqual([]);
+      expect(webhooks).toEqual([]);
+      expect(liveNotifications).toEqual([]);
+    },
+  );
+
+  describe.each([
+    {
+      name: "an unauthenticated visitor",
+      user: null,
+      locked: false,
+      status: 401,
+      code: "SESSION_REQUIRED",
+    },
+    {
+      name: "a suspended user",
+      user: "suspended",
+      locked: false,
+      status: 403,
+      code: "ACCESS_DENIED",
+    },
+    {
+      name: "an author while uploads are locked",
+      user: "author",
+      locked: true,
+      status: 503,
+      code: "UPLOADS_TEMPORARILY_DISABLED",
+    },
+  ])("$name", ({ user, locked, status, code }) => {
+    it.each([
+      { action: "submit", name: "submit a comment" },
+      { action: "edit", name: "edit a comment" },
+      { action: "flag", name: "flag a comment" },
+      { action: "unflag", name: "withdraw a flag" },
+      { action: "recall", name: "recall a comment" },
+      { action: "remove-request", name: "request comment removal" },
+    ])("cannot $name or change its existing flags", async ({ action }) => {
+      insertSubmission(database.sqlite, { id: "target", userId: "author" });
+      await post("/comments/target/flag", "reader");
+      if (locked) {
+        env.LOCK_UPLOAD_ENDPOINTS = "true";
+        vi.spyOn(console, "error").mockImplementation(() => {});
+      }
+      const before = persistedState();
+      const path = action === "submit" ? "/comments" : `/comments/target/${action}`;
+      const response = await request(path, user, comment);
+      expect(response.status).toBe(status);
+      expect(await response.json()).toMatchObject({ code });
+      expect(persistedState()).toEqual(before);
+      expect(moderation).toEqual([]);
+      expect(webhooks).toHaveLength(1);
+      expect(liveNotifications).toEqual([]);
+    });
+  });
+});
+
 vi.mock("cloudflare:workers", () => ({
   DurableObject: class {},
   exports: { PublicReadCache: { purgeMarker: async () => ({ success: true }) } },
