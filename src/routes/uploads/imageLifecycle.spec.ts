@@ -407,6 +407,71 @@ describe("image removal requests", () => {
   );
 });
 
+describe("image recall", () => {
+  it.each(["pending_openai", "pending_audit", "active", "flagged", "remove_request"])(
+    "withdraws a %s image from public and author lists and records one resolution even when retried",
+    async (status) => {
+      insertSubmission(database.sqlite, { id: "photo", kind: "image", userId: "author", status });
+      const response = await post("photo", "recall", "author");
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ ok: true, status: "stale" });
+      expect(submission("photo")).toMatchObject({
+        status: "stale",
+        file_path: "images/photo.webp",
+        snapshot_id: "snapshot-photo",
+      });
+      expect((await request("/images/photo?markerId=marker-1", null)).status).toBe(404);
+      const authorList = await request("/images/mine?markerId=marker-1");
+      expect(await authorList.json()).toEqual({ items: [] });
+      expect(
+        database.sqlite
+          .prepare(
+            "SELECT from_status, to_status, source FROM ugc_review_events WHERE submission_id = 'photo'",
+          )
+          .all(),
+      ).toEqual([{ from_status: status, to_status: "stale", source: "user_action" }]);
+      expect(
+        database.sqlite
+          .prepare(
+            "SELECT recipient_user_id, type, submission_id, message_count FROM notifications",
+          )
+          .all(),
+      ).toEqual([
+        {
+          recipient_user_id: "author",
+          type: "system.remove_request.resolved",
+          submission_id: "photo",
+          message_count: 1,
+        },
+      ]);
+      expect(liveNotifications).toEqual([
+        expect.objectContaining({
+          recipient: "author",
+          body: expect.objectContaining({
+            event: "notification.upserted",
+            notification: expect.objectContaining({
+              target: expect.objectContaining({ submissionId: "photo", markerId: "marker-1" }),
+            }),
+          }),
+        }),
+      ]);
+      const recalled = submission("photo");
+      const retry = await post("photo", "recall", "author");
+      expect(await retry.json()).toEqual({ ok: true, status: "stale" });
+      expect(submission("photo")).toEqual(recalled);
+      expect(
+        database.sqlite.prepare("SELECT COUNT(*) AS count FROM ugc_review_events").get(),
+      ).toEqual({ count: 1 });
+      expect(
+        database.sqlite.prepare("SELECT COUNT(*) AS count FROM notification_messages").get(),
+      ).toEqual({ count: 1 });
+      expect(liveNotifications).toHaveLength(1);
+      expect(moderation).toEqual([]);
+      expect(webhooks).toEqual([]);
+    },
+  );
+});
+
 vi.mock("cloudflare:workers", () => ({
   DurableObject: class {},
   exports: { PublicReadCache: { purgeMarker: async () => ({ success: true }) } },
