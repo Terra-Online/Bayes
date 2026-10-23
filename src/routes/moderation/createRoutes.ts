@@ -2,8 +2,6 @@ import { Hono, type Context } from "hono";
 
 import { getRuntimeConfig } from "@/lib/config";
 import { ApiError } from "@/lib/errors";
-import { isCommentEditModerationNote, RECALL_MODERATION_NOTE_PREFIX } from "@/lib/moderation";
-import { prewarmPublicUgcAsset } from "@/lib/publicUgcAssets";
 import { createRedisClient } from "@/lib/redis";
 import { requireAuth, requireRole } from "@/middleware/auth";
 import { rateLimit } from "@/middleware/rate-limit";
@@ -19,15 +17,10 @@ import {
   markImageSubmissionsStaleByFilePathPrefix,
 } from "@/repositories/submission-review";
 import {
-  getSubmissionById,
-  transitionSubmissionStatusWithNotifications,
-} from "@/repositories/submission/statusSubmission";
-import {
   ALL_STATUSES,
   type SubmissionRecord,
   type SubmissionStatus,
 } from "@/repositories/submission/types";
-import { applyUserPointsDelta } from "@/repositories/users";
 import {
   updateSchema,
   listSchema,
@@ -38,9 +31,9 @@ import {
   warningSchema,
 } from "@/routes/schema/moderation";
 import { evaluateKarmaBatch } from "@/services/karma/evaluation";
-import { getModerationPointsDeltaWithDailyBackoff } from "@/services/karma/moderationPoints";
 import { moderateSubmissionIds } from "@/services/moderation/core";
 import { getImageCoverage } from "@/services/moderation/imageCoverage";
+import { applyManualModeration } from "@/services/moderation/manualModeration";
 import { notifySubmissionModerationResult } from "@/services/moderation/notifications";
 import { getOrphanImages } from "@/services/moderation/orphanImages";
 import {
@@ -50,15 +43,6 @@ import {
 import { sendModerationWarning } from "@/services/moderation/warnings";
 import { publishNotificationsCreated } from "@/services/notify/live";
 import type { AppEnv } from "@/types/app";
-
-const STATUS_TRANSITIONS: Record<SubmissionStatus, SubmissionStatus[]> = {
-  pending_openai: ["active", "pending_audit", "stale"],
-  pending_audit: ["active", "stale"],
-  active: ["stale"],
-  flagged: ["active", "stale"],
-  remove_request: ["active", "stale"],
-  stale: ["active"],
-};
 
 function isModerationLocked(flag: string | undefined): boolean {
   const normalized = (flag ?? "true").trim().toLowerCase();
@@ -111,41 +95,6 @@ function resolveImageScope(
   }
 
   return {};
-}
-
-function assertStatusTransition(from: SubmissionStatus, to: SubmissionStatus): void {
-  if (from === to) {
-    return;
-  }
-
-  if (!STATUS_TRANSITIONS[from].includes(to)) {
-    throw new ApiError(
-      409,
-      "INVALID_STATUS_TRANSITION",
-      `Cannot move submission from ${from} to ${to}.`,
-      {
-        from,
-        to,
-        allowed: STATUS_TRANSITIONS[from],
-      },
-    );
-  }
-}
-
-function shouldApplyModerationPoints(
-  currentStatus: SubmissionStatus,
-  nextStatus: SubmissionStatus,
-  moderationNote: string | null,
-): boolean {
-  if (currentStatus === nextStatus || (nextStatus !== "active" && nextStatus !== "stale")) {
-    return false;
-  }
-
-  if (nextStatus === "stale" && moderationNote?.startsWith(RECALL_MODERATION_NOTE_PREFIX)) {
-    return false;
-  }
-
-  return true;
 }
 
 async function runModeration<E extends AppEnv>(
@@ -425,89 +374,17 @@ export function createRoutes() {
         );
       }
 
-      const current = await getSubmissionById(c.env.DB, submissionId);
-      if (!current) {
-        throw new ApiError(404, "SUBMISSION_NOT_FOUND", "Submission was not found.");
-      }
-      assertStatusTransition(current.status, parsed.data.status);
-
-      const transition = await transitionSubmissionStatusWithNotifications(c.env.DB, {
-        submission: current,
-        status: parsed.data.status,
-        moderationNote: parsed.data.moderationNote,
-        source: "manual_moderation",
-        clearFlags: current.status === "flagged" && parsed.data.status === "active",
-      });
-      if (!transition.updated) {
-        throw new ApiError(
-          409,
-          "MODERATION_CONFLICT",
-          "Submission changed while it was being moderated.",
-        );
-      }
-      if (transition.notifications.length > 0) {
-        c.executionCtx.waitUntil(publishNotificationsCreated(c.env, transition.notifications));
-      }
-      if (
-        current.status !== parsed.data.status &&
-        (parsed.data.status === "active" || parsed.data.status === "pending_audit")
-      ) {
-        c.executionCtx.waitUntil(
-          notifySubmissionModerationResult(c.env, {
-            submission: current,
-            previousStatus: current.status,
-            nextStatus: parsed.data.status,
-            source: "manual_moderation",
-          }),
-        );
-      }
-      if (
-        current.status !== "active" &&
-        parsed.data.status === "active" &&
-        current.kind === "image"
-      ) {
-        const config = getRuntimeConfig(c.env);
-        c.executionCtx.waitUntil(prewarmPublicUgcAsset(config.ugcAssetBaseUrl, current.filePath));
-      }
-      c.executionCtx.waitUntil(
-        invalidateUploadCaches({
-          kv: c.env.OEM_KV,
-          kind: current.kind,
-          markerId: current.markerId,
-        }),
+      await applyManualModeration(
+        {
+          bindings: c.env,
+          defer: (task) => c.executionCtx.waitUntil(task),
+        },
+        {
+          submissionId,
+          nextStatus: parsed.data.status,
+          moderationNote: parsed.data.moderationNote,
+        },
       );
-      if (current.kind === "comment") {
-        if (current.status !== "active" && parsed.data.status === "active") {
-          c.executionCtx.waitUntil(
-            enqueueApprovedCommentTransPrewarm(c.env, submissionId, "manual_moderation"),
-          );
-        }
-      }
-      const effectiveModerationNote = parsed.data.moderationNote ?? current.moderationNote;
-      const isPreviouslyApprovedEdit =
-        isCommentEditModerationNote(current.moderationNote) &&
-        current.editOriginalStatus !== "pending_openai" &&
-        current.editOriginalStatus !== "pending_audit";
-      if (
-        !isPreviouslyApprovedEdit &&
-        shouldApplyModerationPoints(current.status, parsed.data.status, effectiveModerationNote)
-      ) {
-        const reviewStatus = parsed.data.status === "active" ? "active" : "stale";
-        const redis = createRedisClient(c.env);
-        const config = getRuntimeConfig(c.env);
-        await applyUserPointsDelta(
-          c.env.DB,
-          current.userId,
-          await getModerationPointsDeltaWithDailyBackoff(redis, {
-            userId: current.userId,
-            kind: current.kind,
-            status: reviewStatus,
-            role: current.submitter?.role,
-            surgeModeEnabled: config.surgeModeEnabled,
-            surgeBackoffMultiplier: config.surgeBackoffMultiplier,
-          }),
-        );
-      }
 
       return c.json({ ok: true });
     })
