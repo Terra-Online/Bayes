@@ -89,6 +89,60 @@ afterEach(() => {
 });
 
 describe("automatic moderation", () => {
+  it.each(["stored image", "public fallback"])(
+    "reviews a %s and rewards the image author",
+    async (source) => {
+      env.OPENAI_API_KEY = "synthetic-ai-key";
+      submission({ id: "photo", kind: "image", content: null, status: "pending_openai" });
+      env.UGC_BUCKET = {
+        get: async () =>
+          source === "stored image"
+            ? {
+                httpMetadata: { contentType: "image/png" },
+                arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer,
+              }
+            : null,
+      } as unknown as R2Bucket;
+      const aiInputs: unknown[] = [];
+      const warmedAssets: string[] = [];
+      vi.mocked(fetch).mockImplementation(async (url, init) => {
+        if (String(url) === "https://api.openai.com/v1/moderations") {
+          aiInputs.push(JSON.parse(String(init?.body)).input);
+          return Response.json({ results: [{ flagged: false }] });
+        }
+        warmedAssets.push(String(url));
+        return new Response("image");
+      });
+      const response = await request("/run", {
+        method: "POST",
+        headers: createReviewerSession("a"),
+        body: { ids: ["photo"] },
+      });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ processed: 1, active: 1 });
+      expect(aiInputs).toEqual([
+        [
+          {
+            type: "image_url",
+            image_url: {
+              url:
+                source === "stored image"
+                  ? "data:image/png;base64,AQID"
+                  : "https://assets.example.test/images/photo.webp",
+            },
+          },
+        ],
+      ]);
+      expect(warmedAssets).toEqual(["https://assets.example.test/images/photo.webp"]);
+      expect(storedSubmission("photo")).toMatchObject({ status: "active" });
+      expect(authorPoints()).toBe(26);
+      expect(translationMessages).toEqual([]);
+      expect(notificationMessages()).toEqual([
+        { recipient_user_id: "author", type: "system.submission.approved", submission_id: "photo" },
+      ]);
+    },
+  );
+
   it("keeps a failed queue send eligible for the next backfill", async () => {
     submission({ id: "retry", status: "pending_openai" });
     const headers = createReviewerSession("a");
@@ -184,6 +238,37 @@ describe("automatic moderation", () => {
     expect(reviewEvents()).toEqual([]);
     expect(notificationMessages()).toEqual([]);
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("leaves a newer author edit pending when an AI decision for the old snapshot arrives", async () => {
+    env.OPENAI_API_KEY = "synthetic-ai-key";
+    submission({ id: "changing", status: "pending_openai", content: "Original directions" });
+    vi.mocked(fetch).mockImplementation(async () => {
+      database.sqlite
+        .prepare(
+          "UPDATE ugc_submissions SET snapshot_id = 'new-snapshot', content = 'Corrected directions' WHERE id = 'changing'",
+        )
+        .run();
+      return Response.json({ results: [{ flagged: false }] });
+    });
+    const response = await request("/run", {
+      method: "POST",
+      headers: createReviewerSession("a"),
+      body: { ids: ["changing"] },
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ processed: 0, active: 0, pendingAudit: 0 });
+    expect(storedSubmission("changing")).toMatchObject({
+      snapshot_id: "new-snapshot",
+      content: "Corrected directions",
+      status: "pending_openai",
+    });
+    expect(authorPoints()).toBe(20);
+    expect(reviewEvents()).toEqual([]);
+    expect(notificationMessages()).toEqual([]);
+    expect(liveMessages).toEqual([]);
+    expect(translationMessages).toEqual([]);
+    expect(webhookMessages).toEqual([]);
   });
 
   it.each([
@@ -384,4 +469,43 @@ describe("automatic moderation", () => {
     expect(translationMessages).toHaveLength(1);
     expect(webhookMessages).toHaveLength(1);
   });
+});
+
+describe("automatic moderation recovery and preserved decisions", () => {
+  it.each([
+    { previousStatus: "active", expectedPoints: 20 },
+    { previousStatus: "pending_audit", expectedPoints: 22 },
+  ])(
+    "approves an edit formerly $previousStatus with $expectedPoints author points and prewarm disabled",
+    async ({ previousStatus, expectedPoints }) => {
+      env.OPENAI_API_KEY = "synthetic-ai-key";
+      env.ENABLE_COMMENT_TRANSLATION_PREWARM = "false";
+      submission({
+        id: "edited",
+        status: "pending_openai",
+        moderationNote: "Edited by author: correction",
+      });
+      database.sqlite
+        .prepare(
+          `UPDATE ugc_submissions SET edit_original_content='Original directions', edit_original_status=?, edit_original_snapshot_id='previous' WHERE id='edited'`,
+        )
+        .run(previousStatus);
+      vi.mocked(fetch).mockResolvedValue(Response.json({ results: [{ flagged: false }] }));
+      const response = await request("/run", {
+        method: "POST",
+        headers: createReviewerSession("a"),
+        body: { ids: ["edited"] },
+      });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ processed: 1, active: 1 });
+      expect(storedSubmission("edited")).toMatchObject({
+        status: "active",
+        edit_original_status: null,
+      });
+      // Only the first approval earns points; editing approved content cannot earn them again.
+      expect(authorPoints()).toBe(expectedPoints);
+      expect(translationMessages).toEqual([]);
+      expect(notificationMessages()).toHaveLength(1);
+    },
+  );
 });
