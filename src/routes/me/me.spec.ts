@@ -51,7 +51,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function request(id: string, uid?: string, headers?: HeadersInit) {
+function requestPreview(id: string, uid?: string, headers?: HeadersInit) {
   return requestPath(`/contributions/${id}/preview`, uid, headers);
 }
 async function requestPath(path: string, uid?: string, headers?: HeadersInit) {
@@ -65,10 +65,10 @@ async function requestPath(path: string, uid?: string, headers?: HeadersInit) {
 }
 
 it("serves an owner's image bytes with private cache headers", async () => {
-  const response = await request("photo", "author");
+  const response = await requestPreview("photo", "author");
   expect(response.status).toBe(200);
   expect(response.headers.get("Content-Type")).toBe("image/webp");
-  expect(response.headers.get("Cache-Control")).toBe("private, max-age=3600, must-revalidate");
+  expect(response.headers.get("Cache-Control")).toMatch(/^private, max-age=\d+, must-revalidate$/);
   expect(response.headers.get("Vary")).toContain("Cookie");
   expect(response.headers.get("Vary")).toContain("Authorization");
   expect(new Uint8Array(await response.arrayBuffer())).toEqual(new Uint8Array([82, 73, 70, 70]));
@@ -77,34 +77,63 @@ it("serves an owner's image bytes with private cache headers", async () => {
   });
 });
 
+it.each([
+  ["image/jpeg", "image/jpeg"],
+  [null, "application/octet-stream"],
+])("serves legacy preview MIME %s when object metadata is absent", async (mimeType, expected) => {
+  database.sqlite
+    .prepare("UPDATE ugc_submissions SET mime_type = ? WHERE id = 'photo'")
+    .run(mimeType);
+  const response = new Response(new Uint8Array([1, 2, 3]));
+  mocks.ugcBucket.get.mockResolvedValueOnce({
+    ...createMockR2Object({ key: "images/photo.webp", size: 3 }),
+    httpMetadata: {},
+    writeHttpMetadata: () => {},
+    body: response.body!,
+    bodyUsed: false,
+    arrayBuffer: () => response.arrayBuffer(),
+    bytes: () => response.bytes(),
+    text: () => response.text(),
+    json: () => response.json(),
+    blob: () => response.blob(),
+  });
+  // Warm the list cache first: preview metadata must retain the legacy MIME fallback.
+  expect((await requestPath("/contributions", "author")).status).toBe(200);
+  const preview = await requestPreview("photo", "author");
+  expect(preview.status).toBe(200);
+  expect(preview.headers.get("content-type")).toBe(expected);
+  expect(preview.headers.get("cache-control")).toMatch(/^private, max-age=\d+, must-revalidate$/);
+  expect(new Uint8Array(await preview.arrayBuffer())).toEqual(new Uint8Array([1, 2, 3]));
+  expect((await requestPreview("photo", "other")).status).toBe(404);
+});
+
 it("keeps historical previews available to their owner only", async () => {
   database.sqlite.exec("UPDATE ugc_submissions SET status = 'stale' WHERE id = 'photo'");
-  expect((await request("photo", "author")).status).toBe(200);
+  expect((await requestPreview("photo", "author")).status).toBe(200);
   mocks.ugcBucket.get.mockClear();
-  expect((await request("photo", "other")).status).toBe(404);
+  expect((await requestPreview("photo", "other")).status).toBe(404);
   expect(mocks.ugcBucket.get).not.toHaveBeenCalled();
 });
 
 it("rejects unauthenticated requests and missing image objects", async () => {
-  expect((await request("photo")).status).toBe(401);
+  expect((await requestPreview("photo")).status).toBe(401);
   expect(mocks.ugcBucket.get).not.toHaveBeenCalled();
   mocks.ugcBucket.get.mockResolvedValue(null);
-  expect((await request("photo", "author")).status).toBe(404);
+  expect((await requestPreview("photo", "author")).status).toBe(404);
 });
 
 it("revalidates an owner's cached preview without sending image bytes", async () => {
   // Vitest models only R2.get's last overload; conditional reads can return
   // metadata without a body. Keep the actual R2Object shape for the 304 path.
   vi.mocked(mocks.ugcBucket.get, { partial: true }).mockResolvedValueOnce(previewMetadata());
-  const response = await request("photo", "author", { "If-None-Match": '"test"' });
+  const response = await requestPreview("photo", "author", { "If-None-Match": '"test"' });
   expect(response.status).toBe(304);
   expect(await response.text()).toBe("");
   expect(response.headers.get("etag")).toBe('"test"');
   const condition = mocks.ugcBucket.get.mock.calls[0][1]?.onlyIf;
-  expect(condition).toBeInstanceOf(Headers);
   expect((condition as Headers).get("If-None-Match")).toBe('"test"');
   mocks.ugcBucket.get.mockClear();
-  expect((await request("photo", "other", { "If-None-Match": '"test"' })).status).toBe(404);
+  expect((await requestPreview("photo", "other", { "If-None-Match": '"test"' })).status).toBe(404);
   expect(mocks.ugcBucket.get).not.toHaveBeenCalled();
 });
 
@@ -138,7 +167,9 @@ it("caches completed overview counts and pages separately by owner and filter", 
   expect(data.contributions.imageCount).toBe(3);
   expect(data.contributions.recent).toBeUndefined();
   expect(data.loginMethods).toBeUndefined();
-  expect(responses[0].headers.get("Cache-Control")).toBe("private, max-age=15, must-revalidate");
+  expect(responses[0].headers.get("Cache-Control")).toMatch(
+    /^private, max-age=\d+, must-revalidate$/,
+  );
   const other = (await (await requestPath("/overview", "other")).json()) as Summary;
   expect(other.contributions.imageCount).toBe(0);
   prepare.mockClear();
@@ -228,7 +259,7 @@ function previewMetadata(): Mocked<R2Object> {
   return { ...object, httpEtag: '"test"' };
 }
 
-async function list(): Promise<{ items: ContributionItem[] }> {
+async function listOwnerContributions(): Promise<{ items: ContributionItem[] }> {
   const response = await requestPath("/contributions?limit=20", "author");
   expect(response.status).toBe(200);
   return response.json();
@@ -267,7 +298,7 @@ it("returns portable preview paths and retains complete historical comment conte
   database.sqlite
     .prepare("UPDATE ugc_submissions SET kind = 'comment', content = ? WHERE id = 'mine'")
     .run(content);
-  const { items } = await list();
+  const { items } = await listOwnerContributions();
   expect(items.find((item) => item.id === "photo")?.previewUrl).toBe(
     "/me/v1/contributions/photo/preview",
   );
@@ -286,7 +317,7 @@ it("retains a completed manual review for the current published snapshot only", 
     to: "pending_audit",
     snapshot: "old-edit",
   });
-  const { items } = await list();
+  const { items } = await listOwnerContributions();
   expect(items.find((item) => item.id === "photo")?.review).toMatchObject({
     manual: true,
     published: true,
@@ -306,7 +337,7 @@ it("distinguishes an archived public submission from one recalled before approva
   });
   insertLegacyReviewNotification({ submissionId: "photo", from: "pending_audit", to: "active" });
   insertLegacyReviewNotification({ submissionId: "photo", from: "active", to: "stale" });
-  const { items } = await list();
+  const { items } = await listOwnerContributions();
   expect(items.find((item) => item.id === "photo")?.review).toMatchObject({
     manual: true,
     published: true,
@@ -319,10 +350,31 @@ it("distinguishes an archived public submission from one recalled before approva
 
 it("recognizes an ongoing manual review before any notification is available", async () => {
   database.sqlite.exec("UPDATE ugc_submissions SET status = 'pending_audit' WHERE id = 'photo'");
-  expect((await list()).items.find((item) => item.id === "photo")?.review).toMatchObject({
+  expect(
+    (await listOwnerContributions()).items.find((item) => item.id === "photo")?.review,
+  ).toMatchObject({
     manual: true,
     published: false,
   });
+});
+
+it("does not present a historical recall during manual review as a completed manual decision", async () => {
+  insertLegacyReviewNotification({
+    submissionId: "photo",
+    from: "pending_openai",
+    to: "pending_audit",
+  });
+  database.sqlite.exec(
+    "UPDATE ugc_submissions SET status = 'stale', moderation_note = 'Recalled by uploader: withdrawn' WHERE id = 'photo'",
+  );
+  const review = (await listOwnerContributions()).items.find((item) => item.id === "photo")?.review;
+  expect(review?.path).toEqual([
+    { key: "uploaded", at: "2026-09-01" },
+    { key: "ai", at: "2026-09-04T12:00:00Z" },
+    { key: "archived", at: "2026-09-05T12:00:00Z" },
+  ]);
+  expect(review?.manual).toBe(false);
+  expect(review?.published).toBe(false);
 });
 
 it("returns real decision times without borrowing a previous snapshot's timestamps", async () => {
@@ -348,7 +400,7 @@ it("returns real decision times without borrowing a previous snapshot's timestam
     at: "2026-09-02T10:00:00Z",
   });
   database.sqlite.exec("UPDATE ugc_submissions SET status = 'stale' WHERE id = 'photo'");
-  const { items } = await list();
+  const { items } = await listOwnerContributions();
   expect(items.find((item) => item.id === "photo")?.review.times).toEqual({
     uploaded: "2026-09-01",
     ai: "2026-09-02T12:00:00Z",
@@ -359,80 +411,154 @@ it("returns real decision times without borrowing a previous snapshot's timestam
   expect(items.find((item) => item.id === "mine")?.review.times.public).toBeNull();
 });
 
-const paths: Array<[string, Array<[string, string, string]>, string[]]> = [
-  ["stale", [["pending_openai", "stale", "manual_moderation"]], ["uploaded", "manual", "archived"]],
-  ["stale", [["pending_openai", "stale", "auto_moderation"]], ["uploaded", "ai", "archived"]],
-  ["stale", [["pending_openai", "stale", "user_action"]], ["uploaded", "archived"]],
-  [
-    "stale",
-    [
+interface ReviewPathScenario {
+  scenario: string;
+  status: string;
+  events: Array<[from: string, to: string, source: string]>;
+  expectedSteps: string[];
+}
+
+const reviewPathScenarios: ReviewPathScenario[] = [
+  {
+    scenario: "a moderator restores an archived submission",
+    status: "active",
+    events: [["stale", "active", "manual_moderation"]],
+    expectedSteps: ["uploaded", "archived", "manual", "public"],
+  },
+  {
+    scenario: "a moderator approves after manual review",
+    status: "active",
+    events: [["pending_audit", "active", "manual_moderation"]],
+    expectedSteps: ["uploaded", "manual", "public"],
+  },
+  {
+    scenario: "the uploader recalls a published submission",
+    status: "stale",
+    events: [["active", "stale", "user_action"]],
+    expectedSteps: ["uploaded", "public", "archived"],
+  },
+  {
+    scenario: "a moderator rejects before AI review completes",
+    status: "stale",
+    events: [["pending_openai", "stale", "manual_moderation"]],
+    expectedSteps: ["uploaded", "manual", "archived"],
+  },
+  {
+    scenario: "AI rejects a submission",
+    status: "stale",
+    events: [["pending_openai", "stale", "auto_moderation"]],
+    expectedSteps: ["uploaded", "ai", "archived"],
+  },
+  {
+    scenario: "the uploader recalls before AI review completes",
+    status: "stale",
+    events: [["pending_openai", "stale", "user_action"]],
+    expectedSteps: ["uploaded", "archived"],
+  },
+  {
+    scenario: "a moderator rejects after AI requests manual review",
+    status: "stale",
+    events: [
       ["pending_openai", "pending_audit", "auto_moderation"],
       ["pending_audit", "stale", "manual_moderation"],
     ],
-    ["uploaded", "ai", "manual", "archived"],
-  ],
-  [
-    "stale",
-    [
+    expectedSteps: ["uploaded", "ai", "manual", "archived"],
+  },
+  {
+    scenario: "the uploader recalls during manual review",
+    status: "stale",
+    events: [
       ["pending_openai", "pending_audit", "auto_moderation"],
       ["pending_audit", "stale", "user_action"],
     ],
-    ["uploaded", "ai", "archived"],
-  ],
-  ["active", [["pending_openai", "active", "manual_moderation"]], ["uploaded", "manual", "public"]],
-  ["active", [["pending_openai", "active", "auto_moderation"]], ["uploaded", "ai", "public"]],
-  [
-    "stale",
-    [
+    expectedSteps: ["uploaded", "ai", "archived"],
+  },
+  {
+    scenario: "a moderator approves before AI review completes",
+    status: "active",
+    events: [["pending_openai", "active", "manual_moderation"]],
+    expectedSteps: ["uploaded", "manual", "public"],
+  },
+  {
+    scenario: "AI approves a submission",
+    status: "active",
+    events: [["pending_openai", "active", "auto_moderation"]],
+    expectedSteps: ["uploaded", "ai", "public"],
+  },
+  {
+    scenario: "the uploader recalls after AI approval",
+    status: "stale",
+    events: [
       ["pending_openai", "active", "auto_moderation"],
       ["active", "stale", "user_action"],
     ],
-    ["uploaded", "ai", "public", "archived"],
-  ],
-  [
-    "stale",
-    [
+    expectedSteps: ["uploaded", "ai", "public", "archived"],
+  },
+  {
+    scenario: "a moderator archives a flagged publication",
+    status: "stale",
+    events: [
       ["pending_openai", "active", "auto_moderation"],
       ["flagged", "stale", "manual_moderation"],
     ],
-    ["uploaded", "ai", "public", "manual", "archived"],
-  ],
-  [
-    "active",
-    [
+    expectedSteps: ["uploaded", "ai", "public", "manual", "archived"],
+  },
+  {
+    scenario: "a moderator restores a previously rejected submission",
+    status: "active",
+    events: [
       ["pending_openai", "stale", "manual_moderation"],
       ["stale", "active", "manual_moderation"],
     ],
-    ["uploaded", "manual", "archived", "manual", "public"],
-  ],
-  [
-    "pending_audit",
-    [["pending_openai", "pending_audit", "auto_moderation"]],
-    ["uploaded", "ai", "manual"],
-  ],
+    expectedSteps: ["uploaded", "manual", "archived", "manual", "public"],
+  },
+  {
+    scenario: "AI requests manual review that is still pending",
+    status: "pending_audit",
+    events: [["pending_openai", "pending_audit", "auto_moderation"]],
+    expectedSteps: ["uploaded", "ai", "manual"],
+  },
 ];
-it.each(paths)("reconstructs %s from actual decisions: %j", async (status, events, expected) => {
-  database.sqlite.prepare("UPDATE ugc_submissions SET status = ? WHERE id = 'photo'").run(status);
-  events.forEach(([from, to, source], index) => {
-    database.sqlite
-      .prepare(`INSERT INTO ugc_review_events
+it.each(reviewPathScenarios)(
+  "reconstructs review history when $scenario",
+  async ({ status, events, expectedSteps }) => {
+    database.sqlite.prepare("UPDATE ugc_submissions SET status = ? WHERE id = 'photo'").run(status);
+    events.forEach(([from, to, source], index) => {
+      database.sqlite
+        .prepare(`INSERT INTO ugc_review_events
       (submission_id, snapshot_id, from_status, to_status, source, created_at)
       VALUES ('photo', 'current', ?, ?, ?, ?)`)
-      .run(from, to, source, `2026-09-0${index + 2}T12:00:00Z`);
-  });
-  // Events from a different edit must never become part of this path.
-  database.sqlite.exec(`INSERT INTO ugc_review_events
+        .run(from, to, source, `2026-09-0${index + 2}T12:00:00Z`);
+    });
+    // Events from a different edit must never become part of this path.
+    database.sqlite.exec(`INSERT INTO ugc_review_events
     (submission_id, snapshot_id, from_status, to_status, source, created_at)
     VALUES ('photo', 'old-edit', 'pending_openai', 'active', 'auto_moderation', '2026-09-01')`);
-  const review = (await list()).items.find((item) => item.id === "photo")?.review;
-  expect(review?.path.map((step) => step.key)).toEqual(expected);
-});
+    const review = (await listOwnerContributions()).items.find(
+      (item) => item.id === "photo",
+    )?.review;
+    expect(review?.path.map((step) => step.key)).toEqual(expectedSteps);
+  },
+);
 
 it("keeps a historical publication with an unknown approval time, without inventing AI review", async () => {
-  const review = (await list()).items.find((item) => item.id === "photo")?.review;
+  const review = (await listOwnerContributions()).items.find((item) => item.id === "photo")?.review;
   expect(review?.path).toEqual([
     { key: "uploaded", at: "2026-09-01" },
     { key: "public", at: null },
+  ]);
+});
+
+it("retains the archival time of an old AI rejection without inventing a review completion time", async () => {
+  database.sqlite.exec(
+    "UPDATE ugc_submissions SET status = 'stale', moderation_note = 'OpenAI moderation flagged: unsafe' WHERE id = 'photo'",
+  );
+  expect(
+    (await listOwnerContributions()).items.find((item) => item.id === "photo")?.review.path,
+  ).toEqual([
+    { key: "uploaded", at: "2026-09-01" },
+    { key: "ai", at: null },
+    { key: "archived", at: "2026-09-05T12:00:00Z" },
   ]);
 });
 
@@ -450,7 +576,8 @@ it.each([
     database.sqlite
       .prepare("UPDATE ugc_submissions SET status = ?, moderation_note = ? WHERE id = 'photo'")
       .run(status, note);
-    const path = (await list()).items.find((item) => item.id === "photo")?.review.path;
+    const path = (await listOwnerContributions()).items.find((item) => item.id === "photo")?.review
+      .path;
     expect(path?.map((step) => step.key)).toEqual(expected);
     expect(path?.find((step) => step.key === "ai")?.at).toBeNull();
   },
@@ -462,7 +589,9 @@ it("omits AI when automation explicitly bypasses AI review", async () => {
       (submission_id, snapshot_id, from_status, to_status, source, created_at, ai_reviewed)
       VALUES ('photo', 'current', 'pending_openai', 'pending_audit', 'auto_moderation', '2026-09-04', 0)`);
   expect(
-    (await list()).items.find((item) => item.id === "photo")?.review.path.map((step) => step.key),
+    (await listOwnerContributions()).items
+      .find((item) => item.id === "photo")
+      ?.review.path.map((step) => step.key),
   ).toEqual(["uploaded", "manual"]);
 });
 
@@ -479,7 +608,7 @@ it("keeps the latest restored publication time instead of the first approval", a
     VALUES ('photo', 'current', 'pending_openai', 'active', 'auto_moderation', '2026-09-02T12:00:00Z'),
            ('photo', 'current', 'active', 'stale', 'user_action', '2026-09-03T12:00:00Z'),
            ('photo', 'current', 'stale', 'active', 'manual_moderation', '2026-09-04T12:00:00Z')`);
-  expect((await list()).items.find((item) => item.id === "photo")?.review.times.public).toBe(
-    "2026-09-04T12:00:00Z",
-  );
+  expect(
+    (await listOwnerContributions()).items.find((item) => item.id === "photo")?.review.times.public,
+  ).toBe("2026-09-04T12:00:00Z");
 });

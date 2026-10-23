@@ -165,13 +165,17 @@ test("rejects AVIF disguised as PNG instead of entering sharp's HEIF decoder", a
   assert.equal((await prepare(await image().avif().toBuffer(), "image/png")).status, 422);
 });
 
-test("rejects malformed and empty images", async () => {
+test("rejects malformed encoded images", async () => {
   assert.equal((await prepare(Buffer.from("not an image"), "image/png")).status, 422);
-  assert.equal((await prepare(Buffer.alloc(0), "image/png")).status, 422);
 });
 
-test("rejects unsupported declared MIME types", async () => {
+test("rejects an unsupported declared MIME even when the bytes are a valid PNG", async () => {
   assert.equal((await prepare(await image().png().toBuffer(), "image/svg+xml")).status, 422);
+});
+
+test("rejects empty bodies before image pass-through", async () => {
+  // WebP bypasses decoding, so a decoder error cannot mask a missing empty-body guard.
+  assert.equal((await prepare(Buffer.alloc(0), "image/webp")).status, 422);
 });
 
 test("handles simultaneous conversions", async () => {
