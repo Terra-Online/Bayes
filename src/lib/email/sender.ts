@@ -219,9 +219,15 @@ function toResendProviderError(error: {
 }): EmailProviderError {
   const providerCode = error.name ?? "unknown_error";
   const statusCode = typeof error.statusCode === "number" ? error.statusCode : undefined;
+  // Resend's SDK replaces fetch failures (including timeouts after acceptance)
+  // with application_error/statusCode:null. Delivery is unknown in that case;
+  // automatically sending through another provider could duplicate the email.
+  const transportFailure = providerCode === "application_error" && error.statusCode === null;
   return new EmailProviderError({
     provider: "resend",
-    kind: classifyResendFailure(providerCode, statusCode, error.message ?? ""),
+    kind: transportFailure
+      ? "ambiguous"
+      : classifyResendFailure(providerCode, statusCode, error.message ?? ""),
     message: error.message || "Resend rejected email send request.",
     statusCode,
     providerCode,
