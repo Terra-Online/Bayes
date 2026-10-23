@@ -18,7 +18,7 @@ const textHash = createHash("sha256").update(content).digest("hex");
 let database: TestDatabase;
 let env: Bindings;
 let kv: Map<string, string>;
-let fetch: ReturnType<typeof vi.fn<typeof globalThis.fetch>>;
+let providerFetch: ReturnType<typeof vi.fn<typeof globalThis.fetch>>;
 
 beforeEach(() => {
   database = createTestDatabase();
@@ -42,10 +42,10 @@ beforeEach(() => {
     GOOGLE_TRANSLATE_GLOSSARY_LANGUAGES: "zh-CN,en,ja",
     GOOGLE_TRANSLATE_ALLOWED_LANGUAGES: "zh-CN,en,ja",
   };
-  fetch = vi
+  providerFetch = vi
     .fn<typeof globalThis.fetch>()
     .mockRejectedValue(new Error("Unexpected translation request"));
-  vi.stubGlobal("fetch", fetch);
+  vi.stubGlobal("fetch", providerFetch);
 });
 
 afterEach(() => {
@@ -54,18 +54,19 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function seed(
-  options: {
-    version?: string;
-    source?: string;
-    glossary?: string;
-    provider?: string;
-    translated?: string;
-    date?: string;
-  } = {},
-): string {
+type CachedTranslationInput = {
+  version?: string;
+  source?: string;
+  glossary?: string;
+  provider?: string;
+  translated?: string;
+  date?: string;
+};
+
+function insertCachedTranslation(options: CachedTranslationInput = {}): string {
   const version = options.version ?? "g2026-07-19";
   const source = options.source ?? "zh-CN";
+  // Persist the established key format explicitly so fixtures can represent old revisions.
   const flow = `translate:v1:${version}:google-v3:${source}:en`;
   const key = `${flow}:${textHash}`;
   database.sqlite
@@ -112,7 +113,7 @@ describe("translation reuse across glossary revisions", () => {
   ])(
     "reuses an old revision for source %s and cachedOnly=%s without translating or rewriting it",
     async (source, cachedOnly) => {
-      const key = seed();
+      const key = insertCachedTranslation();
       const before = database.sqlite.prepare("SELECT * FROM ugc_text_translations").all();
       expect((await translate(source, cachedOnly)).items[0]).toMatchObject({
         translatedContent: "Historical translation",
@@ -121,7 +122,7 @@ describe("translation reuse across glossary revisions", () => {
         targetLanguage: "en-US",
         glossaryApplied: true,
       });
-      expect(fetch).not.toHaveBeenCalled();
+      expect(providerFetch).not.toHaveBeenCalled();
       expect(database.queries.every((query) => query.changes === 0)).toBe(true);
       expect(database.sqlite.prepare("SELECT * FROM ugc_text_translations").all()).toEqual(before);
       expect(JSON.parse(kv.get(key)!)).toMatchObject({
@@ -134,21 +135,25 @@ describe("translation reuse across glossary revisions", () => {
   it.each([undefined, "zh-CN"])(
     "prefers the configured revision for source %s even when a different revision is newer",
     async (source) => {
-      seed({ version: currentVersion, translated: "Current translation" });
-      seed({ date: "2026-10-22 00:00:00" });
+      insertCachedTranslation({ version: currentVersion, translated: "Current translation" });
+      insertCachedTranslation({ date: "2026-10-22 00:00:00" });
       expect((await translate(source)).items[0]?.translatedContent).toBe("Current translation");
-      expect(fetch).not.toHaveBeenCalled();
+      expect(providerFetch).not.toHaveBeenCalled();
     },
   );
 
   it("uses the most recent historical revision when the configured revision is absent", async () => {
-    seed({ version: "g2026-07-01", translated: "Older", date: "2026-07-01 00:00:00" });
-    seed();
+    insertCachedTranslation({
+      version: "g2026-07-01",
+      translated: "Older",
+      date: "2026-07-01 00:00:00",
+    });
+    insertCachedTranslation();
     expect((await translate()).items[0]?.translatedContent).toBe("Historical translation");
   });
 
   it("repairs the auto-detection pointer so later requests reuse KV without rereading stored translations", async () => {
-    const key = seed();
+    const key = insertCachedTranslation();
     await translate();
     const pointer = [...kv.values()]
       .map((value) => JSON.parse(value))
@@ -161,13 +166,13 @@ describe("translation reuse across glossary revisions", () => {
     database.queries.length = 0;
     expect((await translate()).items[0]?.cached).toBe(true);
     expect(database.queries).toHaveLength(1); // The visible comment is still read from D1.
-    expect(fetch).not.toHaveBeenCalled();
+    expect(providerFetch).not.toHaveBeenCalled();
   });
 
   it("prefers current KV data when a historical pointer was repaired during a mixed rollout", async () => {
-    seed();
+    insertCachedTranslation();
     await translate();
-    seed({ version: currentVersion, translated: "Current translation" });
+    insertCachedTranslation({ version: currentVersion, translated: "Current translation" });
     await translate("zh-CN"); // Repair the current translation KV entry without replacing the pointer.
     database.queries.length = 0;
     expect((await translate()).items[0]?.translatedContent).toBe("Current translation");
@@ -175,7 +180,7 @@ describe("translation reuse across glossary revisions", () => {
   });
 
   it("continues reading detection pointers written before historical-version support", async () => {
-    seed({ version: currentVersion });
+    insertCachedTranslation({ version: currentVersion });
     await translate();
     for (const [key, value] of kv) {
       const record = JSON.parse(value);
@@ -198,26 +203,51 @@ describe("translation reuse across glossary revisions", () => {
   )(
     "does not reuse a translation from an incompatible source, provider or glossary: %j",
     async (options) => {
-      seed(options);
+      insertCachedTranslation(options);
       expect((await translate("zh-CN", true)).items[0]).toMatchObject({
         cached: false,
         error: "TRANSLATION_CACHE_MISS",
       });
-      expect(fetch).not.toHaveBeenCalled();
+      expect(providerFetch).not.toHaveBeenCalled();
     },
   );
 
   it.each([undefined, "zh-CN"])(
     "ignores empty current translations for source %s",
     async (source) => {
-      seed({ version: currentVersion, translated: " " });
-      seed();
+      insertCachedTranslation({ version: currentVersion, translated: " " });
+      insertCachedTranslation();
       expect((await translate(source)).items[0]?.translatedContent).toBe("Historical translation");
     },
   );
 
+  it("does not present a cached same-language detection as a translation", async () => {
+    insertCachedTranslation({ version: currentVersion });
+    await translate("zh-CN", true);
+    const before = database.sqlite.prepare("SELECT * FROM ugc_text_translations").all();
+    // A stale/corrupt KV record is reachable even though migration 0028 rejects
+    // same-language SQL rows. Do not bypass that migration to construct this case.
+    for (const [key, value] of kv) {
+      const record = JSON.parse(value);
+      if (record.translatedText) {
+        kv.set(key, JSON.stringify({ ...record, detectedSourceLanguage: "en" }));
+      }
+    }
+    const result = await translate("zh-CN", true);
+    expect(result.items).toEqual([
+      expect.objectContaining({
+        sourceLanguage: "en",
+        cached: true,
+        error: "Target language cannot be equal to source language.",
+      }),
+    ]);
+    expect(result.items[0]).not.toHaveProperty("translatedContent");
+    expect(providerFetch).not.toHaveBeenCalled();
+    expect(database.sqlite.prepare("SELECT * FROM ugc_text_translations").all()).toEqual(before);
+  });
+
   it("preserves the no-glossary fallback", async () => {
-    seed({ version: "g0", glossary: "" });
+    insertCachedTranslation({ version: "g0", glossary: "" });
     expect((await translate()).items[0]).toMatchObject({
       cached: true,
       glossaryApplied: false,
@@ -226,15 +256,15 @@ describe("translation reuse across glossary revisions", () => {
   });
 
   it("returns the stored translation even when KV repair fails", async () => {
-    seed();
+    insertCachedTranslation();
     vi.mocked(env.OEM_KV!.put).mockRejectedValue(new Error("KV unavailable"));
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     expect((await translate()).items[0]?.cached).toBe(true);
-    expect(fetch).not.toHaveBeenCalled();
+    expect(providerFetch).not.toHaveBeenCalled();
   });
 
   it("translates changed text and stores it under the configured version", async () => {
-    seed();
+    insertCachedTranslation();
     database.sqlite
       .prepare("UPDATE ugc_submissions SET content = ? WHERE id = ?")
       .run("不同的评论", "comment");
@@ -245,7 +275,7 @@ describe("translation reuse across glossary revisions", () => {
       privateKeyEncoding: { type: "pkcs8", format: "pem" },
       publicKeyEncoding: { type: "spki", format: "pem" },
     }).privateKey;
-    fetch.mockImplementation(
+    providerFetch.mockImplementation(
       async (url) =>
         new Response(
           JSON.stringify(
@@ -260,7 +290,8 @@ describe("translation reuse across glossary revisions", () => {
       cached: false,
       translatedContent: "New translation",
     });
-    expect(fetch).toHaveBeenCalledTimes(2);
+    // A changed text needs one OAuth exchange and one paid translation request.
+    expect(providerFetch).toHaveBeenCalledTimes(2);
     expect(
       database.sqlite
         .prepare(
