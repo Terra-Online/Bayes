@@ -19,6 +19,7 @@ interface ModerationRequestOptions {
   method?: string;
   headers?: Record<string, string>;
   body?: unknown;
+  rawBody?: string;
 }
 
 interface ModerationMessages {
@@ -112,7 +113,9 @@ export function createModerationTestFixture(): ModerationTestFixture {
       {
         method: options.method ?? "GET",
         headers: { "content-type": "application/json", ...options.headers },
-        body: options.body === undefined ? undefined : JSON.stringify(options.body),
+        body:
+          options.rawBody ??
+          (options.body === undefined ? undefined : JSON.stringify(options.body)),
       },
       env,
       {

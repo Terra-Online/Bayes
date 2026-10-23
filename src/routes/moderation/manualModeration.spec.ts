@@ -172,6 +172,23 @@ describe("moderation access", () => {
 });
 
 describe("manual moderation recovery and preserved decisions", () => {
+  it("reports malformed review JSON as a validation error without applying a decision", async () => {
+    submission({ id: "waiting", status: "pending_audit" });
+    const before = storedSubmission("waiting");
+    const response = await request("/waiting/status", {
+      method: "PATCH",
+      headers: createReviewerSession(),
+      rawBody: '{"status":',
+    });
+
+    expect(response.status).toBe(422);
+    expect(await response.json()).toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(storedSubmission("waiting")).toEqual(before);
+    expect(authorPoints()).toBe(20);
+    expect(reviewEvents()).toEqual([]);
+    expect(notificationMessages()).toEqual([]);
+  });
+
   it("preserves a newer author snapshot when a manual reviewer loses the write race", async () => {
     submission({ id: "changing", status: "pending_audit" });
     database.hooks.beforeQuery = (sql) => {
