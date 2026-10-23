@@ -164,7 +164,6 @@ interface ModerationRequestOptions {
   method?: string;
   headers?: Record<string, string>;
   body?: unknown;
-  rawBody?: string;
 }
 
 async function request(path: string, options: ModerationRequestOptions = {}): Promise<Response> {
@@ -176,8 +175,7 @@ async function request(path: string, options: ModerationRequestOptions = {}): Pr
     {
       method: options.method ?? "GET",
       headers: { "content-type": "application/json", ...options.headers },
-      body:
-        options.rawBody ?? (options.body === undefined ? undefined : JSON.stringify(options.body)),
+      body: options.body === undefined ? undefined : JSON.stringify(options.body),
     },
     env,
     {
@@ -217,33 +215,6 @@ function notificationMessages() {
 }
 
 describe("moderation recovery and preserved decisions", () => {
-  it("rejects invalid moderation operations without changing review history or delivering effects", async () => {
-    submission({ id: "waiting", status: "pending_audit" });
-    const headers = createReviewerSession("a");
-    const before = storedSubmission("waiting");
-    for (const [path, method, body] of [
-      ["/warnings", "POST", { publicUid: "" }],
-      ["/pending?from=invalid", "GET", undefined],
-      ["/images/coverage?scope=unknown", "GET", undefined],
-      ["/images/duplicates?offset=-1", "GET", undefined],
-      ["/images/duplicates/marker?limit=0", "GET", undefined],
-      ["/images/duplicates/%20", "GET", undefined],
-      ["/waiting/status", "PATCH", { status: "unknown" }],
-      ["/run", "POST", { limit: 0 }],
-    ] as const) {
-      const response = await request(path, { method, headers, body });
-      expect(response.status).toBe(422);
-      expect(await response.json()).toMatchObject({ code: "VALIDATION_ERROR" });
-    }
-    expect(storedSubmission("waiting")).toEqual(before);
-    expect(authorPoints()).toBe(20);
-    expect(reviewEvents()).toEqual([]);
-    expect(notificationMessages()).toEqual([]);
-    expect(webhookMessages).toEqual([]);
-    expect(translationMessages).toEqual([]);
-    expect(fetch).not.toHaveBeenCalled();
-  });
-
   it("preserves a newer author snapshot when a manual reviewer loses the write race", async () => {
     submission({ id: "changing", status: "pending_audit" });
     database.hooks.beforeQuery = (sql) => {
@@ -337,24 +308,6 @@ describe("moderation recovery and preserved decisions", () => {
       expect(notificationMessages()).toHaveLength(1);
     },
   );
-
-  it("rejects malformed status JSON without changing the submission and permits a later decision", async () => {
-    submission({ id: "waiting", status: "pending_audit" });
-    const headers = createReviewerSession("a");
-    const before = storedSubmission("waiting");
-    const response = await request("/waiting/status", { method: "PATCH", headers, rawBody: "{" });
-    expect(response.status).toBe(422);
-    expect(await response.json()).toMatchObject({ code: "VALIDATION_ERROR" });
-    expect(storedSubmission("waiting")).toEqual(before);
-    expect(authorPoints()).toBe(20);
-    expect(reviewEvents()).toEqual([]);
-    expect(notificationMessages()).toEqual([]);
-    expect(
-      (await request("/waiting/status", { method: "PATCH", headers, body: { status: "active" } }))
-        .status,
-    ).toBe(200);
-    expect(storedSubmission("waiting")).toMatchObject({ status: "active" });
-  });
 });
 
 describe("moderation access", () => {

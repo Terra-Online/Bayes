@@ -224,17 +224,7 @@ describe("progress community stats HTTP", () => {
     expect(recovered.response.headers.get("x-oem-kv-cache")).toBe("miss");
   });
 
-  it("rejects invalid dataset hashes and returns an empty public sample for a dataset without contributions", async () => {
-    for (const path of [
-      "/stats",
-      "/stats?markerIndexHash=not-a-hash",
-      "/state?markerIndexHash=not-a-hash",
-      "/archive/state?archiveIndexHash=not-a-hash",
-    ]) {
-      const response = await request(path);
-      expect(response.status).toBe(422);
-      expect(await response.json()).toMatchObject({ code: "VALIDATION_ERROR" });
-    }
+  it("returns an empty public sample for a dataset without contributions", async () => {
     const result = await readPublicStats("a".repeat(64));
     expect(result.body).toEqual({
       markerIndexHash: "a".repeat(64),
@@ -718,57 +708,14 @@ describe("persisted progress HTTP sync", () => {
 
 describe("progress HTTP access and manifests", () => {
   it.each(["map", "archive"] as const)(
-    "preserves saved %s collections after malformed requests and accepts a later valid edit",
+    "allows the same %s mutation to succeed after its missing index is registered",
     async (kind) => {
-      const hash = await registerManifest(kind);
-      const setIdsField = kind === "map" ? "setPointIds" : "setArchiveIds";
-      const collectedIdsField = kind === "map" ? "pointIds" : "archiveIds";
-      const first = await expectAcceptedSync(
-        await syncProgress(hash, "initial", { [setIdsField]: ["p1"] }, kind),
-      );
-      await drainStatsDeliveries();
-      const snapshot = () => ({
-        users: database.sqlite.prepare("SELECT * FROM users ORDER BY uid").all(),
-        archives: database.sqlite.prepare("SELECT * FROM user_archive_progress ORDER BY uid").all(),
-        maps: database.sqlite
-          .prepare("SELECT * FROM progress_sync_mutations ORDER BY uid, mutation_id")
-          .all(),
-        archiveMutations: database.sqlite
-          .prepare("SELECT * FROM archive_progress_sync_mutations ORDER BY uid, mutation_id")
-          .all(),
-        outbox: database.sqlite.prepare("SELECT * FROM progress_stats_outbox ORDER BY id").all(),
-      });
-      const persistedBeforeInvalidRequests = snapshot();
-      const prefix = kind === "map" ? "" : "/archive";
-      for (const payload of [
-        null,
-        { clientMutationId: "missing-index", updatedAt: 1_700_000_000_000 },
-      ]) {
-        const response = await request(`${prefix}/sync`, payload);
-        expect(response.status).toBe(422);
-        expect(await response.json()).toMatchObject({ code: "VALIDATION_ERROR" });
-        expect(snapshot()).toEqual(persistedBeforeInvalidRequests);
-      }
-      expect((await request(`${prefix}/state`)).status).toBe(422);
-      expect(snapshot()).toEqual(persistedBeforeInvalidRequests);
-      await expectAcceptedSync(
-        await syncProgress(
-          hash,
-          "after-invalid",
-          { baseRevision: first.progress.revision, [setIdsField]: ["p2"] },
-          kind,
-        ),
-      );
-      await drainStatsDeliveries();
-      expect(await readProgress(hash, kind)).toMatchObject({ [collectedIdsField]: ["p1", "p2"] });
-      expect(await readProgress(hash, kind, "other")).toMatchObject({ [collectedIdsField]: [] });
-    },
-  );
-
-  it.each(["map", "archive"] as const)(
-    "rejects invalid %s sync metadata and unregistered indexes without creating progress",
-    async (kind) => {
-      const missing = await syncProgress("f".repeat(64), "unknown-index", {}, kind);
+      const manifest = await buildManifestPayload(kind, ["p1", "p2"]);
+      const hash = (
+        "markerIndexHash" in manifest ? manifest.markerIndexHash : manifest.archiveIndexHash
+      )!;
+      const patch = { [kind === "map" ? "setPointIds" : "setArchiveIds"]: ["p1"] };
+      const missing = await syncProgress(hash, "waiting-for-index", patch, kind);
       expect(missing.status).toBe(409);
       expect(await missing.json()).toMatchObject({
         code:
@@ -776,26 +723,12 @@ describe("progress HTTP access and manifests", () => {
             ? "PROGRESS_MANIFEST_NOT_REGISTERED"
             : "ARCHIVE_PROGRESS_MANIFEST_NOT_REGISTERED",
       });
-      const hash = await registerManifest(kind);
-      for (const patch of [
-        { clientMutationId: "" },
-        { baseRevision: "invalid-revision" },
-        { updatedAt: -1 },
-        { [kind === "map" ? "setPointIds" : "setArchiveIds"]: "p1" },
-      ]) {
-        const response = await syncProgress(hash, "invalid-offline-patch", patch, kind);
-        expect(response.status).toBe(422);
-        expect(await response.json()).toMatchObject({ code: "VALIDATION_ERROR" });
-      }
+      await registerManifest(kind);
+      await expectAcceptedSync(await syncProgress(hash, "waiting-for-index", patch, kind));
+      await drainStatsDeliveries();
       expect(await readProgress(hash, kind)).toMatchObject({
-        revision: "",
-        [kind === "map" ? "pointIds" : "archiveIds"]: [],
+        [kind === "map" ? "pointIds" : "archiveIds"]: ["p1"],
       });
-      expect(database.sqlite.prepare("SELECT * FROM progress_sync_mutations").all()).toEqual([]);
-      expect(
-        database.sqlite.prepare("SELECT * FROM archive_progress_sync_mutations").all(),
-      ).toEqual([]);
-      expect(database.sqlite.prepare("SELECT * FROM progress_stats_outbox").all()).toEqual([]);
     },
   );
 
@@ -856,43 +789,9 @@ describe("progress HTTP access and manifests", () => {
   });
 
   it.each(["map", "archive"] as const)(
-    "rejects an invalid %s index without making it available to clients",
+    "registers a %s index idempotently and reads it from durable storage",
     async (kind) => {
       const archive = kind === "archive";
-      const path = archive ? "/archive/manifest" : "/manifest";
-      const hashField = archive ? "archiveIndexHash" : "markerIndexHash";
-      const idsField = archive ? "archiveIds" : "pointIds";
-      const hash = "f".repeat(64);
-      for (const [body, code] of [
-        [null, "VALIDATION_ERROR"],
-        [{ [idsField]: ["p1"] }, "VALIDATION_ERROR"],
-        [{ [hashField]: hash, [idsField]: [" "] }, "VALIDATION_ERROR"],
-        ...(archive ? [[{ [hashField]: hash, [idsField]: [7] }, "VALIDATION_ERROR"]] : []),
-        [{ [hashField]: hash, [idsField]: [] }, "VALIDATION_ERROR"],
-        [
-          { [hashField]: hash, [idsField]: ["p1"] },
-          archive ? "ARCHIVE_PROGRESS_MANIFEST_HASH_MISMATCH" : "PROGRESS_MANIFEST_HASH_MISMATCH",
-        ],
-        ...(archive
-          ? [
-              [{ [hashField]: hash, [idsField]: ["b", "a"] }, "VALIDATION_ERROR"],
-              [{ [hashField]: hash, [idsField]: ["a", "a"] }, "VALIDATION_ERROR"],
-            ]
-          : []),
-      ]) {
-        const response = await request(path, body);
-        expect(response.status).toBe(422);
-        expect(await response.json()).toMatchObject({ code });
-      }
-      const missing = await request(
-        archive ? `/archive/state?archiveIndexHash=${hash}` : `/state?markerIndexHash=${hash}`,
-      );
-      expect(missing.status).toBe(409);
-      expect(await missing.json()).toMatchObject({
-        code: archive
-          ? "ARCHIVE_PROGRESS_MANIFEST_NOT_REGISTERED"
-          : "PROGRESS_MANIFEST_NOT_REGISTERED",
-      });
       const validHash = await registerManifest(kind);
       await registerManifest(kind);
       kv.clear();

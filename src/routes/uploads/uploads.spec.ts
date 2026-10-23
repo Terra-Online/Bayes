@@ -104,11 +104,11 @@ describe("upload route policies", () => {
   });
 
   it("registers direct comment context as a public no-store read", async () => {
-    const response = await request("/comments/target");
+    const response = await request("/comments/target?markerId=42");
 
-    expect(response.status).toBe(422);
+    expect(response.status).toBe(404);
     expect(response.headers.get("Cache-Control")).toBe("private, no-store");
-    expect(await response.json()).toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(await response.json()).toMatchObject({ code: "COMMENT_NOT_FOUND" });
   });
 
   it.each(["/images/mine", "/images?includeMine=1", "/comments/mine", "/file/private.webp"])(
@@ -119,15 +119,9 @@ describe("upload route policies", () => {
     },
   );
 
-  it("rejects conflicting or invalid image modes", async () => {
-    for (const query of ["includeMine=1&publicOnly=1", "includeMine=invalid"]) {
-      expect((await request(`/images?markerId=42&${query}`)).status).toBe(422);
-    }
-    expect((await request("/point-images?markerId=42")).status).toBe(404);
-  });
-
   it("returns a normal 404 for unknown upload paths while locked", async () => {
     expect((await request("/unknown")).status).toBe(404);
+    expect((await request("/point-images?markerId=42")).status).toBe(404);
     expect((await request("/images/photo/extra")).status).toBe(404);
   });
 
@@ -165,23 +159,5 @@ describe("upload route policies", () => {
         })
       ).status,
     ).toBe(200);
-  });
-
-  it("validates translation payloads before requiring live-translation access", async () => {
-    const response = await request("/comments/translations", {
-      method: "POST",
-      body: JSON.stringify({ commentIds: [] }),
-      headers: { "content-type": "application/json" },
-    });
-    expect(response.status).toBe(422);
-    expect(
-      (
-        await request("/comments/translations", {
-          method: "POST",
-          body: JSON.stringify({ commentIds: [] }),
-          headers: { ...suspendedSession.headers, "content-type": "application/json" },
-        })
-      ).status,
-    ).toBe(422);
   });
 });

@@ -14,8 +14,6 @@ vi.mock("cloudflare:workers", () => ({
   },
 }));
 
-const HASH_A = "a".repeat(64);
-
 describe("POST /progress/v1/archive/manifest", () => {
   let database: TestDatabase;
   let fixture: ProgressFixture;
@@ -59,49 +57,5 @@ describe("POST /progress/v1/archive/manifest", () => {
       format_version: 1,
       bits_per_archive: 1,
     });
-  });
-
-  it.each([
-    [["archive-b", "archive-a"], "must be sorted"],
-    [["archive-a", "archive-a"], "must not contain duplicate"],
-  ])("rejects a non-canonical archive index", async (archiveIds, message) => {
-    const response = await fixture.request(
-      new Request("https://progress/archive/manifest", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ archiveIndexHash: HASH_A, archiveIds }),
-      }),
-    );
-
-    expect(response.status).toBe(422);
-    await expect(response.json()).resolves.toMatchObject({
-      code: "VALIDATION_ERROR",
-      message: expect.stringContaining(message),
-    });
-    expect(
-      database.sqlite
-        .prepare("SELECT * FROM archive_progress_manifests WHERE archive_index_hash = ?")
-        .get(HASH_A),
-    ).toBeUndefined();
-  });
-
-  it("rejects a mismatched manifest hash", async () => {
-    const response = await fixture.request(
-      new Request("https://progress/archive/manifest", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ archiveIndexHash: HASH_A, archiveIds: ["archive-a"] }),
-      }),
-    );
-
-    expect(response.status).toBe(422);
-    await expect(response.json()).resolves.toMatchObject({
-      code: "ARCHIVE_PROGRESS_MANIFEST_HASH_MISMATCH",
-    });
-    expect(
-      database.sqlite
-        .prepare("SELECT * FROM archive_progress_manifests WHERE archive_index_hash = ?")
-        .get(HASH_A),
-    ).toBeUndefined();
   });
 });

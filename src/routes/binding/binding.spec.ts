@@ -90,7 +90,7 @@ function request(path: string, payload?: unknown, uid: string | null = "user") {
         : {
             method: "POST",
             headers,
-            body: typeof payload === "string" ? payload : JSON.stringify(payload),
+            body: JSON.stringify(payload),
           },
       env,
     ),
@@ -217,40 +217,6 @@ it("disables idempotently, isolates another user's unlink, and removes only the 
   ).toBeUndefined();
   expect(endfieldFetch).not.toHaveBeenCalled();
 });
-
-it("keeps token validation details and the existing malformed-JSON distinction", async () => {
-  vi.spyOn(console, "error").mockImplementation(() => {});
-  const payload = { provider: "skland", token: "short" };
-  const response = await request("exchange-token", payload);
-  expect(response.status).toBe(422);
-  expect(await response.json()).toMatchObject({
-    code: "VALIDATION_ERROR",
-    message: "Invalid exchange payload.",
-    details: {
-      formErrors: [],
-      fieldErrors: { token: ["Too small: expected string to have >=8 characters"] },
-    },
-  });
-  expect((await request("exchange-token", "{")).status).toBe(422);
-  expect((await request("exchange-code", "{")).status).toBe(500);
-  expect((await request("bind-role", "{")).status).toBe(500);
-  expect(endfieldFetch).not.toHaveBeenCalled();
-});
-
-it.each([
-  ["exchange-code", { provider: "skland", code: "" }],
-  ["bind-role", { flowId: "flow", serverId: -1, roleId: "role" }],
-])(
-  "rejects an invalid %s request without provider or binding side effects",
-  async (path, payload) => {
-    const response = await request(path, payload);
-    expect(response.status).toBe(422);
-    expect(await response.json()).toMatchObject({ code: "VALIDATION_ERROR" });
-    expect(endfieldFetch).not.toHaveBeenCalled();
-    expect(redis.records.size).toBe(0);
-    expect(database.sqlite.prepare("SELECT * FROM endfield_bindings").all()).toEqual([]);
-  },
-);
 
 it("requires a site identity before exchanging external credentials", async () => {
   expect(

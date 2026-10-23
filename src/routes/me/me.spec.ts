@@ -377,22 +377,6 @@ it("does not present a historical recall during manual review as a completed man
   expect(review?.published).toBe(false);
 });
 
-it("rejects decoded contribution cursors with missing fields without changing history", async () => {
-  const before = database.sqlite.prepare("SELECT * FROM ugc_submissions ORDER BY id").all();
-  for (const value of [
-    { createdAt: 123, id: "photo" },
-    { createdAt: "2026-09-01", id: "" },
-  ]) {
-    const cursor = encodeURIComponent(btoa(JSON.stringify(value)));
-    const response = await requestPath(`/contributions?cursor=${cursor}`, "author");
-    expect(response.status).toBe(422);
-    expect(await response.json()).toMatchObject({ code: "INVALID_CURSOR" });
-  }
-  expect(database.sqlite.prepare("SELECT * FROM ugc_submissions ORDER BY id").all()).toEqual(
-    before,
-  );
-});
-
 it("returns real decision times without borrowing a previous snapshot's timestamps", async () => {
   insertLegacyReviewNotification({
     submissionId: "photo",

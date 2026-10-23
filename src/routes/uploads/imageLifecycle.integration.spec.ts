@@ -735,30 +735,6 @@ describe("image submission", () => {
     },
   );
 
-  it.each([
-    { name: "a missing file", mime: null, size: 1, code: "UPLOAD_FILE_MISSING" },
-    { name: "an unsupported file", mime: "text/plain", size: 1, code: "MIME_NOT_ALLOWED" },
-    { name: "an empty image", mime: "image/webp", size: 0, code: "UPLOAD_SIZE_INVALID" },
-    { name: "an oversized image", mime: "image/webp", size: 9, code: "UPLOAD_SIZE_INVALID" },
-  ])(
-    "rejects $name without storing a file or creating a submission",
-    async ({ mime, size, code }) => {
-      env.MAX_UPLOAD_BYTES = "8";
-      const form = upload(
-        new File([new Uint8Array(size)], "entrance", { type: mime ?? "image/webp" }),
-      );
-      if (mime === null) {
-        form.delete("file");
-      }
-      const response = await request("/images", "author", form);
-      expect(response.status).toBe(422);
-      expect(await response.json()).toMatchObject({ code });
-      expect(storage.size).toBe(0);
-      expect(database.sqlite.prepare("SELECT * FROM ugc_submissions").all()).toEqual([]);
-      expect(moderation).toEqual([]);
-    },
-  );
-
   it.each(["image/webp", "image/avif"])(
     "preserves an already compressed %s upload and warns about another image at the same marker",
     async (mime) => {

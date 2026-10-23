@@ -618,7 +618,7 @@ describe("locator policy authorization through HTTP", () => {
     expect(storedBinding()).toEqual(previous);
   });
 
-  it("rejects another role, another server, and invalid consent targets before contacting the provider", async () => {
+  it("rejects another role or server before contacting the provider", async () => {
     await bind();
     await bind("neighbor", wulingRole);
     const previous = storedBinding();
@@ -629,9 +629,6 @@ describe("locator policy authorization through HTTP", () => {
         409,
         "ENDFIELD_BINDING_MISMATCH",
       );
-    }
-    for (const payload of [{ roleId: "" }, { serverId: 0 }]) {
-      await expectError(await request("/locator/agree-policy", payload), 422, "VALIDATION_ERROR");
     }
     expect(external).not.toHaveBeenCalled();
     expect(storedBinding()).toEqual(previous);

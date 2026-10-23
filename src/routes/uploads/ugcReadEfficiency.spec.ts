@@ -79,20 +79,6 @@ function reactionQueries() {
   );
 }
 
-it.each([
-  "/comments?markerId=m&replyLimit=-1",
-  "/comments/mine?markerId=m&limit=0",
-  "/images?markerId=m&limit=0",
-  "/comments",
-  "/images",
-])("rejects an invalid list selection before reading content: %s", async (path) => {
-  const response = await request(path, viewerHeaders);
-  expect(response.status).toBe(422);
-  expect(await response.json()).toMatchObject({ code: "VALIDATION_ERROR" });
-  expect(workersCache.fetch).not.toHaveBeenCalled();
-  expect(submissionQueries()).toEqual([]);
-});
-
 // Returned-ID SQL observation protects the read budget; authentication queries are separate.
 describe("personalized UGC cache overlays", () => {
   it("only requests reactions for images returned by the public cache", async () => {

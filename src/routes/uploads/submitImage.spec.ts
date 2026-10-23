@@ -223,14 +223,6 @@ describe("image submission through HTTP", () => {
     );
   });
 
-  it("rejects missing marker identity before processing or storing the image", async () => {
-    const response = await request(undefined, "image/webp", { fields: { markerId: "" } });
-    expect(response.status).toBe(422);
-    expect(await response.json()).toMatchObject({ code: "VALIDATION_ERROR" });
-    expectNoWrites();
-    expect(getRandom).not.toHaveBeenCalled();
-  });
-
   it("persists one pending image and queues its moderation after a successful retry", async () => {
     configureUploadPersistence(2);
     const conversionRequests: Array<{

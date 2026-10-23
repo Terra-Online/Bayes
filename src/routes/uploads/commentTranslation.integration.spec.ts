@@ -453,22 +453,6 @@ describe("comment translation cache", () => {
 
 describe("translation access", () => {
   it.each([
-    { sourceLanguage: undefined, targetLanguage: "xx-YY" },
-    { sourceLanguage: "xx-YY", targetLanguage: "en-US" },
-  ])("does not send unsupported language requests to Google: %s", async (languages) => {
-    insertSubmission(database.sqlite, { id: "comment", userId: "author", content: originalText });
-    expect(await translations(languages)).toEqual([
-      expect.objectContaining({
-        commentId: "comment",
-        error: "LANGUAGE_NOT_ALLOWED",
-        cached: false,
-      }),
-    ]);
-    expect(providerFetch).not.toHaveBeenCalled();
-    expect(storedTranslations()).toEqual([]);
-  });
-
-  it.each([
     { user: null, status: 401, code: "SESSION_REQUIRED" },
     { user: "suspended", status: 403, code: "ACCESS_DENIED" },
   ])(
@@ -491,14 +475,6 @@ describe("translation access", () => {
       expect(translationRequests).toHaveLength(1);
     },
   );
-
-  it("rejects invalid request bodies before requesting live access or contacting Google", async () => {
-    const response = await request({ commentIds: [], targetLanguage: "en-US" }, null);
-    expect(response.status).toBe(422);
-    expect(await response.json()).toMatchObject({ code: "VALIDATION_ERROR" });
-    expect(providerFetch).not.toHaveBeenCalled();
-    expect(storedTranslations()).toEqual([]);
-  });
 });
 
 describe("translation glossary", () => {

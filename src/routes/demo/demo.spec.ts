@@ -82,18 +82,4 @@ describe("local demo object upload HTTP", () => {
       contentType: storedType,
     });
   });
-
-  it("rejects an empty object key without writing a file", async () => {
-    const response = await request(
-      "http://localhost:8787/__demo/r2?key=%20%20",
-      "http://localhost:8787",
-      {
-        headers: { "x-demo-local-sync": "1" },
-        body: "Demo file",
-      },
-    );
-    expect(response.status).toBe(400);
-    expect(await response.json()).toEqual({ error: "missing_key" });
-    expect(objects.size).toBe(0);
-  });
 });

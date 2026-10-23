@@ -121,25 +121,15 @@ export async function testPublicReads(t, { worker, db, read, gate }) {
     },
   );
   await t.test(
-    "origin validation rejects unsupported methods, resources and invalid selections without caching",
+    "origin errors stay uncacheable for rejected methods, unknown resources and invalid queries",
     async () => {
       const images =
         "/origin/images?markerId=origin-image&limit=6&namespace=prod&assetBaseUrl=https://assets.test";
-      const comments =
-        "/origin/comments?markerId=origin-comment&limit=6&replyLimit=1&namespace=prod";
       const cases = [
         [images, "POST", 405],
         ["/origin/unknown", "GET", 404],
-        [images.replace("markerId=origin-image", "markerId=%20"), "GET", 422],
         [images.replace("limit=6", "limit=1.5"), "GET", 422],
-        [images.replace("namespace=prod", "namespace=private"), "GET", 422],
-        [images.replace("&assetBaseUrl=https://assets.test", ""), "GET", 422],
-        [comments.replace("replyLimit=1", "replyLimit=-1"), "GET", 422],
-        [comments.replace("limit=6&", ""), "GET", 422],
-        ["/origin/progress-stats", "GET", 422],
-        ["/origin/progress-stats?markerIndexHash=invalid", "GET", 422],
       ];
-      const before = (await db.prepare("SELECT * FROM ugc_submissions ORDER BY id").all()).results;
       for (const [path, method, status] of cases) {
         const response = await within(
           worker.dispatchFetch(`https://fixture.test${path}`, { method }),
@@ -149,10 +139,6 @@ export async function testPublicReads(t, { worker, db, read, gate }) {
         assert.equal(response.headers.get("cloudflare-cdn-cache-control"), null, path);
         assert.equal((await response.json()).code, "INVALID_PUBLIC_CACHE_REQUEST", path);
       }
-      assert.deepEqual(
-        (await db.prepare("SELECT * FROM ugc_submissions ORDER BY id").all()).results,
-        before,
-      );
     },
   );
 }

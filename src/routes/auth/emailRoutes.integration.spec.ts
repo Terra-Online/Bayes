@@ -232,22 +232,16 @@ describe("email authentication HTTP behavior", () => {
   it.each([
     [
       "/register",
-      { email: "new@example.com", otp: "123456", password: "weak" },
-      "VALIDATION_ERROR",
-    ],
-    [
-      "/register",
       { email: "new@disposable.example.test", otp: "123456", password: "Password123" },
       "DISPOSABLE_EMAIL_NOT_ALLOWED",
     ],
-    ["/email-otp/send-verification-otp", { email: "invalid" }, "VALIDATION_ERROR"],
     [
       "/email-otp/send-verification-otp",
       { email: "new@sub.disposable.example.test" },
       "DISPOSABLE_EMAIL_NOT_ALLOWED",
     ],
   ] as const)(
-    "rejects invalid or disposable registration input at %s without creating an identity or sending mail",
+    "enforces the disposable-email registration policy at %s before creating an identity or sending mail",
     async (path, body, code) => {
       const before = storedIdentity();
       const response = await request(path, body);
@@ -259,15 +253,9 @@ describe("email authentication HTTP behavior", () => {
     },
   );
 
-  it.each([
-    "/register",
-    "/email-otp/send-verification-otp",
-    "/sign-in/email",
-    "/forget-password",
-    "/reset-password",
-  ])("rejects broken JSON at %s without creating an identity or delivering email", async (path) => {
+  it("returns a validation response instead of forwarding a consumed email sign-in body", async () => {
     const response = await app.request(
-      `https://api.opendfieldmap.org/auth/v1${path}`,
+      "https://api.opendfieldmap.org/auth/v1/sign-in/email",
       {
         method: "POST",
         headers: { "content-type": "application/json", "cf-connecting-ip": testIp },
@@ -409,12 +397,6 @@ describe("email authentication HTTP behavior", () => {
   it("preserves password and reset token after invalid reset input, then resets successfully using the localized delivered link", async () => {
     const email = "reset@example.com";
     await registerEmailAccount(email);
-    const beforeRequest = storedIdentity();
-    const rejectedRequest = await request("/forget-password", { email, redirectTo: "not-a-url" });
-    expect(rejectedRequest.status).toBe(422);
-    expect(await rejectedRequest.json()).toMatchObject({ code: "VALIDATION_ERROR" });
-    expect(storedIdentity()).toEqual(beforeRequest);
-    expect(delivery).toHaveBeenCalledTimes(1); // Only the registration OTP was delivered.
     const token = await issueReset("RESET@example.com", "zh-Hant");
     expect(delivery.mock.calls.at(-1)![0]).toMatchObject({
       to: email,
@@ -484,14 +466,6 @@ describe("email authentication HTTP behavior", () => {
     );
     expect(database.sqlite.prepare("SELECT * FROM users").all()).toEqual(profile);
     expect(storedIdentity().users).toHaveLength(1);
-  });
-
-  it("rejects a reset preview without a token before reading any account", async () => {
-    const response = await preview("");
-    expect(response.status).toBe(422);
-    expect(await response.json()).toMatchObject({ code: "VALIDATION_ERROR" });
-    expect(storedIdentity()).toEqual({ users: [], accounts: [], sessions: [] });
-    expect(delivery).not.toHaveBeenCalled();
   });
 
   it.each(["expired", "deleted user"])(

@@ -141,18 +141,4 @@ describe("public image details through HTTP", () => {
     const otherViewerImage = await requestImage("/images/photo?markerId=42", otherViewerHeaders);
     expect(otherViewerImage).toMatchObject({ upvoted: false, flagged: false });
   });
-
-  it.each([
-    "/images/photo",
-    "/images/photo?markerId=",
-    "/images/photo?markerId=" + "x".repeat(129),
-    "/images/photo?markerId=42&scope=invalid",
-  ])("rejects an invalid query in %s", async (path) => {
-    const response = await request(path, viewerHeaders);
-
-    expect(response.status).toBe(422);
-    expect(await response.json()).toMatchObject({ code: "VALIDATION_ERROR" });
-    // Invalid input must be rejected before reading session or submission data.
-    expect(database.queries).toEqual([]);
-  });
 });

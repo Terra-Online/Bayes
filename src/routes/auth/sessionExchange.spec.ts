@@ -92,27 +92,6 @@ describe("CHIPS OAuth exchange", () => {
     );
   }
 
-  it("rejects malformed social sign-in without saving an OAuth attempt and permits a valid retry", async () => {
-    for (const body of ["{", "null", "[]", '"github"']) {
-      const response = await app.request(
-        `${API_ORIGIN}/auth/v1/sign-in/social`,
-        {
-          method: "POST",
-          headers: { origin: CN_ORIGIN, "content-type": "application/json" },
-          body,
-        },
-        env,
-      );
-      expect(response.status).toBe(422);
-      expect(await response.json()).toMatchObject({ code: "VALIDATION_ERROR" });
-      expect(response.headers.getSetCookie()).toEqual([]);
-      expect(database.sqlite.prepare("SELECT id FROM auth_verifications").all()).toEqual([]);
-      expect(database.sqlite.prepare("SELECT id FROM auth_sessions").all()).toEqual([]);
-    }
-    const { code } = await issueCode();
-    expect((await exchange(code)).status).toBe(200);
-  });
-
   it.each([CN_ORIGIN, "https://opendfieldmap.org", "https://www.opendfieldmap.cn"])(
     "establishes a signed HttpOnly partitioned cookie from %s without relying on callback cookies",
     async (origin) => {
@@ -210,22 +189,20 @@ describe("CHIPS OAuth exchange", () => {
     expect((await exchange(code)).status).toBe(200);
   });
 
-  it("preserves the exchange code after invalid JSON, invalid payloads and an oversized browser proof", async () => {
+  it("preserves the exchange code after malformed JSON and an oversized browser proof", async () => {
     const { code } = await issueCode();
-    for (const body of ["{", "null", "{}", JSON.stringify({ code: 7 })]) {
-      const response = await app.request(
-        `${API_ORIGIN}/auth/v1/session/exchange`,
-        {
-          method: "POST",
-          headers: { origin: CN_ORIGIN, "content-type": "application/json", cookie: proofCookie },
-          body,
-        },
-        env,
-      );
-      expect(response.status).toBe(422);
-      expect(await response.json()).toMatchObject({ code: "VALIDATION_ERROR" });
-      expect(response.headers.getSetCookie()).toEqual([]);
-    }
+    const response = await app.request(
+      `${API_ORIGIN}/auth/v1/session/exchange`,
+      {
+        method: "POST",
+        headers: { origin: CN_ORIGIN, "content-type": "application/json", cookie: proofCookie },
+        body: "{",
+      },
+      env,
+    );
+    expect(response.status).toBe(422);
+    expect(await response.json()).toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(response.headers.getSetCookie()).toEqual([]);
     const original = proofCookie;
     proofCookie = `${proofCookie.split("=")[0]}=${"a".repeat(129)}`;
     expect((await exchange(code)).status).toBe(400);

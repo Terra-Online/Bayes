@@ -260,14 +260,6 @@ describe("comment submission and replies", () => {
     expect(moderation).toEqual([]);
     expect(webhooks).toEqual([]);
   });
-
-  it("rejects blank submission content without creating a comment", async () => {
-    const response = await post("/comments", "author", { ...comment, content: " \n\t " });
-    expect(response.status).toBe(422);
-    expect(await response.json()).toMatchObject({ code: "VALIDATION_ERROR" });
-    expect(await mine()).toEqual([]);
-    expect(moderation).toEqual([]);
-  });
 });
 
 describe("comment flags", () => {
@@ -485,33 +477,15 @@ describe("comment edits", () => {
     expect(webhooks).toHaveLength(1);
   });
 
-  it.each([
-    {
-      name: "blank content",
-      status: "active",
-      content: " \n ",
-      httpStatus: 422,
-      code: "VALIDATION_ERROR",
-    },
-    {
-      name: "a withdrawn comment",
-      status: "stale",
-      content: comment.content,
-      httpStatus: 409,
-      code: "INVALID_SUBMISSION_STATUS",
-    },
-  ])(
-    "rejects editing $name without changing the comment",
-    async ({ status, content, httpStatus, code }) => {
-      insertSubmission(database.sqlite, { id: "target", userId: "author", status });
-      const before = persistedState();
-      const response = await post("/comments/target/edit", "author", { content });
-      expect(response.status).toBe(httpStatus);
-      expect(await response.json()).toMatchObject({ code });
-      expect(persistedState()).toEqual(before);
-      expect(moderation).toEqual([]);
-    },
-  );
+  it("rejects editing a withdrawn comment without changing it", async () => {
+    insertSubmission(database.sqlite, { id: "target", userId: "author", status: "stale" });
+    const before = persistedState();
+    const response = await post("/comments/target/edit", "author", { content: comment.content });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ code: "INVALID_SUBMISSION_STATUS" });
+    expect(persistedState()).toEqual(before);
+    expect(moderation).toEqual([]);
+  });
 });
 
 describe("comment recall", () => {

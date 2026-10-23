@@ -141,23 +141,6 @@ describe("personal contributions HTTP", () => {
     ).toEqual(["review-comment"]);
   });
 
-  it("rejects an invalid history cursor or filter instead of silently returning a different page", async () => {
-    for (const [query, code] of [
-      ["cursor=not-a-history-cursor", "INVALID_CURSOR"],
-      ["kind=video", "VALIDATION_ERROR"],
-      ["status=approved", "VALIDATION_ERROR"],
-      ["limit=0", "VALIDATION_ERROR"],
-    ]) {
-      const response = await request(`/contributions?${query}`);
-      expect(response.status).toBe(422);
-      expect(response.headers.get("cache-control")).toBe("private, no-store");
-      expect(await response.json()).toMatchObject({ code });
-    }
-    expect((await contributions("?limit=1")).items.map((item) => item.id)).toEqual([
-      "review-comment",
-    ]);
-  });
-
   it("keeps cached preview metadata private after both owners load their contribution lists", async () => {
     await contributions("?kind=image");
     await contributions("?kind=image", "other");

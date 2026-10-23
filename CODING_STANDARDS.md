@@ -64,6 +64,28 @@ when the task explicitly concerns those documents.
   transactions, query plans, and native Workers behavior. Keep business assertions
   visible and derive expectations from business rules or external contracts.
 
+### Schema and invalid-input tests
+
+- Integration tests exercise business behavior. Bad inputs are not a required
+  checklist for each route. Do not build database, authentication, or external mock
+  fixtures solely to demonstrate that a schema rejects an input.
+- Delete routine type, required-field, length, range, and enum examples that only
+  repeat a validation library's behavior. Keep schema tests when they protect a
+  meaningful project contract, such as normalization, cross-field rules, or a
+  compatibility regression; test the exported schema directly in a sibling
+  `*.spec.ts` file without HTTP, database, or authentication setup. Do not copy every
+  deleted integration example into schema unit tests or assert library-generated
+  error prose.
+- Keep invalid-request integration tests only when they prove a guarantee beyond
+  schema rejection, such as a project-specific parsing or forwarding regression,
+  security-sensitive decoding, credential preservation, prevention of partial
+  writes, or retry with the same credential or mutation after rejection. Make that
+  guarantee explicit. Generic assertions that no
+  rows changed or no provider was called do not by themselves justify a bad-input
+  matrix.
+- Test domain-owned validators at their own module interface. Keep domain rules
+  with their owner rather than relocating them into route schemas to avoid HTTP.
+
 ## Working guidance
 
 Agents should keep changes focused and explain compatibility changes and
