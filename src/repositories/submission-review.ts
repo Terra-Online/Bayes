@@ -14,6 +14,7 @@ export interface ReviewSubmissionStats {
 }
 
 type ReviewSubmissionFilters = {
+  submissionId?: string;
   statuses?: SubmissionStatus[];
   createdFrom?: string;
   createdTo?: string;
@@ -21,12 +22,7 @@ type ReviewSubmissionFilters = {
 
 export async function getReviewSubmissions(
   db: D1Database,
-  payload: {
-    statuses?: SubmissionStatus[];
-    createdFrom?: string;
-    createdTo?: string;
-    limit?: number;
-  } = {},
+  payload: ReviewSubmissionFilters & { limit?: number } = {},
 ): Promise<SubmissionRecord[]> {
   const filters = buildReviewSubmissionWhere(payload);
   const limit = Math.min(Math.max(payload.limit ?? 1000, 1), 10000);
@@ -219,6 +215,11 @@ function buildReviewSubmissionWhere(payload: ReviewSubmissionFilters): {
   const statuses = payload.statuses?.length ? payload.statuses : ALL_STATUSES;
   const bindings: string[] = [...statuses];
   const clauses = [`s.status IN (${statuses.map((_, index) => `?${index + 1}`).join(", ")})`];
+
+  if (payload.submissionId) {
+    bindings.push(payload.submissionId);
+    clauses.push(`s.id = ?${bindings.length}`);
+  }
 
   if (payload.createdFrom) {
     bindings.push(payload.createdFrom);

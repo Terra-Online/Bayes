@@ -42,9 +42,48 @@ const event: ModerationNotificationEvent = {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe("Discord moderation notifications", () => {
+  it.each([
+    ["image", "12345"],
+    ["comment", "12345"],
+    ["image", "marker /+1"],
+    ["comment", "marker /+1"],
+  ] as const)(
+    "links directly to the %s and its Cor review for marker %s",
+    async (kind, markerId) => {
+      const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+      vi.stubGlobal("fetch", fetchMock);
+      const id = "submission /+1";
+      await sendModerationNotificationNow(
+        {
+          DISCORD_MODERATION_WEBHOOK_URL: "https://discord.example.test/webhook",
+        } as Bindings,
+        { ...event, submission: { ...submission, id, kind, markerId } },
+      );
+
+      const payload = JSON.parse(fetchMock.mock.calls[0]![1].body);
+      const fields = payload.embeds[0].fields as { name: string; value: string }[];
+      const content = fields.find((field) => field.name === "content")!.value;
+      const review = fields.find((field) => field.name === "review")!.value;
+      const contentUrl = new URL(content.match(/\]\(([^)]+)\)/)![1]!);
+      const reviewUrl = new URL(review.match(/\]\(([^)]+)\)/)![1]!);
+      expect(contentUrl.origin).toBe("https://oem.re");
+      expect(contentUrl.searchParams.get(kind === "image" ? "imageId" : "commentId")).toBe(id);
+      expect(contentUrl.searchParams.has(kind === "image" ? "commentId" : "imageId")).toBe(false);
+      if (markerId === "12345") {
+        expect(contentUrl.pathname).toMatch(/^\/[a-zA-Z0-9]{7}$/);
+      } else {
+        expect(contentUrl.searchParams.get("p")).toBe(markerId);
+        expect(contentUrl.searchParams.get("type")).toBe(submission.poiType);
+      }
+      expect(reviewUrl.origin).toBe("https://admin.opendfieldmap.org");
+      expect(reviewUrl.searchParams.get("submissionId")).toBe(id);
+    },
+  );
+
   it("fails when the webhook secret is missing", async () => {
     await expect(sendModerationNotificationNow({} as Bindings, event)).rejects.toThrow(
       "DISCORD_MODERATION_WEBHOOK_URL is not configured",

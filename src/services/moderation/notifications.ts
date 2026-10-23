@@ -1,4 +1,4 @@
-import { buildPointShareUrl } from "@/lib/pointShare";
+import { buildSubmissionShareUrl } from "@/lib/pointShare";
 import type { SubmissionRecord, SubmissionStatus } from "@/repositories/submission/types";
 import type { AuthUser, Bindings } from "@/types/app";
 
@@ -325,7 +325,16 @@ function submissionFields(
     { name: "submission", value: submission.id, inline: true },
     { name: "kind", value: submission.kind, inline: true },
     { name: "marker", value: truncateFieldValue(submission.markerId), inline: true },
-    { name: "point", value: buildPointShareUrl(submission), inline: false },
+    {
+      name: "content",
+      value: `[Open ${submission.kind}](${buildSubmissionShareUrl(submission)})`,
+      inline: false,
+    },
+    {
+      name: "review",
+      value: `[Open in Cor](https://admin.opendfieldmap.org/?submissionId=${encodeURIComponent(submission.id)})`,
+      inline: false,
+    },
     { name: "uploader", value: formatSubmitter(submission), inline: true },
   ];
 }
