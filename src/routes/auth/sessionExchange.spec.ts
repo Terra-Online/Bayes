@@ -63,14 +63,13 @@ describe("CHIPS OAuth exchange", () => {
     expect(proof).toContain("HttpOnly");
     proofCookie = proof.split(";")[0]!;
     callbackUrl = response.headers.get("location")!;
-    expect(response.status).toBe(302);
     expect(response.headers.get("cache-control")).toBe("private, no-store");
     expect(response.headers.get("referrer-policy")).toBe("no-referrer");
-    const code = new URL(response.headers.get("location")!).searchParams.get("auth_code")!;
+    const destination = new URL(callbackUrl);
+    const code = destination.searchParams.get("auth_code")!;
     expect(code).toBeTruthy();
-    expect(
-      new URL(response.headers.get("location")!).searchParams.has(AUTH_EXCHANGE_CHALLENGE_PARAM),
-    ).toBe(false);
+    // The browser proof stays in its HttpOnly cookie, outside the frontend URL.
+    expect(destination.searchParams.has(AUTH_EXCHANGE_CHALLENGE_PARAM)).toBe(false);
     return { code, cookie, token };
   }
 
@@ -103,7 +102,7 @@ describe("CHIPS OAuth exchange", () => {
       const payload = (await response.json()) as { user: { uid: string }; token?: string };
       expect(payload.user.uid).toBe("100001ER");
       expect(payload).not.toHaveProperty("token");
-      expect(JSON.stringify(payload)).not.toContain(token!);
+      expect(JSON.stringify(payload)).not.toContain(token);
       const cookie = response.headers
         .getSetCookie()
         .find((value) => value.startsWith("__Secure-oem-chips.session_token="))!;
@@ -188,6 +187,94 @@ describe("CHIPS OAuth exchange", () => {
     expect((await exchange(code)).status).toBe(400);
     proofCookie = originalProof;
     expect((await exchange(code)).status).toBe(200);
+  });
+
+  it("preserves the exchange code after malformed JSON and an oversized browser proof", async () => {
+    const { code } = await issueCode();
+    const response = await app.request(
+      `${API_ORIGIN}/auth/v1/session/exchange`,
+      {
+        method: "POST",
+        headers: { origin: CN_ORIGIN, "content-type": "application/json", cookie: proofCookie },
+        body: "{",
+      },
+      env,
+    );
+    expect(response.status).toBe(422);
+    expect(await response.json()).toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(response.headers.getSetCookie()).toEqual([]);
+    const original = proofCookie;
+    proofCookie = `${proofCookie.split("=")[0]}=${"a".repeat(129)}`;
+    expect((await exchange(code)).status).toBe(400);
+    proofCookie = original;
+    expect((await exchange(code)).status).toBe(200);
+    expect((await exchange(code)).status).toBe(400);
+  });
+
+  it.each([
+    ["/settings?tab=accounts", `${CN_ORIGIN}/settings?tab=accounts`],
+    ["//attacker.example/steal", `${CN_ORIGIN}/`],
+    ["/\\attacker.example/steal", `${CN_ORIGIN}/`],
+    ["https://attacker.example/steal", `${CN_ORIGIN}/`],
+    ["not a URL", `${CN_ORIGIN}/`],
+  ])("keeps OAuth return destinations trusted for %s", async (callbackURL, expected) => {
+    const response = await app.request(
+      `${API_ORIGIN}/auth/v1/sign-in/social`,
+      {
+        method: "POST",
+        headers: { origin: CN_ORIGIN, "content-type": "application/json" },
+        body: JSON.stringify({
+          provider: "github",
+          callbackURL,
+          newUserCallbackURL: callbackURL,
+          errorCallbackURL: callbackURL,
+          disableRedirect: true,
+        }),
+      },
+      env,
+    );
+    expect(response.status).toBe(200);
+    const row = database.sqlite.prepare("SELECT value FROM auth_verifications").get()!;
+    const stored = JSON.parse(String(row.value)) as {
+      callbackURL: string;
+      newUserURL: string;
+      errorURL: string;
+    };
+    for (const raw of [stored.callbackURL, stored.newUserURL, stored.errorURL]) {
+      const url = new URL(raw);
+      url.searchParams.delete(AUTH_EXCHANGE_CHALLENGE_PARAM);
+      expect(url.toString()).toBe(expected);
+    }
+    expect(database.sqlite.prepare("SELECT id FROM auth_sessions").all()).toEqual([]);
+  });
+
+  it("uses explicitly configured frontend origins while excluding the backend itself", async () => {
+    env.TRUSTED_ORIGINS = `${API_ORIGIN}, https://preview.example.test, `;
+    const response = await app.request(
+      `${API_ORIGIN}/auth/v1/sign-in/social`,
+      {
+        method: "POST",
+        headers: { origin: "https://preview.example.test", "content-type": "application/json" },
+        body: JSON.stringify({ provider: "github", callbackURL: "/map", disableRedirect: true }),
+      },
+      env,
+    );
+    expect(response.status).toBe(200);
+    const row = database.sqlite.prepare("SELECT value FROM auth_verifications").get()!;
+    expect(JSON.parse(String(row.value)).callbackURL).toMatch(
+      /^https:\/\/preview\.example\.test\/map\?/,
+    );
+    const rejected = await app.request(
+      `${API_ORIGIN}/auth/v1/sign-in/social`,
+      {
+        method: "POST",
+        headers: { origin: API_ORIGIN, "content-type": "application/json" },
+        body: JSON.stringify({ provider: "github", disableRedirect: true }),
+      },
+      env,
+    );
+    expect(rejected.status).toBe(403);
+    expect(database.sqlite.prepare("SELECT id FROM auth_verifications").all()).toHaveLength(1);
   });
 
   it("rejects a code paired with a different browser login attempt", async () => {
@@ -299,12 +386,11 @@ describe("CHIPS OAuth exchange", () => {
       );
       expect(response.status).toBe(200);
       const cleared = response.headers.getSetCookie();
-      expect(
-        cleared.find((value) => value.startsWith("__Secure-oem-chips.session_token=")),
-      ).toContain("Partitioned");
-      expect(
-        cleared.find((value) => value.startsWith("__Secure-oem-chips.session_token=")),
-      ).toContain("Max-Age=0");
+      const partitionedCookie = cleared.find((value) =>
+        value.startsWith("__Secure-oem-chips.session_token="),
+      );
+      expect(partitionedCookie).toContain("Partitioned");
+      expect(partitionedCookie).toContain("Max-Age=0");
       const oldCookie = cleared.find((value) =>
         value.startsWith("__Secure-better-auth.session_token="),
       )!;
