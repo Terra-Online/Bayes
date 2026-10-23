@@ -120,6 +120,7 @@ export async function moderateSubmissionById(
       prewarmAsset: options.prewarmAsset,
       enqueueApprovedCommentTransPrewarm: options.enqueueApprovedCommentTransPrewarm,
       enqueueSubmissionModerationNotice: options.enqueueSubmissionModerationNotice,
+      publishNotifications: options.publishNotifications,
       id: submissionId,
       aiReviewed: false,
       moderationNote: "AI moderation skipped; waiting for manual audit.",
@@ -138,6 +139,7 @@ export async function moderateSubmissionById(
       prewarmAsset: options.prewarmAsset,
       enqueueApprovedCommentTransPrewarm: options.enqueueApprovedCommentTransPrewarm,
       enqueueSubmissionModerationNotice: options.enqueueSubmissionModerationNotice,
+      publishNotifications: options.publishNotifications,
       id: submissionId,
       aiReviewed: false,
       moderationNote: options.localAutoApprove
@@ -181,6 +183,7 @@ export async function moderateSubmissionById(
     prewarmAsset: options.prewarmAsset,
     enqueueApprovedCommentTransPrewarm: options.enqueueApprovedCommentTransPrewarm,
     enqueueSubmissionModerationNotice: options.enqueueSubmissionModerationNotice,
+    publishNotifications: options.publishNotifications,
     id: submissionId,
     aiReviewed: true,
     moderationNote: result.approved
