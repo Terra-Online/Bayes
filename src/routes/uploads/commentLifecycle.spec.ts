@@ -384,6 +384,110 @@ describe("comment flags", () => {
   );
 });
 
+describe("comment edits", () => {
+  it("replaces a flagged comment with a pending revision, clears old flags and preserves an undo version", async () => {
+    insertSubmission(database.sqlite, {
+      id: "target",
+      userId: "author",
+      content: "Use the west entrance.",
+    });
+    await post("/comments/target/flag", "reader");
+    await post("/comments/target/flag", "other-reader");
+    const response = await post("/comments/target/edit", "author", { content: comment.content });
+    expect(response.status).toBe(200);
+    const { submission: edited } = (await response.json()) as {
+      submission: { id: string; snapshotId: string; status: string };
+    };
+    expect(edited).toMatchObject({ id: "target", status: "pending_openai" });
+    expect(edited.snapshotId).not.toBe("snapshot-target");
+    expect(submission("target")).toMatchObject({
+      user_id: "author",
+      content: comment.content,
+      status: "pending_openai",
+      snapshot_id: edited.snapshotId,
+      edit_original_content: "Use the west entrance.",
+      edit_original_status: "flagged",
+      edit_original_snapshot_id: "snapshot-target",
+    });
+    expect(activeFlaggers("target")).toEqual([]);
+    expect(await mine()).toEqual([
+      expect.objectContaining({
+        id: "target",
+        content: comment.content,
+        status: "pending_openai",
+        flagCount: 0,
+      }),
+    ]);
+    const publicRead = await request("/comments/target?markerId=marker-1", null);
+    expect(publicRead.status).toBe(404);
+    expect(moderation).toEqual([
+      expect.objectContaining({ submissionId: "target", snapshotId: edited.snapshotId }),
+    ]);
+    expect(webhooks).toHaveLength(2);
+  });
+
+  it.each(["admin", "root"])(
+    "allows %s to correct another author's comment without changing its ownership",
+    async (user) => {
+      insertSubmission(database.sqlite, { id: "target", userId: "author" });
+      const response = await post("/comments/target/edit", user, { content: comment.content });
+      expect(response.status).toBe(200);
+      expect(submission("target")).toMatchObject({
+        user_id: "author",
+        content: comment.content,
+        status: "pending_openai",
+        edit_original_content: "Content target",
+      });
+      expect(await mine(user)).toEqual([]);
+      expect((await mine())[0]).toMatchObject({ id: "target", content: comment.content });
+      expect(moderation).toEqual([expect.objectContaining({ submissionId: "target" })]);
+    },
+  );
+
+  it.each(["reader", "reviewer"])(
+    "rejects an edit by %s and preserves the original comment",
+    async (user) => {
+      insertSubmission(database.sqlite, { id: "target", userId: "author" });
+      const before = persistedState();
+      const response = await post("/comments/target/edit", user, { content: comment.content });
+      expect(response.status).toBe(403);
+      expect(await response.json()).toMatchObject({ code: "COMMENT_EDIT_OWNER_ONLY" });
+      expect(persistedState()).toEqual(before);
+      expect(moderation).toEqual([]);
+    },
+  );
+
+  it("keeps an unchanged comment's version, flags and visibility without another moderation job", async () => {
+    insertSubmission(database.sqlite, { id: "target", userId: "author", content: comment.content });
+    await post("/comments/target/flag", "reader");
+    const before = persistedState();
+    const response = await post("/comments/target/edit", "author", {
+      content: `  ${comment.content}  `,
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      submission: {
+        id: "target",
+        status: "flagged",
+        snapshotId: "snapshot-target",
+      },
+    });
+    expect(persistedState()).toEqual(before);
+    expect(moderation).toEqual([]);
+    expect(webhooks).toHaveLength(1);
+  });
+
+  it("rejects editing a withdrawn comment without changing it", async () => {
+    insertSubmission(database.sqlite, { id: "target", userId: "author", status: "stale" });
+    const before = persistedState();
+    const response = await post("/comments/target/edit", "author", { content: comment.content });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ code: "INVALID_SUBMISSION_STATUS" });
+    expect(persistedState()).toEqual(before);
+    expect(moderation).toEqual([]);
+  });
+});
+
 vi.mock("cloudflare:workers", () => ({
   DurableObject: class {},
   exports: { PublicReadCache: { purgeMarker: async () => ({ success: true }) } },
