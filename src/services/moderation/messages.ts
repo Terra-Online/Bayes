@@ -1,7 +1,8 @@
 import type { SubmissionRecord, SubmissionStatus } from "@/repositories/submission/types";
 import type { AuthUser } from "@/types/app";
 
-export type ModerationQueueSource = "upload" | "manual" | "scheduled_backfill";
+// "manual" identifies an operator-triggered automatic review, not a manual review decision.
+export type AutoModerationQueueSource = "upload" | "manual" | "scheduled_backfill";
 
 export type TransPrewarmSource = "auto_moderation" | "manual_moderation";
 
@@ -56,11 +57,11 @@ export type ModerationNotificationEvent =
       targets: TransPrewarmTarget[];
     };
 
-export type OemModerationQueueMessage = {
+export type OemAutoModerationQueueMessage = {
   type: "moderation";
   submissionId: string;
   snapshotId?: string;
-  source: ModerationQueueSource;
+  source: AutoModerationQueueSource;
   queuedAt: string;
 };
 

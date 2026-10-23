@@ -1,8 +1,8 @@
 import { getRuntimeConfig } from "@/lib/config";
-import { getPendingOpenAISubmissions } from "@/repositories/submission/createSubmission";
+import { getPendingAutoModerationSubmissions } from "@/repositories/submission/createSubmission";
 import {
   getSubmissionById,
-  markSubmissionModerationQueued,
+  markSubmissionAutoModerationQueued,
 } from "@/repositories/submission/statusSubmission";
 import { prewarmApprovedCommentTrans } from "@/services/upload/commentTranslation";
 import type { Bindings } from "@/types/app";
@@ -10,22 +10,22 @@ import type { Bindings } from "@/types/app";
 import type { OemTranslationQueueMessage } from "./messages";
 import { notifyCommentTransPrewarmDone } from "./notifications";
 
-const MODERATION_BACKFILL_STALE_MS = 5 * 60 * 1000;
+const AUTO_MODERATION_BACKFILL_STALE_MS = 5 * 60 * 1000;
 
-export async function enqueueModeration(
+export async function enqueueAutoModeration(
   env: Bindings,
   submissionId: string,
   snapshotId: string,
 ): Promise<void> {
   const queuedAt = new Date().toISOString();
-  await env.OEM_MODERATION_Q.send({
+  await env.OEM_AUTO_MODERATION_Q.send({
     type: "moderation",
     submissionId,
     snapshotId,
     source: "upload",
     queuedAt,
   });
-  await markSubmissionModerationQueued(env.DB, {
+  await markSubmissionAutoModerationQueued(env.DB, {
     id: submissionId,
     snapshotId,
     queuedAt,
@@ -54,24 +54,24 @@ export async function enqueueApprovedCommentTransPrewarm(
   });
 }
 
-export async function ensureModerationBackfill(
+export async function ensureAutoModerationBackfill(
   env: Bindings,
   targetQueueSize = 20,
 ): Promise<number> {
-  const queuedBefore = new Date(Date.now() - MODERATION_BACKFILL_STALE_MS).toISOString();
-  const pending = await getPendingOpenAISubmissions(env.DB, targetQueueSize, queuedBefore);
+  const queuedBefore = new Date(Date.now() - AUTO_MODERATION_BACKFILL_STALE_MS).toISOString();
+  const pending = await getPendingAutoModerationSubmissions(env.DB, targetQueueSize, queuedBefore);
   let enqueued = 0;
 
   for (const item of pending) {
     const queuedAt = new Date().toISOString();
-    await env.OEM_MODERATION_Q.send({
+    await env.OEM_AUTO_MODERATION_Q.send({
       type: "moderation",
       submissionId: item.id,
       snapshotId: item.snapshotId,
       source: "scheduled_backfill",
       queuedAt,
     });
-    await markSubmissionModerationQueued(env.DB, {
+    await markSubmissionAutoModerationQueued(env.DB, {
       id: item.id,
       snapshotId: item.snapshotId,
       queuedAt,

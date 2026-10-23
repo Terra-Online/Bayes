@@ -19,19 +19,19 @@ import { getModerationPointsDeltaWithDailyBackoff } from "@/services/karma/moder
 import { publishNotificationsCreated } from "@/services/notify/live";
 import type { Bindings } from "@/types/app";
 
-import type { OemModerationQueueMessage } from "./messages";
+import type { OemAutoModerationQueueMessage } from "./messages";
 import { notifySubmissionModerationResult } from "./notifications";
 import { requestOpenAiModeration, type OpenAiModerationResult } from "./openAiModeration";
-import { ensureModerationBackfill, enqueueApprovedCommentTransPrewarm } from "./queue";
+import { ensureAutoModerationBackfill, enqueueApprovedCommentTransPrewarm } from "./queue";
 
 const SELECTED_MODERATION_MAX_RUNTIME_MS = 25_000;
 
-export interface AutomaticModerationRunInput {
+export interface AutoModerationRunInput {
   submissionIds?: string[];
   limit?: number;
 }
 
-export interface AutomaticModerationStats {
+export interface AutoModerationStats {
   processed: number;
   active: number;
   pendingAudit: number;
@@ -39,34 +39,34 @@ export interface AutomaticModerationStats {
   stale: number;
 }
 
-export type AutomaticModerationRunResult =
-  | (AutomaticModerationStats & { mode: "selected"; requested: number })
-  | (AutomaticModerationStats & { mode: "queue"; requested: number; enqueued: number });
+export type AutoModerationRunResult =
+  | (AutoModerationStats & { mode: "selected"; requested: number })
+  | (AutoModerationStats & { mode: "queue"; requested: number; enqueued: number });
 
-interface AutomaticModerationRuntime {
+interface AutoModerationRuntime {
   bindings: Bindings;
   config: RuntimeConfig;
   redis: Redis;
 }
 
-interface AutomaticModerationDecision {
+interface AutoModerationDecision {
   nextStatus: "active" | "pending_audit";
   moderationNote: string;
   aiReviewed: boolean;
 }
 
-function createAutomaticModerationRuntime(bindings: Bindings): AutomaticModerationRuntime {
+function createAutoModerationRuntime(bindings: Bindings): AutoModerationRuntime {
   const config = getRuntimeConfig(bindings);
   const redis = createRedisClient(bindings);
   return { bindings, config, redis };
 }
 
-function createAutomaticModerationStats(): AutomaticModerationStats {
+function createAutoModerationStats(): AutoModerationStats {
   return { processed: 0, active: 0, pendingAudit: 0, stale: 0 };
 }
 
-function recordAutomaticModerationStatus(
-  stats: AutomaticModerationStats,
+function recordAutoModerationStatus(
+  stats: AutoModerationStats,
   status: "active" | "pending_audit",
 ): void {
   stats.processed += 1;
@@ -77,12 +77,12 @@ function recordAutomaticModerationStatus(
   }
 }
 
-export async function runAutomaticModerationRequest(
+export async function runAutoModerationRequest(
   bindings: Bindings,
-  input: AutomaticModerationRunInput,
-): Promise<AutomaticModerationRunResult> {
-  const runtime = createAutomaticModerationRuntime(bindings);
-  const stats = createAutomaticModerationStats();
+  input: AutoModerationRunInput,
+): Promise<AutoModerationRunResult> {
+  const runtime = createAutoModerationRuntime(bindings);
+  const stats = createAutoModerationStats();
   if (input.submissionIds && input.submissionIds.length > 0) {
     const startedAt = Date.now();
     const ids = [...new Set(input.submissionIds.map((id) => id.trim()).filter(Boolean))];
@@ -93,23 +93,23 @@ export async function runAutomaticModerationRequest(
       }
       const status = await moderateSubmission(runtime, submissionId);
       if (status) {
-        recordAutomaticModerationStatus(stats, status);
+        recordAutoModerationStatus(stats, status);
       }
     }
     return { mode: "selected", requested: input.submissionIds.length, ...stats };
   }
 
   const limit = input.limit ?? 5;
-  const enqueued = await ensureModerationBackfill(bindings, limit);
+  const enqueued = await ensureAutoModerationBackfill(bindings, limit);
   return { mode: "queue", requested: limit, enqueued, ...stats };
 }
 
-export async function runAutomaticModerationQueueBatch(
+export async function runAutoModerationQueueBatch(
   bindings: Bindings,
-  batch: MessageBatch<OemModerationQueueMessage>,
-): Promise<AutomaticModerationStats> {
-  const runtime = createAutomaticModerationRuntime(bindings);
-  const stats = createAutomaticModerationStats();
+  batch: MessageBatch<OemAutoModerationQueueMessage>,
+): Promise<AutoModerationStats> {
+  const runtime = createAutoModerationRuntime(bindings);
+  const stats = createAutoModerationStats();
   for (const message of batch.messages) {
     try {
       const status = await moderateSubmission(
@@ -118,11 +118,11 @@ export async function runAutomaticModerationQueueBatch(
         message.body.snapshotId,
       );
       if (status) {
-        recordAutomaticModerationStatus(stats, status);
+        recordAutoModerationStatus(stats, status);
       }
       message.ack();
     } catch (error) {
-      console.warn("OEM_MODERATION_Q message failed", {
+      console.warn("OEM_AUTO_MODERATION_Q message failed", {
         type: message.body?.type,
         error: error instanceof Error ? error.message : String(error),
       });
@@ -133,7 +133,7 @@ export async function runAutomaticModerationQueueBatch(
 }
 
 async function moderateSubmission(
-  runtime: AutomaticModerationRuntime,
+  runtime: AutoModerationRuntime,
   submissionId: string,
   expectedSnapshotId?: string,
 ): Promise<"active" | "pending_audit" | null> {
@@ -148,7 +148,7 @@ async function moderateSubmission(
   }
 
   if (config.skipAiModeration) {
-    return applyAutomaticModerationDecision(runtime, submission, {
+    return applyAutoModerationDecision(runtime, submission, {
       nextStatus: "pending_audit",
       aiReviewed: false,
       moderationNote: "AI moderation skipped; waiting for manual audit.",
@@ -156,7 +156,7 @@ async function moderateSubmission(
   }
 
   if (!bindings.OPENAI_API_KEY) {
-    return applyAutomaticModerationDecision(runtime, submission, {
+    return applyAutoModerationDecision(runtime, submission, {
       nextStatus: config.localUploadAutoApprove ? "active" : "pending_audit",
       aiReviewed: false,
       moderationNote: config.localUploadAutoApprove
@@ -188,7 +188,7 @@ async function moderateSubmission(
     categorySummary = `OpenAI moderation failed (${formatModerationError(error)}), sent to manual audit.`;
   }
 
-  return applyAutomaticModerationDecision(runtime, submission, {
+  return applyAutoModerationDecision(runtime, submission, {
     nextStatus: approved ? "active" : "pending_audit",
     aiReviewed: true,
     moderationNote: approved
@@ -210,10 +210,10 @@ function describeModerationResult(result: OpenAiModerationResult): string {
   }
 }
 
-async function applyAutomaticModerationDecision(
-  runtime: AutomaticModerationRuntime,
+async function applyAutoModerationDecision(
+  runtime: AutoModerationRuntime,
   submission: SubmissionRecord,
-  decision: AutomaticModerationDecision,
+  decision: AutoModerationDecision,
 ): Promise<"active" | "pending_audit" | null> {
   const { bindings, config, redis } = runtime;
   const { nextStatus } = decision;

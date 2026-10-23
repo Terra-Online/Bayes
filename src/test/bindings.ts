@@ -1,7 +1,7 @@
 import { vi, type Mocked, type MockInstance } from "vitest";
 
 import type {
-  OemModerationQueueMessage,
+  OemAutoModerationQueueMessage,
   OemTranslationQueueMessage,
   OemWebhookQueueMessage,
 } from "@/services/moderation/messages";
@@ -15,7 +15,7 @@ export type MockImageTranscoder = Mocked<DurableObjectStub<oem_imgTrans>>;
 export interface MockBindings {
   bindings: Bindings;
   ugcBucket: Mocked<R2Bucket>;
-  moderationQueue: Mocked<Bindings["OEM_MODERATION_Q"]>;
+  autoModerationQueue: Mocked<Bindings["OEM_AUTO_MODERATION_Q"]>;
   translationQueue: Mocked<Bindings["OEM_TRANSLATION_Q"]>;
   webhookQueue: Mocked<Bindings["OEM_WEBHOOK_Q"]>;
   publicRateLimit: Mocked<RateLimit>;
@@ -125,7 +125,7 @@ function createImageTranscoder(): MockImageTranscoder {
  */
 export function createMockBindings(input: { DB: D1Database }): MockBindings {
   const ugcBucket = createBucket();
-  const moderationQueue = createQueue<OemModerationQueueMessage>("OEM_MODERATION_Q");
+  const autoModerationQueue = createQueue<OemAutoModerationQueueMessage>("OEM_AUTO_MODERATION_Q");
   const translationQueue = createQueue<OemTranslationQueueMessage>("OEM_TRANSLATION_Q");
   const webhookQueue = createQueue<OemWebhookQueueMessage>("OEM_WEBHOOK_Q");
   const publicRateLimit = createRateLimit("OEM_PUBLIC_RATE_LIMIT");
@@ -148,7 +148,7 @@ export function createMockBindings(input: { DB: D1Database }): MockBindings {
     OEM_PUBLIC_RATE_LIMIT: publicRateLimit,
     OEM_AUTH_RATE_LIMIT: authRateLimit,
     OEM_BINDING_RATE_LIMIT: bindingRateLimit,
-    OEM_MODERATION_Q: moderationQueue,
+    OEM_AUTO_MODERATION_Q: autoModerationQueue,
     OEM_TRANSLATION_Q: translationQueue,
     OEM_WEBHOOK_Q: webhookQueue,
     OEM_ID_MAILS: idMails,
@@ -158,7 +158,7 @@ export function createMockBindings(input: { DB: D1Database }): MockBindings {
   return {
     bindings,
     ugcBucket,
-    moderationQueue,
+    autoModerationQueue,
     translationQueue,
     webhookQueue,
     publicRateLimit,

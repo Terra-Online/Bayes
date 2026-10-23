@@ -93,7 +93,7 @@ describe("upload route policies", () => {
     expect(database.sqlite.prepare("SELECT * FROM ugc_submissions ORDER BY id").all()).toEqual(
       before,
     );
-    expect(mocks.moderationQueue.send).not.toHaveBeenCalled();
+    expect(mocks.autoModerationQueue.send).not.toHaveBeenCalled();
     expect(mocks.ugcBucket.put).not.toHaveBeenCalled();
   });
 

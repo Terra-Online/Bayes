@@ -103,7 +103,7 @@ namespace_id = "26080103"
 simple = { limit = 80, period = 60 }
 
 [[queues.producers]]
-binding = "OEM_MODERATION_Q"
+binding = "OEM_AUTO_MODERATION_Q"
 queue = "oem-moderation"
 
 [[queues.producers]]
@@ -196,7 +196,7 @@ namespace_id = "26080203"
 simple = { limit = 80, period = 60 }
 
 [[env.local.queues.producers]]
-binding = "OEM_MODERATION_Q"
+binding = "OEM_AUTO_MODERATION_Q"
 queue = "oem-moderation"
 
 [[env.local.queues.producers]]

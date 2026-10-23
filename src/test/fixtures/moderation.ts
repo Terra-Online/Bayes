@@ -59,7 +59,7 @@ export function createModerationTestFixture(): ModerationTestFixture {
     UGC_ASSET_BASE_URL: "https://assets.example.test",
     ENABLE_COMMENT_TRANSLATION_PREWARM: "true",
     OEM_AUTH_RATE_LIMIT: { limit: async () => ({ success: true }) },
-    OEM_MODERATION_Q: {
+    OEM_AUTO_MODERATION_Q: {
       send: async (message: unknown) => {
         messages.moderation.push(message);
       },

@@ -6,15 +6,15 @@ import { getRuntimeConfig } from "./lib/config";
 import { createRedisClient } from "./lib/redis";
 import { withRequestTelemetry } from "./lib/requestTelemetry";
 import { evaluateKarmaIfDue } from "./services/karma/evaluation";
-import { runAutomaticModerationQueueBatch } from "./services/moderation/automaticModeration";
+import { runAutoModerationQueueBatch } from "./services/moderation/autoModeration";
 import type {
-  OemModerationQueueMessage,
+  OemAutoModerationQueueMessage,
   OemTranslationQueueMessage,
   OemWebhookQueueMessage,
 } from "./services/moderation/messages";
 import { processWebhookQueueBatch } from "./services/moderation/notifications";
 import {
-  ensureModerationBackfill,
+  ensureAutoModerationBackfill,
   processTranslationQueueBatch,
 } from "./services/moderation/queue";
 import { drainProgressStatsOutbox } from "./services/progress/outbox";
@@ -56,7 +56,7 @@ async function runScheduledJobs(env: Bindings): Promise<void> {
   let enqueued = 0;
 
   if (config.scheduledModerationEnabled) {
-    enqueued = await ensureModerationBackfill(env, 20);
+    enqueued = await ensureAutoModerationBackfill(env, 20);
   }
 
   console.warn("cron jobs completed", {
@@ -104,12 +104,12 @@ export default {
   },
   async queue(
     batch: MessageBatch<
-      OemModerationQueueMessage | OemTranslationQueueMessage | OemWebhookQueueMessage
+      OemAutoModerationQueueMessage | OemTranslationQueueMessage | OemWebhookQueueMessage
     >,
     env: Bindings,
   ) {
     if (batch.queue === "oem-moderation") {
-      await runAutomaticModerationQueueBatch(env, batch as MessageBatch<OemModerationQueueMessage>);
+      await runAutoModerationQueueBatch(env, batch as MessageBatch<OemAutoModerationQueueMessage>);
       return;
     }
     if (batch.queue === "oem-translation") {

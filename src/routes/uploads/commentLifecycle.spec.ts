@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { onAppError } from "@/middleware/error-handler";
 import type { UserSubmissionComment } from "@/repositories/submission/types";
 import type {
-  OemModerationQueueMessage,
+  OemAutoModerationQueueMessage,
   OemWebhookQueueMessage,
 } from "@/services/moderation/messages";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
@@ -17,7 +17,7 @@ import { createRoutes } from "./createRoutes";
 let database: TestDatabase;
 let env: AppEnv["Bindings"];
 let sessions: Record<string, { authorization: string }>;
-let moderation: OemModerationQueueMessage[];
+let moderation: OemAutoModerationQueueMessage[];
 let webhooks: OemWebhookQueueMessage[];
 let liveNotifications: Array<{ recipient: string; body: unknown }>;
 
@@ -54,8 +54,8 @@ beforeEach(() => {
     DB: database.db,
     LOCK_UPLOAD_ENDPOINTS: "false",
     OEM_AUTH_RATE_LIMIT: { limit: async () => ({ success: true }) },
-    OEM_MODERATION_Q: {
-      send: async (message: OemModerationQueueMessage) => {
+    OEM_AUTO_MODERATION_Q: {
+      send: async (message: OemAutoModerationQueueMessage) => {
         moderation.push(message);
       },
     },

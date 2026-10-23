@@ -26,7 +26,7 @@ import {
   warningSchema,
 } from "@/routes/schema/moderation";
 import { evaluateKarmaBatch } from "@/services/karma/evaluation";
-import { runAutomaticModerationRequest } from "@/services/moderation/automaticModeration";
+import { runAutoModerationRequest } from "@/services/moderation/autoModeration";
 import { getImageCoverage } from "@/services/moderation/imageCoverage";
 import { applyManualModeration } from "@/services/moderation/manualModeration";
 import { getOrphanImages } from "@/services/moderation/orphanImages";
@@ -323,14 +323,14 @@ export function createRoutes() {
         );
       }
 
-      const result = await runAutomaticModerationRequest(c.env, {
+      const result = await runAutoModerationRequest(c.env, {
         submissionIds: parsed.data.ids,
         limit: parsed.data.limit,
       });
       return c.json({ ok: true, ...result });
     })
     .post("/run-once", requireAuth, requireRole(["a"]), rateLimit("auth"), async (c) => {
-      const result = await runAutomaticModerationRequest(c.env, { limit: 5 });
+      const result = await runAutoModerationRequest(c.env, { limit: 5 });
       return c.json({ ok: true, ...result });
     })
     .post("/karma/run-once", requireAuth, requireRole(["a"]), rateLimit("auth"), async (c) => {

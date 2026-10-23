@@ -1,5 +1,5 @@
 import type {
-  OemModerationQueueMessage,
+  OemAutoModerationQueueMessage,
   OemTranslationQueueMessage,
   OemWebhookQueueMessage,
 } from "@/services/moderation/messages";
@@ -18,7 +18,7 @@ export interface Bindings {
   OEM_PUBLIC_RATE_LIMIT: RateLimit;
   OEM_AUTH_RATE_LIMIT: RateLimit;
   OEM_BINDING_RATE_LIMIT: RateLimit;
-  OEM_MODERATION_Q: Queue<OemModerationQueueMessage>;
+  OEM_AUTO_MODERATION_Q: Queue<OemAutoModerationQueueMessage>;
   OEM_TRANSLATION_Q: Queue<OemTranslationQueueMessage>;
   OEM_WEBHOOK_Q: Queue<OemWebhookQueueMessage>;
   OEM_ID_MAILS: SendEmail;

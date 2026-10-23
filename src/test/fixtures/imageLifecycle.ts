@@ -3,7 +3,7 @@ import type { SQLOutputValue } from "node:sqlite";
 import { onAppError } from "@/middleware/error-handler";
 import { createRoutes } from "@/routes/uploads/createRoutes";
 import type {
-  OemModerationQueueMessage,
+  OemAutoModerationQueueMessage,
   OemWebhookQueueMessage,
 } from "@/services/moderation/messages";
 import { createMockBindings } from "@/test/bindings";
@@ -26,7 +26,7 @@ export interface ImageLifecycleFixture {
   database: TestDatabase;
   env: AppEnv["Bindings"];
   sessions: Record<string, { authorization: string }>;
-  moderation: OemModerationQueueMessage[];
+  moderation: OemAutoModerationQueueMessage[];
   webhooks: OemWebhookQueueMessage[];
   liveNotifications: Array<{ recipient: string; body: unknown }>;
   request: (path: string, user?: string | null, body?: FormData | object) => Promise<Response>;
@@ -48,7 +48,7 @@ export function createImageLifecycleFixture(): ImageLifecycleFixture {
     insertAuthUser(database.sqlite, { id: uid });
     sessions[uid] = insertSession(database.sqlite, { userId: uid }).headers;
   }
-  const moderation: OemModerationQueueMessage[] = [];
+  const moderation: OemAutoModerationQueueMessage[] = [];
   const webhooks: OemWebhookQueueMessage[] = [];
   const liveNotifications: Array<{ recipient: string; body: unknown }> = [];
   const mocks = createMockBindings({ DB: database.db });
@@ -59,8 +59,8 @@ export function createImageLifecycleFixture(): ImageLifecycleFixture {
     UGC_ASSET_BASE_URL: "https://assets.example.test",
     OEM_PUBLIC_RATE_LIMIT: { limit: async () => ({ success: true }) },
     OEM_AUTH_RATE_LIMIT: { limit: async () => ({ success: true }) },
-    OEM_MODERATION_Q: {
-      send: async (message: OemModerationQueueMessage) => {
+    OEM_AUTO_MODERATION_Q: {
+      send: async (message: OemAutoModerationQueueMessage) => {
         moderation.push(message);
       },
     },

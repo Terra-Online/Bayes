@@ -59,7 +59,7 @@ export async function createPendingSubmission(
     .run();
 }
 
-export async function getPendingOpenAISubmissions(
+export async function getPendingAutoModerationSubmissions(
   db: D1Database,
   limit = 50,
   queuedBefore?: string,

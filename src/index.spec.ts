@@ -31,7 +31,7 @@ vi.mock("./services/progress/repository", () => ({
   cleanupProgressConsistencyRecords: mocks.cleanup,
   getProgressStatsOutboxHealth: mocks.health,
 }));
-vi.mock("./services/moderation/queue", () => ({ ensureModerationBackfill: mocks.moderation }));
+vi.mock("./services/moderation/queue", () => ({ ensureAutoModerationBackfill: mocks.moderation }));
 import worker, { PublicReadCache } from "./index";
 
 describe("HTTP entrypoint telemetry", () => {

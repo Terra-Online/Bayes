@@ -59,7 +59,7 @@ describe.each(["new comments", "comment edits"] as const)("%s content boundaries
       LOCK_UPLOAD_ENDPOINTS: "false",
       UPSTASH_REDIS_REST_URL: "https://redis.example.test",
       UPSTASH_REDIS_REST_TOKEN: "test-token",
-      OEM_MODERATION_Q: { send } as unknown as Queue,
+      OEM_AUTO_MODERATION_Q: { send } as unknown as Queue,
     } as Bindings;
     app = new Hono<AppEnv>();
     app.onError(onAppError);

@@ -105,7 +105,7 @@ describe("image submission through HTTP", () => {
     mocks.ugcBucket.put.mockImplementation(async (key) =>
       createMockR2Object({ key, size: sizeBytes }),
     );
-    mocks.moderationQueue.send.mockResolvedValue({
+    mocks.autoModerationQueue.send.mockResolvedValue({
       metadata: { metrics: { backlogCount: 1, backlogBytes: 64 } },
     });
   }
@@ -113,7 +113,7 @@ describe("image submission through HTTP", () => {
   function expectNoWrites() {
     expect(database.sqlite.prepare("SELECT id FROM ugc_submissions").all()).toEqual([]);
     expect(mocks.ugcBucket.put).not.toHaveBeenCalled();
-    expect(mocks.moderationQueue.send).not.toHaveBeenCalled();
+    expect(mocks.autoModerationQueue.send).not.toHaveBeenCalled();
   }
 
   it("accepts a camera image with generic MIME using its filename and stores the processed format", async () => {
@@ -142,7 +142,7 @@ describe("image submission through HTTP", () => {
         .prepare("SELECT mime_type, status FROM ugc_submissions WHERE id = ?")
         .get(payload.submission.id),
     ).toEqual({ mime_type: "image/webp", status: "pending_openai" });
-    expect(mocks.moderationQueue.send).toHaveBeenCalledOnce();
+    expect(mocks.autoModerationQueue.send).toHaveBeenCalledOnce();
   });
 
   it("keeps beta uploads and private lists in the test namespace while local demo reads select production", async () => {
@@ -184,7 +184,7 @@ describe("image submission through HTTP", () => {
     const demoRead = await read("&demoLocal=1");
     expect(demoRead.status).toBe(200);
     expect(await demoRead.json()).toMatchObject({ items: [{ id: "production" }] });
-    expect(mocks.moderationQueue.send).toHaveBeenCalledOnce();
+    expect(mocks.autoModerationQueue.send).toHaveBeenCalledOnce();
     expect(getRandom).not.toHaveBeenCalled();
   });
 
@@ -218,7 +218,7 @@ describe("image submission through HTTP", () => {
       status: "pending_openai",
     });
     expect(mocks.ugcBucket.put).toHaveBeenCalledOnce();
-    expect(mocks.moderationQueue.send).toHaveBeenCalledWith(
+    expect(mocks.autoModerationQueue.send).toHaveBeenCalledWith(
       expect.objectContaining({ submissionId: submission.id, snapshotId: submission.snapshotId }),
     );
   });
@@ -306,8 +306,8 @@ describe("image submission through HTTP", () => {
       }),
     );
     // The same submission must produce one moderation job, without duplicates from the retry.
-    expect(mocks.moderationQueue.send).toHaveBeenCalledOnce();
-    expect(mocks.moderationQueue.send).toHaveBeenCalledWith({
+    expect(mocks.autoModerationQueue.send).toHaveBeenCalledOnce();
+    expect(mocks.autoModerationQueue.send).toHaveBeenCalledWith({
       type: "moderation",
       submissionId: payload.submission.id,
       snapshotId: payload.submission.snapshotId,
