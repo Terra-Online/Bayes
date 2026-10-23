@@ -10,6 +10,8 @@ import {
 } from "@/test/fixtures/sessionAuth";
 import type { AppEnv, Bindings } from "@/types/app";
 
+import * as authForwarding from "./forwarding";
+
 interface IssuedExchangeCode {
   code: string;
   cookie: string;
@@ -35,6 +37,7 @@ describe("CHIPS OAuth exchange", () => {
     // these tests assert auth timestamps, never users.last_active.
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-09-05T00:00:00.000Z"));
+    vi.spyOn(authForwarding, "forwardToAuthRawRequest");
     fixture = createSessionAuthFixture(API_ORIGIN);
     ({ database, env, app } = fixture);
   });
@@ -91,6 +94,23 @@ describe("CHIPS OAuth exchange", () => {
       env,
     );
   }
+
+  it("rejects malformed social sign-in JSON before forwarding the consumed request", async () => {
+    const response = await app.request(
+      `${API_ORIGIN}/auth/v1/sign-in/social`,
+      {
+        method: "POST",
+        headers: { origin: CN_ORIGIN, "content-type": "application/json" },
+        body: '{"',
+      },
+      env,
+    );
+
+    expect(response.status).toBe(422);
+    expect(await response.json()).toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(authForwarding.forwardToAuthRawRequest).not.toHaveBeenCalled();
+    expect(fixture.oauthFetch).not.toHaveBeenCalled();
+  });
 
   it.each([CN_ORIGIN, "https://opendfieldmap.org", "https://www.opendfieldmap.cn"])(
     "establishes a signed HttpOnly partitioned cookie from %s without relying on callback cookies",
