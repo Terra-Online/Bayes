@@ -618,6 +618,74 @@ describe("comment recall", () => {
   );
 });
 
+describe("comment removal requests", () => {
+  it.each(["active", "flagged"])(
+    "keeps a comment with status %s visible while its author's removal request awaits review",
+    async (status) => {
+      insertSubmission(database.sqlite, { id: "target", userId: "author" });
+      if (status === "flagged") {
+        await post("/comments/target/flag", "reader");
+      }
+      const flaggers = activeFlaggers("target");
+      const response = await post("/comments/target/remove-request");
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ ok: true, status: "remove_request" });
+      expect(submission("target")).toMatchObject({
+        status: "remove_request",
+        content: "Content target",
+      });
+      expect(activeFlaggers("target")).toEqual(flaggers);
+      expect((await mine())[0]).toMatchObject({ id: "target", status: "remove_request" });
+      const visible = await request("/comments/target?markerId=marker-1", null);
+      expect(visible.status).toBe(200);
+      expect(await visible.json()).toMatchObject({
+        item: {
+          targetId: "target",
+          path: [
+            expect.objectContaining({
+              id: "target",
+              content: "Content target",
+              status: "remove_request",
+            }),
+          ],
+        },
+      });
+      expect(webhooks.at(-1)).toMatchObject({
+        event: {
+          type: "remove_request_created",
+          actor: { uid: "author" },
+          submission: { id: "target" },
+          previousStatus: status,
+          nextStatus: "remove_request",
+          source: "remove_request",
+        },
+      });
+      expect(moderation).toEqual([]);
+
+      const before = persistedState();
+      const webhookCountBeforeRetry = webhooks.length;
+      const retry = await post("/comments/target/remove-request");
+      expect(retry.status).toBe(409);
+      expect(await retry.json()).toMatchObject({ code: "INVALID_STATUS_TRANSITION" });
+      expect(persistedState()).toEqual(before);
+      expect(webhooks).toHaveLength(webhookCountBeforeRetry);
+    },
+  );
+
+  it.each(["pending_openai", "pending_audit", "stale"])(
+    "rejects a removal request for a %s comment without changing data",
+    async (status) => {
+      insertSubmission(database.sqlite, { id: "target", userId: "author", status });
+      const before = persistedState();
+      const response = await post("/comments/target/remove-request");
+      expect(response.status).toBe(409);
+      expect(await response.json()).toMatchObject({ code: "INVALID_STATUS_TRANSITION" });
+      expect(persistedState()).toEqual(before);
+      expect(webhooks).toEqual([]);
+    },
+  );
+});
+
 vi.mock("cloudflare:workers", () => ({
   DurableObject: class {},
   exports: { PublicReadCache: { purgeMarker: async () => ({ success: true }) } },
