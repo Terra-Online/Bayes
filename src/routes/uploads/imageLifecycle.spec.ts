@@ -46,6 +46,19 @@ function post(id: string, action: string, user = "reader") {
   return request(`/images/${id}/${action}`, user, {});
 }
 
+async function publicImage(user: string | null = null) {
+  const response = await request("/images/photo?markerId=marker-1", user);
+  expect(response.status).toBe(200);
+  return ((await response.json()) as { item: Record<string, unknown> }).item;
+}
+
+function activeUsers(table: "ugc_submission_upvotes" | "ugc_submission_flags", id = "photo") {
+  return database.sqlite
+    .prepare(`SELECT user_id FROM ${table} WHERE submission_id = ? AND active = 1 ORDER BY user_id`)
+    .all(id)
+    .map((row) => row.user_id);
+}
+
 describe("image write permissions", () => {
   it.each(["pending_openai", "pending_audit", "stale"])(
     "preserves a %s image when readers try to vote or flag it or the owner requests removal",
@@ -179,6 +192,64 @@ describe("image write permissions", () => {
     expect(persistedState()).toEqual(before);
     expect(webhooks).toHaveLength(notices);
     expect(liveNotifications).toEqual([]);
+    expect(moderation).toEqual([]);
+  });
+});
+
+describe("image votes", () => {
+  it("counts each reader once, isolates withdrawals, and lets a reader vote again", async () => {
+    insertSubmission(database.sqlite, { id: "photo", kind: "image", userId: "author" });
+    const first = await post("photo", "upvote");
+    expect(first.status).toBe(200);
+    expect(await first.json()).toEqual({ ok: true, created: true, upvoteCount: 1 });
+    expect(activeUsers("ugc_submission_upvotes")).toEqual(["reader"]);
+    expect(await publicImage("reader")).toMatchObject({ upvoteCount: 1, upvoted: true });
+    expect(await publicImage("other-reader")).toMatchObject({ upvoteCount: 1, upvoted: false });
+    expect(
+      database.sqlite
+        .prepare(
+          "SELECT recipient_user_id, submission_id, category, message_count FROM notifications",
+        )
+        .all(),
+    ).toEqual([
+      {
+        recipient_user_id: "author",
+        submission_id: "photo",
+        category: "community",
+        message_count: 1,
+      },
+    ]);
+    expect(liveNotifications).toEqual([
+      expect.objectContaining({
+        recipient: "author",
+        body: expect.objectContaining({ event: "notification.upserted" }),
+      }),
+    ]);
+
+    const duplicate = await post("photo", "upvote");
+    expect(await duplicate.json()).toEqual({ ok: true, created: false, upvoteCount: 1 });
+    expect(activeUsers("ugc_submission_upvotes")).toEqual(["reader"]);
+    expect(liveNotifications).toHaveLength(1);
+    const second = await post("photo", "upvote", "other-reader");
+    expect(await second.json()).toEqual({ ok: true, created: true, upvoteCount: 2 });
+    const withdrawn = await post("photo", "unvote");
+    expect(await withdrawn.json()).toEqual({ ok: true, deleted: true, upvoteCount: 1 });
+    expect(activeUsers("ugc_submission_upvotes")).toEqual(["other-reader"]);
+    expect(await publicImage("reader")).toMatchObject({ upvoteCount: 1, upvoted: false });
+    const repeatedWithdrawal = await post("photo", "unvote");
+    expect(await repeatedWithdrawal.json()).toEqual({
+      ok: true,
+      deleted: false,
+      upvoteCount: 1,
+    });
+    const renewedVote = await post("photo", "upvote");
+    expect(await renewedVote.json()).toEqual({
+      ok: true,
+      created: true,
+      upvoteCount: 2,
+    });
+    expect(activeUsers("ugc_submission_upvotes")).toEqual(["other-reader", "reader"]);
+    expect(submission("photo").status).toBe("active");
     expect(moderation).toEqual([]);
   });
 });
