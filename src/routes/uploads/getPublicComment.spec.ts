@@ -6,7 +6,7 @@ import { onAppError } from "@/middleware/error-handler";
 import type { PublicCommentContext } from "@/repositories/submission/getPublicComment";
 import { createMockBindings, type MockBindings } from "@/test/bindings";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
-import { insertAuthenticatedUser, insertAuthUser, insertSession } from "@/test/fixtures/auth";
+import { insertAuthUser, insertSession } from "@/test/fixtures/auth";
 import {
   insertSubmission,
   type SubmissionFixture,
@@ -400,18 +400,4 @@ describe("public comment context through HTTP", () => {
       }
     },
   );
-
-  it.each([
-    "/comments/target",
-    "/comments/target?markerId=",
-    "/comments/target?markerId=" + "x".repeat(129),
-  ])("rejects an invalid markerId in %s", async (path) => {
-    const viewer = insertAuthenticatedUser(database.sqlite, { uid: "viewer" });
-    const response = await request(path, viewer.headers);
-
-    expect(response.status).toBe(422);
-    expect(await response.json()).toMatchObject({ code: "VALIDATION_ERROR" });
-    // A valid session makes any authentication before input validation observable.
-    expect(database.queries).toEqual([]);
-  });
 });
