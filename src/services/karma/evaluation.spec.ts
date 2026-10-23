@@ -216,7 +216,9 @@ describe("12-hour resumable karma evaluation", () => {
     expect(database.queries.filter((query) => query.sql.startsWith("UPDATE"))).toMatchObject([
       { values: ["changed", 2, 0, 150, "2026-09-05 11:00:00", "n"], changes: 1 },
     ]);
-    const sweep = database.queries.find((query) => query.sql.includes("ORDER BY uid"))!;
+    const sweep = database.queries.find((query) =>
+      query.sql.replace(/\s+/g, " ").includes("ORDER BY uid"),
+    )!;
     const aggregation = database.queries.find((query) => query.sql.includes("image_stats"))!;
     expect(database.explain(sweep)).toContain("idx_users_karma_sweep");
     expect(database.explain(aggregation)).toContain("idx_ugc_user_kind_poi_created");
@@ -350,15 +352,18 @@ describe("12-hour resumable karma evaluation", () => {
 
   it("stops before writing if its lease expires during selection and evaluates successfully on retry", async () => {
     insertKarmaUser("first");
+    let leaseExpiryInjected = false;
     database.hooks.beforeQuery = (sql) => {
-      if (sql.includes("ORDER BY uid")) {
+      if (sql.replace(/\s+/g, " ").includes("ORDER BY uid")) {
         database.hooks.beforeQuery = undefined;
+        leaseExpiryInjected = true;
         vi.setSystemTime(START + 181_000);
       }
     };
     await expect(evaluateKarmaIfDue(database.db, redis.redis)).rejects.toThrow(
       "KARMA_EVALUATION_LEASE_LOST",
     );
+    expect(leaseExpiryInjected).toBe(true);
     expect(database.sqlite.prepare("SELECT karma FROM users WHERE uid='first'").get()).toEqual({
       karma: 0,
     });
