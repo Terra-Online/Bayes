@@ -3,8 +3,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createMockBindings } from "@/test/bindings";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { insertAuthenticatedUser } from "@/test/fixtures/auth";
+import { insertSubmission } from "@/test/fixtures/submissions";
+import { insertUser } from "@/test/fixtures/users";
 
 import { createApp } from "./app";
+import worker from "./index";
 
 // This Node suite exercises HTTP/CORS/auth. Unused native service bindings fail loudly.
 vi.mock("cloudflare:workers", () => ({
@@ -117,4 +120,96 @@ it("fails privately for missing auth configuration and resumes the existing sess
   );
   expect(recovered.status).toBe(200);
   expect(await recovered.json()).toMatchObject({ user: { nickname: owner.user.nickname } });
+});
+
+it("keeps progress delivery and moderation backfill independent through job locks and read failures", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime("2026-10-23T12:01:00Z");
+  vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  database = createTestDatabase();
+  insertUser(database.sqlite, { uid: "explorer" });
+  const mocks = createMockBindings({ DB: database.db });
+  const delivered: unknown[] = [];
+  mocks.statsObjects.getByName.mockImplementation(
+    (name) =>
+      ({
+        name,
+        fetch: async (input: RequestInfo | URL, init?: RequestInit) => {
+          delivered.push(await new Request(input, init).json());
+          return Response.json({ ok: true });
+        },
+      }) as DurableObjectStub,
+  );
+  const hash = "a".repeat(64);
+  const event = {
+    eventId: "pending-event",
+    markerIndexHash: hash,
+    pointCount: 2,
+    increments: [0],
+    decrements: [],
+    firstSync: true,
+  };
+  database.sqlite
+    .prepare(`INSERT INTO progress_stats_outbox
+    (event_id,uid,mutation_id,marker_index_hash,payload,status,next_attempt_at,created_at)
+    VALUES ('pending-event','explorer','offline-write',?,?,'pending',?,?)`)
+    .run(hash, JSON.stringify(event), Date.now(), Date.now());
+  const env = { ...mocks.bindings, LOCK_SCHEDULED_JOBS: "true" };
+  const waits: Promise<unknown>[] = [];
+  await worker.scheduled({} as ScheduledEvent, env, {
+    waitUntil: (work: Promise<unknown>) => waits.push(work),
+  } as unknown as ExecutionContext);
+  await Promise.all(waits);
+  expect(delivered).toEqual([event]);
+  expect(database.sqlite.prepare("SELECT status FROM progress_stats_outbox").all()).toEqual([
+    { status: "processed" },
+  ]);
+  expect(mocks.moderationQueue.send).not.toHaveBeenCalled();
+
+  // Optional jobs resume independently when a progress read fails. Redis reports
+  // a future evaluation cycle; the real moderation backfill still runs.
+  env.LOCK_SCHEDULED_JOBS = "false";
+  mocks.bindings.UPSTASH_REDIS_REST_URL = "https://redis.example.test";
+  env.UPSTASH_REDIS_REST_URL = mocks.bindings.UPSTASH_REDIS_REST_URL;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    expect(String(input)).toMatch(/^https:\/\/redis\.example\.test\//);
+    const commands = JSON.parse(String(init?.body)) as string[][];
+    return Response.json(
+      commands.map(([command]) => {
+        if (command !== "get") {
+          throw new Error(`Unexpected Redis command: ${command}`);
+        }
+        return { result: JSON.stringify({ cursor: null, nextRunAt: Date.now() + 86_400_000 }) };
+      }),
+    );
+  });
+  mocks.moderationQueue.send.mockResolvedValue({
+    metadata: { metrics: { backlogCount: 1, backlogBytes: 100 } },
+  });
+  insertSubmission(database.sqlite, {
+    id: "awaiting-review",
+    userId: "explorer",
+    status: "pending_openai",
+  });
+  vi.spyOn(console, "error").mockImplementation(() => undefined);
+  database.hooks.beforeQuery = (sql) => {
+    if (sql.includes("progress_stats_outbox")) {
+      throw new Error("temporary progress read outage");
+    }
+  };
+  waits.length = 0;
+  await worker.scheduled({} as ScheduledEvent, env, {
+    waitUntil: (work: Promise<unknown>) => waits.push(work),
+  } as unknown as ExecutionContext);
+  await Promise.allSettled(waits);
+  expect(mocks.moderationQueue.send).toHaveBeenCalledWith(
+    expect.objectContaining({ submissionId: "awaiting-review", source: "scheduled_backfill" }),
+  );
+  database.hooks.beforeQuery = undefined;
+  waits.length = 0;
+  await worker.scheduled({} as ScheduledEvent, env, {
+    waitUntil: (work: Promise<unknown>) => waits.push(work),
+  } as unknown as ExecutionContext);
+  await Promise.all(waits);
+  expect(mocks.moderationQueue.send).toHaveBeenCalledTimes(1);
 });
