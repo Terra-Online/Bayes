@@ -1,6 +1,7 @@
 import { test } from "node:test";
 
 import { testLocator } from "./worker-lifecycle-locator.mjs";
+import { testNotifications } from "./worker-lifecycle-notifications.mjs";
 import { testPersistence } from "./worker-lifecycle-persistence.mjs";
 import { testPublicReads } from "./worker-lifecycle-public-reads.mjs";
 import { createLifecycleRuntime } from "./worker-lifecycle-runtime.mjs";
@@ -8,6 +9,7 @@ import { createLifecycleRuntime } from "./worker-lifecycle-runtime.mjs";
 // Separate runtimes keep provider modes, sockets and stored state within their domain.
 for (const [name, scenarios] of [
   ["locator", testLocator],
+  ["notifications", testNotifications],
   ["public reads", testPublicReads],
   ["persistence", testPersistence],
 ]) {
