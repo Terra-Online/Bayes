@@ -188,7 +188,9 @@ async function readSingleItem<T>(
       transient,
       message: (reason instanceof Error ? reason.message : String(reason)).slice(0, 300),
     });
-    return noStoreError(transient ? 503 : (upstreamStatus ?? 502), "Public cache reads failed.");
+    // A successful transport status cannot describe an unreadable cache body.
+    const status = stage === "body" ? 502 : (upstreamStatus ?? 502);
+    return noStoreError(transient ? 503 : status, "Public cache reads failed.");
   }
 }
 
