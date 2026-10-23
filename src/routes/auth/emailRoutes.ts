@@ -216,7 +216,7 @@ export function createRoutes(
       try {
         body = await c.req.json();
       } catch {
-        return deps.forwardToAuthRawRequest(c);
+        throw new ApiError(422, "VALIDATION_ERROR", "Request body must be valid JSON.");
       }
 
       if (!body || typeof body !== "object" || Array.isArray(body)) {
