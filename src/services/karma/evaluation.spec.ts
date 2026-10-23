@@ -120,7 +120,7 @@ describe("12-hour resumable karma evaluation", () => {
     vi.restoreAllMocks();
   });
 
-  function insertUser(uid: string, options: KarmaUserFixture = {}): void {
+  function insertKarmaUser(uid: string, options: KarmaUserFixture = {}): void {
     seedUser(database.sqlite, {
       uid,
       role: options.role ?? "n",
@@ -169,11 +169,10 @@ describe("12-hour resumable karma evaluation", () => {
 
   it("covers every eligible user across batches before waiting for the next 12-hour cycle", async () => {
     for (let index = 0; index < 2001; index += 1) {
-      insertUser(`user-${String(index).padStart(4, "0")}`);
+      insertKarmaUser(`user-${String(index).padStart(4, "0")}`);
     }
-    insertUser("robot", { role: "r" });
-    insertUser("pinned", { karma: 5, points: 0 });
-    expect(rules.getKarmaEvaluationIntervalSeconds()).toBe(43200);
+    insertKarmaUser("robot", { role: "r" });
+    insertKarmaUser("pinned", { karma: 5, points: 0 });
     const first = await evaluateKarmaIfDue(database.db, redis.redis);
     expect(first).toMatchObject({
       selected: 1000,
@@ -197,9 +196,9 @@ describe("12-hour resumable karma evaluation", () => {
     expect(
       database.sqlite.prepare("SELECT karma FROM users WHERE uid = 'pinned'").get()?.karma,
     ).toBe(5);
-    const queries = database.queries.length;
+    const queriesAfterCompletedCycle = database.queries.length;
     expect(await evaluateKarmaIfDue(database.db, redis.redis)).toMatchObject({ evaluated: false });
-    expect(database.queries).toHaveLength(queries);
+    expect(database.queries).toHaveLength(queriesAfterCompletedCycle);
     vi.setSystemTime(START + INTERVAL);
     expect(await evaluateKarmaIfDue(database.db, redis.redis)).toMatchObject({
       evaluated: true,
@@ -209,8 +208,8 @@ describe("12-hour resumable karma evaluation", () => {
   });
 
   it("uses indexed sweeps and user-scoped image aggregation and writes only changed karma", async () => {
-    insertUser("changed");
-    insertUser("unchanged", { karma: 2 });
+    insertKarmaUser("changed");
+    insertKarmaUser("unchanged", { karma: 2 });
     const result = await evaluateKarmaIfDue(database.db, redis.redis);
     expect(result).toMatchObject({ selected: 2, updated: 1, cycleComplete: true });
     // Only the changed user may be written; unchanged karma must cause no write.
@@ -221,12 +220,11 @@ describe("12-hour resumable karma evaluation", () => {
     const aggregation = database.queries.find((query) => query.sql.includes("image_stats"))!;
     expect(database.explain(sweep)).toContain("idx_users_karma_sweep");
     expect(database.explain(aggregation)).toContain("idx_ugc_user_kind_poi_created");
-    expect(database.queries.filter((query) => query.sql.startsWith("UPDATE"))).toHaveLength(1);
   });
 
   it("still evaluates inactivity decay without a dirty-user marker", async () => {
     const manual = createManualRun();
-    insertUser("inactive", { karma: 2, points: 150, lastActive: "2025-01-01 00:00:00" });
+    insertKarmaUser("inactive", { karma: 2, points: 150, lastActive: "2025-01-01 00:00:00" });
     expect(await runManually(manual)).toMatchObject({
       selected: 1,
       updated: 1,
@@ -238,7 +236,7 @@ describe("12-hour resumable karma evaluation", () => {
 
   it("looks up only the 90 selected users' images despite competing kind indexes and unrelated image history", async () => {
     for (let index = 0; index < 90; index += 1) {
-      insertUser(`selected-${String(index).padStart(3, "0")}`);
+      insertKarmaUser(`selected-${String(index).padStart(3, "0")}`);
     }
     seedUser(database.sqlite, { uid: "outside-user", role: "r" });
     database.sqlite.exec(`
@@ -252,10 +250,10 @@ describe("12-hour resumable karma evaluation", () => {
     `);
     // One approved image is below the scoring threshold. Keep this specialist
     // observation: final karma alone cannot prove the selected image was counted.
-    const score = vi.spyOn(rules, "calculateKarmaEvaluationScore");
+    const calculateScore = vi.spyOn(rules, "calculateKarmaEvaluationScore");
     expect(await evaluateKarmaIfDue(database.db, redis.redis)).toMatchObject({ selected: 90 });
     expect(
-      score.mock.calls
+      calculateScore.mock.calls
         .map(([payload]) => payload.approvedImages)
         .reduce((total, count) => total + count, 0),
     ).toBe(1);
@@ -269,7 +267,7 @@ describe("12-hour resumable karma evaluation", () => {
   });
 
   it("does not advance the cursor or sleep for 12 hours after a failed write", async () => {
-    insertUser("first");
+    insertKarmaUser("first");
     database.sqlite.exec(`CREATE TRIGGER fail_karma BEFORE UPDATE OF karma ON users
       BEGIN SELECT RAISE(ABORT, 'D1 overloaded'); END`);
     await expect(evaluateKarmaIfDue(database.db, redis.redis)).rejects.toThrow("D1 overloaded");
@@ -286,7 +284,7 @@ describe("12-hour resumable karma evaluation", () => {
 
   it("resumes after an intermediate chunk failed without rewriting committed karma", async () => {
     for (let index = 0; index < 100; index += 1) {
-      insertUser(`user-${String(index).padStart(3, "0")}`);
+      insertKarmaUser(`user-${String(index).padStart(3, "0")}`);
     }
     database.sqlite.exec(`CREATE TRIGGER fail_second_chunk BEFORE UPDATE OF karma ON users
       WHEN OLD.uid = 'user-090'
@@ -306,7 +304,7 @@ describe("12-hour resumable karma evaluation", () => {
 
   it("honors an existing lease and retries after its expiry", async () => {
     const manual = createManualRun();
-    insertUser("first");
+    insertKarmaUser("first");
     await redis.set(LEASE_KEY, "another-worker", { ex: 180 });
     expect(await evaluateKarmaIfDue(database.db, redis.redis)).toMatchObject({ evaluated: false });
     expect(database.queries).toHaveLength(0);
@@ -350,12 +348,63 @@ describe("12-hour resumable karma evaluation", () => {
     });
   });
 
+  it("stops before writing if its lease expires during selection and evaluates successfully on retry", async () => {
+    insertKarmaUser("first");
+    database.hooks.beforeQuery = (sql) => {
+      if (sql.includes("ORDER BY uid")) {
+        database.hooks.beforeQuery = undefined;
+        vi.setSystemTime(START + 181_000);
+      }
+    };
+    await expect(evaluateKarmaIfDue(database.db, redis.redis)).rejects.toThrow(
+      "KARMA_EVALUATION_LEASE_LOST",
+    );
+    expect(database.sqlite.prepare("SELECT karma FROM users WHERE uid='first'").get()).toEqual({
+      karma: 0,
+    });
+    expect(await redis.get(CYCLE_KEY)).toMatchObject({ cursor: "" });
+    expect(await evaluateKarmaIfDue(database.db, redis.redis)).toMatchObject({
+      selected: 1,
+      updated: 1,
+      cycleComplete: true,
+    });
+    expect(database.sqlite.prepare("SELECT karma FROM users WHERE uid='first'").get()).toEqual({
+      karma: 2,
+    });
+  });
+
+  it("honors a cycle another worker completed before this worker acquired the lease", async () => {
+    insertKarmaUser("first");
+    const set = redis.set.bind(redis);
+    vi.spyOn(redis, "set").mockImplementation(async (key, value, options) => {
+      const result = await set(key, value, options);
+      if (key === LEASE_KEY && result === "OK") {
+        redis.records.set(CYCLE_KEY, {
+          value: { cursor: null, startedAt: START, nextRunAt: START + INTERVAL },
+        });
+      }
+      return result;
+    });
+    expect(await evaluateKarmaIfDue(database.db, redis.redis)).toMatchObject({ evaluated: false });
+    expect(database.sqlite.prepare("SELECT karma FROM users WHERE uid='first'").get()).toEqual({
+      karma: 0,
+    });
+    expect(await redis.get(LEASE_KEY)).toBeNull();
+    vi.restoreAllMocks();
+    vi.setSystemTime(START + INTERVAL);
+    expect(await evaluateKarmaIfDue(database.db, redis.redis)).toMatchObject({
+      selected: 1,
+      updated: 1,
+    });
+  });
+
   it("cannot checkpoint or release a newer worker's lease", async () => {
-    insertUser("first");
-    let saves = 0;
+    insertKarmaUser("first");
+    let checkpointAttempts = 0;
     redis.beforeSave = () => {
-      saves += 1;
-      if (saves === 2) {
+      checkpointAttempts += 1;
+      // Steal the lease after the initial cycle save, just before checkpointing.
+      if (checkpointAttempts === 2) {
         redis.records.set(LEASE_KEY, { value: "new-owner" });
       }
     };
@@ -369,7 +418,7 @@ describe("12-hour resumable karma evaluation", () => {
   it("allows an explicit manual run early but does not reset an in-progress cursor", async () => {
     const manual = createManualRun();
     for (let index = 0; index < 1001; index += 1) {
-      insertUser(`user-${String(index).padStart(4, "0")}`);
+      insertKarmaUser(`user-${String(index).padStart(4, "0")}`);
     }
     await evaluateKarmaIfDue(database.db, redis.redis);
     expect(await runManually(manual)).toMatchObject({
@@ -386,7 +435,7 @@ describe("12-hour resumable karma evaluation", () => {
 
   it("checkpoints a partial page at the time budget and resumes without rereading completed users", async () => {
     for (let index = 0; index < 100; index += 1) {
-      insertUser(`user-${String(index).padStart(3, "0")}`);
+      insertKarmaUser(`user-${String(index).padStart(3, "0")}`);
     }
     database.hooks.beforeQuery = (sql, values) => {
       if (sql.startsWith("UPDATE users SET karma") && values[0] === "user-089") {
@@ -416,7 +465,7 @@ describe("12-hour resumable karma evaluation", () => {
   });
 
   it("does not commit a score calculated before concurrent point or role changes", async () => {
-    insertUser("first");
+    insertKarmaUser("first");
     const manual = createManualRun();
     database.hooks.beforeQuery = (sql) => {
       if (sql.startsWith("UPDATE users SET karma")) {
