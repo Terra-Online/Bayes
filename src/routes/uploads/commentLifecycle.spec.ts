@@ -488,6 +488,136 @@ describe("comment edits", () => {
   });
 });
 
+describe("comment recall", () => {
+  it.each(["pending_openai", "pending_audit", "active", "flagged", "remove_request"])(
+    "withdraws an unedited %s comment and delivers one resolution notification even if retried",
+    async (status) => {
+      insertSubmission(database.sqlite, {
+        id: "target",
+        userId: "author",
+        status: ["flagged", "remove_request"].includes(status) ? "active" : status,
+      });
+      if (status === "flagged") {
+        await post("/comments/target/flag", "reader");
+      }
+      if (status === "remove_request") {
+        await post("/comments/target/remove-request");
+      }
+      const response = await post("/comments/target/recall");
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ ok: true, status: "stale" });
+      expect(submission("target")).toMatchObject({ status: "stale", content: "Content target" });
+      expect(await mine()).toEqual([]);
+      expect((await request("/comments/target?markerId=marker-1", null)).status).toBe(404);
+      expect(
+        database.sqlite
+          .prepare(
+            "SELECT from_status, to_status, source FROM ugc_review_events WHERE submission_id = 'target'",
+          )
+          .all(),
+      ).toEqual([{ from_status: status, to_status: "stale", source: "user_action" }]);
+      expect(
+        database.sqlite
+          .prepare(
+            "SELECT recipient_user_id, type, submission_id, message_count FROM notifications",
+          )
+          .all(),
+      ).toEqual([
+        {
+          recipient_user_id: "author",
+          type: "system.remove_request.resolved",
+          submission_id: "target",
+          message_count: 1,
+        },
+      ]);
+      expect(liveNotifications).toEqual([
+        {
+          recipient: "author",
+          body: expect.objectContaining({
+            event: "notification.upserted",
+            notification: expect.objectContaining({
+              type: "system.remove_request.resolved",
+              target: expect.objectContaining({ submissionId: "target", markerId: "marker-1" }),
+            }),
+            unread: { system: 1, community: 0, total: 1 },
+          }),
+        },
+      ]);
+
+      const beforeRetry = persistedState();
+      const retry = await post("/comments/target/recall");
+      expect(retry.status).toBe(200);
+      expect(await retry.json()).toEqual({ ok: true, status: "stale" });
+      expect(persistedState()).toEqual(beforeRetry);
+      expect(liveNotifications).toHaveLength(1);
+      expect(moderation).toEqual([]);
+    },
+  );
+
+  it.each([
+    ["active", "active"],
+    ["flagged", "active"],
+    ["remove_request", "active"],
+    ["pending_openai", "pending_openai"],
+    ["pending_audit", "pending_audit"],
+  ])(
+    "undoes an edit from status %s and restores the comment as %s",
+    async (originalStatus, restoredStatus) => {
+      insertSubmission(database.sqlite, { id: "parent", userId: "reader" });
+      insertSubmission(database.sqlite, {
+        id: "target",
+        userId: "author",
+        parentId: "parent",
+        depth: 1,
+        status: ["flagged", "remove_request"].includes(originalStatus) ? "active" : originalStatus,
+        content: "The entrance is on the west side.",
+      });
+      if (originalStatus === "flagged") {
+        await post("/comments/target/flag", "reader");
+      }
+      if (originalStatus === "remove_request") {
+        await post("/comments/target/remove-request");
+      }
+      const edit = await post("/comments/target/edit", "author", { content: comment.content });
+      expect(edit.status).toBe(200);
+      const editedSnapshot = submission("target").snapshot_id;
+      const recall = await post("/comments/target/recall");
+      expect(recall.status).toBe(200);
+      expect(await recall.json()).toEqual({
+        ok: true,
+        editReverted: true,
+        status: restoredStatus,
+        content: "The entrance is on the west side.",
+      });
+      expect(submission("target")).toMatchObject({
+        content: "The entrance is on the west side.",
+        status: restoredStatus,
+        snapshot_id: "snapshot-target",
+        parent_id: "parent",
+        comment_depth: 1,
+        edit_original_content: null,
+        edit_original_status: null,
+        edit_original_snapshot_id: null,
+      });
+      expect((await mine())[0]).toMatchObject({
+        id: "target",
+        content: "The entrance is on the west side.",
+        status: restoredStatus,
+      });
+      // Editing clears flags on the old wording. Undo restores that wording without
+      // reviving those flags or the author's earlier removal request.
+      expect(activeFlaggers("target")).toEqual([]);
+      // An original version still awaiting AI review needs its own job after undo.
+      expect(moderation.map((message) => message.snapshotId)).toEqual(
+        originalStatus === "pending_openai"
+          ? [editedSnapshot, "snapshot-target"]
+          : [editedSnapshot],
+      );
+      expect(database.sqlite.prepare("SELECT * FROM notifications").all()).toEqual([]);
+    },
+  );
+});
+
 vi.mock("cloudflare:workers", () => ({
   DurableObject: class {},
   exports: { PublicReadCache: { purgeMarker: async () => ({ success: true }) } },
