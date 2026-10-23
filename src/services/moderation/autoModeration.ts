@@ -9,6 +9,8 @@ import {
 import { prewarmPublicUgcAsset } from "@/lib/publicUgcAssets";
 import { createRedisClient } from "@/lib/redis";
 import { invalidateUploadCaches } from "@/publicRead/client/invalidate";
+import { ensureAutoModerationBackfill } from "@/queues/client/autoModeration";
+import { enqueueApprovedCommentTransPrewarm } from "@/queues/client/commentTranslation";
 import {
   getSubmissionById,
   transitionSubmissionStatusWithNotifications,
@@ -19,10 +21,8 @@ import { getModerationPointsDeltaWithDailyBackoff } from "@/services/karma/moder
 import { publishNotificationsCreated } from "@/services/notify/live";
 import type { Bindings } from "@/types/app";
 
-import type { OemAutoModerationQueueMessage } from "./messages";
 import { notifySubmissionModerationResult } from "./notifications";
 import { requestOpenAiModeration, type OpenAiModerationResult } from "./openAiModeration";
-import { ensureAutoModerationBackfill, enqueueApprovedCommentTransPrewarm } from "./queue";
 
 const SELECTED_MODERATION_MAX_RUNTIME_MS = 25_000;
 
@@ -81,7 +81,7 @@ export async function runAutoModerationRequest(
   bindings: Bindings,
   input: AutoModerationRunInput,
 ): Promise<AutoModerationRunResult> {
-  const runtime = createAutoModerationRuntime(bindings);
+  const review = createAutoModerationReviewer(bindings);
   const stats = createAutoModerationStats();
   if (input.submissionIds && input.submissionIds.length > 0) {
     const startedAt = Date.now();
@@ -91,7 +91,7 @@ export async function runAutoModerationRequest(
       if (Date.now() - startedAt >= SELECTED_MODERATION_MAX_RUNTIME_MS) {
         break;
       }
-      const status = await moderateSubmission(runtime, submissionId);
+      const status = await review({ submissionId });
       if (status) {
         recordAutoModerationStatus(stats, status);
       }
@@ -104,32 +104,16 @@ export async function runAutoModerationRequest(
   return { mode: "queue", requested: limit, enqueued, ...stats };
 }
 
-export async function runAutoModerationQueueBatch(
+// Reuse configuration and Redis for all reviews in one request or queue batch.
+export function createAutoModerationReviewer(
   bindings: Bindings,
-  batch: MessageBatch<OemAutoModerationQueueMessage>,
-): Promise<AutoModerationStats> {
+): (input: {
+  submissionId: string;
+  snapshotId?: string;
+}) => Promise<"active" | "pending_audit" | null> {
   const runtime = createAutoModerationRuntime(bindings);
-  const stats = createAutoModerationStats();
-  for (const message of batch.messages) {
-    try {
-      const status = await moderateSubmission(
-        runtime,
-        message.body.submissionId,
-        message.body.snapshotId,
-      );
-      if (status) {
-        recordAutoModerationStatus(stats, status);
-      }
-      message.ack();
-    } catch (error) {
-      console.warn("OEM_AUTO_MODERATION_Q message failed", {
-        type: message.body?.type,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      message.retry();
-    }
-  }
-  return stats;
+  return (input: { submissionId: string; snapshotId?: string }) =>
+    moderateSubmission(runtime, input.submissionId, input.snapshotId);
 }
 
 async function moderateSubmission(

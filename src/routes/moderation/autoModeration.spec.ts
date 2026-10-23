@@ -146,8 +146,8 @@ describe("automatic moderation", () => {
   it("keeps a failed queue send eligible for the next backfill", async () => {
     submission({ id: "retry", status: "pending_openai" });
     const headers = createReviewerSession("a");
-    const send = env.OEM_AUTO_MODERATION_Q.send;
-    env.OEM_AUTO_MODERATION_Q.send = async () => {
+    const send = env.OEM_MODERATION_Q.send;
+    env.OEM_MODERATION_Q.send = async () => {
       throw new Error("Queue unavailable");
     };
     const failed = await request("/run", { method: "POST", headers, body: { limit: 1 } });
@@ -157,7 +157,7 @@ describe("automatic moderation", () => {
       moderation_queued_at: null,
     });
     expect(moderationMessages).toEqual([]);
-    env.OEM_AUTO_MODERATION_Q.send = send;
+    env.OEM_MODERATION_Q.send = send;
     const retry = await request("/run", { method: "POST", headers, body: { limit: 1 } });
     expect(retry.status).toBe(200);
     expect(await retry.json()).toMatchObject({ enqueued: 1 });

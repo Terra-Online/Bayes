@@ -103,7 +103,8 @@ when the task explicitly concerns those documents.
 Agents should keep changes focused and explain compatibility changes and
 verification in the pull request. Agents should follow
 [route conventions](src/routes/README.md) for HTTP work and
-[public read conventions](src/publicRead/README.md) for cached public reads.
+[public read conventions](src/publicRead/README.md) for cached public reads, and
+[queue conventions](src/queues/README.md) for asynchronous queue entrypoints.
 
 ## Setup
 

@@ -24,6 +24,7 @@ import {
   resolvePublicCommentCacheNamespace,
   resolvePublicImageCacheNamespace,
 } from "@/publicRead/client/scope";
+import { enqueueAutoModeration } from "@/queues/client/autoModeration";
 import { getDuplicateImageMarkerSummary } from "@/repositories/submission-duplicates";
 import { createPendingSubmission } from "@/repositories/submission/createSubmission";
 import {
@@ -78,7 +79,6 @@ import {
   notifyRemoveRequestCancelled,
   notifyRemoveRequestCreated,
 } from "@/services/moderation/notifications";
-import { enqueueAutoModeration } from "@/services/moderation/queue";
 import { publishNotificationsCreated } from "@/services/notify/live";
 import { translateVisibleComments } from "@/services/upload/commentTranslation";
 import { normalizeUploadMime } from "@/services/upload/mime";

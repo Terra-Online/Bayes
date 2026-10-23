@@ -18,7 +18,7 @@ describe("mock bindings", () => {
     first.autoModerationQueue.send.mockResolvedValue({
       metadata: { metrics: { backlogCount: 1, backlogBytes: 64 } },
     });
-    await first.bindings.OEM_AUTO_MODERATION_Q.send({
+    await first.bindings.OEM_MODERATION_Q.send({
       type: "moderation",
       submissionId: "image-1",
       snapshotId: "snapshot-1",
@@ -28,14 +28,14 @@ describe("mock bindings", () => {
     expect(first.autoModerationQueue.send).toHaveBeenCalledOnce();
     expect(second.autoModerationQueue.send).not.toHaveBeenCalled();
     expect(() =>
-      second.bindings.OEM_AUTO_MODERATION_Q.send({
+      second.bindings.OEM_MODERATION_Q.send({
         type: "moderation",
         submissionId: "image-2",
         snapshotId: "snapshot-2",
         source: "upload",
         queuedAt: "2026-09-01T00:00:00.000Z",
       }),
-    ).toThrow("Unconfigured mock binding: OEM_AUTO_MODERATION_Q.send");
+    ).toThrow("Unconfigured mock binding: OEM_MODERATION_Q.send");
   });
 
   it("reports unconfigured external operations instead of returning successful empty results", () => {

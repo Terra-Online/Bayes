@@ -5,18 +5,9 @@ import { runWithAuthRequest } from "./lib/auth/createAuth";
 import { getRuntimeConfig } from "./lib/config";
 import { createRedisClient } from "./lib/redis";
 import { withRequestTelemetry } from "./lib/requestTelemetry";
+import { ensureAutoModerationBackfill } from "./queues/client/autoModeration";
+import { handleQueue } from "./queues/runtime/entrypoint";
 import { evaluateKarmaIfDue } from "./services/karma/evaluation";
-import { runAutoModerationQueueBatch } from "./services/moderation/autoModeration";
-import type {
-  OemAutoModerationQueueMessage,
-  OemTranslationQueueMessage,
-  OemWebhookQueueMessage,
-} from "./services/moderation/messages";
-import { processWebhookQueueBatch } from "./services/moderation/notifications";
-import {
-  ensureAutoModerationBackfill,
-  processTranslationQueueBatch,
-} from "./services/moderation/queue";
 import { drainProgressStatsOutbox } from "./services/progress/outbox";
 import {
   cleanupProgressConsistencyRecords,
@@ -102,29 +93,5 @@ export default {
     ctx.waitUntil(runProgressRecovery(env));
     ctx.waitUntil(runScheduledJobs(env));
   },
-  async queue(
-    batch: MessageBatch<
-      OemAutoModerationQueueMessage | OemTranslationQueueMessage | OemWebhookQueueMessage
-    >,
-    env: Bindings,
-  ) {
-    if (batch.queue === "oem-moderation") {
-      await runAutoModerationQueueBatch(env, batch as MessageBatch<OemAutoModerationQueueMessage>);
-      return;
-    }
-    if (batch.queue === "oem-translation") {
-      await processTranslationQueueBatch(env, batch as MessageBatch<OemTranslationQueueMessage>);
-      return;
-    }
-    if (batch.queue === "oem-webhook") {
-      await processWebhookQueueBatch(env, batch as MessageBatch<OemWebhookQueueMessage>);
-      return;
-    }
-
-    console.warn("unknown queue batch received", {
-      queue: batch.queue,
-      messages: batch.messages.length,
-    });
-    batch.retryAll();
-  },
+  queue: handleQueue,
 };

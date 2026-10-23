@@ -4,6 +4,7 @@ import { isCommentEditModerationNote, RECALL_MODERATION_NOTE_PREFIX } from "@/li
 import { prewarmPublicUgcAsset } from "@/lib/publicUgcAssets";
 import { createRedisClient } from "@/lib/redis";
 import { invalidateUploadCaches } from "@/publicRead/client/invalidate";
+import { enqueueApprovedCommentTransPrewarm } from "@/queues/client/commentTranslation";
 import {
   getSubmissionById,
   transitionSubmissionStatusWithNotifications,
@@ -15,7 +16,6 @@ import { publishNotificationsCreated } from "@/services/notify/live";
 import type { Bindings } from "@/types/app";
 
 import { notifySubmissionModerationResult } from "./notifications";
-import { enqueueApprovedCommentTransPrewarm } from "./queue";
 
 export interface ManualModerationInput {
   submissionId: string;
