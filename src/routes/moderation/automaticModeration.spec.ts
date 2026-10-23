@@ -48,6 +48,7 @@ let storedSubmission: ModerationTestFixture["storedSubmission"];
 let authorPoints: ModerationTestFixture["authorPoints"];
 let reviewEvents: ModerationTestFixture["reviewEvents"];
 let notificationMessages: ModerationTestFixture["notificationMessages"];
+let moderationMessages: ModerationTestFixture["messages"]["moderation"];
 let translationMessages: ModerationTestFixture["messages"]["translation"];
 let webhookMessages: ModerationTestFixture["messages"]["webhook"];
 let liveMessages: ModerationTestFixture["messages"]["live"];
@@ -66,6 +67,7 @@ beforeEach(() => {
     reviewEvents,
     notificationMessages,
   } = fixture);
+  moderationMessages = fixture.messages.moderation;
   translationMessages = fixture.messages.translation;
   webhookMessages = fixture.messages.webhook;
   liveMessages = fixture.messages.live;
@@ -87,6 +89,103 @@ afterEach(() => {
 });
 
 describe("automatic moderation", () => {
+  it("keeps a failed queue send eligible for the next backfill", async () => {
+    submission({ id: "retry", status: "pending_openai" });
+    const headers = createReviewerSession("a");
+    const send = env.OEM_MODERATION_Q.send;
+    env.OEM_MODERATION_Q.send = async () => {
+      throw new Error("Queue unavailable");
+    };
+    const failed = await request("/run", { method: "POST", headers, body: { limit: 1 } });
+    expect(failed.status).toBe(500);
+    expect(storedSubmission("retry")).toMatchObject({
+      status: "pending_openai",
+      moderation_queued_at: null,
+    });
+    expect(moderationMessages).toEqual([]);
+    env.OEM_MODERATION_Q.send = send;
+    const retry = await request("/run", { method: "POST", headers, body: { limit: 1 } });
+    expect(retry.status).toBe(200);
+    expect(await retry.json()).toMatchObject({ enqueued: 1 });
+    expect(moderationMessages).toEqual([
+      expect.objectContaining({ submissionId: "retry", snapshotId: "snapshot-retry" }),
+    ]);
+    expect(storedSubmission("retry")).toMatchObject({
+      status: "pending_openai",
+      moderation_queued_at: expect.any(String),
+    });
+    expect(reviewEvents()).toEqual([]);
+    expect(authorPoints()).toBe(20);
+  });
+
+  it("backfills the oldest pending snapshots within the limit and retries only expired queue reservations", async () => {
+    const oldReservation = new Date(Date.now() - 6 * 60 * 1000).toISOString();
+    const freshReservation = new Date().toISOString();
+    submission({ id: "oldest", status: "pending_openai", createdAt: "2026-09-01 00:00:00" });
+    submission({ id: "expired", status: "pending_openai", createdAt: "2026-09-02 00:00:00" });
+    submission({ id: "fresh", status: "pending_openai", createdAt: "2026-09-03 00:00:00" });
+    submission({ id: "human-review", status: "pending_audit" });
+    submission({ id: "approved", status: "active" });
+    database.sqlite
+      .prepare("UPDATE ugc_submissions SET moderation_queued_at = ? WHERE id = 'expired'")
+      .run(oldReservation);
+    database.sqlite
+      .prepare("UPDATE ugc_submissions SET moderation_queued_at = ? WHERE id = 'fresh'")
+      .run(freshReservation);
+    const headers = createReviewerSession("a");
+    const first = await request("/run", { method: "POST", headers, body: { limit: 1 } });
+    expect(first.status).toBe(200);
+    expect(await first.json()).toEqual({
+      ok: true,
+      mode: "queue",
+      requested: 1,
+      enqueued: 1,
+      processed: 0,
+      active: 0,
+      pendingAudit: 0,
+      stale: 0,
+    });
+    expect(moderationMessages).toEqual([
+      expect.objectContaining({
+        type: "moderation",
+        submissionId: "oldest",
+        snapshotId: "snapshot-oldest",
+        source: "scheduled_backfill",
+      }),
+    ]);
+    const second = await request("/run-once", { method: "POST", headers });
+    expect(await second.json()).toMatchObject({
+      mode: "queue",
+      enqueued: 1,
+      processed: 0,
+    });
+    expect(moderationMessages).toEqual([
+      expect.objectContaining({ submissionId: "oldest" }),
+      expect.objectContaining({
+        submissionId: "expired",
+        snapshotId: "snapshot-expired",
+        source: "scheduled_backfill",
+      }),
+    ]);
+    expect(storedSubmission("oldest")).toMatchObject({
+      status: "pending_openai",
+      moderation_queued_at: expect.any(String),
+    });
+    expect(storedSubmission("expired")).toMatchObject({
+      status: "pending_openai",
+      moderation_queued_at: expect.any(String),
+    });
+    expect(storedSubmission("expired")!.moderation_queued_at).not.toBe(oldReservation);
+    expect(storedSubmission("fresh")!.moderation_queued_at).toBe(freshReservation);
+    const repeat = await request("/run-once", { method: "POST", headers });
+    expect(await repeat.json()).toMatchObject({ enqueued: 0 });
+    expect(moderationMessages).toHaveLength(2);
+    expect(authorPoints()).toBe(20);
+    expect(reviewEvents()).toEqual([]);
+    expect(notificationMessages()).toEqual([]);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it.each([
     {
       name: "AI disabled even with local approval enabled",
