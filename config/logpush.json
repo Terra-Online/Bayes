@@ -1,0 +1,26 @@
+{
+  "name": "oem-backend-archive",
+  "scriptName": "oem-backend",
+  "bucket": "opendfieldmap-log",
+  "prefix": "workers/oem-backend",
+  "retentionDays": 180,
+  "dataset": "workers_trace_events",
+  "outputOptions": {
+    "field_names": [
+      "EventTimestampMs",
+      "EventType",
+      "Entrypoint",
+      "ScriptName",
+      "ScriptVersion",
+      "CPUTimeMs",
+      "WallTimeMs",
+      "Event",
+      "Outcome",
+      "Exceptions",
+      "Logs"
+    ],
+    "output_type": "ndjson",
+    "sample_rate": 1,
+    "timestamp_format": "rfc3339"
+  }
+}

@@ -16,7 +16,7 @@ Start with the task you want to do:
 | Set up local data files | [Data templates](../templates/README.md) |
 | Work on HTTP modules | [Route conventions](../src/routes/README.md) |
 | Work on cached public reads | [Public read conventions](../src/publicRead/README.md) |
-| Work on error logging | [Tail Worker](../oem-logger/README.md) |
+| Work on error logging and request archives | [Tail Worker and Logpush](../oem-logger/README.md) |
 | Work on image processing | [Transcoder](../containers/oem_imgTrans/README.md) |
 
 ## Maintaining these guides
