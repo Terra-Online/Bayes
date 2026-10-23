@@ -169,6 +169,15 @@ test("rejects malformed encoded images", async () => {
   assert.equal((await prepare(Buffer.from("not an image"), "image/png")).status, 422);
 });
 
+test("rejects an unsupported declared MIME even when the bytes are a valid PNG", async () => {
+  assert.equal((await prepare(await image().png().toBuffer(), "image/svg+xml")).status, 422);
+});
+
+test("rejects empty bodies before image pass-through", async () => {
+  // WebP bypasses decoding, so a decoder error cannot mask a missing empty-body guard.
+  assert.equal((await prepare(Buffer.alloc(0), "image/webp")).status, 422);
+});
+
 test("handles simultaneous conversions", async () => {
   const input = await image(2160, 32).png().toBuffer();
   const responses = await Promise.all([prepare(input, "image/png"), prepare(input, "image/png")]);
