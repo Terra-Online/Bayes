@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import logger, { isErrorTrace } from "./index";
+import logger, { getErrorReasons, isErrorTrace } from "./index";
 
 function makeTrace(overrides: Partial<TraceItem> = {}): TraceItem {
   return {
@@ -137,17 +137,54 @@ describe("isErrorTrace", () => {
     ).toBe(true);
   });
 
-  it("drops canceled outcomes even when they contain logs or exceptions", () => {
+  it("drops pure cancellations and their routine network exceptions", () => {
     expect(isErrorTrace(makeTrace({ outcome: "canceled" }))).toBe(false);
     expect(
       isErrorTrace(
         makeTrace({
           outcome: "canceled",
-          logs: [{ level: "error", message: ["request canceled"], timestamp: 1 }],
           exceptions: [{ name: "Error", message: "Network connection lost.", timestamp: 1 }],
         }),
       ),
     ).toBe(false);
+  });
+
+  it("retains server errors that precede cancellation", () => {
+    expect(
+      getErrorReasons(
+        makeTrace({
+          outcome: "canceled",
+          event: {
+            request: {
+              cf: {},
+              headers: {},
+              method: "GET",
+              url: "https://api.example.test/resource",
+              getUnredacted() {
+                return this;
+              },
+            },
+            response: { status: 503 },
+          },
+        }),
+      ),
+    ).toEqual(["http_5xx"]);
+    expect(
+      getErrorReasons(
+        makeTrace({
+          outcome: "canceled",
+          logs: [{ level: "error", message: ["db failed"], timestamp: 1 }],
+        }),
+      ),
+    ).toEqual(["console_error"]);
+    expect(
+      getErrorReasons(
+        makeTrace({
+          outcome: "canceled",
+          exceptions: [{ name: "Error", message: "db failed", timestamp: 1 }],
+        }),
+      ),
+    ).toEqual(["runtime_exception"]);
   });
 
   it("does not issue any D1 writes for a canceled-only tail batch", () => {
@@ -227,5 +264,52 @@ describe("isErrorTrace", () => {
         }),
       ),
     ).toBe(false);
+  });
+});
+
+describe("error persistence", () => {
+  it("writes one classified row per failed invocation in a mixed batch", async () => {
+    const bound: unknown[][] = [];
+    const statement = {
+      bind: vi.fn((...args: unknown[]) => {
+        bound.push(args);
+        return statement;
+      }),
+    };
+    const prepare = vi.fn(() => statement);
+    const batch = vi.fn().mockResolvedValue([]);
+    const pending: Promise<unknown>[] = [];
+    const failed = makeTrace({
+      outcome: "exception",
+      logs: [{ level: "error", message: ["failed"], timestamp: 1 }],
+      exceptions: [{ name: "Error", message: "failed", timestamp: 1 }],
+    });
+    logger.tail(
+      [makeTrace(), makeTrace({ outcome: "canceled" }), failed, makeTrace({ outcome: "loadShed" })],
+      { OEM_ERR: { prepare, batch } as unknown as D1Database },
+      {
+        waitUntil: (promise: Promise<unknown>) => pending.push(promise),
+      } as unknown as ExecutionContext,
+    );
+    await Promise.all(pending);
+    expect(prepare).toHaveBeenCalledTimes(2);
+    expect(batch).toHaveBeenCalledWith([statement, statement]);
+    expect(bound[0][16]).toBe(JSON.stringify(failed));
+    expect(JSON.parse(bound[0][17] as string)).toEqual(["runtime_exception", "console_error"]);
+    expect(JSON.parse(bound[1][17] as string)).toEqual(["outcome_failure"]);
+  });
+
+  it("does not serialize or persist successful invocations", () => {
+    const prepare = vi.fn();
+    const successful = makeTrace();
+    const serialize = vi.fn(() => {
+      throw new Error("unexpected serialization");
+    });
+    Object.assign(successful, { toJSON: serialize });
+    logger.tail([successful], { OEM_ERR: { prepare } as unknown as D1Database }, {
+      waitUntil: vi.fn(),
+    } as unknown as ExecutionContext);
+    expect(prepare).not.toHaveBeenCalled();
+    expect(serialize).not.toHaveBeenCalled();
   });
 });

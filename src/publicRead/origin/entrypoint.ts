@@ -1,5 +1,6 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 
+import { withRequestTelemetry } from "@/lib/requestTelemetry";
 import { toApiError } from "@/middleware/error-handler";
 import { buildPublicReadMarkerTag } from "@/publicRead/contract/cacheKeys";
 import {
@@ -51,6 +52,10 @@ async function buildMarkerTags(kind: PublicReadMarkerKind, markerIds: string[]):
 
 export class PublicReadCache extends WorkerEntrypoint<Bindings> {
   async fetch(request: Request): Promise<Response> {
+    return withRequestTelemetry(request, "PublicReadCache", () => this.fetchResponse(request));
+  }
+
+  private async fetchResponse(request: Request): Promise<Response> {
     if (request.method !== "GET" && request.method !== "HEAD") {
       return noStoreError(405, "Only GET and HEAD are supported.");
     }

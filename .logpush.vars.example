@@ -1,0 +1,8 @@
+# Copy to .logpush.vars (ignored). Used only by the local provisioning tool,
+# never uploaded as Worker bindings or secrets. Target bucket: opendfieldmap-log.
+CLOUDFLARE_ACCOUNT_ID=
+# Account Logs Write and R2 Storage Write; use Logs Read/R2 Read for --status only.
+CLOUDFLARE_API_TOKEN=
+# Bucket-scoped R2 Object Read & Write credentials for the private archive bucket.
+R2_ACCESS_KEY_ID=
+R2_SECRET_ACCESS_KEY=
