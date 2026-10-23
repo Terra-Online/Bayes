@@ -141,6 +141,73 @@ describe("automatic moderation", () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
+  it.each([
+    {
+      name: "flagged content",
+      result: () => Response.json({ results: [{ flagged: true, categories: { violence: true } }] }),
+      reason: "violence",
+    },
+    {
+      name: "no explicit AI decision",
+      result: () => Response.json({ results: [] }),
+      reason: "no explicit decision",
+    },
+    {
+      name: "provider outage",
+      result: () => new Response("Service unavailable", { status: 503 }),
+      reason: "unavailable (503",
+    },
+    {
+      name: "network failure",
+      result: () => {
+        throw new Error("Connection closed");
+      },
+      reason: "Connection closed",
+    },
+  ])("sends $name to manual audit without a rejection penalty", async ({ result, reason }) => {
+    env.OPENAI_API_KEY = "synthetic-ai-key";
+    submission({ id: "uncertain", status: "pending_openai" });
+    vi.mocked(fetch).mockImplementation(async () => result());
+    const response = await request("/run", {
+      method: "POST",
+      headers: createReviewerSession("a"),
+      body: { ids: ["uncertain"] },
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      processed: 1,
+      active: 0,
+      pendingAudit: 1,
+      stale: 0,
+    });
+    expect(storedSubmission("uncertain")).toMatchObject({
+      status: "pending_audit",
+      moderation_note: expect.stringContaining(reason),
+    });
+    expect(authorPoints()).toBe(20);
+    expect(reviewEvents()).toEqual([
+      {
+        submission_id: "uncertain",
+        from_status: "pending_openai",
+        to_status: "pending_audit",
+        source: "auto_moderation",
+        ai_reviewed: 1,
+      },
+    ]);
+    expect(notificationMessages()).toEqual([
+      {
+        recipient_user_id: "author",
+        type: "system.submission.needs_review",
+        submission_id: "uncertain",
+      },
+    ]);
+    expect(liveMessages).toEqual([expect.objectContaining({ recipient: "author" })]);
+    expect(translationMessages).toEqual([]);
+    expect(webhookMessages).toEqual([
+      expect.objectContaining({ event: expect.objectContaining({ nextStatus: "pending_audit" }) }),
+    ]);
+  });
+
   it("approves a clean comment once and delivers the persisted approval to its author", async () => {
     env.OPENAI_API_KEY = "synthetic-ai-key";
     submission({ id: "clean", status: "pending_openai", content: "Turn left at the bridge" });
