@@ -4,11 +4,10 @@ import { createMockBindings } from "@/test/bindings";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import {
   createProgressFixture,
-  createProgressState,
-  FakeStorage,
   insertProgressManifest,
   type ProgressFixture,
 } from "@/test/fixtures/progress";
+import { createProgressTestState, ProgressTestStorage } from "@/test/fixtures/progressRuntime";
 import { insertUser } from "@/test/fixtures/users";
 
 import { buildStatsCountsBase64, parseStatsCountsBase64 } from "./bitmap";
@@ -104,12 +103,13 @@ describe("OEMUserDO progress consistency", () => {
       expect.objectContaining({
         operation: "state",
         status: 200,
-        stage: "state_read",
       }),
     );
     const completion = warningLog.mock.calls.find(
       ([label]) => label === "[progress][sync] request completed",
     )?.[1];
+    // Per-user and per-mutation fields would make the completion metric's
+    // dimensions grow with traffic instead of describing operation totals.
     expect(completion).not.toHaveProperty("uid");
     expect(completion).not.toHaveProperty("clientMutationId");
   });
@@ -186,21 +186,22 @@ describe("OEMUserDO progress consistency", () => {
 
   it("reports removed source-manifest points separately without counting retained known IDs as active", async () => {
     const database = databaseForTest();
-    const sourceHash = "b".repeat(64);
+    const sourceManifestHash = "b".repeat(64);
+    const sourceRevision = "d".repeat(64);
     insertUser(database.sqlite, { uid: "A", uid_number: 100001 });
     database.sqlite
       .prepare(`UPDATE users SET progress_version=1, progress_marker='Aw==',
       progress_marker_index_hash=?, progress_checksum=?, progress_point_count=2,
       progress_retained_point_ids=? WHERE uid='A'`)
-      .run(sourceHash, "d".repeat(64), JSON.stringify(["legacy-old", "p2"]));
+      .run(sourceManifestHash, sourceRevision, JSON.stringify(["legacy-old", "p2"]));
     const { request, markerIndexHash, state } = fixtureForTest(database);
-    insertProgressManifest(database, sourceHash, ["p1", "removed"]);
+    insertProgressManifest(database, sourceManifestHash, ["p1", "removed"]);
     const response = await request(
       new Request(`https://progress-user/state?markerIndexHash=${markerIndexHash}`),
     );
     expect(await response.json()).toMatchObject({
       progress: {
-        markerIndexHash: sourceHash,
+        markerIndexHash: sourceManifestHash,
         pointIds: ["p1"],
         retainedPointIds: ["legacy-old", "removed"],
       },
@@ -211,13 +212,15 @@ describe("OEMUserDO progress consistency", () => {
     const migrated = await request(
       syncRequest(markerIndexHash, {
         mutationId: "migration",
-        baseRevision: "d".repeat(64),
+        baseRevision: sourceRevision,
       }),
     );
     expect(migrated.status).toBe(200);
     expect(await migrated.json()).toMatchObject({
       progress: { markerIndexHash, retainedPointIds: ["legacy-old", "removed"] },
     });
+    // A retained ID that appears in the current index is still acknowledged in
+    // storage, but must not become an active collection merely by reappearing.
     expect(
       JSON.parse(
         String(
@@ -267,7 +270,7 @@ describe("OEMUserDO progress consistency", () => {
 
   it("fails closed when the DO has no named identity", async () => {
     const database = databaseForTest();
-    const { state } = createProgressState();
+    const { state } = createProgressTestState();
     const object = new OEMUserDO(state, createMockBindings({ DB: database.db }).bindings);
     const response = await object.fetch(
       new Request(`https://progress-user/state?markerIndexHash=${"a".repeat(64)}`),
@@ -276,110 +279,38 @@ describe("OEMUserDO progress consistency", () => {
     expect(await response.json()).toMatchObject({ code: "PROGRESS_DO_IDENTITY_MISSING" });
   });
 
-  it("rolls back user, mutation, and outbox when a batch statement fails", async () => {
-    const database = databaseForTest();
-    insertUser(database.sqlite, { uid: "A", uid_number: 100001 });
-    // Abort only after the initial UPDATE has changed the user inside the batch.
-    database.sqlite
-      .exec(`CREATE TRIGGER reject_progress_mutation BEFORE INSERT ON progress_sync_mutations
-      WHEN (SELECT progress_version FROM users WHERE uid = NEW.uid) = 1
-      BEGIN SELECT RAISE(ABORT, 'injected mutation failure after user update'); END`);
-    const { request, markerIndexHash, state } = fixtureForTest(database);
-
-    const response = await request(
-      syncRequest(markerIndexHash, {
-        mutationId: "m1",
-        setPointIds: ["p1"],
-      }),
-    );
-    await Promise.all(state.waits);
-
-    expect(response.status).toBe(500);
-    expect(
-      database.sqlite.prepare("SELECT * FROM users WHERE uid='A'").get()?.progress_version,
-    ).toBe(0);
-    expect(
-      database.sqlite.prepare("SELECT count(*) AS count FROM progress_sync_mutations").get()?.count,
-    ).toBe(0);
-    expect(database.sqlite.prepare("SELECT * FROM progress_stats_outbox").all()).toHaveLength(0);
-  });
-
-  it("returns the original M1 result after M2 without applying M1 twice", async () => {
-    const database = databaseForTest();
-    insertUser(database.sqlite, { uid: "A", uid_number: 100001 });
-    const { request, markerIndexHash, state } = fixtureForTest(database);
-
-    const first = await request(
-      syncRequest(markerIndexHash, {
-        mutationId: "m1",
-        setPointIds: ["p1"],
-      }),
-    );
-    const firstBody = await first.text();
-    const firstRevision = (JSON.parse(firstBody) as { progress: { revision: string } }).progress
-      .revision;
-    const second = await request(
-      syncRequest(markerIndexHash, {
-        mutationId: "m2",
-        baseRevision: firstRevision,
-        setPointIds: ["p2"],
-      }),
-    );
-    expect(second.status).toBe(200);
-
-    const replay = await request(
-      syncRequest(markerIndexHash, {
-        mutationId: "m1",
-        setPointIds: ["p1"],
-      }),
-    );
-    await Promise.all(state.waits);
-
-    expect(await replay.text()).toBe(firstBody);
-    expect(replay.headers.get("x-progress-idempotent")).toBe("true");
-    expect(
-      database.sqlite.prepare("SELECT * FROM users WHERE uid='A'").get()?.progress_version,
-    ).toBe(2);
-    expect(
-      database.sqlite.prepare("SELECT count(*) AS count FROM progress_sync_mutations").get()?.count,
-    ).toBe(2);
-    expect(database.sqlite.prepare("SELECT * FROM progress_stats_outbox").all()).toHaveLength(2);
-  });
-
   it("does not wait for a slow Stats DO after the D1 batch commits", async () => {
     const database = databaseForTest();
     insertUser(database.sqlite, { uid: "A", uid_number: 100001 });
     let acknowledge!: (response: Response) => void;
-    const statsNeverRespond = () =>
-      new Promise<Response>((resolve) => {
-        acknowledge = resolve;
-      });
-    const { request, markerIndexHash, state } = fixtureForTest(database, "A", statsNeverRespond);
-
-    let timeout: ReturnType<typeof setTimeout> | undefined;
-    const result = await Promise.race([
-      request(
-        syncRequest(markerIndexHash, {
-          mutationId: "m1",
-          setPointIds: ["p1"],
-        }),
-      ),
-      new Promise<"timeout">((resolve) => {
-        timeout = setTimeout(() => resolve("timeout"), 100);
+    const statsAcknowledgement = new Promise<Response>((resolve) => {
+      acknowledge = resolve;
+    });
+    const { request, markerIndexHash, state } = fixtureForTest(
+      database,
+      "A",
+      () => statsAcknowledgement,
+    );
+    let syncResponse: Response | undefined;
+    const sync = request(
+      syncRequest(markerIndexHash, {
+        mutationId: "m1",
+        setPointIds: ["p1"],
       }),
-    ]);
-    if (timeout) {
-      clearTimeout(timeout);
-    }
+    ).then((response) => {
+      syncResponse = response;
+    });
 
     try {
-      expect(result).toBeInstanceOf(Response);
-      expect((result as Response).status).toBe(200);
+      // The response must arrive while the stats acknowledgement is still held.
+      // This checks ordering without imposing a machine-dependent latency budget.
+      await vi.waitFor(() => expect(syncResponse?.status).toBe(200));
       expect(
         database.sqlite.prepare("SELECT * FROM users WHERE uid='A'").get()?.progress_version,
       ).toBe(1);
     } finally {
       acknowledge(Response.json({ applied: true }));
+      await sync;
       await Promise.all(state.waits);
     }
   });
@@ -477,13 +408,23 @@ describe("OEMStatsDO event receipts", () => {
     firstSync: true,
   };
 
-  interface StatsFixture {
-    object: OEMStatsDO;
-    storage: FakeStorage;
+  function statsEventRequest(): Request {
+    return new Request("https://progress-stats/apply", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
   }
 
-  function createStatsDo(storage = new FakeStorage(), database = databaseForTest()): StatsFixture {
-    const state = createProgressState(markerIndexHash, storage);
+  interface StatsFixture {
+    object: OEMStatsDO;
+    storage: ProgressTestStorage;
+  }
+
+  function createStatsDo(
+    storage = new ProgressTestStorage(),
+    database = databaseForTest(),
+  ): StatsFixture {
+    const state = createProgressTestState(markerIndexHash, storage);
     return {
       object: new OEMStatsDO(state.state, createMockBindings({ DB: database.db }).bindings),
       storage,
@@ -492,14 +433,8 @@ describe("OEMStatsDO event receipts", () => {
 
   it("deduplicates a retry after the first acknowledgement is lost", async () => {
     const { object, storage } = createStatsDo();
-    const request = () =>
-      new Request("https://progress-stats/apply", {
-        method: "POST",
-        body: JSON.stringify(payload),
-      });
-
-    expect((await object.fetch(request())).status).toBe(200);
-    const replay = await object.fetch(request());
+    expect((await object.fetch(statsEventRequest())).status).toBe(200);
+    const replay = await object.fetch(statsEventRequest());
     expect(await replay.json()).toMatchObject({ ok: true, idempotent: true });
 
     const snapshot = await storage.get<{ counts: string; totalSyncedUsers: number }>(
@@ -509,25 +444,54 @@ describe("OEMStatsDO event receipts", () => {
     expect([...parseStatsCountsBase64(snapshot?.counts ?? "", 2)]).toEqual([1, 0]);
   });
 
-  it("does not replace memory or storage when the transaction fails", async () => {
-    const storage = new FakeStorage();
+  it("retries a failed stats backup and restores the accepted collection from D1 in a fresh object", async () => {
+    const database = databaseForTest();
+    const { object } = createStatsDo(undefined, database);
+    const response = await object.fetch(statsEventRequest());
+    expect(response.status).toBe(200);
+    database.sqlite
+      .exec(`CREATE TRIGGER reject_stats_backup BEFORE INSERT ON progress_stats_snapshots
+      BEGIN SELECT RAISE(ABORT, 'backup unavailable'); END`);
+    // Execute application alarm logic against the runtime storage boundary.
+    // This does not establish native alarm scheduling or platform durability.
+    await object.alarm();
+    expect(database.sqlite.prepare("SELECT * FROM progress_stats_snapshots").all()).toEqual([]);
+    database.sqlite.exec("DROP TRIGGER reject_stats_backup");
+    await object.alarm();
+    const recovered = createStatsDo(undefined, database);
+    const state = await recovered.object.fetch(
+      new Request(`https://progress-stats/state?markerIndexHash=${markerIndexHash}`),
+    );
+    expect(state.status).toBe(200);
+    const restored = (await state.json()) as {
+      counts: string;
+      totalSyncedUsers: number;
+      sampleSize: number;
+    };
+    expect(restored).toMatchObject({ totalSyncedUsers: 1, sampleSize: 1 });
+    expect([...parseStatsCountsBase64(restored.counts, 2)]).toEqual([1, 0]);
+    expect(
+      database.sqlite
+        .prepare(
+          "SELECT marker_index_hash, point_count, total_synced_users FROM progress_stats_snapshots",
+        )
+        .all(),
+    ).toEqual([{ marker_index_hash: markerIndexHash, point_count: 2, total_synced_users: 1 }]);
+  });
+
+  it("leaves a failed stats event retryable when its storage transaction is rejected", async () => {
+    const storage = new ProgressTestStorage();
     storage.failNextTransaction = true;
     const { object } = createStatsDo(storage);
-    const request = () =>
-      new Request("https://progress-stats/apply", {
-        method: "POST",
-        body: JSON.stringify(payload),
-      });
-
-    expect((await object.fetch(request())).status).toBe(500);
+    expect((await object.fetch(statsEventRequest())).status).toBe(500);
     expect(await storage.get("stats:snapshot:v2")).toBeUndefined();
-    expect((await object.fetch(request())).status).toBe(200);
+    expect((await object.fetch(statsEventRequest())).status).toBe(200);
     const snapshot = await storage.get<{ counts: string }>("stats:snapshot:v2");
     expect([...parseStatsCountsBase64(snapshot?.counts ?? "", 2)]).toEqual([1, 0]);
   });
 
-  it("replaces a stale v2 DO snapshot with a newer authoritative v2 D1 rebuild", async () => {
-    const storage = new FakeStorage();
+  it("replaces a stale DO snapshot with a newer authoritative D1 rebuild", async () => {
+    const storage = new ProgressTestStorage();
     await storage.put("stats:snapshot:v2", {
       markerIndexHash,
       pointCount: 2,

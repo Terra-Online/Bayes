@@ -639,7 +639,13 @@ export function decodeNotificationCursor(raw: string | undefined): NotificationC
   if (!raw?.trim()) {
     return null;
   }
-  const decoded = decodeURIComponent(raw.trim());
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(raw.trim());
+  } catch {
+    // Malformed percent escapes follow the existing invalid-cursor fallback.
+    return null;
+  }
   const separatorIndex = decoded.lastIndexOf("|");
   if (separatorIndex <= 0 || separatorIndex >= decoded.length - 1) {
     return null;
