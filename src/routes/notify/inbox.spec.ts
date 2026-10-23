@@ -142,6 +142,7 @@ describe("notification inbox HTTP", () => {
   it("restarts at the first inbox page when a saved cursor is unusable", async () => {
     const first = await inbox("/system/messages?limit=1");
     expect(await inbox("/system/messages?limit=1&cursor=no-separator")).toEqual(first);
+    expect(await inbox("/system/messages?limit=1&cursor=%25")).toEqual(first);
   });
 
   it("presents grouped approvals with each destination and counts the group as one unread notification", async () => {
