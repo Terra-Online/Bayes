@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createMockBindings } from "@/test/bindings";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
+import { insertAuthenticatedUser } from "@/test/fixtures/auth";
 
 import { createApp } from "./app";
 
@@ -84,4 +85,36 @@ describe("browser cross-origin access", () => {
     expect(directClient.status).toBe(401);
     expect(await directClient.json()).toMatchObject({ code: "SESSION_REQUIRED" });
   });
+});
+
+it("fails privately for missing auth configuration and resumes the existing session after configuration recovery", async () => {
+  database = createTestDatabase();
+  vi.spyOn(console, "error").mockImplementation(() => undefined);
+  const owner = insertAuthenticatedUser(database.sqlite, { uid: "configured-owner" });
+  const env = createMockBindings({ DB: database.db }).bindings;
+  const secret = env.BETTER_AUTH_SECRET;
+  const before = database.sqlite.prepare("SELECT * FROM users").all();
+  const app = createApp();
+  for (const invalid of [undefined, "   "]) {
+    env.BETTER_AUTH_SECRET = invalid;
+    const response = await app.request(
+      "http://localhost/auth/v1/session",
+      { headers: owner.headers },
+      env,
+    );
+    expect(response.status).toBe(500);
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+    const body = await response.text();
+    expect(JSON.parse(body)).toMatchObject({ code: "INTERNAL_ERROR" });
+    expect(body).not.toContain("BETTER_AUTH_SECRET");
+    expect(database.sqlite.prepare("SELECT * FROM users").all()).toEqual(before);
+  }
+  env.BETTER_AUTH_SECRET = secret;
+  const recovered = await app.request(
+    "http://localhost/auth/v1/session",
+    { headers: owner.headers },
+    env,
+  );
+  expect(recovered.status).toBe(200);
+  expect(await recovered.json()).toMatchObject({ user: { nickname: owner.user.nickname } });
 });
