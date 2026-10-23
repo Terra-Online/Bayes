@@ -340,6 +340,73 @@ describe("image flags", () => {
   });
 });
 
+describe("image removal requests", () => {
+  it.each([false, true])(
+    "keeps an image visible during removal review and restores its remaining flags on cancellation (flagged: %s)",
+    async (flagged) => {
+      insertSubmission(database.sqlite, { id: "photo", kind: "image", userId: "author" });
+      if (flagged) {
+        await post("photo", "flag");
+      }
+      const response = await post("photo", "remove-request", "author");
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ ok: true, status: "remove_request" });
+      expect(submission("photo").status).toBe("remove_request");
+      expect(await publicImage()).toMatchObject({
+        status: "remove_request",
+        flagCount: flagged ? 1 : 0,
+      });
+      expect(webhooks.at(-1)).toMatchObject({
+        event: {
+          type: "remove_request_created",
+          actor: { uid: "author" },
+          submission: { id: "photo" },
+          previousStatus: flagged ? "flagged" : "active",
+          nextStatus: "remove_request",
+        },
+      });
+      // Removal review does not hide the image or disable ordinary voting.
+      const voteDuringReview = await post("photo", "upvote");
+      expect(await voteDuringReview.json()).toMatchObject({
+        created: true,
+        upvoteCount: 1,
+      });
+      const withdrawnVote = await post("photo", "unvote");
+      expect(await withdrawnVote.json()).toMatchObject({
+        deleted: true,
+        upvoteCount: 0,
+      });
+      const beforeRetry = submission("photo");
+      const events = webhooks.length;
+      const retry = await post("photo", "remove-request", "author");
+      expect(retry.status).toBe(409);
+      expect(submission("photo")).toEqual(beforeRetry);
+      expect(webhooks).toHaveLength(events);
+      const cancelled = await post("photo", "unrecall", "author");
+      const restored = flagged ? "flagged" : "active";
+      expect(cancelled.status).toBe(200);
+      expect(await cancelled.json()).toEqual({
+        ok: true,
+        status: restored,
+        flagCount: flagged ? 1 : 0,
+      });
+      expect(submission("photo").status).toBe(restored);
+      expect(activeUsers("ugc_submission_flags")).toEqual(flagged ? ["reader"] : []);
+      expect(await publicImage()).toMatchObject({ status: restored });
+      expect(webhooks.at(-1)).toMatchObject({
+        event: {
+          type: "remove_request_cancelled",
+          actor: { uid: "author" },
+          previousStatus: "remove_request",
+          nextStatus: restored,
+          flagCount: flagged ? 1 : 0,
+        },
+      });
+      expect(moderation).toEqual([]);
+    },
+  );
+});
+
 vi.mock("cloudflare:workers", () => ({
   DurableObject: class {},
   exports: { PublicReadCache: { purgeMarker: async () => ({ success: true }) } },
