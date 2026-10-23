@@ -4,6 +4,7 @@ import { createApp } from "./app";
 import { runWithAuthRequest } from "./lib/auth/createAuth";
 import { getRuntimeConfig } from "./lib/config";
 import { createRedisClient } from "./lib/redis";
+import { withRequestTelemetry } from "./lib/requestTelemetry";
 import { evaluateKarmaIfDue } from "./services/karma/evaluation";
 import type {
   OemModerationQueueMessage,
@@ -90,10 +91,12 @@ async function runProgressRecovery(env: Bindings): Promise<void> {
 
 export default {
   async fetch(request: Request, env: Bindings, ctx: ExecutionContext) {
-    return runWithAuthRequest(async () => {
-      const liveResponse = await handleNotificationLiveUpgrade(request, env);
-      return liveResponse ?? app.fetch(request, env, ctx);
-    });
+    return withRequestTelemetry(request, "default", () =>
+      runWithAuthRequest(async () => {
+        const liveResponse = await handleNotificationLiveUpgrade(request, env);
+        return liveResponse ?? app.fetch(request, env, ctx);
+      }),
+    );
   },
   async scheduled(_event: ScheduledEvent, env: Bindings, ctx: ExecutionContext) {
     ctx.waitUntil(runProgressRecovery(env));

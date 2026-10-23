@@ -42,12 +42,13 @@ function getEventType(item: TraceItem): string {
   return "other";
 }
 
-export function isErrorTrace(item: TraceItem): boolean {
-  if (item.outcome === "canceled") {
-    return false;
-  }
+export type ErrorReason = "http_5xx" | "runtime_exception" | "console_error" | "outcome_failure";
+
+export function getErrorReasons(item: TraceItem): ErrorReason[] | null {
   const fetchEvent = getFetchEvent(item);
   const status = fetchEvent?.response?.status;
+  const hasServerError = typeof status === "number" && status >= 500;
+  const hasErrorLog = item.logs.some((log) => log.level === "error");
   if (
     item.scriptName === "oem-backend" &&
     item.outcome === "exception" &&
@@ -59,16 +60,40 @@ export function isErrorTrace(item: TraceItem): boolean {
     (status === undefined || status < 500) &&
     item.exceptions.length === 1 &&
     item.exceptions[0]?.message === "Network connection lost." &&
-    !item.logs.some((log) => log.level === "error")
+    !hasErrorLog
   ) {
-    return false;
+    return null;
   }
-  return Boolean(
-    (typeof status === "number" && status >= 500) ||
-    item.outcome !== "ok" ||
-    item.exceptions.length > 0 ||
-    item.logs.some((log) => log.level === "error"),
+
+  // Cancellation alone (including its routine transport exception) is not an error.
+  const hasException = item.exceptions.some(
+    (exception) => item.outcome !== "canceled" || exception.message !== "Network connection lost.",
   );
+  const hasRuntimeException = item.outcome === "exception" || hasException;
+  const hasFailedOutcome =
+    item.outcome !== "ok" && item.outcome !== "canceled" && item.outcome !== "exception";
+  if (!hasServerError && !hasRuntimeException && !hasErrorLog && !hasFailedOutcome) {
+    return null;
+  }
+
+  const reasons: ErrorReason[] = [];
+  if (hasServerError) {
+    reasons.push("http_5xx");
+  }
+  if (hasRuntimeException) {
+    reasons.push("runtime_exception");
+  }
+  if (hasErrorLog) {
+    reasons.push("console_error");
+  }
+  if (hasFailedOutcome) {
+    reasons.push("outcome_failure");
+  }
+  return reasons;
+}
+
+export function isErrorTrace(item: TraceItem): boolean {
+  return getErrorReasons(item) !== null;
 }
 
 function makeErrorId(item: TraceItem, fetchEvent: FetchEventInfo | null, index: number): string {
@@ -77,8 +102,12 @@ function makeErrorId(item: TraceItem, fetchEvent: FetchEventInfo | null, index: 
   return `${item.eventTimestamp ?? Date.now()}-${suffix}-${index}`;
 }
 
-function writeErrors(items: TraceItem[], db: D1Database, receivedAtMs: number): Promise<void> {
-  const statements = items.map((item, index) => {
+function writeErrors(
+  items: { item: TraceItem; reasons: ErrorReason[] }[],
+  db: D1Database,
+  receivedAtMs: number,
+): Promise<void> {
+  const statements = items.map(({ item, reasons }, index) => {
     const fetchEvent = getFetchEvent(item);
     const status = fetchEvent?.response?.status ?? null;
     const errorLogCount = item.logs.reduce(
@@ -108,8 +137,9 @@ function writeErrors(items: TraceItem[], db: D1Database, receivedAtMs: number): 
         cpu_time_ms,
         wall_time_ms,
         truncated,
-        payload_json
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        payload_json,
+        error_reasons_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
       .bind(
         makeErrorId(item, fetchEvent, index),
@@ -129,6 +159,7 @@ function writeErrors(items: TraceItem[], db: D1Database, receivedAtMs: number): 
         item.wallTime,
         item.truncated ? 1 : 0,
         JSON.stringify(item),
+        JSON.stringify(reasons),
       );
   });
 
@@ -138,10 +169,11 @@ function writeErrors(items: TraceItem[], db: D1Database, receivedAtMs: number): 
 export default {
   tail(events: TraceItem[], env: LoggerEnv, ctx: ExecutionContext): void {
     // Keep the hot path to a few scalar checks; serialize and write only failures.
-    let errors: TraceItem[] | undefined;
+    let errors: { item: TraceItem; reasons: ErrorReason[] }[] | undefined;
     for (const item of events) {
-      if (isErrorTrace(item)) {
-        (errors ??= []).push(item);
+      const reasons = getErrorReasons(item);
+      if (reasons) {
+        (errors ??= []).push({ item, reasons });
       }
     }
     if (!errors) {
