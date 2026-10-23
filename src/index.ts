@@ -6,6 +6,7 @@ import { getRuntimeConfig } from "./lib/config";
 import { createRedisClient } from "./lib/redis";
 import { withRequestTelemetry } from "./lib/requestTelemetry";
 import { evaluateKarmaIfDue } from "./services/karma/evaluation";
+import { runAutomaticModerationQueueBatch } from "./services/moderation/automaticModeration";
 import type {
   OemModerationQueueMessage,
   OemTranslationQueueMessage,
@@ -14,7 +15,6 @@ import type {
 import { processWebhookQueueBatch } from "./services/moderation/notifications";
 import {
   ensureModerationBackfill,
-  processModerationQueueBatch,
   processTranslationQueueBatch,
 } from "./services/moderation/queue";
 import { drainProgressStatsOutbox } from "./services/progress/outbox";
@@ -109,7 +109,7 @@ export default {
     env: Bindings,
   ) {
     if (batch.queue === "oem-moderation") {
-      await processModerationQueueBatch(env, batch as MessageBatch<OemModerationQueueMessage>);
+      await runAutomaticModerationQueueBatch(env, batch as MessageBatch<OemModerationQueueMessage>);
       return;
     }
     if (batch.queue === "oem-translation") {

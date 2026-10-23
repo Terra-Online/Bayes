@@ -1,56 +1,16 @@
 import { getRuntimeConfig } from "@/lib/config";
-import { createRedisClient } from "@/lib/redis";
 import { getPendingOpenAISubmissions } from "@/repositories/submission/createSubmission";
 import {
   getSubmissionById,
   markSubmissionModerationQueued,
 } from "@/repositories/submission/statusSubmission";
-import { publishNotificationsCreated } from "@/services/notify/live";
 import { prewarmApprovedCommentTrans } from "@/services/upload/commentTranslation";
 import type { Bindings } from "@/types/app";
 
-import { moderateSubmissionById } from "./core";
-import type {
-  OemModerationQueueMessage,
-  OemTranslationQueueMessage,
-  PendingOpenAICompletionStats,
-} from "./messages";
-import {
-  createEmptyPendingOpenAICompletionStats,
-  notifyCommentTransPrewarmDone,
-  notifySubmissionModerationResult,
-  recordPendingOpenAICompletionStatus,
-} from "./notifications";
+import type { OemTranslationQueueMessage } from "./messages";
+import { notifyCommentTransPrewarmDone } from "./notifications";
 
 const MODERATION_BACKFILL_STALE_MS = 5 * 60 * 1000;
-
-type ModerationOptions = Parameters<typeof moderateSubmissionById>[2];
-
-function createModerationOptions(env: Bindings): ModerationOptions {
-  const config = getRuntimeConfig(env);
-  const redis = createRedisClient(env);
-  return {
-    openAiApiKey: env.OPENAI_API_KEY,
-    assetBaseUrl: config.ugcAssetBaseUrl,
-    ugcBucket: env.UGC_BUCKET,
-    ugcKv: env.OEM_KV,
-    redis,
-    surgeModeEnabled: config.surgeModeEnabled,
-    surgeBackoffMultiplier: config.surgeBackoffMultiplier,
-    skipAiModeration: config.skipAiModeration,
-    localAutoApprove: config.localUploadAutoApprove,
-    enqueueApprovedCommentTransPrewarm: (submissionId) =>
-      enqueueApprovedCommentTransPrewarm(env, submissionId, "auto_moderation"),
-    enqueueSubmissionModerationNotice: (submission, previousStatus, nextStatus) =>
-      notifySubmissionModerationResult(env, {
-        submission,
-        previousStatus,
-        nextStatus,
-        source: "auto_moderation",
-      }),
-    publishNotifications: (notifications) => publishNotificationsCreated(env, notifications),
-  };
-}
 
 export async function enqueueModeration(
   env: Bindings,
@@ -125,46 +85,6 @@ export async function ensureModerationBackfill(
   }
 
   return enqueued;
-}
-
-export async function processModerationQueueBatch(
-  env: Bindings,
-  batch: MessageBatch<OemModerationQueueMessage>,
-): Promise<PendingOpenAICompletionStats> {
-  const options = createModerationOptions(env);
-  const stats = createEmptyPendingOpenAICompletionStats();
-
-  for (const message of batch.messages) {
-    try {
-      await processModerationQueueMessage(env, message.body, options, stats);
-      message.ack();
-    } catch (error) {
-      console.warn("OEM_MODERATION_Q message failed", {
-        type: message.body?.type,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      message.retry();
-    }
-  }
-
-  return stats;
-}
-
-async function processModerationQueueMessage(
-  env: Bindings,
-  message: OemModerationQueueMessage,
-  options: ModerationOptions,
-  stats: PendingOpenAICompletionStats,
-): Promise<void> {
-  const status = await moderateSubmissionById(
-    env.DB,
-    message.submissionId,
-    options,
-    message.snapshotId,
-  );
-  if (status) {
-    recordPendingOpenAICompletionStatus(stats, status);
-  }
 }
 
 export async function processTranslationQueueBatch(

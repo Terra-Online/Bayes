@@ -1,4 +1,4 @@
-import { Hono, type Context } from "hono";
+import { Hono } from "hono";
 
 import { getRuntimeConfig } from "@/lib/config";
 import { ApiError } from "@/lib/errors";
@@ -6,7 +6,6 @@ import { createRedisClient } from "@/lib/redis";
 import { requireAuth, requireRole } from "@/middleware/auth";
 import { rateLimit } from "@/middleware/rate-limit";
 import { invalidateUploadCaches } from "@/publicRead/client/invalidate";
-import type { NotificationRecord } from "@/repositories/notifications";
 import {
   listDuplicateImageMarkers,
   listDuplicateMarkerImages,
@@ -16,11 +15,7 @@ import {
   getReviewSubmissions,
   markImageSubmissionsStaleByFilePathPrefix,
 } from "@/repositories/submission-review";
-import {
-  ALL_STATUSES,
-  type SubmissionRecord,
-  type SubmissionStatus,
-} from "@/repositories/submission/types";
+import { ALL_STATUSES, type SubmissionStatus } from "@/repositories/submission/types";
 import {
   updateSchema,
   listSchema,
@@ -31,17 +26,11 @@ import {
   warningSchema,
 } from "@/routes/schema/moderation";
 import { evaluateKarmaBatch } from "@/services/karma/evaluation";
-import { moderateSubmissionIds } from "@/services/moderation/core";
+import { runAutomaticModerationRequest } from "@/services/moderation/automaticModeration";
 import { getImageCoverage } from "@/services/moderation/imageCoverage";
 import { applyManualModeration } from "@/services/moderation/manualModeration";
-import { notifySubmissionModerationResult } from "@/services/moderation/notifications";
 import { getOrphanImages } from "@/services/moderation/orphanImages";
-import {
-  ensureModerationBackfill,
-  enqueueApprovedCommentTransPrewarm,
-} from "@/services/moderation/queue";
 import { sendModerationWarning } from "@/services/moderation/warnings";
-import { publishNotificationsCreated } from "@/services/notify/live";
 import type { AppEnv } from "@/types/app";
 
 function isModerationLocked(flag: string | undefined): boolean {
@@ -95,71 +84,6 @@ function resolveImageScope(
   }
 
   return {};
-}
-
-async function runModeration<E extends AppEnv>(
-  c: Context<E>,
-  payload: {
-    ids?: string[];
-    limit?: number;
-  },
-) {
-  const config = getRuntimeConfig(c.env);
-  const redis = createRedisClient(c.env);
-  const options = {
-    openAiApiKey: c.env.OPENAI_API_KEY,
-    assetBaseUrl: config.ugcAssetBaseUrl,
-    ugcBucket: c.env.UGC_BUCKET,
-    ugcKv: c.env.OEM_KV,
-    redis,
-    surgeModeEnabled: config.surgeModeEnabled,
-    surgeBackoffMultiplier: config.surgeBackoffMultiplier,
-    skipAiModeration: config.skipAiModeration,
-    localAutoApprove: config.localUploadAutoApprove,
-    enqueueApprovedCommentTransPrewarm: (submissionId: string) =>
-      enqueueApprovedCommentTransPrewarm(c.env, submissionId, "auto_moderation"),
-    enqueueSubmissionModerationNotice: (
-      submission: SubmissionRecord,
-      previousStatus: SubmissionStatus,
-      nextStatus: "active" | "pending_audit",
-    ) =>
-      notifySubmissionModerationResult(c.env, {
-        submission,
-        previousStatus,
-        nextStatus,
-        source: "auto_moderation",
-      }),
-    publishNotifications: (notifications: NotificationRecord[]) =>
-      publishNotificationsCreated(c.env, notifications),
-  };
-
-  if (payload.ids && payload.ids.length > 0) {
-    const processed = await moderateSubmissionIds(c.env.DB, options, payload.ids, 25_000);
-
-    return {
-      ok: true,
-      mode: "selected" as const,
-      requested: payload.ids.length,
-      processed: processed.processed,
-      active: processed.stats.active,
-      pendingAudit: processed.stats.pendingAudit,
-      stale: processed.stats.stale,
-    };
-  }
-
-  const limit = payload.limit ?? 5;
-  const enqueued = await ensureModerationBackfill(c.env, limit);
-
-  return {
-    ok: true,
-    mode: "queue" as const,
-    requested: limit,
-    enqueued,
-    processed: 0,
-    active: 0,
-    pendingAudit: 0,
-    stale: 0,
-  };
 }
 
 export function createRoutes() {
@@ -399,10 +323,15 @@ export function createRoutes() {
         );
       }
 
-      return c.json(await runModeration(c, parsed.data));
+      const result = await runAutomaticModerationRequest(c.env, {
+        submissionIds: parsed.data.ids,
+        limit: parsed.data.limit,
+      });
+      return c.json({ ok: true, ...result });
     })
     .post("/run-once", requireAuth, requireRole(["a"]), rateLimit("auth"), async (c) => {
-      return c.json(await runModeration(c, { limit: 5 }));
+      const result = await runAutomaticModerationRequest(c.env, { limit: 5 });
+      return c.json({ ok: true, ...result });
     })
     .post("/karma/run-once", requireAuth, requireRole(["a"]), rateLimit("auth"), async (c) => {
       const redis = createRedisClient(c.env);

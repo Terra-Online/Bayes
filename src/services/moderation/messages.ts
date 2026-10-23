@@ -56,13 +56,6 @@ export type ModerationNotificationEvent =
       targets: TransPrewarmTarget[];
     };
 
-export interface PendingOpenAICompletionStats {
-  processed: number;
-  active: number;
-  pendingAudit: number;
-  stale: number;
-}
-
 export type OemModerationQueueMessage = {
   type: "moderation";
   submissionId: string;
