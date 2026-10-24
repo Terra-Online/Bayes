@@ -1,7 +1,6 @@
-// Keep the owner-provided lookup at its existing path to preserve local data setup.
-import officialMarkerHashToPointId from "@/routes/binding/officialMarkerHashToPointId.json";
 import type { DecryptedBinding } from "@/services/official/auth/types";
 import { getEndfieldMapMarkList } from "@/services/official/client/mapClient";
+import officialMarkerHashToPointId from "@/services/official/officialMarkerHashToPointId.json";
 import type { OfficialMapMark, OfficialMarksResult } from "@/services/official/types";
 import type { Bindings } from "@/types/app";
 

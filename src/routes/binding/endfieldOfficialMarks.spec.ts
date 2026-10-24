@@ -14,7 +14,7 @@ const boundary = vi.hoisted(() => ({
 }));
 
 // Substitute lookup data while keeping the official-marks application service real.
-vi.mock("@/routes/binding/officialMarkerHashToPointId.json", () => ({
+vi.mock("@/services/official/officialMarkerHashToPointId.json", () => ({
   default: { "mark-a": "point-a", "mark-b": "point-b" },
 }));
 
