@@ -73,6 +73,7 @@ import {
   imagesQuerySchema,
   imageUploadFieldsSchema,
 } from "@/routes/schema/uploads";
+import { translateVisibleComments } from "@/services/commentTranslation/commentTranslation";
 import {
   notifyFlagCreated,
   notifyFlagRemoved,
@@ -80,7 +81,6 @@ import {
   notifyRemoveRequestCreated,
 } from "@/services/moderation/notifications";
 import { publishNotificationsCreated } from "@/services/notify/live";
-import { translateVisibleComments } from "@/services/upload/commentTranslation";
 import { normalizeUploadMime } from "@/services/upload/mime";
 import {
   buildUploadObjectKey,

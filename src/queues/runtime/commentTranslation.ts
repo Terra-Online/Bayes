@@ -1,5 +1,5 @@
 import type { TranslationMsg } from "@/queues/types/messages";
-import { prewarmCommentTranslationWithNotification } from "@/services/upload/commentTranslationPrewarm";
+import { prewarmCommentTranslationWithNotification } from "@/services/commentTranslation/commentTranslationPrewarm";
 import type { Bindings } from "@/types/app";
 
 export async function processTranslationQueueBatch(

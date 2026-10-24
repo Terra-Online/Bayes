@@ -1,6 +1,6 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { CommentTranslationItem } from "@/services/upload/commentTranslation";
+import type { CommentTranslationItem } from "@/services/commentTranslation/commentTranslation";
 import {
   createCommentTranslationFixture,
   createTranslationSigningKey,
@@ -266,6 +266,41 @@ describe("translation failure outcomes", () => {
       expect.objectContaining({ translatedContent: translatedText, cached: true }),
     ]);
     expect(translationRequests).toHaveLength(1);
+  });
+
+  it("translates groups in request order using the first requested original text", async () => {
+    const firstRequestedText = "\n入口在东边。\n";
+    const exitText = "出口在西边。";
+    const entranceTranslation = "The entrance is on the east side.";
+    const exitTranslation = "The exit is on the west side.";
+    for (const [id, content] of [
+      ["a", "入口在东边。"],
+      ["z", firstRequestedText],
+      ["middle", exitText],
+    ]) {
+      insertSubmission(database.sqlite, { id, userId: "author", content });
+    }
+    provider.translationResponse = () =>
+      Response.json({
+        translations: [
+          { translatedText: entranceTranslation, detectedLanguageCode: "zh-CN" },
+          { translatedText: exitTranslation, detectedLanguageCode: "zh-CN" },
+        ],
+      });
+
+    const items = await translations({ commentIds: ["z", "middle", "a"] });
+
+    expect(translationRequests.map(({ contents }) => contents)).toEqual([
+      [firstRequestedText, exitText],
+    ]);
+    expect(
+      items.map(({ commentId, translatedContent }) => ({ commentId, translatedContent })),
+    ).toEqual([
+      { commentId: "z", translatedContent: entranceTranslation },
+      { commentId: "middle", translatedContent: exitTranslation },
+      { commentId: "a", translatedContent: entranceTranslation },
+    ]);
+    expect(storedTranslations()).toHaveLength(2);
   });
 
   it("saves successful batch items while reporting an empty translation for another comment", async () => {

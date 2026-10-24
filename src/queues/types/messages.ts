@@ -1,6 +1,6 @@
 import type {
   ModerationNotificationEvent,
-  TransPrewarmSource,
+  SubmissionModerationSource,
 } from "@/services/moderation/messages";
 
 // "manual" identifies an operator-triggered automatic review, not a manual review decision.
@@ -17,7 +17,7 @@ export type AutoModerationMsg = {
 export type TranslationMsg = {
   type: "comment_translation_prewarm";
   submissionId: string;
-  source: TransPrewarmSource;
+  source: SubmissionModerationSource;
   queuedAt: string;
 };
 
