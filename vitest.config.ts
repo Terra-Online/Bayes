@@ -20,7 +20,7 @@ export default defineConfig({
         "src/repositories/binding/types.ts",
         "src/routes/auth/types.ts",
         "src/services/official/auth/types.ts",
-        "src/services/locator/types.ts",
+        "src/services/official/locator/types.ts",
         "src/services/official/types.ts",
         "src/services/moderation/messages.ts",
       ],

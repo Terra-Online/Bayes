@@ -1,7 +1,7 @@
-import { getLocatorCache, writePositionCache } from "@/services/locator/cache";
-import type { PositionCacheEntry } from "@/services/locator/types";
 import type { DecryptedBinding } from "@/services/official/auth/types";
 import { getEndfieldPosition } from "@/services/official/client/positionSocket";
+import { getLocatorCache, writePositionCache } from "@/services/official/locator/cache";
+import type { PositionCacheEntry } from "@/services/official/locator/types";
 import type { Bindings } from "@/types/app";
 
 // Share only in-flight position reads within this request. Completed values use the locator cache.

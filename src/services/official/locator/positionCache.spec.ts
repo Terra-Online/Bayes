@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { deleteLocatorCaches, readPositionCache } from "@/services/locator/cache";
 import type { DecryptedBinding } from "@/services/official/auth/types";
+import { deleteLocatorCaches, readPositionCache } from "@/services/official/locator/cache";
 import type { Bindings } from "@/types/app";
 
 import { createPositionRefreshScope, refreshPositionCache } from "./positionCache";

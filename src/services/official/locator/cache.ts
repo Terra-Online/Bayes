@@ -1,5 +1,5 @@
 import type { EndfieldBindingRow } from "@/repositories/binding/types";
-import type { PositionCacheEntry } from "@/services/locator/types";
+import type { PositionCacheEntry } from "@/services/official/locator/types";
 import type { Bindings } from "@/types/app";
 
 const MAX_CACHE_ENTRIES = 1000;

@@ -2,9 +2,9 @@ import type { Context } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError } from "@/lib/errors";
-import { positionReconnectDelay } from "@/services/locator/reconnect";
 import type { DecryptedBinding } from "@/services/official/auth/types";
 import type { EndfieldPositionTermination } from "@/services/official/client/positionSocket";
+import { positionReconnectDelay } from "@/services/official/locator/reconnect";
 import type { AppEnv } from "@/types/app";
 
 const mocks = vi.hoisted(() => ({ connect: vi.fn(), binding: vi.fn() }));
@@ -18,11 +18,11 @@ vi.mock("@/services/official/auth/credentials", () => ({
   isAutoRefreshableEndfieldError: () => false,
   recoverBindingCredentials: vi.fn(),
 }));
-vi.mock("@/services/locator/ticket", () => ({
+vi.mock("@/services/official/locator/ticket", () => ({
   verifyLocatorSocketTicket: async () => "user-1",
   issueLocatorSocketTicket: vi.fn(),
 }));
-vi.mock("@/services/locator/cache", () => ({
+vi.mock("@/services/official/locator/cache", () => ({
   readPositionCache: vi.fn(),
   writePositionCache: vi.fn(),
   getPositionCacheKey: () => "key",

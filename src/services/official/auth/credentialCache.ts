@@ -1,4 +1,4 @@
-import { deleteLocatorCaches } from "@/services/locator/cache";
+import { deleteLocatorCaches } from "@/services/official/locator/cache";
 import type { Bindings } from "@/types/app";
 
 import type { DecryptedBinding } from "./types";

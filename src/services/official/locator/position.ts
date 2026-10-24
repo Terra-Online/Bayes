@@ -5,6 +5,7 @@ import {
 import type { DecryptedBinding } from "@/services/official/auth/types";
 import type { Bindings } from "@/types/app";
 
+import { prepareLocatorAccess, type LocatorIdentity } from "./access";
 import {
   getPositionCacheKey,
   POSITION_CACHE_FRESH_MS,
@@ -16,6 +17,7 @@ import {
   refreshPositionCache,
   type PositionRefreshDependencies,
 } from "./positionCache";
+import { issueLocatorSocketTicket } from "./ticket";
 import type { PositionCacheEntry } from "./types";
 
 type PositionReadResult = {
@@ -54,18 +56,22 @@ async function readPositionWithBinding(
 }
 
 export async function readPosition(
-  input: { uid: string; binding: DecryptedBinding },
+  input: { identity: LocatorIdentity; includeSocketTicket?: boolean },
   env: Bindings,
-): Promise<PositionReadResult> {
+): Promise<PositionReadResult & { socketTicket?: string }> {
+  const { uid, binding: initialBinding } = await prepareLocatorAccess(input.identity, env);
+  const socketTicket = input.includeSocketTicket
+    ? await issueLocatorSocketTicket(env, uid)
+    : undefined;
   const scope = createPositionRefreshScope(env);
   try {
-    return await readPositionWithBinding(input.uid, input.binding, scope);
+    return { ...(await readPositionWithBinding(uid, initialBinding, scope)), socketTicket };
   } catch (rejection) {
     const binding = await recoverBindingCredentials(
-      { uid: input.uid, rejectedCredentials: input.binding, rejection },
+      { uid, rejectedCredentials: initialBinding, rejection },
       { env, recoveryScope: createCredentialRecoveryScope() },
     );
     // The original operation retries once; recovery alone does not guarantee upstream acceptance.
-    return readPositionWithBinding(input.uid, binding, scope);
+    return { ...(await readPositionWithBinding(uid, binding, scope)), socketTicket };
   }
 }
