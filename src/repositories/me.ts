@@ -26,14 +26,13 @@ type ContributionRow = {
   moderation_note: string | null;
 };
 
-export type ContributionRecord = {
+export type ContributionRecord = ContributionReviewEvidence & {
   id: string;
   kind: SubmissionKind;
   markerId: string;
   poiType: string;
   content: string | null;
   hasImageFile: boolean;
-  reviewEvidence: ContributionReviewEvidence;
 };
 
 type ContributionRecordPage = {
@@ -55,18 +54,16 @@ function mapContributionRecord(row: ContributionRow): ContributionRecord {
     poiType: row.poi_type,
     content: row.content,
     hasImageFile: Boolean(row.file_path),
-    reviewEvidence: {
-      status: row.status,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-      events,
-      legacy: {
-        manualAt: row.manual_at,
-        publicAt: row.public_at,
-        hasManualEvidence: Boolean(row.manual_review),
-        hasPublicationEvidence: Boolean(row.was_published),
-        moderationNote: row.moderation_note,
-      },
+    status: row.status,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    events,
+    legacy: {
+      manualAt: row.manual_at,
+      publicAt: row.public_at,
+      hasManualEvidence: Boolean(row.manual_review),
+      hasPublicationEvidence: Boolean(row.was_published),
+      moderationNote: row.moderation_note,
     },
   };
 }
@@ -232,17 +229,18 @@ export async function listContributionRecords(
   const visibleRows = rows.slice(0, payload.limit);
   // The list already verified ownership and read each file path. Reuse that
   // result for image requests instead of one extra D1 lookup per thumbnail.
-  visibleRows.forEach((row) => {
+  const records = visibleRows.map((row) => {
     if (row.kind === "image" && row.file_path) {
       rememberPreview(db, JSON.stringify([payload.uid, row.id]), {
         file_path: row.file_path,
         mime_type: row.mime_type ?? null,
       });
     }
+    return mapContributionRecord(row);
   });
   const last = visibleRows.at(-1);
   return {
-    records: visibleRows.map(mapContributionRecord),
+    records,
     nextCursor:
       hasMore && last
         ? encodeContributionCursor({ createdAt: last.created_at, id: last.id })

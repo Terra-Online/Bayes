@@ -167,14 +167,21 @@ export function projectContributionReview(
     public: null,
     archived: null,
   };
-  path.forEach((step) => {
+  let manual = false;
+  let published = false;
+  for (const step of path) {
     times[step.key] = step.at;
-  });
+    if (step.key === "manual") {
+      manual = true;
+    } else if (step.key === "public") {
+      published = true;
+    }
+  }
   return {
     visibility: visibilityFor(evidence.status),
     review: {
-      manual: path.some((step) => step.key === "manual"),
-      published: path.some((step) => step.key === "public"),
+      manual,
+      published,
       times,
       path,
     },

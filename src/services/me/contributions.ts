@@ -10,20 +10,24 @@ export async function listContributions(
 ): Promise<ContributionPage> {
   const page = await listContributionRecords(db, query);
   return {
-    items: page.records.map((record) => ({
-      id: record.id,
-      kind: record.kind,
-      markerId: record.markerId,
-      poiType: record.poiType,
-      content: record.content,
-      previewUrl:
-        record.kind === "image" && record.hasImageFile && query.previewBaseUrl
-          ? buildPublicUgcAssetUrl(query.previewBaseUrl, `${record.id}/preview`)
-          : null,
-      status: record.reviewEvidence.status,
-      ...projectContributionReview(record.reviewEvidence),
-      createdAt: record.reviewEvidence.createdAt,
-    })),
+    items: page.records.map((record) => {
+      const projection = projectContributionReview(record);
+      return {
+        id: record.id,
+        kind: record.kind,
+        markerId: record.markerId,
+        poiType: record.poiType,
+        content: record.content,
+        previewUrl:
+          record.kind === "image" && record.hasImageFile && query.previewBaseUrl
+            ? buildPublicUgcAssetUrl(query.previewBaseUrl, `${record.id}/preview`)
+            : null,
+        status: record.status,
+        visibility: projection.visibility,
+        review: projection.review,
+        createdAt: record.createdAt,
+      };
+    }),
     nextCursor: page.nextCursor,
   };
 }
