@@ -233,17 +233,6 @@ export function buildUploadObjectKey(payload: {
   return prefix ? `${prefix}/${baseKey}` : baseKey;
 }
 
-export function normalizePathPart(value: string): string {
-  return (
-    value
-      .trim()
-      .replace(/[^a-zA-Z0-9_-]/g, "-")
-      .replace(/-+/g, "-")
-      .replace(/^-|-$/g, "")
-      .slice(0, 96) || "unknown"
-  );
-}
-
 function normalizePathPrefix(value: string | undefined): string {
   return (value ?? "")
     .trim()

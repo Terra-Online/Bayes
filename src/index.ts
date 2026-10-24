@@ -14,11 +14,11 @@ import {
   getProgressStatsOutboxHealth,
 } from "./services/progress/repository";
 import type { Bindings } from "./types/app";
-export { oem_imgTrans } from "./services/upload/imageTranscoderContainer";
-export { OEMUserDO } from "./services/progress/userDo";
-export { OEMStatsDO } from "./services/progress/statsDo";
-export { OEMNotificationDO } from "./services/notify/live";
 export { PublicReadCache } from "./publicRead/origin/entrypoint";
+export { oem_imgTrans } from "./services/ugc/submission/imageTranscoderContainer";
+export { OEMNotificationDO } from "./services/notify/live";
+export { OEMStatsDO } from "./services/progress/statsDo";
+export { OEMUserDO } from "./services/progress/userDo";
 
 const app = createApp();
 

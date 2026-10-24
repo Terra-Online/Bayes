@@ -5,7 +5,7 @@ import { notifyCommentTransPrewarmDone } from "@/services/moderation/notificatio
 import { isGoogleTranslateConfigured } from "@/services/translation/googleTranslation";
 import type { Bindings } from "@/types/app";
 
-import { translateVisibleComments } from "./commentTranslation";
+import { translateVisibleComments } from "./comments";
 import type { CommentTranslationPrewarmTarget } from "./types";
 
 export async function prewarmCommentTranslationWithNotification(

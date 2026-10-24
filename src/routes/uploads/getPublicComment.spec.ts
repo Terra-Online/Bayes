@@ -1,35 +1,29 @@
-import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { createApp } from "@/app";
 import { runWithAuthRequest } from "@/lib/auth/createAuth";
-import { onAppError } from "@/middleware/error-handler";
 import type { PublicCommentContext } from "@/repositories/submission/getPublicComment";
 import { createMockBindings, type MockBindings } from "@/test/bindings";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { insertAuthUser, insertSession } from "@/test/fixtures/auth";
 import {
   insertSubmission,
-  type SubmissionFixture,
   type SeededSubmission,
+  type SubmissionFixture,
 } from "@/test/fixtures/submissions";
 import { insertUser } from "@/test/fixtures/users";
-import type { AppEnv } from "@/types/app";
-
-import { createRoutes } from "./createRoutes";
 
 vi.mock("cloudflare:workers", () => ({ DurableObject: class {}, exports: {} }));
 vi.mock("@cloudflare/containers", () => ({ getRandom: vi.fn() }));
 
 let database: TestDatabase;
 let mocks: MockBindings;
-let app: Hono<AppEnv>;
+let app: ReturnType<typeof createApp>;
 
 beforeEach(() => {
   database = createTestDatabase();
   mocks = createMockBindings({ DB: database.db });
-  app = new Hono<AppEnv>();
-  app.onError(onAppError);
-  app.route("/uploads/v1", createRoutes());
+  app = createApp();
   insertUser(database.sqlite, {
     uid: "root-author",
     uid_number: 1,
@@ -379,7 +373,7 @@ describe("public comment context through HTTP", () => {
         insertComment(fixture);
       }
 
-      const response = await request(path);
+      const response = await request(path, { "x-request-id": "comment-context-not-found" });
       const body = await response.text();
 
       expect(response.status).toBe(404);
@@ -387,9 +381,11 @@ describe("public comment context through HTTP", () => {
       expect(JSON.parse(body)).toEqual({
         code: "COMMENT_NOT_FOUND",
         message: "Comment not found.",
+        requestId: "comment-context-not-found",
         error: {
           code: "COMMENT_NOT_FOUND",
           message: "Comment not found.",
+          requestId: "comment-context-not-found",
         },
       });
       if (fixture) {

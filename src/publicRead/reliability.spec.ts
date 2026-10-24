@@ -1,10 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { publicReadResponse } from "@/routes/uploads/responses";
 import { createMockBindings } from "@/test/bindings";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { insertSubmission } from "@/test/fixtures/submissions";
 import { insertUser } from "@/test/fixtures/users";
 import type { Bindings } from "@/types/app";
+
+import {
+  readPublicCommentsFromWorkersCache,
+  readPublicImagesFromWorkersCache,
+} from "./client/client";
+import { PublicReadCache } from "./origin/entrypoint";
 
 const mocks = vi.hoisted(() => ({ fetch: vi.fn() }));
 vi.mock("cloudflare:workers", () => ({
@@ -16,18 +23,12 @@ vi.mock("cloudflare:workers", () => ({
     ) {}
   },
 }));
-import {
-  publicReadResponse,
-  readPublicImagesFromWorkersCache,
-  readPublicCommentsFromWorkersCache,
-} from "./client/client";
 const fetchPublicImagesFromWorkersCache = async (
   payload: Parameters<typeof readPublicImagesFromWorkersCache>[0],
 ) => publicReadResponse(await readPublicImagesFromWorkersCache(payload));
 const fetchPublicCommentsFromWorkersCache = async (
   payload: Parameters<typeof readPublicCommentsFromWorkersCache>[0],
 ) => publicReadResponse(await readPublicCommentsFromWorkersCache(payload));
-import { PublicReadCache } from "./origin/entrypoint";
 
 let database: TestDatabase;
 let backgroundTasks: Promise<unknown>[];

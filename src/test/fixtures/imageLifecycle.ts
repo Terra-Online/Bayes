@@ -1,8 +1,7 @@
 import type { SQLOutputValue } from "node:sqlite";
 
-import { onAppError } from "@/middleware/error-handler";
+import { createApp } from "@/app";
 import type { AutoModerationMsg, WebhookMsg } from "@/queues/types/messages";
-import { createRoutes } from "@/routes/uploads/createRoutes";
 import { createMockBindings } from "@/test/bindings";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import type { AppEnv } from "@/types/app";
@@ -39,6 +38,8 @@ export function createImageLifecycleFixture(): ImageLifecycleFixture {
     ["reader", "n"],
     ["other-reader", "n"],
     ["admin", "a"],
+    ["reviewer", "p"],
+    ["root", "r"],
     ["suspended", "s"],
   ]) {
     insertUser(database.sqlite, { uid, role });
@@ -78,12 +79,11 @@ export function createImageLifecycleFixture(): ImageLifecycleFixture {
   } as unknown as AppEnv["Bindings"];
 
   async function request(path: string, user: string | null = "author", body?: FormData | object) {
-    const app = createRoutes();
-    app.onError(onAppError);
+    const app = createApp();
     const pending: Promise<unknown>[] = [];
     const multipart = body instanceof FormData;
     const response = await app.request(
-      `http://localhost${path}`,
+      `http://localhost/uploads/v1${path}`,
       {
         method: body === undefined ? "GET" : "POST",
         headers: {

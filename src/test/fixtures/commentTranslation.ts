@@ -2,8 +2,7 @@ import type { SQLOutputValue } from "node:sqlite";
 
 import { vi } from "vitest";
 
-import { onAppError } from "@/middleware/error-handler";
-import { createRoutes } from "@/routes/uploads/createRoutes";
+import { createApp } from "@/app";
 import { createMockBindings } from "@/test/bindings";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import type { AppEnv } from "@/types/app";
@@ -124,11 +123,10 @@ export function createCommentTranslationFixture({
   };
 
   async function request(body: unknown, user: string | null = "reader") {
-    const app = createRoutes();
-    app.onError(onAppError);
+    const app = createApp();
     const pending: Promise<unknown>[] = [];
     const response = await app.request(
-      "http://localhost/comments/translations",
+      "http://localhost/uploads/v1/comments/translations",
       {
         method: "POST",
         headers: { ...((user && sessions[user]) || {}), "content-type": "application/json" },

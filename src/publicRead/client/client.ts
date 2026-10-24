@@ -3,16 +3,12 @@ import { exports as workerExports } from "cloudflare:workers";
 import { transientDependencyError } from "@/lib/errors";
 import { buildPublicReadCacheKey, buildPublicReadMarkerTag } from "@/publicRead/contract/cacheKeys";
 import {
-  PUBLIC_EMPTY_IMAGE_LIST_CACHE_CONTROL,
-  PUBLIC_IMAGE_LIST_CACHE_CONTROL,
-} from "@/publicRead/contract/cachePolicy";
-import {
   PUBLIC_MARKER_COMMENT_CACHE_LIMIT,
   PUBLIC_MARKER_COMMENT_REPLY_CACHE_LIMIT,
   PUBLIC_MARKER_IMAGE_CACHE_LIMIT,
+  type PublicMarkerListResponse,
   type PublicReadCacheNamespace,
   type PublicReadMarkerKind,
-  type PublicMarkerListResponse,
 } from "@/publicRead/contract/markers";
 import {
   buildProgressStatsSearchParams,
@@ -55,18 +51,12 @@ async function fetchSingleMarker(path: string, searchParams: URLSearchParams): P
   return fetchPublicRead(request, cacheKey);
 }
 
-function noStoreError(status: number, message: string): Response {
-  return new Response(JSON.stringify({ code: "PUBLIC_CACHE_READ_FAILED", message }), {
-    status,
-    headers: {
-      "content-type": "application/json; charset=utf-8",
-      "Cache-Control": "private, no-store",
-      ...(status === 503 ? { "retry-after": "5" } : {}),
-    },
-  });
+function readFailure(status: number, message: string): PublicReadFailure {
+  return { ok: false, error: { code: "PUBLIC_CACHE_READ_FAILED", status, message } };
 }
 
 type MarkerItemsResult<T> = {
+  ok: true;
   failedCount: number;
   failedMarkerIds: string[];
   items: T[][];
@@ -77,7 +67,7 @@ async function readItems<T>(
   request: (markerId: string) => Promise<Response>,
   kind: PublicReadMarkerKind,
   selectItems: (items: T[]) => T[],
-): Promise<MarkerItemsResult<T> | Response> {
+): Promise<MarkerItemsResult<T> | PublicReadFailure> {
   let nextIndex = 0;
   const results: Array<T[] | undefined> = new Array(markerIds.length);
   let failureStatus: number | undefined;
@@ -152,16 +142,16 @@ async function readItems<T>(
     );
   }
   if (items.length === 0 && failedCount > 0) {
-    return noStoreError(failureStatus ?? 502, "Public cache reads failed.");
+    return readFailure(failureStatus ?? 502, "Public cache reads failed.");
   }
-  return { failedCount, failedMarkerIds, items };
+  return { ok: true, failedCount, failedMarkerIds, items };
 }
 
 async function readSingleItem<T>(
   request: () => Promise<Response>,
   kind: PublicReadMarkerKind,
   selectItems: (items: T[]) => T[],
-): Promise<MarkerItemsResult<T> | Response> {
+): Promise<MarkerItemsResult<T> | PublicReadFailure> {
   const startedAt = Date.now();
   let stage: "fetch" | "body" = "fetch";
   let upstreamStatus: number | undefined;
@@ -177,7 +167,7 @@ async function readSingleItem<T>(
     if (!Array.isArray(payload.items)) {
       throw new Error("Public cache response did not contain an items array.");
     }
-    return { failedCount: 0, failedMarkerIds: [], items: [selectItems(payload.items)] };
+    return { ok: true, failedCount: 0, failedMarkerIds: [], items: [selectItems(payload.items)] };
   } catch (reason) {
     const transient = Boolean(transientDependencyError(reason));
     console.error("[public-read] single marker read failed", {
@@ -190,43 +180,36 @@ async function readSingleItem<T>(
     });
     // A successful transport status cannot describe an unreadable cache body.
     const status = stage === "body" ? 502 : (upstreamStatus ?? 502);
-    return noStoreError(transient ? 503 : status, "Public cache reads failed.");
+    return readFailure(transient ? 503 : status, "Public cache reads failed.");
   }
 }
 
-export type PublicReadResult<T> = {
-  payload: { items: T[]; partial?: boolean; failedMarkerIds?: string[] };
-  headers: Record<string, string>;
+export type PublicReadFailure = {
+  ok: false;
+  error: { code: "PUBLIC_CACHE_READ_FAILED"; status: number; message: string };
 };
 
-export function publicReadResponse<T>(result: PublicReadResult<T> | Response): Response {
-  return result instanceof Response
-    ? result
-    : Response.json(result.payload, { headers: result.headers });
-}
+export type PublicReadSuccess<T> = {
+  ok: true;
+  payload: { items: T[] } & (
+    | { partial: true; failedMarkerIds: string[] }
+    | { partial?: false; failedMarkerIds?: never }
+  );
+  kind: PublicReadMarkerKind;
+};
+
+export type PublicReadResult<T> = PublicReadSuccess<T> | PublicReadFailure;
 
 function combinedResult<T>(
   items: T[],
-  cacheControl: string,
-  markerHeader: string,
+  kind: PublicReadMarkerKind,
   failedCount = 0,
   failedMarkerIds: string[] = [],
-): PublicReadResult<T> {
-  const partial = failedCount > 0;
+): PublicReadSuccess<T> {
   return {
-    payload: { items, ...(partial ? { partial: true, failedMarkerIds } : {}) },
-    headers: {
-      "content-type": "application/json; charset=utf-8",
-      "Cache-Control": partial ? "private, no-store" : cacheControl,
-      [markerHeader]: "enabled",
-      "x-oem-workers-cache": "per-marker",
-      ...(partial
-        ? {
-            "x-oem-partial-response": "true",
-            "x-oem-failed-marker-count": String(failedCount),
-          }
-        : {}),
-    },
+    ok: true,
+    payload: failedCount > 0 ? { items, partial: true, failedMarkerIds } : { items },
+    kind,
   };
 }
 
@@ -235,7 +218,7 @@ export async function readPublicImagesFromWorkersCache(payload: {
   limit: number;
   cacheNamespace: PublicReadCacheNamespace;
   assetBaseUrl: string;
-}): Promise<PublicReadResult<PublicSubmissionImage> | Response> {
+}): Promise<PublicReadResult<PublicSubmissionImage>> {
   const markerIds = normalizePublicReadMarkerIds(payload.markerIds);
   const request = (markerId: string) =>
     fetchSingleMarker(
@@ -257,18 +240,12 @@ export async function readPublicImagesFromWorkersCache(payload: {
       : await readItems<PublicSubmissionImage>(markerIds, request, "image", (images) =>
           images.slice(0, payload.limit),
         );
-  if (markerItems instanceof Response) {
+  if (!markerItems.ok) {
     return markerItems;
   }
 
   const items = markerItems.items.flat();
-  return combinedResult(
-    items,
-    items.length > 0 ? PUBLIC_IMAGE_LIST_CACHE_CONTROL : PUBLIC_EMPTY_IMAGE_LIST_CACHE_CONTROL,
-    "x-oem-marker-kv-cache",
-    markerItems.failedCount,
-    markerItems.failedMarkerIds,
-  );
+  return combinedResult(items, "image", markerItems.failedCount, markerItems.failedMarkerIds);
 }
 
 export async function readPublicCommentsFromWorkersCache(payload: {
@@ -276,7 +253,7 @@ export async function readPublicCommentsFromWorkersCache(payload: {
   limit: number;
   replyLimit: number;
   cacheNamespace: PublicReadCacheNamespace;
-}): Promise<PublicReadResult<PublicSubmissionComment> | Response> {
+}): Promise<PublicReadResult<PublicSubmissionComment>> {
   const markerIds = normalizePublicReadMarkerIds(payload.markerIds);
   const request = (markerId: string) =>
     fetchSingleMarker(
@@ -301,18 +278,12 @@ export async function readPublicCommentsFromWorkersCache(payload: {
           selectComments,
         )
       : await readItems<PublicSubmissionComment>(markerIds, request, "comment", selectComments);
-  if (markerItems instanceof Response) {
+  if (!markerItems.ok) {
     return markerItems;
   }
 
   const items = markerItems.items.flat();
-  return combinedResult(
-    items,
-    items.length > 0 ? "public, max-age=15" : "public, max-age=5",
-    "x-oem-marker-comment-kv-cache",
-    markerItems.failedCount,
-    markerItems.failedMarkerIds,
-  );
+  return combinedResult(items, "comment", markerItems.failedCount, markerItems.failedMarkerIds);
 }
 
 export async function fetchProgressStatsFromWorkersCache(
@@ -349,3 +320,8 @@ export async function purgePublicMarkerResponseCache(
 }
 
 export type { PublicMarkerListResponse } from "@/publicRead/contract/markers";
+
+export {
+  PUBLIC_EMPTY_IMAGE_LIST_CACHE_CONTROL,
+  PUBLIC_IMAGE_LIST_CACHE_CONTROL,
+} from "@/publicRead/contract/cachePolicy";
