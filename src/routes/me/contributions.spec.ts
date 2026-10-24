@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { onAppError } from "@/middleware/error-handler";
-import type { ContributionItem } from "@/repositories/me";
+import type { ContributionPage } from "@/services/me/contract/contributions";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { insertAuthUser, insertSession, testAuthConfig } from "@/test/fixtures/auth";
 import { insertSubmission } from "@/test/fixtures/submissions";
@@ -53,8 +53,6 @@ function request(path: string, uid = "author") {
     ...testAuthConfig,
   } as AppEnv["Bindings"]);
 }
-
-type ContributionPage = { items: ContributionItem[]; nextCursor: string | null };
 
 async function contributions(query = "", uid = "author"): Promise<ContributionPage> {
   const response = await request(`/contributions${query}`, uid);

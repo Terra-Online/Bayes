@@ -1,40 +1,11 @@
-import {
-  AI_ACTIVE_MODERATION_NOTE_PREFIX,
-  AI_PENDING_AUDIT_MODERATION_NOTE_PREFIX,
-  AI_STALE_MODERATION_NOTE_PREFIX,
-  RECALL_MODERATION_NOTE_PREFIX,
-} from "@/lib/moderation";
-import { buildPublicUgcAssetUrl } from "@/lib/publicUgcAssets";
+import type {
+  ContributionCursor,
+  ContributionQuery,
+  ContributionReviewEvidence,
+  ReviewEvent,
+} from "@/services/me/contract/contributions";
 
 import type { SubmissionKind, SubmissionStatus } from "./submission/types";
-
-type ReviewKey = "uploaded" | "ai" | "manual" | "public" | "archived";
-type ReviewStep = { key: ReviewKey; at: string | null };
-type ReviewEvent = {
-  from: SubmissionStatus;
-  to: SubmissionStatus;
-  source: "auto_moderation" | "manual_moderation" | "user_action";
-  at: string;
-  aiReviewed: number;
-};
-
-export type ContributionItem = {
-  id: string;
-  kind: SubmissionKind;
-  markerId: string;
-  poiType: string;
-  content: string | null;
-  previewUrl: string | null;
-  status: SubmissionStatus;
-  visibility: "public" | "private" | "unavailable";
-  review: {
-    manual: boolean;
-    published: boolean;
-    times: Record<ReviewKey, string | null>;
-    path: ReviewStep[];
-  };
-  createdAt: string;
-};
 
 type ContributionRow = {
   id: string;
@@ -55,178 +26,45 @@ type ContributionRow = {
   moderation_note: string | null;
 };
 
-type ContributionCursor = { createdAt: string; id: string };
+export type ContributionRecord = ContributionReviewEvidence & {
+  id: string;
+  kind: SubmissionKind;
+  markerId: string;
+  poiType: string;
+  content: string | null;
+  hasImageFile: boolean;
+};
 
-function visibilityFor(status: SubmissionStatus): ContributionItem["visibility"] {
-  if (status === "active" || status === "flagged" || status === "remove_request") {
-    return "public";
-  }
-  if (status === "stale") {
-    return "unavailable";
-  }
-  return "private";
-}
+type ContributionRecordPage = {
+  records: ContributionRecord[];
+  nextCursor: string | null;
+};
 
-function reviewPath(row: ContributionRow): ReviewStep[] {
-  const path: ReviewStep[] = [{ key: "uploaded", at: row.created_at }];
-  const add = (key: ReviewKey, at: string | null) => {
-    const last = path.at(-1);
-    if (last?.key === key) {
-      last.at = at ?? last.at;
-    } else {
-      path.push({ key, at });
-    }
-  };
+function mapContributionRecord(row: ContributionRow): ContributionRecord {
   const events = JSON.parse(row.review_events) as ReviewEvent[];
-  // Notifications retained only some older transitions. Seed known earlier
-  // stages, but do not claim an interrupted AI review was completed.
-  const firstTime = events[0]?.at;
-  if (!events.length && !row.manual_at && !row.public_at) {
-    // Fixed prefixes were written by older moderation code; they can confirm
-    // stages even when no notification timestamp survives.
-    const note = row.moderation_note;
-    if (note?.startsWith(AI_ACTIVE_MODERATION_NOTE_PREFIX)) {
-      add("ai", null);
-      add("public", null);
-    } else if (note?.startsWith(AI_PENDING_AUDIT_MODERATION_NOTE_PREFIX)) {
-      add("ai", null);
-      add("manual", null);
-    } else if (note?.startsWith(AI_STALE_MODERATION_NOTE_PREFIX)) {
-      add("ai", null);
-      add("archived", row.status === "stale" ? row.updated_at : null);
-      if (row.status !== "stale") {
-        add("manual", null);
-      }
-    }
-  }
-  if (row.manual_at && (!firstTime || Date.parse(row.manual_at) < Date.parse(firstTime))) {
-    add("ai", row.manual_at);
-    add("manual", row.manual_at);
-  }
-  if (row.public_at && (!firstTime || Date.parse(row.public_at) < Date.parse(firstTime))) {
-    if (
-      !path.some((step) => step.key === "manual") &&
-      row.moderation_note?.startsWith(AI_PENDING_AUDIT_MODERATION_NOTE_PREFIX)
-    ) {
-      add("ai", null);
-      add("manual", row.public_at);
-    } else if (!path.some((step) => step.key === "manual") && !row.manual_review) {
-      add("ai", row.public_at);
-    } else {
-      add("manual", row.public_at);
-    }
-    add("public", row.public_at);
-  }
-  if (!events.length && row.was_published && !path.some((step) => step.key === "public")) {
-    add("public", null);
-  }
+  // Normalize SQLite's numeric flags on the freshly decoded objects before
+  // exposing them as evidence, without copying every historical event.
   for (const event of events) {
-    // The first captured event may start after unrecorded historical stages.
-    if (event.from === "pending_audit" && !path.some((step) => step.key === "manual")) {
-      add("manual", null);
-    }
-    if (
-      ["active", "flagged", "remove_request"].includes(event.from) &&
-      path.at(-1)?.key !== "public"
-    ) {
-      add("public", null);
-    }
-    if (event.from === "stale" && path.at(-1)?.key !== "archived") {
-      add("archived", null);
-    }
-
-    if (event.source === "auto_moderation" && event.aiReviewed && event.from === "pending_openai") {
-      add("ai", event.at);
-    }
-    if (event.source === "manual_moderation") {
-      add("manual", event.at);
-    }
-    if (event.source === "user_action" && event.to === "stale") {
-      let interrupted = null;
-      if (event.from === "pending_openai") {
-        interrupted = "ai";
-      } else if (event.from === "pending_audit") {
-        interrupted = "manual";
-      }
-      if (path.at(-1)?.key === interrupted) {
-        path.pop();
-      }
-    }
-    if (event.to === "pending_audit") {
-      add("manual", event.at);
-    }
-    if (event.to === "active") {
-      add("public", event.at);
-    }
-    if (event.to === "stale") {
-      add("archived", event.at);
-    }
+    event.aiReviewed = Boolean(event.aiReviewed);
   }
-  if (
-    !events.length &&
-    row.status === "stale" &&
-    !row.was_published &&
-    row.moderation_note?.startsWith(RECALL_MODERATION_NOTE_PREFIX) &&
-    path.at(-1)?.key === "manual"
-  ) {
-    path.pop();
-  }
-  // Preserve the latest event time when a submission has been restored/reviewed
-  // more than once. The notification timestamp may describe its first approval.
-  let current: ReviewStep;
-  switch (row.status) {
-    case "pending_openai":
-      current = { key: "ai", at: row.updated_at };
-      break;
-    case "pending_audit":
-      current = { key: "manual", at: row.manual_at ?? row.updated_at };
-      break;
-    case "stale":
-      current = { key: "archived", at: row.updated_at };
-      break;
-    default:
-      current = { key: "public", at: row.public_at };
-  }
-  const last = path.at(-1);
-  if (last?.key !== current.key) {
-    add(current.key, current.at);
-  } else {
-    last.at ??= current.at;
-  }
-  return path;
-}
-
-function mapContribution(row: ContributionRow, previewBaseUrl?: string): ContributionItem {
-  const path = reviewPath(row);
-  const times: ContributionItem["review"]["times"] = {
-    uploaded: null,
-    ai: null,
-    manual: null,
-    public: null,
-    archived: null,
-  };
-  path.forEach((step) => {
-    times[step.key] = step.at;
-  });
   return {
     id: row.id,
     kind: row.kind,
     markerId: row.poi_id,
     poiType: row.poi_type,
     content: row.content,
-    previewUrl:
-      row.kind === "image" && row.file_path && previewBaseUrl
-        ? buildPublicUgcAssetUrl(previewBaseUrl, `${row.id}/preview`)
-        : null,
+    hasImageFile: Boolean(row.file_path),
     status: row.status,
-    visibility: visibilityFor(row.status),
-    review: {
-      manual: path.some((step) => step.key === "manual"),
-      published: path.some((step) => step.key === "public"),
-      times,
-      path,
-    },
     createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    events,
+    legacy: {
+      manualAt: row.manual_at,
+      publicAt: row.public_at,
+      hasManualEvidence: Boolean(row.manual_review),
+      hasPublicationEvidence: Boolean(row.was_published),
+      moderationNote: row.moderation_note,
+    },
   };
 }
 
@@ -316,17 +154,10 @@ function rememberPreview(
   return value;
 }
 
-export async function listContributions(
+export async function listContributionRecords(
   db: D1Database,
-  payload: {
-    uid: string;
-    kind?: SubmissionKind;
-    status?: SubmissionStatus;
-    cursor?: ContributionCursor;
-    limit: number;
-    previewBaseUrl?: string;
-  },
-): Promise<{ items: ContributionItem[]; nextCursor: string | null }> {
+  payload: ContributionQuery,
+): Promise<ContributionRecordPage> {
   const filters = ["user_id = ?1"];
   const bindings: Array<string | number> = [payload.uid];
   if (payload.kind) {
@@ -398,17 +229,18 @@ export async function listContributions(
   const visibleRows = rows.slice(0, payload.limit);
   // The list already verified ownership and read each file path. Reuse that
   // result for image requests instead of one extra D1 lookup per thumbnail.
-  visibleRows.forEach((row) => {
+  const records = visibleRows.map((row) => {
     if (row.kind === "image" && row.file_path) {
       rememberPreview(db, JSON.stringify([payload.uid, row.id]), {
         file_path: row.file_path,
         mime_type: row.mime_type ?? null,
       });
     }
+    return mapContributionRecord(row);
   });
   const last = visibleRows.at(-1);
   return {
-    items: visibleRows.map((row) => mapContribution(row, payload.previewBaseUrl)),
+    records,
     nextCursor:
       hasMore && last
         ? encodeContributionCursor({ createdAt: last.created_at, id: last.id })

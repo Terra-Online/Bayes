@@ -7,10 +7,10 @@ import {
   decodeContributionCursor,
   getContributionCounts,
   getContributionImage,
-  listContributions,
 } from "@/repositories/me";
 import { toSessionUser } from "@/routes/auth/sessionUser";
 import { contributionQuerySchema } from "@/routes/schema/me";
+import { listContributions } from "@/services/me/contributions";
 import type { AppEnv } from "@/types/app";
 
 // Completed private values are scoped to the database and user.
