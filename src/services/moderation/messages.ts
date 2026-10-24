@@ -1,16 +1,8 @@
 import type { SubmissionRecord, SubmissionStatus } from "@/repositories/submission/types";
+import type { CommentTranslationPrewarmTarget } from "@/services/commentTranslation/types";
 import type { AuthUser } from "@/types/app";
 
-export type TransPrewarmSource = "auto_moderation" | "manual_moderation";
-
-export type TransPrewarmTargetStatus = "success" | "failed" | "skipped";
-
-export interface TransPrewarmTarget {
-  lang: string;
-  status: TransPrewarmTargetStatus;
-  cached?: boolean;
-  error?: string;
-}
+export type SubmissionModerationSource = "auto_moderation" | "manual_moderation";
 
 export type ModerationNotificationEvent =
   | {
@@ -36,7 +28,7 @@ export type ModerationNotificationEvent =
       submission: SubmissionRecord;
       previousStatus: SubmissionStatus;
       nextStatus: "active" | "pending_audit";
-      source: TransPrewarmSource;
+      source: SubmissionModerationSource;
     }
   | {
       type: "remove_request_created" | "remove_request_cancelled";
@@ -50,6 +42,6 @@ export type ModerationNotificationEvent =
   | {
       type: "comment_translation_prewarm_completed";
       submission: SubmissionRecord;
-      source: TransPrewarmSource;
-      targets: TransPrewarmTarget[];
+      source: SubmissionModerationSource;
+      targets: CommentTranslationPrewarmTarget[];
     };

@@ -1,11 +1,11 @@
 import { getRuntimeConfig } from "@/lib/config";
-import type { TransPrewarmSource } from "@/services/moderation/messages";
+import type { SubmissionModerationSource } from "@/services/moderation/messages";
 import type { Bindings } from "@/types/app";
 
 export async function enqueueApprovedCommentTransPrewarm(
   env: Bindings,
   submissionId: string,
-  source: TransPrewarmSource,
+  source: SubmissionModerationSource,
 ): Promise<void> {
   if (!getRuntimeConfig(env).commentTranslationPrewarmEnabled) {
     return;

@@ -1,13 +1,10 @@
 import { buildSubmissionShareUrl } from "@/lib/pointShare";
 import { enqueueModerationNotification } from "@/queues/client/moderationWebhook";
 import type { SubmissionRecord, SubmissionStatus } from "@/repositories/submission/types";
+import type { CommentTranslationPrewarmTarget } from "@/services/commentTranslation/types";
 import type { AuthUser, Bindings } from "@/types/app";
 
-import type {
-  ModerationNotificationEvent,
-  TransPrewarmSource,
-  TransPrewarmTarget,
-} from "./messages";
+import type { ModerationNotificationEvent, SubmissionModerationSource } from "./messages";
 
 const DISCORD_WEBHOOK_TIMEOUT_MS = 5_000;
 
@@ -38,7 +35,7 @@ export async function notifySubmissionModerationResult(
     submission: SubmissionRecord;
     previousStatus: SubmissionStatus;
     nextStatus: "active" | "pending_audit";
-    source: TransPrewarmSource;
+    source: SubmissionModerationSource;
   },
 ): Promise<void> {
   await enqueueModerationNotification(env, {
@@ -54,8 +51,8 @@ export async function notifyCommentTransPrewarmDone(
   env: Bindings,
   payload: {
     submission: SubmissionRecord;
-    source: TransPrewarmSource;
-    targets: TransPrewarmTarget[];
+    source: SubmissionModerationSource;
+    targets: CommentTranslationPrewarmTarget[];
   },
 ): Promise<void> {
   await enqueueModerationNotification(env, {
@@ -309,15 +306,15 @@ function truncateFieldValue(value: string): string {
   return value.length > 512 ? `${value.slice(0, 509)}...` : value;
 }
 
-function formatCompletedTargetLangs(targets: TransPrewarmTarget[]): string {
+function formatCompletedTargetLangs(targets: CommentTranslationPrewarmTarget[]): string {
   return formatTargetLangList(targets.filter((target) => target.status === "success"));
 }
 
-function formatIncompleteTargetLangs(targets: TransPrewarmTarget[]): string {
+function formatIncompleteTargetLangs(targets: CommentTranslationPrewarmTarget[]): string {
   return formatTargetLangList(targets.filter((target) => target.status !== "success"));
 }
 
-function formatTargetLangList(targets: TransPrewarmTarget[]): string {
+function formatTargetLangList(targets: CommentTranslationPrewarmTarget[]): string {
   const values = targets.map((target) => target.lang);
 
   return truncateFieldValue(values.length > 0 ? values.join("\n") : "-");
