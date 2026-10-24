@@ -1,14 +1,13 @@
-import type { Context } from "hono";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { DecryptedBinding } from "@/services/binding/types";
 import { deleteLocatorCaches, readPositionCache } from "@/services/locator/cache";
-import type { AppEnv, Bindings } from "@/types/app";
+import type { DecryptedBinding } from "@/services/official/auth/types";
+import type { Bindings } from "@/types/app";
 
-import { refreshPositionCache } from "./positionCache";
+import { createPositionRefreshScope, refreshPositionCache } from "./positionCache";
 
 const upstream = vi.hoisted(() => vi.fn());
-vi.mock("@/lib/endfieldClient/positionSocket", () => ({ getEndfieldPosition: upstream }));
+vi.mock("@/services/official/client/positionSocket", () => ({ getEndfieldPosition: upstream }));
 const binding = {
   binding: { provider: "skland", role_id: "role", server_id: 1 },
   cred: "cred",
@@ -16,7 +15,6 @@ const binding = {
 } as DecryptedBinding;
 const position = { pos: { x: 1, y: 2, z: 3 }, isOnline: true, mapId: "map", levelId: "level" };
 const env = () => ({ DB: {}, ENDFIELD_CREDENTIAL_SECRET: "test-secret" }) as Bindings;
-const context = (bindings: Bindings) => ({ env: bindings }) as Context<AppEnv>;
 
 describe("request-owned position refreshes", () => {
   beforeEach(() => upstream.mockReset().mockResolvedValue(position));
@@ -29,11 +27,11 @@ describe("request-owned position refreshes", () => {
         release = resolve;
       }),
     );
-    const firstContext = context(bindings);
-    const first = refreshPositionCache(firstContext, "user:role", binding);
-    const duplicate = refreshPositionCache(firstContext, "user:role", binding);
+    const firstScope = createPositionRefreshScope(bindings);
+    const first = refreshPositionCache(firstScope, "user:role", binding);
+    const duplicate = refreshPositionCache(firstScope, "user:role", binding);
     await expect(
-      refreshPositionCache(context(bindings), "user:role", binding),
+      refreshPositionCache(createPositionRefreshScope(bindings), "user:role", binding),
     ).resolves.toMatchObject({ data: position });
     expect(upstream).toHaveBeenCalledTimes(2);
     release(position);
@@ -49,7 +47,7 @@ describe("request-owned position refreshes", () => {
         release = resolve;
       }),
     );
-    const first = refreshPositionCache(context(bindings), "user:role", binding);
+    const first = refreshPositionCache(createPositionRefreshScope(bindings), "user:role", binding);
     deleteLocatorCaches(bindings, "user");
     release(position);
     await first;

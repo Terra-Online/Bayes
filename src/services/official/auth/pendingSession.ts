@@ -7,8 +7,8 @@ import {
   deletePendingRecord,
   type PendingSessionRedis,
 } from "@/repositories/binding/pendingSession";
-import { pendingSessionSchema } from "@/services/binding/contract/schemas";
-import type { PendingEndfieldSession } from "@/services/binding/types";
+import { pendingSessionSchema } from "@/services/official/auth/contract/schemas";
+import type { PendingEndfieldSession } from "@/services/official/auth/types";
 
 export type PendingSessionDependencies = {
   // Preserve lazy client creation so storage setup happens only when the flow reaches Redis.

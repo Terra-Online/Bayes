@@ -1,14 +1,11 @@
 import { ApiError } from "@/lib/errors";
+import type { EndfieldDeviceProfile } from "@/services/official/contract/deviceProfile";
+import type { EndfieldProvider } from "@/services/official/contract/provider";
 
 import { parseApiEnvelope } from "./envelope";
 import { buildDeviceHeaders, buildUrl, getEndfieldHosts } from "./hosts";
 import { getEndfieldTimestamp, getSignature } from "./signature";
-import type {
-  EndfieldDeviceProfile,
-  EndfieldProvider,
-  EndfieldRoleOption,
-  PlayerBindingData,
-} from "./types";
+import type { EndfieldRoleOption, PlayerBindingData } from "./types";
 
 export async function getEndfieldRoles(
   provider: EndfieldProvider,

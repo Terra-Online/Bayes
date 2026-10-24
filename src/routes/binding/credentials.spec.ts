@@ -1,24 +1,29 @@
-import { Hono, type Context } from "hono";
+import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { runWithAuthRequest } from "@/lib/auth/createAuth";
 import { decryptSecret, encryptSecret } from "@/lib/crypto";
-import {
-  createEndfieldDeviceProfile,
-  serializeEndfieldDeviceProfile,
-  SKLAND_DEVICE_PROFILE_USER_AGENT,
-} from "@/lib/endfieldClient/deviceProfile";
-import { getSignature } from "@/lib/endfieldClient/signature";
+import { ApiError } from "@/lib/errors";
 import { onAppError } from "@/middleware/error-handler";
 import { createRoutes as createSyncRoutes } from "@/routes/sync/createRoutes";
-import { readDecryptedBindingCache } from "@/services/locator/cache";
+import { readDecryptedBindingCache } from "@/services/official/auth/credentialCache";
+import {
+  createCredentialRecoveryScope,
+  readBindingCredentials,
+  recoverBindingCredentials,
+} from "@/services/official/auth/credentials";
+import {
+  createEndfieldDeviceProfile,
+  SKLAND_DEVICE_PROFILE_USER_AGENT,
+} from "@/services/official/client/deviceProfile";
+import { getSignature } from "@/services/official/client/signature";
+import { serializeEndfieldDeviceProfile } from "@/services/official/contract/deviceProfile";
 import { createMockBindings } from "@/test/bindings";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { insertAuthenticatedUser, type AuthenticatedUserFixture } from "@/test/fixtures/auth";
 import type { AppEnv, Bindings } from "@/types/app";
 
 import { createRoutes as createBindingRoutes } from "./createRoutes";
-import { getDecryptedBinding, refreshBindingCredentials } from "./credentials";
 
 const oldDevice = "a".repeat(32);
 const newDevice = "c".repeat(32);
@@ -290,12 +295,16 @@ describe("request-owned credential refresh and conditional persistence", () => {
   });
 
   it("deduplicates refreshes inside the same request", async () => {
-    // Exercise request-local deduplication directly; HTTP requests each create their own context.
-    const c = { env } as Context<AppEnv>;
-    const binding = await getDecryptedBinding(c, "user");
+    const dependencies = { env, recoveryScope: createCredentialRecoveryScope() };
+    const binding = await readBindingCredentials({ uid: "user" }, env);
+    const input = {
+      uid: "user",
+      rejectedCredentials: binding,
+      rejection: new ApiError(401, "ENDFIELD_CREDENTIAL_REJECTED", "rejected"),
+    };
     const calls = [
-      refreshBindingCredentials(c, "user", binding),
-      refreshBindingCredentials(c, "user", binding),
+      recoverBindingCredentials(input, dependencies),
+      recoverBindingCredentials(input, dependencies),
     ];
     pending.push(...calls);
     const result = await Promise.all(calls);

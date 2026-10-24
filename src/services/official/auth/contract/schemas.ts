@@ -1,8 +1,7 @@
 import { z } from "zod";
 
-import { parseEndfieldDeviceProfile } from "@/lib/endfieldClient/deviceProfile";
-
-export const providerSchema = z.enum(["skland", "skport"]);
+import { parseEndfieldDeviceProfile } from "@/services/official/contract/deviceProfile";
+import { providerSchema } from "@/services/official/contract/provider";
 
 export const roleOptionSchema = z.object({
   serverId: z.number().int().positive(),

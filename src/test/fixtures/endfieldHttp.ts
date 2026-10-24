@@ -3,12 +3,12 @@ import type { StatementSync } from "node:sqlite";
 import { Hono } from "hono";
 import { expect, vi, type Mock } from "vitest";
 
-import type { EndfieldRoleOption } from "@/lib/endfieldClient/types";
 import { onAppError } from "@/middleware/error-handler";
 import { createRoutes as bindingRoutes } from "@/routes/binding/createRoutes";
 import { createRoutes as locatorRoutes } from "@/routes/locator/createRoutes";
 import { createRoutes as positionRoutes } from "@/routes/locator/positionRoutes";
 import { createRoutes as syncRoutes } from "@/routes/sync/createRoutes";
+import type { EndfieldRoleOption } from "@/services/official/client/types";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import type { AppEnv, Bindings } from "@/types/app";
 

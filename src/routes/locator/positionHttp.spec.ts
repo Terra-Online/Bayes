@@ -3,11 +3,11 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 import { runWithAuthRequest } from "@/lib/auth/createAuth";
 import { encryptSecret } from "@/lib/crypto";
-import { createEndfieldDeviceProfile } from "@/lib/endfieldClient/deviceProfile";
 import { onAppError } from "@/middleware/error-handler";
 import { requestIdMiddleware } from "@/middleware/request-id";
 import { saveBinding, saveRoleDeviceProfile } from "@/repositories/binding/repository";
 import { POSITION_CACHE_FRESH_MS } from "@/services/locator/cache";
+import { createEndfieldDeviceProfile } from "@/services/official/client/deviceProfile";
 import { createMockBindings } from "@/test/bindings";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { insertAuthenticatedUser, type AuthenticatedUserFixture } from "@/test/fixtures/auth";
@@ -38,9 +38,6 @@ beforeEach(async () => {
       serverId: 1,
       nickname: "Explorer",
       serverName: "Talos",
-      serverType: "official",
-      level: 1,
-      isDefault: true,
     },
     {
       cred: await encryptSecret("credential", env.BETTER_AUTH_SECRET!),

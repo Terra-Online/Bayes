@@ -1,40 +1,14 @@
-import {
-  createEndfieldDeviceId,
-  createEndfieldDeviceProfile,
-  parseEndfieldDeviceProfile,
-  serializeEndfieldDeviceProfile,
-  SKLAND_DEVICE_PROFILE_USER_AGENT,
-} from "@/lib/endfieldClient/deviceProfile";
-import type {
-  EndfieldDeviceProfile,
-  EndfieldProvider,
-  EndfieldRoleOption,
-} from "@/lib/endfieldClient/types";
 import type {
   EndfieldBindingRow,
   EndfieldBindingWithDeviceProfileRow,
   EndfieldRoleDeviceProfileRow,
 } from "@/repositories/binding/types";
-
-export function publicBinding(row: EndfieldBindingRow | null) {
-  if (!row) {
-    return {
-      bound: false,
-      enabled: false,
-    };
-  }
-
-  return {
-    bound: true,
-    enabled: row.status === "enabled",
-    provider: row.provider,
-    serverId: row.server_id,
-    roleId: row.role_id,
-    nickname: row.role_nickname ?? "",
-    serverName: row.server_name ?? "",
-    updatedAt: row.updated_at,
-  };
-}
+import {
+  parseEndfieldDeviceProfile,
+  serializeEndfieldDeviceProfile,
+} from "@/services/official/contract/deviceProfile";
+import type { EndfieldDeviceProfile } from "@/services/official/contract/deviceProfile";
+import type { EndfieldProvider } from "@/services/official/contract/provider";
 
 export async function getBinding(db: D1Database, uid: string): Promise<EndfieldBindingRow | null> {
   return db
@@ -43,11 +17,12 @@ export async function getBinding(db: D1Database, uid: string): Promise<EndfieldB
     .first<EndfieldBindingRow>();
 }
 
-export async function getBindingWithDeviceProfile(
+// Return stored evidence only. Historical profile repair belongs to official/auth.
+export async function getBindingWithStoredDeviceProfile(
   db: D1Database,
   uid: string,
-): Promise<{ binding: EndfieldBindingRow; deviceProfile: EndfieldDeviceProfile } | null> {
-  const row = await db
+): Promise<EndfieldBindingWithDeviceProfileRow | null> {
+  return db
     .prepare(
       `SELECT b.*, p.device_profile AS role_device_profile
        FROM endfield_bindings b
@@ -57,22 +32,6 @@ export async function getBindingWithDeviceProfile(
     )
     .bind(uid)
     .first<EndfieldBindingWithDeviceProfileRow>();
-  if (!row) {
-    return null;
-  }
-
-  const { role_device_profile: roleDeviceProfile, ...binding } = row;
-  const parsedRoleProfile = parseEndfieldDeviceProfile(roleDeviceProfile);
-  return {
-    binding,
-    deviceProfile:
-      parsedRoleProfile ??
-      (await getOrCreateRoleDeviceProfile(
-        db,
-        binding.role_id,
-        parseEndfieldDeviceProfile(binding.device_profile),
-      )),
-  };
 }
 
 export async function getRoleDeviceProfile(
@@ -86,42 +45,6 @@ export async function getRoleDeviceProfile(
     .bind(roleId)
     .first<EndfieldRoleDeviceProfileRow>();
   return parseEndfieldDeviceProfile(row?.device_profile);
-}
-
-export async function getOrCreateRoleDeviceProfile(
-  db: D1Database,
-  roleId: string,
-  fallback?: EndfieldDeviceProfile | null,
-): Promise<EndfieldDeviceProfile> {
-  const existing = await getRoleDeviceProfile(db, roleId);
-  if (existing) {
-    return existing;
-  }
-
-  let profile = fallback;
-  if (!profile) {
-    try {
-      profile = createEndfieldDeviceProfile(
-        await createEndfieldDeviceId(),
-        SKLAND_DEVICE_PROFILE_USER_AGENT,
-      );
-    } catch {
-      // Keep existing bindings usable if the fingerprint service is temporarily unavailable.
-      profile = createEndfieldDeviceProfile();
-    }
-  }
-  await db
-    .prepare(
-      `INSERT INTO endfield_role_device_profiles (role_id, device_profile, updated_at)
-      VALUES (?1, ?2, CURRENT_TIMESTAMP)
-      ON CONFLICT(role_id) DO UPDATE SET
-        device_profile = excluded.device_profile,
-        updated_at = CURRENT_TIMESTAMP`,
-    )
-    .bind(roleId, serializeEndfieldDeviceProfile(profile))
-    .run();
-
-  return (await getRoleDeviceProfile(db, roleId)) ?? profile;
 }
 
 export async function saveRoleDeviceProfile(
@@ -141,25 +64,11 @@ export async function saveRoleDeviceProfile(
     .run();
 }
 
-export async function getBindingDeviceProfile(
-  db: D1Database,
-  binding?: EndfieldBindingRow | null,
-): Promise<EndfieldDeviceProfile> {
-  if (!binding) {
-    return createEndfieldDeviceProfile();
-  }
-  return getOrCreateRoleDeviceProfile(
-    db,
-    binding.role_id,
-    parseEndfieldDeviceProfile(binding.device_profile),
-  );
-}
-
 export async function saveBinding(
   db: D1Database,
   uid: string,
   provider: EndfieldProvider,
-  role: EndfieldRoleOption,
+  role: { serverId: number; roleId: string; nickname: string; serverName: string },
   encrypted: { cred: string; token: string; accountToken?: string },
 ): Promise<void> {
   await db

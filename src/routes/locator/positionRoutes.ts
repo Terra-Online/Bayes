@@ -1,40 +1,34 @@
 import type { Context } from "hono";
 import { Hono } from "hono";
 
+import { ApiError } from "@/lib/errors";
+import { resolveAuthIdentity } from "@/middleware/auth";
+import { ensureUserProfile } from "@/repositories/users";
+import { getPositionCacheKey, writePositionCache } from "@/services/locator/cache";
+import { readPosition } from "@/services/locator/position";
+import { positionReconnectDelay } from "@/services/locator/reconnect";
+import { issueLocatorSocketTicket, verifyLocatorSocketTicket } from "@/services/locator/ticket";
+import {
+  createCredentialRecoveryScope,
+  readBindingCredentials,
+  isAutoRefreshableEndfieldError,
+  recoverBindingCredentials,
+} from "@/services/official/auth/credentials";
+import type { DecryptedBinding } from "@/services/official/auth/types";
 import {
   isEndfieldCredentialErrorCode,
   isEndfieldCredentialExpiredErrorCode,
   parseEndfieldPositionSocketError,
   parseEndfieldPositionSocketMessage,
-} from "@/lib/endfieldClient/positionParser";
+} from "@/services/official/client/positionParser";
 import {
   connectEndfieldPositionSocket,
   type EndfieldPositionConnection,
   type EndfieldPositionTermination,
-} from "@/lib/endfieldClient/positionSocket";
-import { ApiError } from "@/lib/errors";
-import { resolveAuthIdentity } from "@/middleware/auth";
-import { ensureUserProfile } from "@/repositories/users";
-import {
-  getDecryptedBinding,
-  isAutoRefreshableEndfieldError,
-  refreshBindingCredentials,
-  withAutoRefreshedBinding,
-} from "@/routes/binding/credentials";
-import type { DecryptedBinding } from "@/services/binding/types";
-import {
-  getPositionCacheKey,
-  POSITION_CACHE_FRESH_MS,
-  POSITION_CACHE_STALE_MS,
-  readPositionCache,
-  writePositionCache,
-} from "@/services/locator/cache";
-import { positionReconnectDelay } from "@/services/locator/reconnect";
-import { issueLocatorSocketTicket, verifyLocatorSocketTicket } from "@/services/locator/ticket";
+} from "@/services/official/client/positionSocket";
 import type { AppEnv } from "@/types/app";
 
 import { serializeLocatorError, shouldIncludeBinding } from "./helpers";
-import { refreshPositionCache } from "./positionCache";
 
 type PositionStreamCloseReason =
   | "client-closed"
@@ -77,7 +71,7 @@ async function resolvePositionBinding<E extends AppEnv<{ requestId: string }>>(
   if (ticketUid) {
     return {
       uid: ticketUid,
-      binding: await getDecryptedBinding(c, ticketUid),
+      binding: await readBindingCredentials({ uid: ticketUid }, c.env),
     };
   }
 
@@ -89,7 +83,7 @@ async function resolvePositionBinding<E extends AppEnv<{ requestId: string }>>(
 
   const identity = await resolveAuthIdentity(c.env, authHeaders);
   const [binding] = await Promise.all([
-    getDecryptedBinding(c, identity.uid),
+    readBindingCredentials({ uid: identity.uid }, c.env),
     ensureUserProfile(c.env.DB, {
       uid: identity.uid,
       email: identity.email,
@@ -97,15 +91,6 @@ async function resolvePositionBinding<E extends AppEnv<{ requestId: string }>>(
     }),
   ]);
   return { uid: identity.uid, binding };
-}
-
-function schedulePositionRefresh<E extends AppEnv<{ requestId: string }>>(
-  c: Context<E>,
-  key: string,
-  binding: DecryptedBinding,
-): void {
-  const refresh = refreshPositionCache(c, key, binding).catch(() => undefined);
-  c.executionCtx.waitUntil(refresh);
 }
 
 export function createRoutes() {
@@ -129,6 +114,7 @@ export function createRoutes() {
         );
       }
 
+      const recoveryScope = createCredentialRecoveryScope();
       const includeBinding = shouldIncludeBinding(c);
       const pair = new WebSocketPair();
       const [client, server] = Object.values(pair);
@@ -308,7 +294,19 @@ export function createRoutes() {
                     });
                     upstream?.close(1000, "refreshing credentials");
                     upstream = undefined;
-                    const recovery = refreshBindingCredentials(c, currentUserUid, currentBinding)
+                    const recovery = recoverBindingCredentials(
+                      {
+                        uid: currentUserUid,
+                        rejectedCredentials: currentBinding,
+                        rejection: new ApiError(
+                          errorPayload.error.status,
+                          code,
+                          message,
+                          errorPayload.error.details,
+                        ),
+                      },
+                      { env: c.env, recoveryScope },
+                    )
                       .then((refreshed) => {
                         if (closed || recoveryGeneration !== upstreamGeneration) {
                           return;
@@ -395,10 +393,9 @@ export function createRoutes() {
             return;
           }
           if (isAutoRefreshableEndfieldError(error)) {
-            const refreshed = await refreshBindingCredentials(
-              c,
-              currentUserUid,
-              currentBinding,
+            const refreshed = await recoverBindingCredentials(
+              { uid: currentUserUid, rejectedCredentials: currentBinding, rejection: error },
+              { env: c.env, recoveryScope },
             ).catch(() => null);
             if (closed || generation !== upstreamGeneration) {
               return;
@@ -491,46 +488,18 @@ export function createRoutes() {
       const socketTicket = includeSocketTicket
         ? await issueLocatorSocketTicket(c.env, resolved.uid)
         : undefined;
-      return withAutoRefreshedBinding(
-        c,
-        resolved.uid,
-        async (binding) => {
-          const cacheKey = getPositionCacheKey(resolved.uid, binding.binding);
-          const cached = readPositionCache(c.env, cacheKey);
-          const now = Date.now();
-
-          if (cached && now - cached.refreshedAt <= POSITION_CACHE_STALE_MS) {
-            if (now - cached.refreshedAt > POSITION_CACHE_FRESH_MS) {
-              schedulePositionRefresh(c, cacheKey, binding);
-            }
-
-            const response = c.json({
-              data: cached.data,
-              ...(socketTicket ? { socketTicket } : {}),
-              ...(includeBinding ? { binding: binding.publicBinding } : {}),
-            });
-            response.headers.set("cache-control", "private, no-store");
-            response.headers.set(
-              "x-locator-cache",
-              now - cached.refreshedAt <= POSITION_CACHE_FRESH_MS ? "fresh" : "stale",
-            );
-            response.headers.set("x-locator-age-ms", String(now - cached.refreshedAt));
-            return response;
-          }
-
-          const position = await refreshPositionCache(c, cacheKey, binding);
-
-          const response = c.json({
-            data: position.data,
-            ...(socketTicket ? { socketTicket } : {}),
-            ...(includeBinding ? { binding: binding.publicBinding } : {}),
-          });
-          response.headers.set("cache-control", "private, no-store");
-          response.headers.set("x-locator-cache", "miss");
-          response.headers.set("x-locator-age-ms", "0");
-          return response;
-        },
-        resolved.binding,
-      );
+      const result = await readPosition({ uid: resolved.uid, binding: resolved.binding }, c.env);
+      if (result.backgroundRefresh) {
+        c.executionCtx.waitUntil(result.backgroundRefresh);
+      }
+      const response = c.json({
+        data: result.data,
+        ...(socketTicket ? { socketTicket } : {}),
+        ...(includeBinding ? { binding: result.binding } : {}),
+      });
+      response.headers.set("cache-control", "private, no-store");
+      response.headers.set("x-locator-cache", result.cacheState);
+      response.headers.set("x-locator-age-ms", String(result.ageMs));
+      return response;
     });
 }

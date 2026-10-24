@@ -1,15 +1,11 @@
 import { ApiError, isApiError } from "@/lib/errors";
+import type { EndfieldDeviceProfile } from "@/services/official/contract/deviceProfile";
+import type { EndfieldProvider } from "@/services/official/contract/provider";
 
 import { parseApiEnvelope, parseAuthEnvelope } from "./envelope";
 import { buildDeviceHeaders, buildUrl, getEndfieldHosts } from "./hosts";
 import { getEndfieldTimestamp, getSignature } from "./signature";
-import type {
-  EndfieldDeviceProfile,
-  EndfieldProvider,
-  GenerateCredData,
-  OauthGrantData,
-  RefreshAuthData,
-} from "./types";
+import type { GenerateCredData, OauthGrantData, RefreshAuthData } from "./types";
 
 export async function grantEndfieldOAuthCode(
   provider: EndfieldProvider,

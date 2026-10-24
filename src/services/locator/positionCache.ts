@@ -1,29 +1,29 @@
-import type { Context } from "hono";
-
-import { getEndfieldPosition } from "@/lib/endfieldClient/positionSocket";
-import type { DecryptedBinding } from "@/services/binding/types";
 import { getLocatorCache, writePositionCache } from "@/services/locator/cache";
 import type { PositionCacheEntry } from "@/services/locator/types";
-import type { AppEnv } from "@/types/app";
+import type { DecryptedBinding } from "@/services/official/auth/types";
+import { getEndfieldPosition } from "@/services/official/client/positionSocket";
+import type { Bindings } from "@/types/app";
 
-// Pending refreshes belong to the Hono request; completed values live in the service cache.
-const positionRequests = new WeakMap<object, Map<string, Promise<PositionCacheEntry>>>();
+// Share only in-flight position reads within this request. Completed values use the locator cache.
+export type PositionRefreshDependencies = {
+  env: Bindings;
+  requests: Map<string, Promise<PositionCacheEntry>>;
+};
 
-export async function refreshPositionCache<E extends AppEnv>(
-  c: Context<E>,
+export function createPositionRefreshScope(env: Bindings): PositionRefreshDependencies {
+  return { env, requests: new Map() };
+}
+
+export async function refreshPositionCache(
+  { env, requests }: PositionRefreshDependencies,
   key: string,
   binding: DecryptedBinding,
 ): Promise<PositionCacheEntry> {
-  let requests = positionRequests.get(c);
-  if (!requests) {
-    requests = new Map();
-    positionRequests.set(c, requests);
-  }
   const pending = requests.get(key);
   if (pending) {
     return pending;
   }
-  const cache = getLocatorCache(c.env);
+  const cache = getLocatorCache(env);
   const revision = cache.revision;
   const promise = getEndfieldPosition({
     provider: binding.binding.provider,
@@ -35,8 +35,8 @@ export async function refreshPositionCache<E extends AppEnv>(
     deviceProfile: binding.deviceProfile,
   }).then((data) => {
     const entry = { data, refreshedAt: Date.now() };
-    if (getLocatorCache(c.env) === cache && cache.revision === revision) {
-      writePositionCache(c.env, key, entry);
+    if (getLocatorCache(env) === cache && cache.revision === revision) {
+      writePositionCache(env, key, entry);
     }
     return entry;
   });

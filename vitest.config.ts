@@ -16,12 +16,12 @@ export default defineConfig({
         "src/types/**",
         // These modules contain only types. submission/types.ts also exports a
         // runtime value, so a blanket **/types.ts exclusion would hide code.
-        "src/lib/endfieldClient/types.ts",
+        "src/services/official/client/types.ts",
         "src/repositories/binding/types.ts",
         "src/routes/auth/types.ts",
-        "src/services/binding/types.ts",
+        "src/services/official/auth/types.ts",
         "src/services/locator/types.ts",
-        "src/services/sync/types.ts",
+        "src/services/official/types.ts",
         "src/services/moderation/messages.ts",
       ],
       reporter: ["text", "html", "json-summary"],

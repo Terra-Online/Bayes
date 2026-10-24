@@ -1,16 +1,14 @@
 import { Hono } from "hono";
 
 import { decryptSecret } from "@/lib/crypto";
-import { agreePolicy } from "@/lib/endfieldClient/mapClient";
 import { ApiError } from "@/lib/errors";
 import { requireAuth } from "@/middleware/auth";
-import {
-  getBinding,
-  getBindingDeviceProfile,
-  publicBinding,
-} from "@/repositories/binding/repository";
-import { getCredentialSecret } from "@/routes/binding/credentials";
+import { getBinding } from "@/repositories/binding/repository";
 import { agreeSchema } from "@/routes/schema/locator";
+import { getCredentialSecret } from "@/services/official/auth/credentials";
+import { getBindingDeviceProfile } from "@/services/official/auth/deviceProfile";
+import { publicBinding } from "@/services/official/auth/publicBinding";
+import { agreePolicy } from "@/services/official/client/mapClient";
 import type { AppEnv } from "@/types/app";
 
 export function createRoutes() {
@@ -54,7 +52,7 @@ export function createRoutes() {
         );
       }
 
-      const secret = getCredentialSecret(c);
+      const secret = getCredentialSecret(c.env);
       await agreePolicy({
         provider: binding.provider,
         roleId: binding.role_id,

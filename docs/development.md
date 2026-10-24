@@ -34,7 +34,7 @@ common variables; the complete binding inventory is in
 | Service identifier hashing | `SERVICE_ID_HMAC_SECRET`; use an independent random value for an installation |
 | Email registration and reset | Provider policy, sender identity, and `RESEND_AUTH_KEY` or the Cloudflare mail binding |
 | Social login | Credentials for each provider being tested; callbacks must target the local backend |
-| Bound account credentials | `ENDFIELD_CREDENTIAL_SECRET`; see `src/routes/binding/credentials.ts` for key selection |
+| Bound account credentials | `ENDFIELD_CREDENTIAL_SECRET`; see `src/services/official/auth/credentials.ts` for key selection |
 | AI moderation | `OPENAI_API_KEY` and a configured moderation queue |
 | Comment translation | `GOOGLE_TRANSLATE_*` service account and language settings |
 | Image delivery | `UGC_ASSET_BASE_URL`, upload MIME/size settings, and the transcoder binding |

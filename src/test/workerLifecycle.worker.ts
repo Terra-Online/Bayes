@@ -3,16 +3,6 @@ import { Hono } from "hono";
 
 import { runWithAuthRequest } from "@/lib/auth/createAuth";
 import { decryptSecret, encryptSecret } from "@/lib/crypto";
-import {
-  createEndfieldDeviceProfile,
-  serializeEndfieldDeviceProfile,
-} from "@/lib/endfieldClient/deviceProfile";
-import {
-  connectEndfieldPositionSocket,
-  getEndfieldPosition,
-  getEndfieldPositionFromSocket,
-} from "@/lib/endfieldClient/positionSocket";
-import type { EndfieldDeviceProfile } from "@/lib/endfieldClient/types";
 import { ApiError } from "@/lib/errors";
 import { onAppError } from "@/middleware/error-handler";
 import { requestIdMiddleware } from "@/middleware/request-id";
@@ -24,8 +14,16 @@ import { getNotificationById } from "@/repositories/notifications";
 import { createRoutes as positionRoutes } from "@/routes/locator/positionRoutes";
 import { createRoutes as notificationRoutes } from "@/routes/notify/createRoutes";
 import { handleNotificationLiveUpgrade } from "@/routes/notify/liveUpgrade";
-import { deleteLocatorCaches } from "@/services/locator/cache";
 import { publishNotificationsCreated } from "@/services/notify/live";
+import { invalidateBindingCaches } from "@/services/official/auth/credentialCache";
+import { createEndfieldDeviceProfile } from "@/services/official/client/deviceProfile";
+import {
+  connectEndfieldPositionSocket,
+  getEndfieldPosition,
+  getEndfieldPositionFromSocket,
+} from "@/services/official/client/positionSocket";
+import { serializeEndfieldDeviceProfile } from "@/services/official/contract/deviceProfile";
+import type { EndfieldDeviceProfile } from "@/services/official/contract/deviceProfile";
 import { drainUserProgressStatsOutbox } from "@/services/progress/outbox";
 import type { AppEnv, Bindings } from "@/types/app";
 
@@ -172,7 +170,7 @@ export default {
       )
         .bind(serializeEndfieldDeviceProfile(profile))
         .run();
-      deleteLocatorCaches(env, "user");
+      invalidateBindingCaches(env, "user");
       return Response.json({ ok: true });
     }
     if (path.startsWith("/publish/")) {

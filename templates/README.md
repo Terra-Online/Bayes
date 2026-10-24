@@ -24,7 +24,7 @@ integration. Tests that assume particular karma policy values need an appropriat
 local configuration. See the consuming modules for field behavior:
 
 - Karma policy: `src/lib/karma/rules.ts`.
-- Official point mapping: `src/services/sync/officialMarks.ts`.
+- Official point mapping: `src/services/official/officialMarks.ts`.
 - Coverage manifest: `src/services/moderation/imageCoverage.ts`.
 
 With the Atlos game data available, regenerate the coverage manifest:

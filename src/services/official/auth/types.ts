@@ -1,10 +1,9 @@
-import type {
-  EndfieldDeviceProfile,
-  EndfieldProvider,
-  EndfieldRoleOption,
-} from "@/lib/endfieldClient/types";
-import type { publicBinding } from "@/repositories/binding/repository";
 import type { EndfieldBindingRow } from "@/repositories/binding/types";
+import type { EndfieldRoleOption } from "@/services/official/client/types";
+import type { EndfieldDeviceProfile } from "@/services/official/contract/deviceProfile";
+import type { EndfieldProvider } from "@/services/official/contract/provider";
+
+import type { publicBinding } from "./publicBinding";
 
 export type PendingEndfieldSession = {
   provider: EndfieldProvider;
@@ -24,8 +23,4 @@ export type DecryptedBinding = {
   accountToken?: string;
   wsBaseUrl?: string;
   deviceProfile: EndfieldDeviceProfile;
-};
-
-export type DecryptedBindingCacheEntry = DecryptedBinding & {
-  expiresAt: number;
 };

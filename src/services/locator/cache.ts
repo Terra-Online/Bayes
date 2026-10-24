@@ -1,9 +1,7 @@
 import type { EndfieldBindingRow } from "@/repositories/binding/types";
-import type { DecryptedBinding, DecryptedBindingCacheEntry } from "@/services/binding/types";
 import type { PositionCacheEntry } from "@/services/locator/types";
 import type { Bindings } from "@/types/app";
 
-const DECRYPTED_BINDING_CACHE_TTL_MS = 10_000;
 const MAX_CACHE_ENTRIES = 1000;
 export const POSITION_CACHE_FRESH_MS = 250;
 export const POSITION_CACHE_STALE_MS = 2_500;
@@ -12,7 +10,6 @@ type LocatorCache = {
   secret?: string;
   wsBaseUrl?: string;
   revision: number;
-  bindings: Map<string, DecryptedBindingCacheEntry>;
   positions: Map<string, PositionCacheEntry>;
 };
 const caches = new WeakMap<D1Database, LocatorCache>();
@@ -25,7 +22,6 @@ export function getLocatorCache(env: Bindings): LocatorCache {
       secret,
       wsBaseUrl: env.ENDFIELD_WS_BASE_URL,
       revision: 0,
-      bindings: new Map(),
       positions: new Map(),
     };
     caches.set(env.DB, cache);
@@ -41,35 +37,9 @@ function cacheValue<T>(cache: Map<string, T>, key: string, value: T): void {
   }
 }
 
-export function readDecryptedBindingCache(
-  env: Bindings,
-  uid: string,
-  now = Date.now(),
-): DecryptedBinding | null {
-  const cache = getLocatorCache(env).bindings;
-  const cached = cache.get(uid);
-  if (cached && cached.expiresAt > now) {
-    return cached;
-  }
-  cache.delete(uid);
-  return null;
-}
-
-export function writeDecryptedBindingCache(
-  env: Bindings,
-  uid: string,
-  binding: DecryptedBinding,
-): void {
-  cacheValue(getLocatorCache(env).bindings, uid, {
-    ...binding,
-    expiresAt: Date.now() + DECRYPTED_BINDING_CACHE_TTL_MS,
-  });
-}
-
 export function deleteLocatorCaches(env: Bindings, uid: string): void {
   const cache = getLocatorCache(env);
   cache.revision += 1;
-  cache.bindings.delete(uid);
   for (const key of cache.positions.keys()) {
     if (key.startsWith(`${uid}:`)) {
       cache.positions.delete(key);

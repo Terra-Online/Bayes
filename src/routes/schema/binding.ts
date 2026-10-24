@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { providerSchema } from "@/services/binding/contract/schemas";
+import { providerSchema } from "@/services/official/contract/provider";
 
 export const exchangeTokenSchema = z.object({
   provider: providerSchema,
