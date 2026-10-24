@@ -1,17 +1,13 @@
 import { getRandom } from "@cloudflare/containers";
-import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { onAppError } from "@/middleware/error-handler";
-import type { oem_imgTrans } from "@/services/upload/imageTranscoderContainer";
+import { createApp } from "@/app";
+import type { oem_imgTrans } from "@/services/ugc/submission/imageTranscoderContainer";
 import {
   createImageLifecycleFixture,
   type ImageLifecycleFixture,
 } from "@/test/fixtures/imageLifecycle";
 import { insertSubmission } from "@/test/fixtures/submissions";
-import type { AppEnv } from "@/types/app";
-
-import { createRoutes } from "./createRoutes";
 
 let database: ImageLifecycleFixture["database"];
 let env: ImageLifecycleFixture["env"];
@@ -95,7 +91,7 @@ describe("stored image delivery", () => {
         mimeType,
       });
       const before = persistedState();
-      const app = new Hono<AppEnv>().onError(onAppError).route("/uploads/v1", createRoutes());
+      const app = createApp();
       const read = (path: string, headers?: Record<string, string>) =>
         app.request(
           `http://localhost/uploads/v1/${path}/${encodeURIComponent(filePath)}`,
@@ -129,6 +125,47 @@ describe("stored image delivery", () => {
     },
   );
 
+  it("checks every matching file owner and preserves reviewers' access to stale images", async () => {
+    const sharedPath = "images/shared.webp";
+    const stalePath = "images/stale.webp";
+    insertSubmission(database.sqlite, {
+      id: "shared-author",
+      userId: "author",
+      kind: "image",
+      filePath: sharedPath,
+      status: "pending_audit",
+    });
+    insertSubmission(database.sqlite, {
+      id: "shared-reader",
+      userId: "reader",
+      kind: "image",
+      filePath: sharedPath,
+    });
+    insertSubmission(database.sqlite, {
+      id: "stale",
+      userId: "author",
+      kind: "image",
+      filePath: stalePath,
+      status: "stale",
+    });
+    for (const path of [sharedPath, stalePath]) {
+      storage.set(path, { bytes: transformedImage, options: {} });
+    }
+    for (const owner of ["author", "reader"]) {
+      const response = await request(`/file/${sharedPath}`, owner);
+      expect(response.status).toBe(200);
+      expect(new Uint8Array(await response.arrayBuffer())).toEqual(transformedImage);
+    }
+    expect((await request(`/file/${sharedPath}`, "other-reader")).status).toBe(404);
+    expect((await request(`/file/${stalePath}`, "author")).status).toBe(404);
+    expect((await request(`/public-file/${stalePath}`, null)).status).toBe(404);
+    for (const reviewer of ["admin", "reviewer", "root"]) {
+      const response = await request(`/file/${stalePath}`, reviewer);
+      expect(response.status).toBe(200);
+      expect(new Uint8Array(await response.arrayBuffer())).toEqual(transformedImage);
+    }
+  });
+
   it.each(["public-file", "file"])(
     "rejects unsafe and malformed encoded %s paths before object storage is read",
     async (path) => {
@@ -136,7 +173,7 @@ describe("stored image delivery", () => {
         .fn<R2Bucket["get"]>()
         .mockRejectedValue(new Error("Unexpected storage access"));
       env.UGC_BUCKET.get = getObject;
-      const app = new Hono<AppEnv>().onError(onAppError).route("/uploads/v1", createRoutes());
+      const app = createApp();
       for (const key of [
         "%2Fprivate.webp",
         "%2E%2E%2Fprivate.webp",

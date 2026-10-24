@@ -1,7 +1,7 @@
 import { buildSubmissionShareUrl } from "@/lib/pointShare";
 import { enqueueModerationNotification } from "@/queues/client/moderationWebhook";
 import type { SubmissionRecord, SubmissionStatus } from "@/repositories/submission/types";
-import type { CommentTranslationPrewarmTarget } from "@/services/commentTranslation/types";
+import type { CommentTranslationPrewarmTarget } from "@/services/ugc/translation/types";
 import type { AuthUser, Bindings } from "@/types/app";
 
 import type { ModerationNotificationEvent, SubmissionModerationSource } from "./messages";

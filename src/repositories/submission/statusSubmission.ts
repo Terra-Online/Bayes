@@ -4,7 +4,6 @@ import {
   prepareSubmissionStatusNotificationWrite,
   type NotificationRecord,
 } from "@/repositories/notifications";
-import type { AuthUser } from "@/types/app";
 
 import { mapSubmission } from "./mapper";
 import type { SubmissionRecord, SubmissionStatus } from "./types";
@@ -30,48 +29,6 @@ export async function getSubmissionById(
     )
     .bind(id)
     .first<Record<string, unknown>>();
-  return row ? mapSubmission(row) : null;
-}
-
-export async function getPublicSubmissionByFilePath(
-  db: D1Database,
-  filePath: string,
-): Promise<SubmissionRecord | null> {
-  const row = await db
-    .prepare(
-      `SELECT *
-       FROM ugc_submissions
-       WHERE file_path = ?1
-         AND kind = 'image'
-         AND status IN ('active', 'flagged', 'remove_request')
-       LIMIT 1`,
-    )
-    .bind(filePath)
-    .first<Record<string, unknown>>();
-
-  return row ? mapSubmission(row) : null;
-}
-
-export async function getImageSubmissionByFilePath(
-  db: D1Database,
-  filePath: string,
-  viewer: Pick<AuthUser, "uid" | "role">,
-): Promise<SubmissionRecord | null> {
-  // Multiple snapshots/owners can share a path. Filter access before LIMIT so
-  // choosing a different index cannot turn an arbitrary owner's row into a 404.
-  const canReadAll = viewer.role === "p" || viewer.role === "a" || viewer.role === "r";
-  const row = await db
-    .prepare(
-      `SELECT *
-       FROM ugc_submissions
-       WHERE file_path = ?1
-         AND kind = 'image'
-         AND (?2 = 1 OR (user_id = ?3 AND status <> 'stale'))
-       LIMIT 1`,
-    )
-    .bind(filePath, canReadAll ? 1 : 0, viewer.uid)
-    .first<Record<string, unknown>>();
-
   return row ? mapSubmission(row) : null;
 }
 

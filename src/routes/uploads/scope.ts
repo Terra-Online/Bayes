@@ -1,3 +1,5 @@
+import type { ImageReadScope } from "@/services/ugc/contract/imageScope";
+
 const TEST_UPLOAD_PREFIX = "_test";
 const BETA_FRONTEND_HOSTNAMES = new Set(["beta.opendfieldmap.org"]);
 
@@ -37,7 +39,7 @@ export function resolveImageScope(
   request: Request,
   configuredPrefix: string,
   scope: "test" | "prod" | undefined,
-): { pathPrefix?: string; excludePathPrefix?: string } {
+): ImageReadScope {
   if (new URL(request.url).searchParams.get("demoLocal") === "1") {
     return { excludePathPrefix: TEST_UPLOAD_PREFIX };
   }

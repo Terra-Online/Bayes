@@ -1,6 +1,6 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { CommentTranslationItem } from "@/services/commentTranslation/commentTranslation";
+import type { CommentTranslationItem } from "@/services/ugc/translation/comments";
 import {
   createCommentTranslationFixture,
   createTranslationSigningKey,

@@ -1,5 +1,5 @@
 import type { AutoModerationMsg, TranslationMsg, WebhookMsg } from "@/queues/types/messages";
-import type { oem_imgTrans } from "@/services/upload/imageTranscoderContainer";
+import type { oem_imgTrans } from "@/services/ugc/submission/imageTranscoderContainer";
 
 export type Role = "n" | "p" | "a" | "s" | "r";
 

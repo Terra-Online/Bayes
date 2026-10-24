@@ -1,16 +1,13 @@
 import { getRandom } from "@cloudflare/containers";
-import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { onAppError } from "@/middleware/error-handler";
+import { createApp } from "@/app";
 import { requestIdMiddleware } from "@/middleware/request-id";
 import { createMockBindings, createMockR2Object, type MockBindings } from "@/test/bindings";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { insertAuthenticatedUser, type SessionHeaders } from "@/test/fixtures/auth";
 import { insertSubmission } from "@/test/fixtures/submissions";
-import type { AppEnv, Bindings } from "@/types/app";
-
-import { createRoutes } from "./createRoutes";
+import type { Bindings } from "@/types/app";
 
 vi.mock("@cloudflare/containers", () => ({ getRandom: vi.fn() }));
 vi.mock("cloudflare:workers", () => ({ DurableObject: class {}, exports: {} }));
@@ -34,7 +31,7 @@ vi.mock("@upstash/redis", () => ({
 
 describe("image submission through HTTP", () => {
   let mocks: MockBindings;
-  let app: Hono<AppEnv>;
+  let app: ReturnType<typeof createApp>;
   let database: TestDatabase;
   let env: Bindings;
   let sessionHeaders: SessionHeaders;
@@ -58,10 +55,8 @@ describe("image submission through HTTP", () => {
       ...mocks.bindings,
       LOCK_UPLOAD_ENDPOINTS: "false",
     };
-    app = new Hono<AppEnv>();
-    app.onError(onAppError);
+    app = createApp();
     app.use(requestIdMiddleware);
-    app.route("/uploads/v1", createRoutes());
   });
 
   afterEach(() => {
@@ -220,6 +215,38 @@ describe("image submission through HTTP", () => {
     expect(mocks.ugcBucket.put).toHaveBeenCalledOnce();
     expect(mocks.autoModerationQueue.send).toHaveBeenCalledWith(
       expect.objectContaining({ submissionId: submission.id, snapshotId: submission.snapshotId }),
+    );
+  });
+
+  it("retains the stored image and pending snapshot for backfill when moderation enqueue fails", async () => {
+    configureUploadPersistence(3);
+    mocks.autoModerationQueue.send.mockRejectedValue(new Error("Queue send failed"));
+
+    const response = await request(undefined, "image/webp");
+    expect(response.status).toBe(500);
+    expect(await response.json()).toMatchObject({ code: "INTERNAL_ERROR" });
+    const rows = database.sqlite
+      .prepare(
+        "SELECT id, file_path, snapshot_id, status, moderation_queued_at FROM ugc_submissions",
+      )
+      .all();
+    expect(rows).toEqual([
+      {
+        id: expect.any(String),
+        file_path: expect.stringMatching(/poi\/poi\/hash\/[^/]+\.webp$/),
+        snapshot_id: expect.any(String),
+        status: "pending_openai",
+        moderation_queued_at: null,
+      },
+    ]);
+    expect(mocks.ugcBucket.put).toHaveBeenCalledWith(
+      rows[0]!.file_path,
+      new Uint8Array([1, 2, 3]).buffer,
+      expect.any(Object),
+    );
+    expect(mocks.ugcBucket.delete).not.toHaveBeenCalled();
+    expect(mocks.autoModerationQueue.send).toHaveBeenCalledWith(
+      expect.objectContaining({ submissionId: rows[0]!.id, snapshotId: rows[0]!.snapshot_id }),
     );
   });
 

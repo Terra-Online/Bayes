@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createMockBindings, type MockBindings } from "@/test/bindings";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 
-import { prepareUploadImageForStorage } from "./storage";
+import { prepareUploadImageForStorage } from "./imagePreparation";
 
 vi.mock("@cloudflare/containers", () => ({ getRandom: vi.fn() }));
 

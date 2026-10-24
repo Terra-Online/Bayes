@@ -8,7 +8,7 @@ import { insertSubmission } from "@/test/fixtures/submissions";
 import { insertUser } from "@/test/fixtures/users";
 import type { Bindings } from "@/types/app";
 
-import { translateVisibleComments } from "./commentTranslation";
+import { translateVisibleComments } from "./comments";
 
 const glossaryKey = "projects/test/locations/us-central1/glossaries/comments";
 const provider = "google_cloud_translation_v3";

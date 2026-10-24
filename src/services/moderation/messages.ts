@@ -1,5 +1,5 @@
 import type { SubmissionRecord, SubmissionStatus } from "@/repositories/submission/types";
-import type { CommentTranslationPrewarmTarget } from "@/services/commentTranslation/types";
+import type { CommentTranslationPrewarmTarget } from "@/services/ugc/translation/types";
 import type { AuthUser } from "@/types/app";
 
 export type SubmissionModerationSource = "auto_moderation" | "manual_moderation";
