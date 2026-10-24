@@ -24,6 +24,7 @@ import {
   resolvePublicCommentCacheNamespace,
   resolvePublicImageCacheNamespace,
 } from "@/publicRead/client/scope";
+import { enqueueAutoModeration } from "@/queues/client/autoModeration";
 import { getDuplicateImageMarkerSummary } from "@/repositories/submission-duplicates";
 import { createPendingSubmission } from "@/repositories/submission/createSubmission";
 import {
@@ -78,7 +79,6 @@ import {
   notifyRemoveRequestCancelled,
   notifyRemoveRequestCreated,
 } from "@/services/moderation/notifications";
-import { enqueueModeration } from "@/services/moderation/queue";
 import { publishNotificationsCreated } from "@/services/notify/live";
 import { translateVisibleComments } from "@/services/upload/commentTranslation";
 import { normalizeUploadMime } from "@/services/upload/mime";
@@ -341,7 +341,7 @@ export function createRoutes() {
         sizeBytes: preparedImage.sizeBytes,
         status: "pending_openai",
       });
-      await enqueueModeration(c.env, submissionId, snapshotId);
+      await enqueueAutoModeration(c.env, submissionId, snapshotId);
       const duplicatePoi = await getDuplicateImageMarkerSummary(c.env.DB, {
         markerId: parsed.data.markerId,
         pathPrefix: uploadScope.pathPrefix,
@@ -432,7 +432,7 @@ export function createRoutes() {
         parentId,
         commentDepth,
       });
-      await enqueueModeration(c.env, submissionId, snapshotId);
+      await enqueueAutoModeration(c.env, submissionId, snapshotId);
 
       return c.json({
         ok: true,
@@ -832,7 +832,7 @@ export function createRoutes() {
         }
         await clearSubmissionFlags(c.env.DB, submissionId);
         invalidateCommentCache(c, submission.markerId);
-        await enqueueModeration(c.env, submissionId, snapshotId);
+        await enqueueAutoModeration(c.env, submissionId, snapshotId);
 
         return c.json({
           ok: true,
@@ -930,7 +930,7 @@ export function createRoutes() {
           }
           invalidateCommentCache(c, submission.markerId);
           if (status === "pending_openai" && submission.editOriginalSnapshotId) {
-            await enqueueModeration(c.env, submissionId, submission.editOriginalSnapshotId);
+            await enqueueAutoModeration(c.env, submissionId, submission.editOriginalSnapshotId);
           }
           return c.json({
             ok: true,

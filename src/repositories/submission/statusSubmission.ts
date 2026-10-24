@@ -284,7 +284,7 @@ export async function revertCommentEdit(
   return (result.meta.changes ?? 0) > 0;
 }
 
-export async function markSubmissionModerationQueued(
+export async function markSubmissionAutoModerationQueued(
   db: D1Database,
   payload: {
     id: string;

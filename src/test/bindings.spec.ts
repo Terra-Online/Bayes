@@ -15,7 +15,7 @@ describe("mock bindings", () => {
   it("keeps configured results and recorded calls local to each environment", async () => {
     const first = setup();
     const second = setup();
-    first.moderationQueue.send.mockResolvedValue({
+    first.autoModerationQueue.send.mockResolvedValue({
       metadata: { metrics: { backlogCount: 1, backlogBytes: 64 } },
     });
     await first.bindings.OEM_MODERATION_Q.send({
@@ -25,8 +25,8 @@ describe("mock bindings", () => {
       source: "upload",
       queuedAt: "2026-09-01T00:00:00.000Z",
     });
-    expect(first.moderationQueue.send).toHaveBeenCalledOnce();
-    expect(second.moderationQueue.send).not.toHaveBeenCalled();
+    expect(first.autoModerationQueue.send).toHaveBeenCalledOnce();
+    expect(second.autoModerationQueue.send).not.toHaveBeenCalled();
     expect(() =>
       second.bindings.OEM_MODERATION_Q.send({
         type: "moderation",

@@ -1,39 +1,15 @@
 import { buildSubmissionShareUrl } from "@/lib/pointShare";
+import { enqueueModerationNotification } from "@/queues/client/moderationWebhook";
 import type { SubmissionRecord, SubmissionStatus } from "@/repositories/submission/types";
 import type { AuthUser, Bindings } from "@/types/app";
 
 import type {
   ModerationNotificationEvent,
-  OemWebhookQueueMessage,
-  PendingOpenAICompletionStats,
   TransPrewarmSource,
   TransPrewarmTarget,
 } from "./messages";
 
 const DISCORD_WEBHOOK_TIMEOUT_MS = 5_000;
-
-export function createEmptyPendingOpenAICompletionStats(): PendingOpenAICompletionStats {
-  return {
-    processed: 0,
-    active: 0,
-    pendingAudit: 0,
-    stale: 0,
-  };
-}
-
-export function recordPendingOpenAICompletionStatus(
-  stats: PendingOpenAICompletionStats,
-  status: SubmissionStatus,
-): void {
-  stats.processed += 1;
-  if (status === "active") {
-    stats.active += 1;
-  } else if (status === "pending_audit") {
-    stats.pendingAudit += 1;
-  } else if (status === "stale") {
-    stats.stale += 1;
-  }
-}
 
 export async function notifyFlagCreated(
   env: Bindings,
@@ -148,36 +124,6 @@ export async function notifyRemoveRequestCancelled(
     flagCount: payload.flagCount,
     source: "remove_request",
   });
-}
-
-async function enqueueModerationNotification(
-  env: Bindings,
-  event: ModerationNotificationEvent,
-): Promise<void> {
-  await env.OEM_WEBHOOK_Q.send({
-    type: "discord_notification",
-    event,
-    queuedAt: new Date().toISOString(),
-  });
-}
-
-export async function processWebhookQueueBatch(
-  env: Bindings,
-  batch: MessageBatch<OemWebhookQueueMessage>,
-): Promise<void> {
-  for (const message of batch.messages) {
-    try {
-      await sendModerationNotificationNow(env, message.body.event);
-      message.ack();
-    } catch (error) {
-      console.warn("OEM_WEBHOOK_Q message failed", {
-        type: message.body?.type,
-        eventType: message.body?.event?.type,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      message.retry();
-    }
-  }
 }
 
 export async function sendModerationNotificationNow(

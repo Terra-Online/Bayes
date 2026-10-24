@@ -19,7 +19,13 @@ when the task explicitly concerns those documents.
   - Partially adopted: existing handlers still contain business workflows and SQL.
 - `services/<topic>/`:
   - Responsible for: business rules, permissions, workflow orchestration, and
-    transactions across repository calls. Agents should pass scoped inputs and dependencies.
+    transactions across repository calls. Agents should pass explicit, scoped business inputs.
+  - Dependencies follow responsibility: orchestration services near HTTP entrypoints may
+    accept the complete application `Bindings`. Focused services and repositories should
+    accept the specific resources they use, such as `D1Database`; pure functions take data.
+  - Call internal services directly. Inject dependencies separately when a real variation
+    or runtime lifecycle requires it. Use binding subsets when they clarify a resource
+    contract; avoid callback wiring or exact subsets solely to minimize declared dependencies.
   - Not responsible for: Hono context, HTTP responses, or SQL statements.
   - Partially adopted: business workflows are not all Hono-independent, and SQL
     ownership has not been fully separated from services.
@@ -97,7 +103,8 @@ when the task explicitly concerns those documents.
 Agents should keep changes focused and explain compatibility changes and
 verification in the pull request. Agents should follow
 [route conventions](src/routes/README.md) for HTTP work and
-[public read conventions](src/publicRead/README.md) for cached public reads.
+[public read conventions](src/publicRead/README.md) for cached public reads, and
+[queue conventions](src/queues/README.md) for asynchronous queue entrypoints.
 
 ## Setup
 

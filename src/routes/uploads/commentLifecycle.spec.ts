@@ -1,11 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { onAppError } from "@/middleware/error-handler";
+import type { AutoModerationMsg, WebhookMsg } from "@/queues/types/messages";
 import type { UserSubmissionComment } from "@/repositories/submission/types";
-import type {
-  OemModerationQueueMessage,
-  OemWebhookQueueMessage,
-} from "@/services/moderation/messages";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { insertAuthUser, insertSession, testAuthConfig } from "@/test/fixtures/auth";
 import { insertSubmission } from "@/test/fixtures/submissions";
@@ -17,8 +14,8 @@ import { createRoutes } from "./createRoutes";
 let database: TestDatabase;
 let env: AppEnv["Bindings"];
 let sessions: Record<string, { authorization: string }>;
-let moderation: OemModerationQueueMessage[];
-let webhooks: OemWebhookQueueMessage[];
+let moderation: AutoModerationMsg[];
+let webhooks: WebhookMsg[];
 let liveNotifications: Array<{ recipient: string; body: unknown }>;
 
 const comment = {
@@ -55,12 +52,12 @@ beforeEach(() => {
     LOCK_UPLOAD_ENDPOINTS: "false",
     OEM_AUTH_RATE_LIMIT: { limit: async () => ({ success: true }) },
     OEM_MODERATION_Q: {
-      send: async (message: OemModerationQueueMessage) => {
+      send: async (message: AutoModerationMsg) => {
         moderation.push(message);
       },
     },
     OEM_WEBHOOK_Q: {
-      send: async (message: OemWebhookQueueMessage) => {
+      send: async (message: WebhookMsg) => {
         webhooks.push(message);
       },
     },

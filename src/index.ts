@@ -5,18 +5,9 @@ import { runWithAuthRequest } from "./lib/auth/createAuth";
 import { getRuntimeConfig } from "./lib/config";
 import { createRedisClient } from "./lib/redis";
 import { withRequestTelemetry } from "./lib/requestTelemetry";
+import { ensureAutoModerationBackfill } from "./queues/client/autoModeration";
+import { handleQueue } from "./queues/runtime/entrypoint";
 import { evaluateKarmaIfDue } from "./services/karma/evaluation";
-import type {
-  OemModerationQueueMessage,
-  OemTranslationQueueMessage,
-  OemWebhookQueueMessage,
-} from "./services/moderation/messages";
-import { processWebhookQueueBatch } from "./services/moderation/notifications";
-import {
-  ensureModerationBackfill,
-  processModerationQueueBatch,
-  processTranslationQueueBatch,
-} from "./services/moderation/queue";
 import { drainProgressStatsOutbox } from "./services/progress/outbox";
 import {
   cleanupProgressConsistencyRecords,
@@ -56,7 +47,7 @@ async function runScheduledJobs(env: Bindings): Promise<void> {
   let enqueued = 0;
 
   if (config.scheduledModerationEnabled) {
-    enqueued = await ensureModerationBackfill(env, 20);
+    enqueued = await ensureAutoModerationBackfill(env, 20);
   }
 
   console.warn("cron jobs completed", {
@@ -102,29 +93,5 @@ export default {
     ctx.waitUntil(runProgressRecovery(env));
     ctx.waitUntil(runScheduledJobs(env));
   },
-  async queue(
-    batch: MessageBatch<
-      OemModerationQueueMessage | OemTranslationQueueMessage | OemWebhookQueueMessage
-    >,
-    env: Bindings,
-  ) {
-    if (batch.queue === "oem-moderation") {
-      await processModerationQueueBatch(env, batch as MessageBatch<OemModerationQueueMessage>);
-      return;
-    }
-    if (batch.queue === "oem-translation") {
-      await processTranslationQueueBatch(env, batch as MessageBatch<OemTranslationQueueMessage>);
-      return;
-    }
-    if (batch.queue === "oem-webhook") {
-      await processWebhookQueueBatch(env, batch as MessageBatch<OemWebhookQueueMessage>);
-      return;
-    }
-
-    console.warn("unknown queue batch received", {
-      queue: batch.queue,
-      messages: batch.messages.length,
-    });
-    batch.retryAll();
-  },
+  queue: handleQueue,
 };

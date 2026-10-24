@@ -1,8 +1,4 @@
-import type {
-  OemModerationQueueMessage,
-  OemTranslationQueueMessage,
-  OemWebhookQueueMessage,
-} from "@/services/moderation/messages";
+import type { AutoModerationMsg, TranslationMsg, WebhookMsg } from "@/queues/types/messages";
 import type { oem_imgTrans } from "@/services/upload/imageTranscoderContainer";
 
 export type Role = "n" | "p" | "a" | "s" | "r";
@@ -18,9 +14,9 @@ export interface Bindings {
   OEM_PUBLIC_RATE_LIMIT: RateLimit;
   OEM_AUTH_RATE_LIMIT: RateLimit;
   OEM_BINDING_RATE_LIMIT: RateLimit;
-  OEM_MODERATION_Q: Queue<OemModerationQueueMessage>;
-  OEM_TRANSLATION_Q: Queue<OemTranslationQueueMessage>;
-  OEM_WEBHOOK_Q: Queue<OemWebhookQueueMessage>;
+  OEM_MODERATION_Q: Queue<AutoModerationMsg>;
+  OEM_TRANSLATION_Q: Queue<TranslationMsg>;
+  OEM_WEBHOOK_Q: Queue<WebhookMsg>;
   OEM_ID_MAILS: SendEmail;
   UPSTASH_REDIS_REST_URL: string;
   UPSTASH_REDIS_REST_TOKEN: string;

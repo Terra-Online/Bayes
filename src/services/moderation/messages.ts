@@ -1,8 +1,6 @@
 import type { SubmissionRecord, SubmissionStatus } from "@/repositories/submission/types";
 import type { AuthUser } from "@/types/app";
 
-export type ModerationQueueSource = "upload" | "manual" | "scheduled_backfill";
-
 export type TransPrewarmSource = "auto_moderation" | "manual_moderation";
 
 export type TransPrewarmTargetStatus = "success" | "failed" | "skipped";
@@ -55,31 +53,3 @@ export type ModerationNotificationEvent =
       source: TransPrewarmSource;
       targets: TransPrewarmTarget[];
     };
-
-export interface PendingOpenAICompletionStats {
-  processed: number;
-  active: number;
-  pendingAudit: number;
-  stale: number;
-}
-
-export type OemModerationQueueMessage = {
-  type: "moderation";
-  submissionId: string;
-  snapshotId?: string;
-  source: ModerationQueueSource;
-  queuedAt: string;
-};
-
-export type OemWebhookQueueMessage = {
-  type: "discord_notification";
-  event: ModerationNotificationEvent;
-  queuedAt: string;
-};
-
-export type OemTranslationQueueMessage = {
-  type: "comment_translation_prewarm";
-  submissionId: string;
-  source: TransPrewarmSource;
-  queuedAt: string;
-};

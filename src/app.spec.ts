@@ -164,7 +164,7 @@ it("keeps progress delivery and moderation backfill independent through job lock
   expect(database.sqlite.prepare("SELECT status FROM progress_stats_outbox").all()).toEqual([
     { status: "processed" },
   ]);
-  expect(mocks.moderationQueue.send).not.toHaveBeenCalled();
+  expect(mocks.autoModerationQueue.send).not.toHaveBeenCalled();
 
   // Optional jobs resume independently when a progress read fails. Redis reports
   // a future evaluation cycle; the real moderation backfill still runs.
@@ -183,7 +183,7 @@ it("keeps progress delivery and moderation backfill independent through job lock
       }),
     );
   });
-  mocks.moderationQueue.send.mockResolvedValue({
+  mocks.autoModerationQueue.send.mockResolvedValue({
     metadata: { metrics: { backlogCount: 1, backlogBytes: 100 } },
   });
   insertSubmission(database.sqlite, {
@@ -202,7 +202,7 @@ it("keeps progress delivery and moderation backfill independent through job lock
     waitUntil: (work: Promise<unknown>) => waits.push(work),
   } as unknown as ExecutionContext);
   await Promise.allSettled(waits);
-  expect(mocks.moderationQueue.send).toHaveBeenCalledWith(
+  expect(mocks.autoModerationQueue.send).toHaveBeenCalledWith(
     expect.objectContaining({ submissionId: "awaiting-review", source: "scheduled_backfill" }),
   );
   database.hooks.beforeQuery = undefined;
@@ -211,5 +211,5 @@ it("keeps progress delivery and moderation backfill independent through job lock
     waitUntil: (work: Promise<unknown>) => waits.push(work),
   } as unknown as ExecutionContext);
   await Promise.all(waits);
-  expect(mocks.moderationQueue.send).toHaveBeenCalledTimes(1);
+  expect(mocks.autoModerationQueue.send).toHaveBeenCalledTimes(1);
 });

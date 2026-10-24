@@ -1,11 +1,8 @@
 import type { SQLOutputValue } from "node:sqlite";
 
 import { onAppError } from "@/middleware/error-handler";
+import type { AutoModerationMsg, WebhookMsg } from "@/queues/types/messages";
 import { createRoutes } from "@/routes/uploads/createRoutes";
-import type {
-  OemModerationQueueMessage,
-  OemWebhookQueueMessage,
-} from "@/services/moderation/messages";
 import { createMockBindings } from "@/test/bindings";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import type { AppEnv } from "@/types/app";
@@ -26,8 +23,8 @@ export interface ImageLifecycleFixture {
   database: TestDatabase;
   env: AppEnv["Bindings"];
   sessions: Record<string, { authorization: string }>;
-  moderation: OemModerationQueueMessage[];
-  webhooks: OemWebhookQueueMessage[];
+  moderation: AutoModerationMsg[];
+  webhooks: WebhookMsg[];
   liveNotifications: Array<{ recipient: string; body: unknown }>;
   request: (path: string, user?: string | null, body?: FormData | object) => Promise<Response>;
   submission: (id: string) => Record<string, SQLOutputValue>;
@@ -48,8 +45,8 @@ export function createImageLifecycleFixture(): ImageLifecycleFixture {
     insertAuthUser(database.sqlite, { id: uid });
     sessions[uid] = insertSession(database.sqlite, { userId: uid }).headers;
   }
-  const moderation: OemModerationQueueMessage[] = [];
-  const webhooks: OemWebhookQueueMessage[] = [];
+  const moderation: AutoModerationMsg[] = [];
+  const webhooks: WebhookMsg[] = [];
   const liveNotifications: Array<{ recipient: string; body: unknown }> = [];
   const mocks = createMockBindings({ DB: database.db });
   const env = {
@@ -60,12 +57,12 @@ export function createImageLifecycleFixture(): ImageLifecycleFixture {
     OEM_PUBLIC_RATE_LIMIT: { limit: async () => ({ success: true }) },
     OEM_AUTH_RATE_LIMIT: { limit: async () => ({ success: true }) },
     OEM_MODERATION_Q: {
-      send: async (message: OemModerationQueueMessage) => {
+      send: async (message: AutoModerationMsg) => {
         moderation.push(message);
       },
     },
     OEM_WEBHOOK_Q: {
-      send: async (message: OemWebhookQueueMessage) => {
+      send: async (message: WebhookMsg) => {
         webhooks.push(message);
       },
     },

@@ -1,14 +1,11 @@
-import { Hono, type Context } from "hono";
+import { Hono } from "hono";
 
 import { getRuntimeConfig } from "@/lib/config";
 import { ApiError } from "@/lib/errors";
-import { isCommentEditModerationNote, RECALL_MODERATION_NOTE_PREFIX } from "@/lib/moderation";
-import { prewarmPublicUgcAsset } from "@/lib/publicUgcAssets";
 import { createRedisClient } from "@/lib/redis";
 import { requireAuth, requireRole } from "@/middleware/auth";
 import { rateLimit } from "@/middleware/rate-limit";
 import { invalidateUploadCaches } from "@/publicRead/client/invalidate";
-import type { NotificationRecord } from "@/repositories/notifications";
 import {
   listDuplicateImageMarkers,
   listDuplicateMarkerImages,
@@ -18,16 +15,7 @@ import {
   getReviewSubmissions,
   markImageSubmissionsStaleByFilePathPrefix,
 } from "@/repositories/submission-review";
-import {
-  getSubmissionById,
-  transitionSubmissionStatusWithNotifications,
-} from "@/repositories/submission/statusSubmission";
-import {
-  ALL_STATUSES,
-  type SubmissionRecord,
-  type SubmissionStatus,
-} from "@/repositories/submission/types";
-import { applyUserPointsDelta } from "@/repositories/users";
+import { ALL_STATUSES, type SubmissionStatus } from "@/repositories/submission/types";
 import {
   updateSchema,
   listSchema,
@@ -38,27 +26,12 @@ import {
   warningSchema,
 } from "@/routes/schema/moderation";
 import { evaluateKarmaBatch } from "@/services/karma/evaluation";
-import { getModerationPointsDeltaWithDailyBackoff } from "@/services/karma/moderationPoints";
-import { moderateSubmissionIds } from "@/services/moderation/core";
+import { runAutoModerationRequest } from "@/services/moderation/autoModeration";
 import { getImageCoverage } from "@/services/moderation/imageCoverage";
-import { notifySubmissionModerationResult } from "@/services/moderation/notifications";
+import { applyManualModeration } from "@/services/moderation/manualModeration";
 import { getOrphanImages } from "@/services/moderation/orphanImages";
-import {
-  ensureModerationBackfill,
-  enqueueApprovedCommentTransPrewarm,
-} from "@/services/moderation/queue";
 import { sendModerationWarning } from "@/services/moderation/warnings";
-import { publishNotificationsCreated } from "@/services/notify/live";
 import type { AppEnv } from "@/types/app";
-
-const STATUS_TRANSITIONS: Record<SubmissionStatus, SubmissionStatus[]> = {
-  pending_openai: ["active", "pending_audit", "stale"],
-  pending_audit: ["active", "stale"],
-  active: ["stale"],
-  flagged: ["active", "stale"],
-  remove_request: ["active", "stale"],
-  stale: ["active"],
-};
 
 function isModerationLocked(flag: string | undefined): boolean {
   const normalized = (flag ?? "true").trim().toLowerCase();
@@ -111,106 +84,6 @@ function resolveImageScope(
   }
 
   return {};
-}
-
-function assertStatusTransition(from: SubmissionStatus, to: SubmissionStatus): void {
-  if (from === to) {
-    return;
-  }
-
-  if (!STATUS_TRANSITIONS[from].includes(to)) {
-    throw new ApiError(
-      409,
-      "INVALID_STATUS_TRANSITION",
-      `Cannot move submission from ${from} to ${to}.`,
-      {
-        from,
-        to,
-        allowed: STATUS_TRANSITIONS[from],
-      },
-    );
-  }
-}
-
-function shouldApplyModerationPoints(
-  currentStatus: SubmissionStatus,
-  nextStatus: SubmissionStatus,
-  moderationNote: string | null,
-): boolean {
-  if (currentStatus === nextStatus || (nextStatus !== "active" && nextStatus !== "stale")) {
-    return false;
-  }
-
-  if (nextStatus === "stale" && moderationNote?.startsWith(RECALL_MODERATION_NOTE_PREFIX)) {
-    return false;
-  }
-
-  return true;
-}
-
-async function runModeration<E extends AppEnv>(
-  c: Context<E>,
-  payload: {
-    ids?: string[];
-    limit?: number;
-  },
-) {
-  const config = getRuntimeConfig(c.env);
-  const redis = createRedisClient(c.env);
-  const options = {
-    openAiApiKey: c.env.OPENAI_API_KEY,
-    assetBaseUrl: config.ugcAssetBaseUrl,
-    ugcBucket: c.env.UGC_BUCKET,
-    ugcKv: c.env.OEM_KV,
-    redis,
-    surgeModeEnabled: config.surgeModeEnabled,
-    surgeBackoffMultiplier: config.surgeBackoffMultiplier,
-    skipAiModeration: config.skipAiModeration,
-    localAutoApprove: config.localUploadAutoApprove,
-    enqueueApprovedCommentTransPrewarm: (submissionId: string) =>
-      enqueueApprovedCommentTransPrewarm(c.env, submissionId, "auto_moderation"),
-    enqueueSubmissionModerationNotice: (
-      submission: SubmissionRecord,
-      previousStatus: SubmissionStatus,
-      nextStatus: "active" | "pending_audit",
-    ) =>
-      notifySubmissionModerationResult(c.env, {
-        submission,
-        previousStatus,
-        nextStatus,
-        source: "auto_moderation",
-      }),
-    publishNotifications: (notifications: NotificationRecord[]) =>
-      publishNotificationsCreated(c.env, notifications),
-  };
-
-  if (payload.ids && payload.ids.length > 0) {
-    const processed = await moderateSubmissionIds(c.env.DB, options, payload.ids, 25_000);
-
-    return {
-      ok: true,
-      mode: "selected" as const,
-      requested: payload.ids.length,
-      processed: processed.processed,
-      active: processed.stats.active,
-      pendingAudit: processed.stats.pendingAudit,
-      stale: processed.stats.stale,
-    };
-  }
-
-  const limit = payload.limit ?? 5;
-  const enqueued = await ensureModerationBackfill(c.env, limit);
-
-  return {
-    ok: true,
-    mode: "queue" as const,
-    requested: limit,
-    enqueued,
-    processed: 0,
-    active: 0,
-    pendingAudit: 0,
-    stale: 0,
-  };
 }
 
 export function createRoutes() {
@@ -425,89 +298,17 @@ export function createRoutes() {
         );
       }
 
-      const current = await getSubmissionById(c.env.DB, submissionId);
-      if (!current) {
-        throw new ApiError(404, "SUBMISSION_NOT_FOUND", "Submission was not found.");
-      }
-      assertStatusTransition(current.status, parsed.data.status);
-
-      const transition = await transitionSubmissionStatusWithNotifications(c.env.DB, {
-        submission: current,
-        status: parsed.data.status,
-        moderationNote: parsed.data.moderationNote,
-        source: "manual_moderation",
-        clearFlags: current.status === "flagged" && parsed.data.status === "active",
-      });
-      if (!transition.updated) {
-        throw new ApiError(
-          409,
-          "MODERATION_CONFLICT",
-          "Submission changed while it was being moderated.",
-        );
-      }
-      if (transition.notifications.length > 0) {
-        c.executionCtx.waitUntil(publishNotificationsCreated(c.env, transition.notifications));
-      }
-      if (
-        current.status !== parsed.data.status &&
-        (parsed.data.status === "active" || parsed.data.status === "pending_audit")
-      ) {
-        c.executionCtx.waitUntil(
-          notifySubmissionModerationResult(c.env, {
-            submission: current,
-            previousStatus: current.status,
-            nextStatus: parsed.data.status,
-            source: "manual_moderation",
-          }),
-        );
-      }
-      if (
-        current.status !== "active" &&
-        parsed.data.status === "active" &&
-        current.kind === "image"
-      ) {
-        const config = getRuntimeConfig(c.env);
-        c.executionCtx.waitUntil(prewarmPublicUgcAsset(config.ugcAssetBaseUrl, current.filePath));
-      }
-      c.executionCtx.waitUntil(
-        invalidateUploadCaches({
-          kv: c.env.OEM_KV,
-          kind: current.kind,
-          markerId: current.markerId,
-        }),
+      await applyManualModeration(
+        {
+          bindings: c.env,
+          defer: (task) => c.executionCtx.waitUntil(task),
+        },
+        {
+          submissionId,
+          nextStatus: parsed.data.status,
+          moderationNote: parsed.data.moderationNote,
+        },
       );
-      if (current.kind === "comment") {
-        if (current.status !== "active" && parsed.data.status === "active") {
-          c.executionCtx.waitUntil(
-            enqueueApprovedCommentTransPrewarm(c.env, submissionId, "manual_moderation"),
-          );
-        }
-      }
-      const effectiveModerationNote = parsed.data.moderationNote ?? current.moderationNote;
-      const isPreviouslyApprovedEdit =
-        isCommentEditModerationNote(current.moderationNote) &&
-        current.editOriginalStatus !== "pending_openai" &&
-        current.editOriginalStatus !== "pending_audit";
-      if (
-        !isPreviouslyApprovedEdit &&
-        shouldApplyModerationPoints(current.status, parsed.data.status, effectiveModerationNote)
-      ) {
-        const reviewStatus = parsed.data.status === "active" ? "active" : "stale";
-        const redis = createRedisClient(c.env);
-        const config = getRuntimeConfig(c.env);
-        await applyUserPointsDelta(
-          c.env.DB,
-          current.userId,
-          await getModerationPointsDeltaWithDailyBackoff(redis, {
-            userId: current.userId,
-            kind: current.kind,
-            status: reviewStatus,
-            role: current.submitter?.role,
-            surgeModeEnabled: config.surgeModeEnabled,
-            surgeBackoffMultiplier: config.surgeBackoffMultiplier,
-          }),
-        );
-      }
 
       return c.json({ ok: true });
     })
@@ -522,10 +323,15 @@ export function createRoutes() {
         );
       }
 
-      return c.json(await runModeration(c, parsed.data));
+      const result = await runAutoModerationRequest(c.env, {
+        submissionIds: parsed.data.ids,
+        limit: parsed.data.limit,
+      });
+      return c.json({ ok: true, ...result });
     })
     .post("/run-once", requireAuth, requireRole(["a"]), rateLimit("auth"), async (c) => {
-      return c.json(await runModeration(c, { limit: 5 }));
+      const result = await runAutoModerationRequest(c.env, { limit: 5 });
+      return c.json({ ok: true, ...result });
     })
     .post("/karma/run-once", requireAuth, requireRole(["a"]), rateLimit("auth"), async (c) => {
       const redis = createRedisClient(c.env);

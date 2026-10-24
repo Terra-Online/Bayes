@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, it, vi, type Mock } from "vitest";
 
+import { processWebhookQueueBatch } from "@/queues/runtime/moderationWebhook";
+import type { WebhookMsg } from "@/queues/types/messages";
 import type { SubmissionRecord } from "@/repositories/submission/types";
 import type { Bindings } from "@/types/app";
 
-import type { ModerationNotificationEvent, OemWebhookQueueMessage } from "./messages";
-import { processWebhookQueueBatch, sendModerationNotificationNow } from "./notifications";
+import type { ModerationNotificationEvent } from "./messages";
+import { sendModerationNotificationNow } from "./notifications";
 
 const submission: SubmissionRecord = {
   id: "submission-1",
@@ -41,7 +43,7 @@ const event: ModerationNotificationEvent = {
 };
 
 interface WebhookDeliveryFixture {
-  batch: MessageBatch<OemWebhookQueueMessage>;
+  batch: MessageBatch<WebhookMsg>;
   ack: Mock<() => void>;
   retry: Mock<() => void>;
 }
@@ -61,7 +63,7 @@ function createWebhookDelivery(): WebhookDeliveryFixture {
   const batch = {
     queue: "oem-webhook",
     messages: [message],
-  } as unknown as MessageBatch<OemWebhookQueueMessage>;
+  } as unknown as MessageBatch<WebhookMsg>;
   return { batch, ack, retry };
 }
 
