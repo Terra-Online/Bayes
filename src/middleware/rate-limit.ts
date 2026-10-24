@@ -1,4 +1,5 @@
-import type { MiddlewareHandler } from "hono";
+import type { Context } from "hono";
+import { createMiddleware } from "hono/factory";
 
 import { ApiError } from "@/lib/errors";
 import { getUploadRateLimitForKarma } from "@/lib/karma/rules";
@@ -74,9 +75,9 @@ function getScopeLimit(scope: RateLimitScope): number {
   return PUBLIC_LIMIT_PER_MINUTE;
 }
 
-function getLimitForRequest(
+function getLimitForRequest<E extends AppEnv<{ authUser?: AuthUser }>>(
   scope: RateLimitScope,
-  c: Parameters<MiddlewareHandler<AppEnv<{ authUser?: AuthUser }>>>[0],
+  c: Context<E>,
 ): number {
   if (scope === "upload") {
     const user = c.get("authUser");
@@ -137,9 +138,9 @@ function applyLocalFixedWindowLimit(
   };
 }
 
-function canUseLocalReadLimit(
+function canUseLocalReadLimit<E extends AppEnv<{ authUser?: AuthUser }>>(
   scope: RateLimitScope,
-  c: Parameters<MiddlewareHandler<AppEnv<{ authUser?: AuthUser }>>>[0],
+  c: Context<E>,
 ): boolean {
   const method = c.req.method.toUpperCase();
   const readMethod = method === "GET" || method === "HEAD" || method === "OPTIONS";
@@ -150,8 +151,8 @@ function normalizeEmail(input: string): string {
   return input.trim().toLowerCase();
 }
 
-async function tryExtractEmailFromJson(
-  c: Parameters<MiddlewareHandler<AppEnv<{ authUser?: AuthUser }>>>[0],
+async function tryExtractEmailFromJson<E extends AppEnv<{ authUser?: AuthUser }>>(
+  c: Context<E>,
 ): Promise<string | null> {
   const contentType = c.req.header("content-type")?.toLowerCase() ?? "";
   if (!contentType.includes("application/json")) {
@@ -172,9 +173,7 @@ async function tryExtractEmailFromJson(
   }
 }
 
-function getRequestIp(
-  c: Parameters<MiddlewareHandler<AppEnv<{ authUser?: AuthUser }>>>[0],
-): string {
+function getRequestIp<E extends AppEnv<{ authUser?: AuthUser }>>(c: Context<E>): string {
   return c.req.header("cf-connecting-ip") ?? "anonymous";
 }
 
@@ -188,9 +187,9 @@ function getCloudflareRateLimitBinding(env: Bindings, scope: RateLimitScope): Ra
   return env.OEM_PUBLIC_RATE_LIMIT;
 }
 
-function getCloudflareRateLimitIdentity(
+function getCloudflareRateLimitIdentity<E extends AppEnv<{ authUser?: AuthUser }>>(
   scope: RateLimitScope,
-  c: Parameters<MiddlewareHandler<AppEnv<{ authUser?: AuthUser }>>>[0],
+  c: Context<E>,
   requestIp: string,
 ): string {
   const user = c.get("authUser");
@@ -200,8 +199,8 @@ function getCloudflareRateLimitIdentity(
   return `ip:${requestIp}`;
 }
 
-async function applyCloudflareRateLimit(
-  c: Parameters<MiddlewareHandler<AppEnv<{ authUser?: AuthUser }>>>[0],
+async function applyCloudflareRateLimit<E extends AppEnv<{ authUser?: AuthUser }>>(
+  c: Context<E>,
   scope: RateLimitScope,
   requestIp: string,
 ): Promise<void> {
@@ -223,8 +222,8 @@ async function applyCloudflareRateLimit(
   }
 }
 
-async function applySlidingWindowLimit(
-  c: Parameters<MiddlewareHandler<AppEnv<{ authUser?: AuthUser }>>>[0],
+async function applySlidingWindowLimit<E extends AppEnv<{ authUser?: AuthUser }>>(
+  c: Context<E>,
   redisKey: string,
   limit: number,
   windowMs: number,
@@ -272,10 +271,10 @@ async function buildRedisRateKey(
   return hmacServiceIdentifier(env, namespace, identity);
 }
 
-export function rateLimit(
-  scope: RateLimitScope,
-): MiddlewareHandler<AppEnv<{ authUser?: AuthUser }>> {
-  return async (c, next) => {
+export function rateLimit<
+  E extends AppEnv<{ authUser?: AuthUser }> = AppEnv<{ authUser?: AuthUser }>,
+>(scope: RateLimitScope) {
+  return createMiddleware<E>(async (c, next) => {
     const requestIp = getRequestIp(c);
     const user = c.get("authUser");
     if (user?.role === "r") {
@@ -392,5 +391,5 @@ export function rateLimit(
     }
 
     await next();
-  };
+  });
 }

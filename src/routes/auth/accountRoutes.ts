@@ -25,9 +25,6 @@ export function createRoutes(
   return new Hono<AppEnv<{ requestId: string }>>()
     .get("/list-accounts", requireAuth, rateLimit("auth"), async (c) => {
       const user = c.get("authUser");
-      if (!user) {
-        throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
-      }
 
       const result = await c.env.DB.prepare(
         `SELECT providerId, createdAt
@@ -83,9 +80,6 @@ export function createRoutes(
       }
 
       const user = c.get("authUser");
-      if (!user) {
-        throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
-      }
       const providerId = parsed.data.provider === "email" ? "credential" : parsed.data.provider;
       const result = await c.env.DB.prepare(
         "SELECT id FROM auth_accounts WHERE userId = ?1 AND providerId = ?2 LIMIT 2",

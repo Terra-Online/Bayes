@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { createMiddleware } from "hono/factory";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 import { runWithAuthRequest } from "@/lib/auth/createAuth";
@@ -71,13 +72,16 @@ afterEach(() => {
 });
 
 function request(path: string, payload?: unknown, uid: string | null = "user") {
-  const app = new Hono<AppEnv<{ requestId: string }>>();
-  app.onError(onAppError);
-  app.use("*", async (c, next) => {
-    c.set("requestId", "binding-request");
-    await next();
-  });
-  app.route("/binding/v1", createRoutes());
+  const app = new Hono<AppEnv>()
+    .onError(onAppError)
+    .use(
+      "*",
+      createMiddleware<AppEnv<{ requestId: string }>>(async (c, next) => {
+        c.set("requestId", "binding-request");
+        await next();
+      }),
+    )
+    .route("/binding/v1", createRoutes());
   const headers = {
     ...(uid ? sessions.get(uid)!.headers : {}),
     "content-type": "application/json",

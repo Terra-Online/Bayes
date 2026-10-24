@@ -13,7 +13,7 @@ import { readImageSections } from "@/services/ugc/read/imageSections";
 import type { AppEnv } from "@/types/app";
 
 import { getOptionalAuthIdentity, hasAuthHeaders, requireMarkerIds } from "./helpers";
-import { imageListAccess, requireActiveUser } from "./middleware";
+import { imageListRateLimit, parseImageListAccess, requireActiveUser } from "./middleware";
 import { imageSectionsResponse, publicReadResponse, viewerReadResponse } from "./responses";
 import { resolveImageScope, resolvePrivateAssetBaseUrl, resolvePublicAssetBaseUrl } from "./scope";
 
@@ -22,9 +22,6 @@ export function createRoutes() {
     new Hono<AppEnv<{ requestId: string }>>()
       .get("/images/mine", requireActiveUser, rateLimit("auth"), async (c) => {
         const user = c.get("authUser");
-        if (!user) {
-          throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
-        }
 
         const parsed = imagesQuerySchema.safeParse({
           markerId: c.req.query("markerId"),
@@ -91,12 +88,9 @@ export function createRoutes() {
         response.headers.set("Cache-Control", "private, no-store");
         return response;
       })
-      .get("/images", imageListAccess(), async (c) => {
-        if (c.req.query("includeMine") === "1") {
-          const user = c.get("authUser");
-          if (!user) {
-            throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
-          }
+      .get("/images", parseImageListAccess, imageListRateLimit, async (c) => {
+        const access = c.get("imageListAccess");
+        if (access.kind === "includeMine") {
           const parsed = imagesQuerySchema.safeParse(c.req.query());
           if (!parsed.success) {
             throw new ApiError(422, "VALIDATION_ERROR", "Invalid image query.");
@@ -108,7 +102,7 @@ export function createRoutes() {
           const limit = parsed.data.limit ?? 6;
 
           const result = await readImageSections(c.env, {
-            viewerUserId: user.uid,
+            viewerUserId: access.user.uid,
             markerIds,
             limit,
             scope,

@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { createMiddleware } from "hono/factory";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createAuth, runWithAuthRequest } from "@/lib/auth/createAuth";
@@ -92,7 +93,10 @@ describe("email authentication HTTP behavior", () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     app = new Hono<AppEnv<{ requestId: string }>>()
-      .use("*", (_c, next) => runWithAuthRequest(next))
+      .use(
+        "*",
+        createMiddleware<AppEnv>((_c, next) => runWithAuthRequest(next)),
+      )
       .onError(onAppError);
     app.route("/auth/v1", createEmailRoutes());
     app.route("/auth/v1", createPasswordResetRoutes());

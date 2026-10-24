@@ -2,8 +2,8 @@ import { Hono } from "hono";
 
 import { getLegacyCookieExpirations } from "@/lib/auth/browserSession";
 import { createAuth } from "@/lib/auth/createAuth";
+import { invalidateAuthUserCache } from "@/lib/auth/identity";
 import { ApiError } from "@/lib/errors";
-import { invalidateAuthUserCache } from "@/middleware/auth";
 import { rateLimit } from "@/middleware/rate-limit";
 import type { AppEnv } from "@/types/app";
 

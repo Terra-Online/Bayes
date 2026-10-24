@@ -59,9 +59,6 @@ export function createRoutes() {
     .use("/contributions/:id/preview", rateLimit("preview"))
     .get("/overview", async (c) => {
       const user = c.get("authUser");
-      if (!user) {
-        throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
-      }
 
       const counts = await readCached(c.env.DB, `counts:${user.uid}`, 15_000, () =>
         getContributionCounts(c.env.DB, user.uid),
@@ -70,9 +67,6 @@ export function createRoutes() {
     })
     .get("/contributions", async (c) => {
       const user = c.get("authUser");
-      if (!user) {
-        throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
-      }
       const parsed = contributionQuerySchema.safeParse({
         kind: c.req.query("kind") || undefined,
         status: c.req.query("status") || undefined,
@@ -107,9 +101,6 @@ export function createRoutes() {
     })
     .get("/contributions/:id/preview", async (c) => {
       const user = c.get("authUser");
-      if (!user) {
-        throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
-      }
       const id = c.req.param("id");
       const image = await getContributionImage(c.env.DB, user.uid, id);
       if (!image) {

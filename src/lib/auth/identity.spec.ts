@@ -1,18 +1,11 @@
-import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as authFactory from "@/lib/auth/createAuth";
 import { createMockBindings } from "@/test/bindings";
 import { insertAuthenticatedUser, type AuthenticatedUserFixture } from "@/test/fixtures/auth";
 import { createAuthCacheFixture, type AuthCacheFixture } from "@/test/fixtures/authCache";
-import type { AppEnv } from "@/types/app";
 
-import {
-  invalidateAuthUserCache,
-  resolveAuthIdentity,
-  resolveAuthUser,
-  resolveContextAuthUser,
-} from "./auth";
+import { invalidateAuthUserCache, resolveAuthIdentity, resolveAuthUser } from "./identity";
 
 const overview = "/me/v1/overview";
 const status = "/binding/v1/endfield/status";
@@ -102,23 +95,6 @@ describe("request-owned auth lookups", () => {
     expect(completed.status).toBe(200);
     expect(await completed.json()).toMatchObject({ user: { email: owner.user.email } });
     expect(profileReads()).toHaveLength(2);
-  });
-
-  it("deduplicates concurrent helpers within a Hono request", async () => {
-    // No public endpoint calls these helpers concurrently; keep the context seam.
-    const app = new Hono<AppEnv>();
-    app.get("/", async (c) => {
-      const users = await Promise.all([resolveContextAuthUser(c), resolveContextAuthUser(c)]);
-      expect(users[0]).toBe(users[1]);
-      return c.json({ uid: users[0]!.uid });
-    });
-    const response = await authFactory.runWithAuthRequest(() =>
-      app.request("/", { headers: owner.headers }, fixture.external.bindings),
-    );
-    expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ uid: owner.user.uid });
-    expect(sessionReads()).toHaveLength(1);
-    expect(profileReads()).toHaveLength(1);
   });
 
   it("isolates completed values by bindings/configuration and invalidates the right environment", async () => {

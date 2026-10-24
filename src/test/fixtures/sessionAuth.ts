@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { createMiddleware } from "hono/factory";
 import { expect, vi, type Mock } from "vitest";
 
 import { runWithAuthRequest } from "@/lib/auth/createAuth";
@@ -37,10 +38,13 @@ export function createSessionAuthFixture(baseURL: string): SessionAuthFixture {
   // Better Auth and route read limits have process-local windows keyed by IP.
   const clientIp = `192.0.2.${++clientNumber}`;
   const app = new Hono<AppEnv<{ requestId: string }>>()
-    .use("*", (c, next) => {
-      c.req.raw.headers.set("cf-connecting-ip", clientIp);
-      return runWithAuthRequest(next);
-    })
+    .use(
+      "*",
+      createMiddleware<AppEnv>((c, next) => {
+        c.req.raw.headers.set("cf-connecting-ip", clientIp);
+        return runWithAuthRequest(next);
+      }),
+    )
     .onError(onAppError)
     .route("/auth/v1", createSocialRoutes())
     .route("/auth/v1", createSessionExchangeRoutes())

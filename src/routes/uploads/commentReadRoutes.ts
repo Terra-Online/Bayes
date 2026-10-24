@@ -21,9 +21,6 @@ export function createRoutes() {
     new Hono<AppEnv<{ requestId: string }>>()
       .get("/comments/mine", requireActiveUser, rateLimit("auth"), async (c) => {
         const user = c.get("authUser");
-        if (!user) {
-          throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
-        }
 
         const parsed = commentsQuerySchema.safeParse({
           markerId: c.req.query("markerId"),

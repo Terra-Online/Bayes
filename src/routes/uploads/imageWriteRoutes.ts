@@ -14,7 +14,7 @@ import { recallSubmission } from "@/services/ugc/owner/withdrawals";
 import { submitImage } from "@/services/ugc/submission/create";
 import type { AppEnv } from "@/types/app";
 
-import { pickFile, pickString, requireUserAndSubmissionId } from "./helpers";
+import { pickFile, pickString } from "./helpers";
 import { requireActiveUser, requireUploadsEnabled } from "./middleware";
 import { resolveImageScope, resolveUploadPrefix } from "./scope";
 
@@ -22,9 +22,6 @@ export function createRoutes() {
   return new Hono<AppEnv<{ requestId: string }>>()
     .post("/images", requireActiveUser, requireUploadsEnabled, rateLimit("upload"), async (c) => {
       const user = c.get("authUser");
-      if (!user) {
-        throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
-      }
 
       const form = await c.req.parseBody();
       const file = pickFile(form.file) ?? pickFile(form.image);
@@ -75,7 +72,8 @@ export function createRoutes() {
       requireUploadsEnabled,
       rateLimit("auth"),
       async (c) => {
-        const { user, submissionId } = requireUserAndSubmissionId(c);
+        const user = c.get("authUser");
+        const submissionId = c.req.param("id");
         const result = await upvoteImage(
           { bindings: c.env, defer: (task) => c.executionCtx.waitUntil(task) },
           { actor: user, submissionId },
@@ -89,7 +87,8 @@ export function createRoutes() {
       requireUploadsEnabled,
       rateLimit("auth"),
       async (c) => {
-        const { user, submissionId } = requireUserAndSubmissionId(c);
+        const user = c.get("authUser");
+        const submissionId = c.req.param("id");
         const result = await unvoteImage(
           { bindings: c.env, defer: (task) => c.executionCtx.waitUntil(task) },
           { actor: user, submissionId },
@@ -103,7 +102,8 @@ export function createRoutes() {
       requireUploadsEnabled,
       rateLimit("auth"),
       async (c) => {
-        const { user, submissionId } = requireUserAndSubmissionId(c);
+        const user = c.get("authUser");
+        const submissionId = c.req.param("id");
         const result = await flagSubmission(
           { bindings: c.env, defer: (task) => c.executionCtx.waitUntil(task) },
           { actor: user, submissionId, kind: "image" },
@@ -117,7 +117,8 @@ export function createRoutes() {
       requireUploadsEnabled,
       rateLimit("auth"),
       async (c) => {
-        const { user, submissionId } = requireUserAndSubmissionId(c);
+        const user = c.get("authUser");
+        const submissionId = c.req.param("id");
         const result = await unflagSubmission(
           { bindings: c.env, defer: (task) => c.executionCtx.waitUntil(task) },
           { actor: user, submissionId, kind: "image" },
@@ -131,7 +132,8 @@ export function createRoutes() {
       requireUploadsEnabled,
       rateLimit("auth"),
       async (c) => {
-        const { user, submissionId } = requireUserAndSubmissionId(c);
+        const user = c.get("authUser");
+        const submissionId = c.req.param("id");
         const result = await requestSubmissionRemoval(
           { bindings: c.env, defer: (task) => c.executionCtx.waitUntil(task) },
           { actor: user, submissionId, kind: "image" },
@@ -145,7 +147,8 @@ export function createRoutes() {
       requireUploadsEnabled,
       rateLimit("auth"),
       async (c) => {
-        const { user, submissionId } = requireUserAndSubmissionId(c);
+        const user = c.get("authUser");
+        const submissionId = c.req.param("id");
         const result = await cancelRemoveImageRequest(
           { bindings: c.env, defer: (task) => c.executionCtx.waitUntil(task) },
           { actor: user, submissionId },
@@ -159,7 +162,8 @@ export function createRoutes() {
       requireUploadsEnabled,
       rateLimit("auth"),
       async (c) => {
-        const { user, submissionId } = requireUserAndSubmissionId(c);
+        const user = c.get("authUser");
+        const submissionId = c.req.param("id");
         const result = await recallSubmission(
           { bindings: c.env, defer: (task) => c.executionCtx.waitUntil(task) },
           { actor: user, submissionId, kind: "image" },

@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { createMiddleware } from "hono/factory";
 
 import { ApiError } from "@/lib/errors";
 import { requireAuth } from "@/middleware/auth";
@@ -22,23 +23,23 @@ function isProgressLocked(flag: string | undefined): boolean {
 }
 
 export function createRoutes() {
-  const app = new Hono<AppEnv<{ requestId: string }>>().use("*", async (c, next) => {
-    if (isProgressLocked(c.env.LOCK_PROGRESS_ENDPOINTS)) {
-      throw new ApiError(
-        503,
-        "PROGRESS_TEMPORARILY_DISABLED",
-        "Progress endpoints are temporarily disabled during stabilization.",
-      );
-    }
-    await next();
-  });
+  const app = new Hono<AppEnv<{ requestId: string }>>().use(
+    "*",
+    createMiddleware<AppEnv>(async (c, next) => {
+      if (isProgressLocked(c.env.LOCK_PROGRESS_ENDPOINTS)) {
+        throw new ApiError(
+          503,
+          "PROGRESS_TEMPORARILY_DISABLED",
+          "Progress endpoints are temporarily disabled during stabilization.",
+        );
+      }
+      await next();
+    }),
+  );
 
   for (const path of ["state", "sync"] as const) {
     app.on(path === "state" ? "GET" : "POST", `/${path}`, requireAuth, async (c) => {
       const user = c.get("authUser");
-      if (!user) {
-        throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
-      }
 
       const stub = c.env.OEM_USER_DO.getByName(user.uid);
       const url = new URL(`https://progress-user/${path}`);
@@ -84,9 +85,6 @@ export function createRoutes() {
   for (const path of ["state", "sync"] as const) {
     app.on(path === "state" ? "GET" : "POST", `/archive/${path}`, requireAuth, async (c) => {
       const user = c.get("authUser");
-      if (!user) {
-        throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
-      }
 
       const stub = c.env.OEM_USER_DO.getByName(user.uid);
       const url = new URL(`https://progress-user/archive/${path}`);

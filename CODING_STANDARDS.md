@@ -49,6 +49,12 @@ when the task explicitly concerns those documents.
     atomicity; identifying historical workarounds; keeping business types with owners.
   - Not responsible for: combining responsibility extraction with behavior changes.
 
+## Hono middleware
+
+Construct every custom middleware with `createMiddleware` from `hono/factory` and an explicit
+environment generic declaring the Variables it reads or writes (`AppEnv` when none).
+Verify and trust preconditions; avoid unnecessary `undefined` checks.
+
 ## Testing
 
 - **NO TAUTOLOGICAL TESTS OR TESTS THAT REPEAT THE IMPLEMENTATION.**

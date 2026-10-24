@@ -8,14 +8,11 @@ import {
   serializeBrowserSessionCookie,
 } from "@/lib/auth/browserSession";
 import { createAuth } from "@/lib/auth/createAuth";
+import { invalidateAuthUserCache, resolveAuthUser } from "@/lib/auth/identity";
+import { getRequestAuthHeaders } from "@/lib/auth/requestHeaders";
 import { hasSessionCredentials } from "@/lib/auth/sessionCredentials";
 import { ApiError } from "@/lib/errors";
-import {
-  getRequestAuthHeaders,
-  invalidateAuthUserCache,
-  requireAuth,
-  resolveAuthUser,
-} from "@/middleware/auth";
+import { requireAuth } from "@/middleware/auth";
 import { rateLimit } from "@/middleware/rate-limit";
 import { formatPublicUid, getErrorMessage, updateUserNickname } from "@/repositories/users";
 import { profileUpdateSchema } from "@/routes/schema/auth";
@@ -87,10 +84,6 @@ export function createRoutes() {
   return new Hono<AppEnv<{ requestId: string }>>()
     .get(
       "/session",
-      async (c, next) => {
-        await next();
-        c.header("Cache-Control", "private, no-store");
-      },
       createMiddleware<AppEnv<{ authUser: AuthUser; authSessionMigrating: boolean }>>(
         async (c, next) => {
           const authHeaders = getRequestAuthHeaders(c.req.raw);
@@ -151,9 +144,6 @@ export function createRoutes() {
     )
     .patch("/profile", requireAuth, rateLimit("auth"), async (c) => {
       const user = c.get("authUser");
-      if (!user) {
-        throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
-      }
 
       const parsed = profileUpdateSchema.safeParse(
         normalizeProfileUpdateBody(await readProfileUpdateBody(c)),

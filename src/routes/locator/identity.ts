@@ -1,6 +1,7 @@
 import type { Context } from "hono";
 
-import { resolveAuthIdentity } from "@/middleware/auth";
+import { resolveAuthIdentity } from "@/lib/auth/identity";
+import { getRequestAuthHeaders } from "@/lib/auth/requestHeaders";
 import type { LocatorIdentity } from "@/services/official/locator/access";
 import type { AppEnv } from "@/types/app";
 
@@ -11,12 +12,7 @@ export async function resolveLocatorIdentity<E extends AppEnv>(
   if (ticketUid) {
     return { uid: ticketUid };
   }
-  const headers = new Headers(c.req.raw.headers);
-  const accessToken = c.req.query("access_token")?.trim();
-  if (accessToken && !headers.has("authorization")) {
-    headers.set("authorization", `Bearer ${accessToken}`);
-  }
-  const identity = await resolveAuthIdentity(c.env, headers);
+  const identity = await resolveAuthIdentity(c.env, getRequestAuthHeaders(c.req.raw));
   return {
     uid: identity.uid,
     profile: { email: identity.email, displayName: identity.displayName },
