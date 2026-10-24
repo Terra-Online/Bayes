@@ -3,7 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { seedImageReadScenario } from "@/test/fixtures/imageReadScenario";
 
-import { getContributionImage, listContributions } from "./me";
+import { getContributionImage, listContributionRecords } from "./me";
 
 let database: TestDatabase;
 beforeEach(() => {
@@ -16,13 +16,15 @@ afterEach(() => {
 });
 
 const list = () =>
-  listContributions(database.db, {
+  listContributionRecords(database.db, {
     uid: "author",
     limit: 20,
-    previewBaseUrl: "/me/v1/contributions",
   });
-it("reuses list file metadata for previews without bypassing owner checks", async () => {
+it("loads a page in one query and reuses preview metadata without bypassing owner checks", async () => {
+  const queryCount = database.queries.length;
   await list();
+  // Review evidence must be fetched with the page rather than once per contribution.
+  expect(database.queries).toHaveLength(queryCount + 1);
   const prepare = vi.spyOn(database.db, "prepare");
   expect(await getContributionImage(database.db, "author", "photo")).toMatchObject({
     file_path: "images/photo.webp",

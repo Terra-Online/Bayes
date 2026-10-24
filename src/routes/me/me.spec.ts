@@ -3,7 +3,7 @@ import { afterEach, beforeEach, expect, it, vi, type Mocked } from "vitest";
 
 import { runWithAuthRequest } from "@/lib/auth/createAuth";
 import { onAppError } from "@/middleware/error-handler";
-import type { ContributionItem } from "@/repositories/me";
+import type { ContributionItem } from "@/services/me/contract/contributions";
 import { createMockBindings, createMockR2Object, type MockBindings } from "@/test/bindings";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { insertAuthUser, insertSession, type SeededSession } from "@/test/fixtures/auth";
