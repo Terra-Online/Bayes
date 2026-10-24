@@ -41,10 +41,13 @@ type ContributionRecordPage = {
   nextCursor: string | null;
 };
 
-type ReviewEventRow = Omit<ReviewEvent, "aiReviewed"> & { aiReviewed: number };
-
 function mapContributionRecord(row: ContributionRow): ContributionRecord {
-  const events = JSON.parse(row.review_events) as ReviewEventRow[];
+  const events = JSON.parse(row.review_events) as ReviewEvent[];
+  // Normalize SQLite's numeric flags on the freshly decoded objects before
+  // exposing them as evidence, without copying every historical event.
+  for (const event of events) {
+    event.aiReviewed = Boolean(event.aiReviewed);
+  }
   return {
     id: row.id,
     kind: row.kind,
@@ -56,7 +59,7 @@ function mapContributionRecord(row: ContributionRow): ContributionRecord {
       status: row.status,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
-      events: events.map((event) => ({ ...event, aiReviewed: Boolean(event.aiReviewed) })),
+      events,
       legacy: {
         manualAt: row.manual_at,
         publicAt: row.public_at,
