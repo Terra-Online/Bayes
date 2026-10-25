@@ -2,7 +2,7 @@ import { Hono } from "hono";
 
 import { createAuth } from "@/lib/auth/createAuth";
 import { toSerializableError } from "@/lib/auth/errors";
-import { isDisposableEmail } from "@/lib/email/disposable";
+import { isDisposableEmail } from "@/lib/auth/rules/disposableEmail";
 import { ApiError } from "@/lib/errors";
 import { toApiError } from "@/middleware/error-handler";
 import { rateLimit } from "@/middleware/rate-limit";

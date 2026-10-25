@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("./blacklist.json", () => ({ default: [" Disposable.EXAMPLE.TEST. "] }));
+vi.mock("./disposableEmailDomains.json", () => ({ default: [" Disposable.EXAMPLE.TEST. "] }));
 
-import { isDisposableEmail, isDisposableEmailDomain } from "./disposable";
+import { isDisposableEmail, isDisposableEmailDomain } from "./disposableEmail";
 
 describe("disposable email policy", () => {
   it("blocks a denylisted domain and its subdomains after domain normalization", () => {

@@ -1,4 +1,4 @@
-import { resolveEmailLocale } from "@/lib/email/templates";
+import { resolveEmailLocale } from "@/services/email";
 import type { Bindings } from "@/types/app";
 
 const OEM_LOCALE_HEADER = "x-oem-locale";

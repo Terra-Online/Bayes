@@ -24,7 +24,7 @@ vi.mock("./lib/redis", () => ({ createRedisClient: () => ({}) }));
 vi.mock("./lib/config", () => ({
   getRuntimeConfig: () => ({ scheduledModerationEnabled: false }),
 }));
-vi.mock("./lib/email/sender", () => ({}));
+vi.mock("./services/email", () => ({}));
 vi.mock("./services/karma/evaluation", () => ({ evaluateKarmaIfDue: mocks.karma }));
 vi.mock("./services/progress/outbox", () => ({ drainProgressStatsOutbox: mocks.drain }));
 vi.mock("./services/progress/repository", () => ({

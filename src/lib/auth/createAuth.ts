@@ -5,12 +5,8 @@ import { getSchema } from "better-auth/db";
 import { bearer, emailOTP } from "better-auth/plugins";
 
 import { getSessionTtlSeconds } from "@/lib/config";
-import { sendEmail } from "@/lib/email/sender";
-import {
-  createOtpEmailTemplate,
-  createResetPasswordMagicLinkTemplate,
-} from "@/lib/email/templates";
 import { envOrThrow } from "@/lib/utils";
+import { sendAuthOtpEmail, sendPasswordResetEmail } from "@/services/email";
 import type { Bindings } from "@/types/app";
 
 import { sameAuthEnvironment } from "./environment";
@@ -50,16 +46,7 @@ function buildAuth(env: Bindings, metadata?: ReturnType<typeof authSchemaDatabas
       resetPasswordTokenExpiresIn: 15 * 60,
       sendResetPassword: async ({ user, url }, request) => {
         const locale = resolvePreferredEmailLocale(env, user, request);
-        const content = createResetPasswordMagicLinkTemplate({ locale, url });
-        await sendEmail(
-          {
-            to: user.email,
-            subject: content.subject,
-            text: content.text,
-            html: content.html,
-          },
-          env,
-        );
+        await sendPasswordResetEmail(env, { to: user.email, locale, url });
       },
     },
     emailVerification: {
@@ -122,16 +109,7 @@ function buildAuth(env: Bindings, metadata?: ReturnType<typeof authSchemaDatabas
         async sendVerificationOTP({ email, otp }, ctx) {
           const request = pickRequestFromCtx(ctx);
           const locale = resolvePreferredEmailLocale(env, null, request);
-          const content = createOtpEmailTemplate({ locale, otp });
-          await sendEmail(
-            {
-              to: email,
-              subject: content.subject,
-              text: content.text,
-              html: content.html,
-            },
-            env,
-          );
+          await sendAuthOtpEmail(env, { to: email, locale, otp });
         },
       }),
     ],
