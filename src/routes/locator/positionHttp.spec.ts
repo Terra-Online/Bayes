@@ -1,7 +1,7 @@
 import { Hono, type ExecutionContext } from "hono";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
-import { runWithAuthRequest } from "@/lib/auth/createAuth";
+import { runWithAuthRequest } from "@/lib/auth/betterAuth";
 import { encryptSecret } from "@/lib/crypto";
 import { onAppError } from "@/middleware/error-handler";
 import { requestIdMiddleware } from "@/middleware/request-id";

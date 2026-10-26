@@ -1,5 +1,5 @@
+import { createAuth } from "@/lib/auth/betterAuth";
 import { resolveBrowserSessionHeaders } from "@/lib/auth/browserSession";
-import { createAuth } from "@/lib/auth/createAuth";
 import { sameAuthCacheEnvironment } from "@/lib/auth/environment";
 import { hasSessionCredentials } from "@/lib/auth/sessionCredentials";
 import { ApiError } from "@/lib/errors";

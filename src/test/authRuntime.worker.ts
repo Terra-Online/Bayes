@@ -3,7 +3,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 
 import { Hono } from "hono";
 
-import { createAuth, runWithAuthRequest } from "@/lib/auth/createAuth";
+import { createAuth, runWithAuthRequest } from "@/lib/auth/betterAuth";
 import { resolveAuthIdentity } from "@/lib/auth/identity";
 import { onAppError } from "@/middleware/error-handler";
 import { createRoutes as createSessionAuthRoutes } from "@/routes/auth/sessionRoutes";
@@ -21,7 +21,7 @@ async function singletonAuth(env: Bindings) {
   let auth = unsafeSingletons.get(env.DB);
   if (!auth) {
     auth = createAuth(env);
-    await auth.$context;
+    await auth.api.getSession({ headers: new Headers() });
     unsafeSingletons.set(env.DB, auth);
   }
   return auth;
@@ -113,7 +113,7 @@ export default {
         let response: Response;
         try {
           if (url.pathname === "/init") {
-            await createAuth(env).$context;
+            await createAuth(env).api.getSession({ headers: new Headers() });
             response = Response.json({ initialized: true });
           } else if (url.pathname === "/singleton-init") {
             await singletonAuth(env);

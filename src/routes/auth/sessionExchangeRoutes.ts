@@ -2,12 +2,12 @@ import type { Context } from "hono";
 import { Hono } from "hono";
 import { z } from "zod";
 
+import { createAuth } from "@/lib/auth/betterAuth";
 import {
   expireOAuthExchangeProof,
   inspectOAuthExchangeProof,
   serializeBrowserSessionCookie,
 } from "@/lib/auth/browserSession";
-import { createAuth } from "@/lib/auth/createAuth";
 import { ApiError } from "@/lib/errors";
 import { rateLimit } from "@/middleware/rate-limit";
 import { ensureUserProfile, formatPublicUid } from "@/repositories/users";

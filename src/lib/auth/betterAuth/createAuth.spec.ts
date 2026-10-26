@@ -26,6 +26,11 @@ describe("completed authentication context reuse", () => {
       DISCORD_CLIENT_SECRET: "test-secret",
     };
   }
+  // Empty credentials exercise the public readiness gate without a session lookup.
+  async function readInitializedContext(auth: ReturnType<typeof createAuth>) {
+    await auth.api.getSession({ headers: new Headers() });
+    return auth.$context;
+  }
   function schemaReads(database = databases[0]!) {
     return database.queries.filter(({ sql }) => /sqlite_master/.test(sql)).length;
   }
@@ -44,7 +49,7 @@ describe("completed authentication context reuse", () => {
       "CREATE TABLE local_rowid_fixture (id INTEGER PRIMARY KEY AUTOINCREMENT)",
     );
     const first = createAuth(env);
-    const context = await first.$context;
+    const context = await readInitializedContext(first);
     expect(schemaReads()).toBe(1);
     const schemaStatements = databases[0]!.queries.length;
     expect(
@@ -54,7 +59,7 @@ describe("completed authentication context reuse", () => {
       4,
     );
     const second = createAuth({ ...env });
-    expect(await second.$context).not.toBe(context);
+    expect(await readInitializedContext(second)).not.toBe(context);
     await second.api.getSession({ headers: new Headers() });
     expect(schemaReads()).toBe(1);
     expect(databases[0]!.queries).toHaveLength(schemaStatements);
@@ -63,14 +68,14 @@ describe("completed authentication context reuse", () => {
 
   it("reuses database metadata across unrelated binding and secret changes without reusing auth configuration", async () => {
     const env = environment();
-    await createAuth(env).$context;
+    await readInitializedContext(createAuth(env));
     const updated = {
       ...env,
       BETTER_AUTH_SECRET: "rotated-secret-at-least-32-characters",
       OEM_KV: {} as KVNamespace,
     };
     const next = createAuth(updated);
-    await next.$context;
+    await readInitializedContext(next);
     expect(next.options.secret).toBe(updated.BETTER_AUTH_SECRET);
     expect(schemaReads()).toBe(1);
   });
@@ -82,7 +87,7 @@ describe("completed authentication context reuse", () => {
       database.sqlite.exec(`CREATE TABLE business_${index} (id TEXT PRIMARY KEY, payload TEXT)`);
     }
     const optimized = createAuth(env);
-    await optimized.$context;
+    await readInitializedContext(optimized);
     const scoped = database.queries.filter(({ sql }) => /pragma_table_info/.test(sql)).length;
     database.queries.length = 0;
     const baseline = betterAuth({ ...optimized.options, database: env.DB });
@@ -92,10 +97,15 @@ describe("completed authentication context reuse", () => {
     expect(unscoped).toBeGreaterThanOrEqual(scoped + 21);
   });
 
-  it("still rejects a missing auth table instead of treating the filtered catalog as complete", async () => {
+  it("exposes the original context but blocks auth operations when an auth table is missing", async () => {
     const env = environment();
     databases[0]!.sqlite.exec("DROP TABLE auth_verifications");
-    await expect(createAuth(env).$context).rejects.toThrow();
+    const auth = createAuth(env);
+    await expect(auth.$context).resolves.toBeDefined();
+    await expect(auth.api.getSession({ headers: new Headers() })).rejects.toThrow();
+    await expect(
+      auth.handler(new Request("https://api.opendfieldmap.org/auth/v1/get-session")),
+    ).rejects.toThrow();
     expect(schemaReads()).toBe(1);
   });
 
@@ -103,18 +113,21 @@ describe("completed authentication context reuse", () => {
     const env = environment();
     const first = createAuth(env);
     const second = createAuth(env);
-    const contexts = await Promise.all([first.$context, second.$context]);
+    const contexts = await Promise.all([
+      readInitializedContext(first),
+      readInitializedContext(second),
+    ]);
     expect(contexts[0]).not.toBe(contexts[1]);
     expect(schemaReads()).toBe(2);
-    expect(await createAuth(env).$context).not.toBe(contexts[0]);
+    expect(await readInitializedContext(createAuth(env))).not.toBe(contexts[0]);
     expect(schemaReads()).toBe(2);
   });
 
   it("isolates database bindings and configuration changes, including in-place changes", async () => {
     const env = environment();
-    const first = await createAuth(env).$context;
+    const first = await readInitializedContext(createAuth(env));
     const other = environment();
-    expect(await createAuth(other).$context).not.toBe(first);
+    expect(await readInitializedContext(createAuth(other))).not.toBe(first);
     for (const change of [
       { SESSION_TTL_SECONDS: "3600" },
       { BETTER_AUTH_URL: "https://api.opendfieldmap.cn" },
@@ -124,14 +137,14 @@ describe("completed authentication context reuse", () => {
       { EMAIL_TEMPLATE_DEFAULT_LOCALE: "en" },
     ]) {
       const updated = { ...env, ...change };
-      const context = await createAuth(updated).$context;
+      const context = await readInitializedContext(createAuth(updated));
       expect(context).not.toBe(first);
       const queries = schemaReads();
-      expect(await createAuth(updated).$context).not.toBe(context);
+      expect(await readInitializedContext(createAuth(updated))).not.toBe(context);
       expect(schemaReads()).toBe(queries);
     }
     env.BETTER_AUTH_SECRET = "mutated-test-secret-at-least-32-characters";
-    expect(await createAuth(env).$context).not.toBe(first);
+    expect(await readInitializedContext(createAuth(env))).not.toBe(first);
   });
 
   it("keeps configuration request-local when schema checks overlap", async () => {
@@ -139,8 +152,11 @@ describe("completed authentication context reuse", () => {
     const old = createAuth(env);
     const updated = { ...env, SESSION_TTL_SECONDS: "3600" };
     const replacement = createAuth(updated);
-    const [, context] = await Promise.all([old.$context, replacement.$context]);
-    expect(await createAuth(updated).$context).not.toBe(context);
+    const [, context] = await Promise.all([
+      readInitializedContext(old),
+      readInitializedContext(replacement),
+    ]);
+    expect(await readInitializedContext(createAuth(updated))).not.toBe(context);
     expect(createAuth(updated).options.session?.expiresIn).toBe(3600);
     expect(schemaReads()).toBe(2);
   });
@@ -153,19 +169,21 @@ describe("completed authentication context reuse", () => {
         throw new Error("D1 temporarily unavailable");
       }
     };
-    await expect(createAuth(env).$context).rejects.toThrow("D1 temporarily unavailable");
+    await expect(readInitializedContext(createAuth(env))).rejects.toThrow(
+      "D1 temporarily unavailable",
+    );
     database.hooks.beforeQuery = undefined;
     database.sqlite.exec("ALTER TABLE auth_users RENAME COLUMN email TO invalid_email");
-    await expect(createAuth(env).$context).rejects.toThrow();
+    await expect(readInitializedContext(createAuth(env))).rejects.toThrow();
     database.sqlite.exec("ALTER TABLE auth_users RENAME COLUMN invalid_email TO email");
-    const context = await createAuth(env).$context;
-    expect(await createAuth(env).$context).not.toBe(context);
+    const context = await readInitializedContext(createAuth(env));
+    expect(await readInitializedContext(createAuth(env))).not.toBe(context);
     expect(schemaReads()).toBe(2);
   });
 
   it("keeps concurrent handler error callbacks private with warm schema metadata", async () => {
     const env = environment();
-    await createAuth(env).$context;
+    await readInitializedContext(createAuth(env));
     const errorsA: unknown[] = [];
     const errorsB: unknown[] = [];
     databases[0]!.hooks.beforeQuery = (sql, values) => {
@@ -203,10 +221,10 @@ describe("completed authentication context reuse", () => {
       const a = createAuth(env);
       const b = createAuth(env);
       expect(b).toBe(a);
-      expect(await b.$context).toBe(await a.$context);
-      return a.$context;
+      expect(await readInitializedContext(b)).toBe(await readInitializedContext(a));
+      return readInitializedContext(a);
     });
-    const second = await runWithAuthRequest(() => createAuth(env).$context);
+    const second = await runWithAuthRequest(() => readInitializedContext(createAuth(env)));
     expect(second).not.toBe(first);
     expect(schemaReads()).toBe(1);
   });
@@ -219,7 +237,7 @@ describe("completed authentication context reuse", () => {
           throw new Error("retryable-init");
         }
       };
-      await expect(createAuth(env).$context).rejects.toThrow("retryable-init");
+      await expect(readInitializedContext(createAuth(env))).rejects.toThrow("retryable-init");
       databases[0]!.hooks.beforeQuery = undefined;
       const auth = createAuth(env);
       await expect(auth.api.getSession({ headers: new Headers() })).resolves.toBeNull();

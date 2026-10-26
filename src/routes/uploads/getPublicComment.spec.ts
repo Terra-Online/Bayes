@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createApp } from "@/app";
-import { runWithAuthRequest } from "@/lib/auth/createAuth";
+import { runWithAuthRequest } from "@/lib/auth/betterAuth";
 import type { PublicCommentContext } from "@/repositories/submission/getPublicComment";
 import { createMockBindings, type MockBindings } from "@/test/bindings";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";

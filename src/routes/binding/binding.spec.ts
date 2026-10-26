@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { createMiddleware } from "hono/factory";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
-import { runWithAuthRequest } from "@/lib/auth/createAuth";
+import { runWithAuthRequest } from "@/lib/auth/betterAuth";
 import { decryptSecret } from "@/lib/crypto";
 import { onAppError } from "@/middleware/error-handler";
 import type { PendingSessionRedis } from "@/repositories/binding/pendingSession";

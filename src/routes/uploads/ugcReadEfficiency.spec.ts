@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createApp } from "@/app";
-import { runWithAuthRequest } from "@/lib/auth/createAuth";
+import { runWithAuthRequest } from "@/lib/auth/betterAuth";
 import { PublicReadCache } from "@/publicRead/origin/entrypoint";
 import type { PublicSubmissionComment } from "@/repositories/submission/types";
 import { createMockBindings, type MockBindings } from "@/test/bindings";

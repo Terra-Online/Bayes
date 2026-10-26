@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { runWithAuthRequest } from "@/lib/auth/createAuth";
+import { runWithAuthRequest } from "@/lib/auth/betterAuth";
 import { onAppError } from "@/middleware/error-handler";
 import { createMockBindings, type MockBindings } from "@/test/bindings";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";

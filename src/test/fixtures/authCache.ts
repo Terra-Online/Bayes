@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { vi } from "vitest";
 
-import { runWithAuthRequest } from "@/lib/auth/createAuth";
+import { runWithAuthRequest } from "@/lib/auth/betterAuth";
 import { onAppError } from "@/middleware/error-handler";
 import { createRoutes as createAuthRoutes } from "@/routes/auth/createRoutes";
 import { createRoutes as createSessionRoutes } from "@/routes/auth/sessionRoutes";

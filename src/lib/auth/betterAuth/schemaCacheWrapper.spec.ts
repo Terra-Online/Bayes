@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 
-import { authSchemaDatabase } from "./schemaMetadata";
+import { wrapDatabaseWithSchemaCache } from "./schemaCacheWrapper";
 
 describe("validated D1 metadata isolation", () => {
   const databases: TestDatabase[] = [];
@@ -18,12 +18,12 @@ describe("validated D1 metadata isolation", () => {
 
   it("shares only plain completed schema results, without exposing mutable cached rows", async () => {
     const database = setup();
-    const cold = authSchemaDatabase(database.db);
+    const cold = wrapDatabaseWithSchemaCache(database.db);
     const result = await cold.db
       .prepare("SELECT * FROM pragma_table_info(?)")
       .bind("auth_users")
       .all();
-    const warm = authSchemaDatabase(database.db, new Map(cold.metadata));
+    const warm = wrapDatabaseWithSchemaCache(database.db, new Map(cold.getUncachedResults()));
     result.results[0]!.name = "mutated-by-caller";
     const cached = await warm.db
       .prepare("SELECT * FROM pragma_table_info(?)")
@@ -42,7 +42,7 @@ describe("validated D1 metadata isolation", () => {
   it("uses native business statements without preparing them again on bind", async () => {
     const database = setup();
     const prepare = vi.spyOn(database.db, "prepare");
-    const wrapped = authSchemaDatabase(database.db);
+    const wrapped = wrapDatabaseWithSchemaCache(database.db);
     const statement = wrapped.db.prepare("SELECT name FROM auth_users WHERE id = ?1");
     expect(statement).toBe(prepare.mock.results[0]!.value);
     await statement.bind("user").first();
@@ -51,9 +51,9 @@ describe("validated D1 metadata isolation", () => {
 
   it("always sends business queries and mixed atomic batches to D1", async () => {
     const database = setup();
-    const cold = authSchemaDatabase(database.db);
+    const cold = wrapDatabaseWithSchemaCache(database.db);
     await cold.db.prepare("SELECT * FROM pragma_table_info(?)").bind("auth_users").all();
-    const warm = authSchemaDatabase(database.db, new Map(cold.metadata));
+    const warm = wrapDatabaseWithSchemaCache(database.db, new Map(cold.getUncachedResults()));
     const query = "SELECT name FROM auth_users WHERE id = ?1";
     expect(await warm.db.prepare(query).bind("user").first("name")).toBe("First");
     database.sqlite.exec("UPDATE auth_users SET name = 'Changed' WHERE id = 'user'");

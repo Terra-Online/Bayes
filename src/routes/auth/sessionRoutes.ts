@@ -2,12 +2,12 @@ import type { Context } from "hono";
 import { Hono } from "hono";
 import { createMiddleware } from "hono/factory";
 
+import { createAuth } from "@/lib/auth/betterAuth";
 import {
   getLegacyCookieExpirations,
   resolveBrowserSessionHeaders,
   serializeBrowserSessionCookie,
 } from "@/lib/auth/browserSession";
-import { createAuth } from "@/lib/auth/createAuth";
 import { invalidateAuthUserCache, resolveAuthUser } from "@/lib/auth/identity";
 import { getRequestAuthHeaders } from "@/lib/auth/requestHeaders";
 import { hasSessionCredentials } from "@/lib/auth/sessionCredentials";

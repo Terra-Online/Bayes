@@ -1,7 +1,7 @@
 import { handleNotificationLiveUpgrade } from "@/routes/notify/liveUpgrade";
 
 import { createApp } from "./app";
-import { runWithAuthRequest } from "./lib/auth/createAuth";
+import { runWithAuthRequest } from "./lib/auth/betterAuth";
 import { getRuntimeConfig } from "./lib/config";
 import { createRedisClient } from "./lib/redis";
 import { withRequestTelemetry } from "./lib/requestTelemetry";

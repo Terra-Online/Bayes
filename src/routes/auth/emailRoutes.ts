@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 
-import { createAuth } from "@/lib/auth/createAuth";
+import { createAuth } from "@/lib/auth/betterAuth";
 import { toSerializableError } from "@/lib/auth/errors";
 import { isDisposableEmail } from "@/lib/auth/rules/disposableEmail";
 import { ApiError } from "@/lib/errors";

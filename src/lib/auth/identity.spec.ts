@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import * as authFactory from "@/lib/auth/createAuth";
+import * as authFactory from "@/lib/auth/betterAuth";
 import { createMockBindings } from "@/test/bindings";
 import { insertAuthenticatedUser, type AuthenticatedUserFixture } from "@/test/fixtures/auth";
 import { createAuthCacheFixture, type AuthCacheFixture } from "@/test/fixtures/authCache";

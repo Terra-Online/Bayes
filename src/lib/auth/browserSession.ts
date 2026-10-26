@@ -4,7 +4,7 @@ import { generateCookie } from "hono/cookie";
 
 import { ApiError } from "@/lib/errors";
 
-import type { createAuth } from "./createAuth";
+import type { createAuth } from "./betterAuth";
 
 type Auth = ReturnType<typeof createAuth>;
 export const AUTH_EXCHANGE_CHALLENGE_PARAM = "auth_exchange_challenge";

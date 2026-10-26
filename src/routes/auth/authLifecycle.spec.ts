@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createAuth } from "@/lib/auth/createAuth";
+import { createAuth } from "@/lib/auth/betterAuth";
 import { onAppError } from "@/middleware/error-handler";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { insertAuthUser, insertSession, testAuthConfig } from "@/test/fixtures/auth";

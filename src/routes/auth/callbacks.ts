@@ -1,8 +1,8 @@
 import { getCookies } from "better-auth/cookies";
 import type { Context } from "hono";
 
+import { createAuth } from "@/lib/auth/betterAuth";
 import { AUTH_EXCHANGE_CHALLENGE_PARAM } from "@/lib/auth/browserSession";
-import { createAuth } from "@/lib/auth/createAuth";
 import type { AppEnv } from "@/types/app";
 
 import {

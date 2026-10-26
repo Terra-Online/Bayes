@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { createMiddleware } from "hono/factory";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { runWithAuthRequest } from "@/lib/auth/createAuth";
+import { runWithAuthRequest } from "@/lib/auth/betterAuth";
 import { decryptSecret, encryptSecret } from "@/lib/crypto";
 import { ApiError } from "@/lib/errors";
 import { onAppError } from "@/middleware/error-handler";

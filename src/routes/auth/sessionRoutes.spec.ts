@@ -2,8 +2,8 @@ import { getCookies } from "better-auth/cookies";
 import type { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import * as authModule from "@/lib/auth/createAuth";
-import { createAuth, runWithAuthRequest } from "@/lib/auth/createAuth";
+import * as authModule from "@/lib/auth/betterAuth";
+import { createAuth, runWithAuthRequest } from "@/lib/auth/betterAuth";
 import { resolveAuthIdentity } from "@/lib/auth/identity";
 import type { TestDatabase } from "@/test/database/createTestDatabase";
 import {
@@ -44,7 +44,7 @@ describe.each(["http://localhost:8787", "https://api.opendfieldmap.org"])(
       fixture = createSessionAuthFixture(baseURL);
       ({ database, env, app } = fixture);
       auth = createAuth(env);
-      await auth.$context;
+      await auth.api.getSession({ headers: new Headers() });
       vi.spyOn(console, "warn").mockImplementation(() => undefined);
     });
 
@@ -108,7 +108,10 @@ describe.each(["http://localhost:8787", "https://api.opendfieldmap.org"])(
       expect(configured.options.session).toMatchObject({ expiresIn: 3600, updateAge: 1800 });
       const invalid = createAuth({ ...env, SESSION_TTL_SECONDS: "invalid" });
       expect(invalid.options.session?.expiresIn).toBe(15_552_000);
-      await Promise.all([configured.$context, invalid.$context]);
+      await Promise.all([
+        configured.api.getSession({ headers: new Headers() }),
+        invalid.api.getSession({ headers: new Headers() }),
+      ]);
     });
 
     it("renews both database and browser on repeated 40-day returns, beyond the original expiry", async () => {

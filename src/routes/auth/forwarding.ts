@@ -1,7 +1,7 @@
 import type { Context } from "hono";
 
+import { createAuth } from "@/lib/auth/betterAuth";
 import { resolveBrowserSessionHeaders } from "@/lib/auth/browserSession";
-import { createAuth } from "@/lib/auth/createAuth";
 import type { AppEnv } from "@/types/app";
 
 import { authConflictResponse } from "./conflicts";

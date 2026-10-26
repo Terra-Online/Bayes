@@ -1,7 +1,7 @@
 // Local workerd fixture for public reads, upstream sockets, and outbox delivery.
 import { Hono } from "hono";
 
-import { runWithAuthRequest } from "@/lib/auth/createAuth";
+import { runWithAuthRequest } from "@/lib/auth/betterAuth";
 import { decryptSecret, encryptSecret } from "@/lib/crypto";
 import { ApiError } from "@/lib/errors";
 import { onAppError } from "@/middleware/error-handler";

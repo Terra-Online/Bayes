@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { createMiddleware } from "hono/factory";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createAuth, runWithAuthRequest } from "@/lib/auth/createAuth";
+import { createAuth, runWithAuthRequest } from "@/lib/auth/betterAuth";
 import { onAppError } from "@/middleware/error-handler";
 import emailTemplates from "@/services/email/templateLocales.json";
 import { createMockBindings, type MockBindings } from "@/test/bindings";

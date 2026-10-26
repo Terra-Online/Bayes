@@ -2,7 +2,7 @@ import { Redis } from "@upstash/redis";
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { runWithAuthRequest } from "@/lib/auth/createAuth";
+import { runWithAuthRequest } from "@/lib/auth/betterAuth";
 import * as rules from "@/lib/karma/rules";
 import { onAppError } from "@/middleware/error-handler";
 import { createRoutes } from "@/routes/moderation/createRoutes";

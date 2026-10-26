@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createAuth } from "@/lib/auth/createAuth";
+import { createAuth } from "@/lib/auth/betterAuth";
 import { onAppError } from "@/middleware/error-handler";
 import { createMockBindings } from "@/test/bindings";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
@@ -9,7 +9,7 @@ import type { AppEnv, Bindings } from "@/types/app";
 
 import { forwardToAuthJsonPath } from "./forwarding";
 
-vi.mock("@/lib/auth/createAuth", () => ({ createAuth: vi.fn() }));
+vi.mock("@/lib/auth/betterAuth", () => ({ createAuth: vi.fn() }));
 // Specialist library boundary: the installed Better Auth version cannot naturally
 // produce every supported throw/onError/opaque-response combination. Browser header
 // handling and conflict classification still execute normally (no cookie in these cases).
