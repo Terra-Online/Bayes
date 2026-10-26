@@ -3,11 +3,11 @@ import { Hono } from "hono";
 import { beginLinkLoginMethod, listLoginMethods, unlinkLoginMethod } from "@/lib/auth/loginMethods";
 import { requireAuth } from "@/middleware/auth";
 import { rateLimit } from "@/middleware/rate-limit";
+import { parseInput } from "@/routes/input";
 import { linkAccountSchema, unlinkAccountSchema } from "@/routes/schema/auth";
 import type { AppEnv } from "@/types/app";
 
 import { authRequestInfo, authResponse } from "./honoAdapter";
-import { parseAuthInput } from "./input";
 
 export function createRoutes() {
   return new Hono<AppEnv<{ requestId: string }>>()
@@ -20,7 +20,7 @@ export function createRoutes() {
       return response;
     })
     .post("/link-social", requireAuth, rateLimit("auth"), async (c) => {
-      const input = parseAuthInput(
+      const input = parseInput(
         linkAccountSchema,
         await c.req.json().catch(() => null),
         "Invalid account link payload.",
@@ -36,7 +36,7 @@ export function createRoutes() {
       );
     })
     .post("/unlink-account", requireAuth, rateLimit("auth"), async (c) => {
-      const input = parseAuthInput(
+      const input = parseInput(
         unlinkAccountSchema,
         await c.req.json().catch(() => null),
         "Invalid account unlink payload.",

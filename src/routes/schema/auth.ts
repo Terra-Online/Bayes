@@ -63,14 +63,3 @@ export const resetPasswordPreviewSchema = z.object({
 export const sessionExchangeSchema = z.object({
   code: z.string().trim().min(16, "Code is required."),
 });
-
-export const profileUpdateSchema = z.object({
-  nickname: z
-    .string()
-    .trim()
-    .min(2, "Nickname must be at least 2 characters.")
-    .max(26, "Nickname must be 26 characters or fewer.")
-    .regex(/^[A-Za-z0-9_-]+$/, "Nickname can only contain letters, numbers, '_' or '-'."),
-  avatar: z.number().int().min(1).max(99).optional(),
-  avt: z.number().int().min(1).max(99).optional(),
-});

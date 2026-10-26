@@ -7,6 +7,7 @@ import {
   resetPassword,
 } from "@/lib/auth/resetPassword";
 import { rateLimit } from "@/middleware/rate-limit";
+import { parseInput, readJsonBody } from "@/routes/input";
 import {
   requestPasswordResetSchema,
   resetPasswordPreviewSchema,
@@ -15,12 +16,11 @@ import {
 import type { AppEnv } from "@/types/app";
 
 import { authRequestInfo, authResponse } from "./honoAdapter";
-import { parseAuthInput, readJsonBody } from "./input";
 
 export function createRoutes() {
   return new Hono<AppEnv<{ requestId: string }>>()
     .post("/forget-password", rateLimit("reset-send"), async (c) => {
-      const input = parseAuthInput(requestPasswordResetSchema, await readJsonBody(c.req));
+      const input = parseInput(requestPasswordResetSchema, await readJsonBody(c.req));
 
       return authResponse(
         c,
@@ -32,7 +32,7 @@ export function createRoutes() {
       );
     })
     .post("/reset-password", rateLimit("public"), async (c) => {
-      const input = parseAuthInput(resetPasswordSchema, await readJsonBody(c.req));
+      const input = parseInput(resetPasswordSchema, await readJsonBody(c.req));
 
       return authResponse(
         c,
@@ -44,7 +44,7 @@ export function createRoutes() {
       );
     })
     .get("/reset-password-preview", rateLimit("public"), async (c) => {
-      const input = parseAuthInput(resetPasswordPreviewSchema, {
+      const input = parseInput(resetPasswordPreviewSchema, {
         token: c.req.query("token"),
       });
 

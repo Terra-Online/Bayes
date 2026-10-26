@@ -3,12 +3,12 @@ import { Hono } from "hono";
 import { normalizeEmail } from "@/lib/auth/contract/email";
 import { registerViaOTP, requestRegistrationOtp } from "@/lib/auth/registerViaOTP";
 import { rateLimit } from "@/middleware/rate-limit";
+import { parseInput, readJsonBody, readJsonObject } from "@/routes/input";
 import { registerWithOtpSchema, sendTemplateOtpSchema } from "@/routes/schema/auth";
 import type { AppEnv } from "@/types/app";
 
 import { forwardToAuthJsonPath } from "./forwarding";
 import { authRequestInfo, authResponse } from "./honoAdapter";
-import { parseAuthInput, readJsonBody, readJsonObject } from "./input";
 import type { ForwardToAuthJsonPath } from "./types";
 
 export function createRoutes(
@@ -18,7 +18,7 @@ export function createRoutes(
 ) {
   return new Hono<AppEnv<{ requestId: string }>>()
     .post("/register", rateLimit("public"), async (c) => {
-      const input = parseAuthInput(registerWithOtpSchema, await readJsonBody(c.req));
+      const input = parseInput(registerWithOtpSchema, await readJsonBody(c.req));
 
       return authResponse(
         c,
@@ -30,7 +30,7 @@ export function createRoutes(
       );
     })
     .post("/email-otp/send-verification-otp", rateLimit("otp-send"), async (c) => {
-      const input = parseAuthInput(sendTemplateOtpSchema, await readJsonBody(c.req));
+      const input = parseInput(sendTemplateOtpSchema, await readJsonBody(c.req));
 
       return authResponse(
         c,

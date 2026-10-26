@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createAuth } from "@/lib/auth/betterAuth";
 import { onAppError } from "@/middleware/error-handler";
+import { createRoutes as createProfileRoutes } from "@/routes/profile/createRoutes";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { insertAuthUser, insertSession, testAuthConfig } from "@/test/fixtures/auth";
 import { insertUser } from "@/test/fixtures/users";
@@ -63,6 +64,7 @@ describe("authenticated account and profile HTTP lifecycle", () => {
     app.route("/auth/v1", createEmailRoutes());
     app.route("/auth/v1", createSocialRoutes());
     app.route("/auth/v1", createSessionRoutes());
+    app.route("/auth/v1", createProfileRoutes());
     app.route("/auth/v1", createAccountRoutes());
     app.route("/auth/v1", createAuthRoutes());
   });
@@ -169,8 +171,8 @@ describe("authenticated account and profile HTTP lifecycle", () => {
   });
 
   it("completes historical nickname onboarding once and keeps the chosen public UID on later renames", async () => {
-    // Current compatibility: an uncustomized profile chooses its suffix on its
-    // first nickname update. Later edits preserve that public identity.
+    // An uncustomized profile chooses its suffix on the first nickname update.
+    // Later edits keep that public identity.
     database.sqlite.exec("UPDATE users SET nickname_customized = 0 WHERE uid = 'owner'");
     expect(await (await request("/session")).json()).toMatchObject({
       user: { uid: "123456AB", needsProfileSetup: true },
@@ -181,7 +183,7 @@ describe("authenticated account and profile HTTP lifecycle", () => {
     const profile = (await onboarded.json()) as { user: { uid: string } };
     expect(profile).toMatchObject({
       user: {
-        uid: expect.stringMatching(/^123456[A-Z]{2}$/),
+        uid: "123456ER",
         nickname: "Explorer",
         avatar: 7,
         needsProfileSetup: false,

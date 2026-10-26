@@ -19,7 +19,7 @@ export async function readJsonObject(request: HonoRequest): Promise<Record<strin
   return body as Record<string, unknown>;
 }
 
-export function parseAuthInput<T>(
+export function parseInput<T>(
   schema: z.ZodType<T>,
   input: unknown,
   message = "Invalid payload.",

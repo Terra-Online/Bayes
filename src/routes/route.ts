@@ -18,6 +18,7 @@ import { createRoutes as createLocatorPositionRoutes } from "./locator/positionR
 import { createRoutes as createMeRoutes } from "./me/createRoutes";
 import { createRoutes as createModerationRoutes } from "./moderation/createRoutes";
 import { createRoutes as createNotifyRoutes } from "./notify/createRoutes";
+import { createRoutes as createProfileRoutes } from "./profile/createRoutes";
 import { createRoutes as createProgressRoutes } from "./progress/createRoutes";
 import { createRoutes as createRootRoutes } from "./root/createRoutes";
 import { createRoutes as createSyncRoutes } from "./sync/createRoutes";
@@ -38,6 +39,7 @@ export function mountRoutes<E extends AppEnv<{ requestId: string }>>(app: Hono<E
   app.route("/auth/v1", createSocialAuthRoutes());
   app.route("/auth/v1", createSessionExchangeRoutes());
   app.route("/auth/v1", createSessionAuthRoutes());
+  app.route("/auth/v1", createProfileRoutes());
   app.route("/auth/v1", createAccountAuthRoutes());
   app.route("/auth/v1", createAuthRoutes());
   app.route("/binding/v1", createBindingRoutes());

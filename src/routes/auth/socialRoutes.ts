@@ -9,6 +9,7 @@ import {
 } from "@/lib/auth/rules/frontendOrigins";
 import { ApiError } from "@/lib/errors";
 import { rateLimit } from "@/middleware/rate-limit";
+import { readJsonObject } from "@/routes/input";
 import type { AppEnv } from "@/types/app";
 
 import {
@@ -17,7 +18,6 @@ import {
   toSafeTrustedUrlLog,
 } from "./callbacks";
 import { forwardToAuthJsonPath, forwardToAuthRawRequest } from "./forwarding";
-import { readJsonObject } from "./input";
 import type { ForwardToAuthJsonPath, ForwardToAuthRawRequest } from "./types";
 
 export function createRoutes(

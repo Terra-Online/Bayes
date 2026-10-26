@@ -12,10 +12,10 @@ import { parseTrustedFrontendOrigins } from "@/lib/auth/rules/frontendOrigins";
 import { ApiError } from "@/lib/errors";
 import { rateLimit } from "@/middleware/rate-limit";
 import { ensureUserProfile, formatPublicUid } from "@/repositories/users";
+import { parseInput, readJsonBody } from "@/routes/input";
 import { sessionExchangeSchema } from "@/routes/schema/auth";
 import type { AppEnv } from "@/types/app";
 
-import { parseAuthInput, readJsonBody } from "./input";
 import { toSessionUser } from "./sessionUser";
 
 const SESSION_EXCHANGE_CODE_PREFIX = "auth-session-exchange:";
@@ -89,7 +89,7 @@ export function createRoutes() {
         throw new ApiError(403, "ORIGIN_NOT_ALLOWED", "A trusted frontend origin is required.");
       }
 
-      const input = parseAuthInput(sessionExchangeSchema, await readJsonBody(c.req));
+      const input = parseInput(sessionExchangeSchema, await readJsonBody(c.req));
 
       const identifier = `${SESSION_EXCHANGE_CODE_PREFIX}${input.code}`;
       const verification = await c.env.DB.prepare(
