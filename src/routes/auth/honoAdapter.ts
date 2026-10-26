@@ -4,7 +4,9 @@ import type { StatusCode } from "hono/utils/http-status";
 import type { BetterAuthRequestInfo, BetterAuthResponseData } from "@/lib/auth/betterAuth";
 import type { AppEnv } from "@/types/app";
 
-export function authRequestInfo(c: Context<AppEnv<{ requestId: string }>>): BetterAuthRequestInfo {
+export function authRequestInfo<E extends AppEnv<{ requestId: string }>>(
+  c: Context<E>,
+): BetterAuthRequestInfo {
   return {
     url: c.req.url,
     method: c.req.method,
@@ -22,8 +24,8 @@ export function authRequestInfo(c: Context<AppEnv<{ requestId: string }>>): Bett
   };
 }
 
-export function authResponse(
-  c: Context<AppEnv<{ requestId: string }>>,
+export function authResponse<E extends AppEnv<{ requestId: string }>>(
+  c: Context<E>,
   result: BetterAuthResponseData,
 ): Response {
   const headers = new Headers(result.headers);

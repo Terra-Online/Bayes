@@ -237,6 +237,7 @@ describe("CHIPS OAuth exchange", () => {
     ["/\\attacker.example/steal", `${CN_ORIGIN}/`],
     ["https://attacker.example/steal", `${CN_ORIGIN}/`],
     ["not a URL", `${CN_ORIGIN}/`],
+    [42, `${CN_ORIGIN}/`],
   ])("keeps OAuth return destinations trusted for %s", async (callbackURL, expected) => {
     const response = await app.request(
       `${API_ORIGIN}/auth/v1/sign-in/social`,

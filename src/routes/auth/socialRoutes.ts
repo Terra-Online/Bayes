@@ -2,18 +2,22 @@ import { Hono } from "hono";
 
 import { createAuth } from "@/lib/auth/betterAuth";
 import { AUTH_EXCHANGE_CHALLENGE_PARAM, createOAuthExchangeProof } from "@/lib/auth/browserSession";
+import {
+  applyDefaultSocialCallbackUrls,
+  parseTrustedFrontendOrigins,
+  resolveTrustedRequestOrigin,
+} from "@/lib/auth/rules/frontendOrigins";
 import { ApiError } from "@/lib/errors";
 import { rateLimit } from "@/middleware/rate-limit";
 import type { AppEnv } from "@/types/app";
 
 import {
-  applyDefaultSocialCallbackUrls,
   attachSessionExchangeCode,
   getProviderFromCallbackPath,
   toSafeTrustedUrlLog,
 } from "./callbacks";
 import { forwardToAuthJsonPath, forwardToAuthRawRequest } from "./forwarding";
-import { parseTrustedFrontendOrigins, resolveTrustedRequestOrigin } from "./frontendOrigins";
+import { readJsonObject } from "./input";
 import type { ForwardToAuthJsonPath, ForwardToAuthRawRequest } from "./types";
 
 export function createRoutes(
@@ -24,50 +28,46 @@ export function createRoutes(
 ) {
   return new Hono<AppEnv<{ requestId: string }>>()
     .post("/sign-in/social", rateLimit("public"), async (c) => {
-      let body: unknown;
-      try {
-        body = await c.req.json();
-      } catch {
-        throw new ApiError(422, "VALIDATION_ERROR", "Request body must be valid JSON.");
-      }
+      const payload = await readJsonObject(c.req);
 
-      if (!body || typeof body !== "object" || Array.isArray(body)) {
-        throw new ApiError(422, "VALIDATION_ERROR", "Invalid payload.");
-      }
-
-      const nextBody = applyDefaultSocialCallbackUrls(c, body as Record<string, unknown>);
       const requestOrigin = c.req.header("origin");
-      if (!requestOrigin || !parseTrustedFrontendOrigins(c).includes(requestOrigin)) {
+      const requestOriginInfo = { origin: requestOrigin, referer: c.req.header("referer") };
+      const callbackInput = {
+        callbackURL: typeof payload.callbackURL === "string" ? payload.callbackURL : undefined,
+        newUserCallbackURL:
+          typeof payload.newUserCallbackURL === "string" ? payload.newUserCallbackURL : undefined,
+        errorCallbackURL:
+          typeof payload.errorCallbackURL === "string" ? payload.errorCallbackURL : undefined,
+      };
+      const provider = typeof payload.provider === "string" ? payload.provider : "unknown";
+      const requestSignUp =
+        typeof payload.requestSignUp === "boolean" ? payload.requestSignUp : null;
+      const disableRedirect =
+        typeof payload.disableRedirect === "boolean" ? payload.disableRedirect : null;
+      const callbackUrls =
+        applyDefaultSocialCallbackUrls(c.env, requestOriginInfo, callbackInput) ?? callbackInput;
+      if (!requestOrigin || !parseTrustedFrontendOrigins(c.env).includes(requestOrigin)) {
         throw new ApiError(403, "ORIGIN_NOT_ALLOWED", "A trusted frontend origin is required.");
       }
       const proof = await createOAuthExchangeProof(createAuth(c.env));
-      for (const key of ["callbackURL", "newUserCallbackURL"]) {
-        if (typeof nextBody[key] !== "string") {
+      for (const key of ["callbackURL", "newUserCallbackURL"] as const) {
+        const rawUrl = callbackUrls[key];
+        if (rawUrl === undefined) {
           continue;
         }
-        const callback = new URL(nextBody[key]);
+        const callback = new URL(rawUrl);
         callback.searchParams.set(AUTH_EXCHANGE_CHALLENGE_PARAM, proof.challenge);
-        nextBody[key] = callback.toString();
+        callbackUrls[key] = callback.toString();
       }
-      const provider = typeof nextBody.provider === "string" ? nextBody.provider : "unknown";
+      const nextBody: Record<string, unknown> = { ...payload, ...callbackUrls };
       console.warn("[auth][social-sign-in] forwarding", {
         provider,
-        requestSignUp: typeof nextBody.requestSignUp === "boolean" ? nextBody.requestSignUp : null,
-        disableRedirect:
-          typeof nextBody.disableRedirect === "boolean" ? nextBody.disableRedirect : null,
-        requestOrigin: resolveTrustedRequestOrigin(c),
-        callbackURL: toSafeTrustedUrlLog(
-          c,
-          typeof nextBody.callbackURL === "string" ? nextBody.callbackURL : null,
-        ),
-        newUserCallbackURL: toSafeTrustedUrlLog(
-          c,
-          typeof nextBody.newUserCallbackURL === "string" ? nextBody.newUserCallbackURL : null,
-        ),
-        errorCallbackURL: toSafeTrustedUrlLog(
-          c,
-          typeof nextBody.errorCallbackURL === "string" ? nextBody.errorCallbackURL : null,
-        ),
+        requestSignUp,
+        disableRedirect,
+        requestOrigin: resolveTrustedRequestOrigin(c.env, requestOriginInfo),
+        callbackURL: toSafeTrustedUrlLog(c, callbackUrls.callbackURL ?? null),
+        newUserCallbackURL: toSafeTrustedUrlLog(c, callbackUrls.newUserCallbackURL ?? null),
+        errorCallbackURL: toSafeTrustedUrlLog(c, callbackUrls.errorCallbackURL ?? null),
       });
 
       const response = await deps.forwardToAuthJsonPath(c, "/sign-in/social", nextBody);

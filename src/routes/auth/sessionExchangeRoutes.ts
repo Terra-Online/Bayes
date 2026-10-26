@@ -8,13 +8,14 @@ import {
   inspectOAuthExchangeProof,
   serializeBrowserSessionCookie,
 } from "@/lib/auth/browserSession";
+import { parseTrustedFrontendOrigins } from "@/lib/auth/rules/frontendOrigins";
 import { ApiError } from "@/lib/errors";
 import { rateLimit } from "@/middleware/rate-limit";
 import { ensureUserProfile, formatPublicUid } from "@/repositories/users";
 import { sessionExchangeSchema } from "@/routes/schema/auth";
 import type { AppEnv } from "@/types/app";
 
-import { parseTrustedFrontendOrigins } from "./frontendOrigins";
+import { parseAuthInput, readJsonBody } from "./input";
 import { toSessionUser } from "./sessionUser";
 
 const SESSION_EXCHANGE_CODE_PREFIX = "auth-session-exchange:";
@@ -84,23 +85,13 @@ export function createRoutes() {
     rateLimit("public"),
     async (c) => {
       const origin = c.req.header("origin");
-      if (!origin || !parseTrustedFrontendOrigins(c).includes(origin)) {
+      if (!origin || !parseTrustedFrontendOrigins(c.env).includes(origin)) {
         throw new ApiError(403, "ORIGIN_NOT_ALLOWED", "A trusted frontend origin is required.");
       }
 
-      let body: unknown;
-      try {
-        body = await c.req.json();
-      } catch {
-        throw new ApiError(422, "VALIDATION_ERROR", "Request body must be valid JSON.");
-      }
+      const input = parseAuthInput(sessionExchangeSchema, await readJsonBody(c.req));
 
-      const parsed = sessionExchangeSchema.safeParse(body);
-      if (!parsed.success) {
-        throw new ApiError(422, "VALIDATION_ERROR", "Invalid payload.", parsed.error.flatten());
-      }
-
-      const identifier = `${SESSION_EXCHANGE_CODE_PREFIX}${parsed.data.code}`;
+      const identifier = `${SESSION_EXCHANGE_CODE_PREFIX}${input.code}`;
       const verification = await c.env.DB.prepare(
         "SELECT value, expiresAt FROM auth_verifications WHERE identifier = ?1 LIMIT 1",
       )

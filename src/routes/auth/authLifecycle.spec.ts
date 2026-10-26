@@ -407,72 +407,80 @@ describe("authenticated account and profile HTTP lifecycle", () => {
     expect((await request("/session")).status).toBe(200);
   });
 
-  it("links a verified GitHub identity to the signed-in user without replacing the public profile", async () => {
-    addAccount("owner-password", "credential");
-    const originalProfile = storedProfile();
-    const response = await jsonRequest("POST", "/link-social", {
-      provider: "github",
-      callbackURL: "https://opendfieldmap.org/settings",
-    });
-    expect(response.status).toBe(200);
-    const authorization = new URL(((await response.json()) as { url: string }).url);
-    expect(authorization.hostname).toBe("github.com");
-    expect(authorization.searchParams.get("redirect_uri")).toBe(
-      "https://api.opendfieldmap.org/auth/v1/callback/github",
-    );
-    const state = authorization.searchParams.get("state");
-    expect(state).toBeTruthy();
+  it.each([
+    ["absolute", "https://opendfieldmap.org/settings", "https://opendfieldmap.org/settings"],
+    ["relative", "/settings", "https://opendfieldmap.org/settings"],
+    ["untrusted", "https://untrusted.example/settings", "https://opendfieldmap.org"],
+    ["omitted", undefined, "https://opendfieldmap.org"],
+  ] as const)(
+    "binds GitHub with %s callback input and returns to the trusted frontend",
+    async (_kind, callbackURL, expectedDestination) => {
+      addAccount("owner-password", "credential");
+      const originalProfile = storedProfile();
+      const response = await jsonRequest("POST", "/link-social", {
+        provider: "github",
+        callbackURL,
+      });
+      expect(response.status).toBe(200);
+      const authorization = new URL(((await response.json()) as { url: string }).url);
+      expect(authorization.hostname).toBe("github.com");
+      expect(authorization.searchParams.get("redirect_uri")).toBe(
+        "https://api.opendfieldmap.org/auth/v1/callback/github",
+      );
+      const state = authorization.searchParams.get("state");
+      expect(state).toBeTruthy();
 
-    // Only the remote provider boundary is substituted. The callback, database
-    // state, auth linking, and route response all use production application code.
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      const url = String(input instanceof Request ? input.url : input);
-      let data: unknown;
-      if (url === "https://github.com/login/oauth/access_token") {
-        data = { access_token: "github-provider-token", token_type: "Bearer" };
-      } else if (url === "https://api.github.com/user") {
-        data = {
-          id: 12345,
-          email: "owner@example.test",
-          name: "GitHub Name",
-          login: "github-owner",
-        };
-      } else if (url === "https://api.github.com/user/emails") {
-        data = [{ email: "owner@example.test", primary: true, verified: true }];
-      } else {
-        throw new Error(`Unexpected OAuth request: ${url}`);
-      }
-      return Response.json(data);
-    });
-    const callback = await request(
-      `/callback/github?state=${encodeURIComponent(state!)}&code=github-code`,
-    );
-    expect(callback.status).toBe(302);
-    expect(callback.headers.get("location")).toBe("https://opendfieldmap.org/settings");
-    expect(storedProfile()).toEqual(originalProfile);
-    expect(
-      database.sqlite
-        .prepare("SELECT userId, accountId FROM auth_accounts WHERE providerId = 'github'")
-        .all(),
-    ).toEqual([{ userId: "owner", accountId: "12345" }]);
-    const accounts = await request("/list-accounts");
-    expect(accounts.status).toBe(200);
-    expect(await accounts.json()).toEqual({
-      accounts: [
-        {
-          provider: "email",
-          linkedAt: "2026-09-02T00:00:00.000Z",
-          verified: true,
-          unlinkable: true,
-        },
-        { provider: "github", linkedAt: expect.any(String), unlinkable: true },
-      ],
-    });
-    expect(await (await request("/session")).json()).toMatchObject({
-      user: { uid: "123456AB", nickname: "OriginalName" },
-    });
-    expect(await (await request("/list-accounts", {}, other)).json()).toEqual({ accounts: [] });
-  });
+      // Only the remote provider boundary is substituted. The callback, database
+      // state, auth linking, and route response all use production application code.
+      vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+        const url = String(input instanceof Request ? input.url : input);
+        let data: unknown;
+        if (url === "https://github.com/login/oauth/access_token") {
+          data = { access_token: "github-provider-token", token_type: "Bearer" };
+        } else if (url === "https://api.github.com/user") {
+          data = {
+            id: 12345,
+            email: "owner@example.test",
+            name: "GitHub Name",
+            login: "github-owner",
+          };
+        } else if (url === "https://api.github.com/user/emails") {
+          data = [{ email: "owner@example.test", primary: true, verified: true }];
+        } else {
+          throw new Error(`Unexpected OAuth request: ${url}`);
+        }
+        return Response.json(data);
+      });
+      const callback = await request(
+        `/callback/github?state=${encodeURIComponent(state!)}&code=github-code`,
+      );
+      expect(callback.status).toBe(302);
+      expect(callback.headers.get("location")).toBe(expectedDestination);
+      expect(storedProfile()).toEqual(originalProfile);
+      expect(
+        database.sqlite
+          .prepare("SELECT userId, accountId FROM auth_accounts WHERE providerId = 'github'")
+          .all(),
+      ).toEqual([{ userId: "owner", accountId: "12345" }]);
+      const accounts = await request("/list-accounts");
+      expect(accounts.status).toBe(200);
+      expect(await accounts.json()).toEqual({
+        accounts: [
+          {
+            provider: "email",
+            linkedAt: "2026-09-02T00:00:00.000Z",
+            verified: true,
+            unlinkable: true,
+          },
+          { provider: "github", linkedAt: expect.any(String), unlinkable: true },
+        ],
+      });
+      expect(await (await request("/session")).json()).toMatchObject({
+        user: { uid: "123456AB", nickname: "OriginalName" },
+      });
+      expect(await (await request("/list-accounts", {}, other)).json()).toEqual({ accounts: [] });
+    },
+  );
 
   it.each(["anonymous", "expired"])(
     "protects profiles and login methods from an %s session",

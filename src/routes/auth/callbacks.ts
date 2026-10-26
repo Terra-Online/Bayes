@@ -3,13 +3,9 @@ import type { Context } from "hono";
 
 import { createAuth } from "@/lib/auth/betterAuth";
 import { AUTH_EXCHANGE_CHALLENGE_PARAM } from "@/lib/auth/browserSession";
+import { isTrustedCallbackUrlForResponse } from "@/lib/auth/rules/frontendOrigins";
 import type { AppEnv } from "@/types/app";
 
-import {
-  isTrustedCallbackUrlForResponse,
-  resolveTrustedCallbackUrl,
-  resolveTrustedRequestOrigin,
-} from "./frontendOrigins";
 import { createSessionExchangeCode } from "./sessionExchangeRoutes";
 
 function splitSetCookieHeader(setCookie: string): string[] {
@@ -160,29 +156,8 @@ export function toSafeTrustedUrlLog<E extends AppEnv<{ requestId: string }>>(
 
   return {
     ...details,
-    trusted: isTrustedCallbackUrlForResponse(c, raw),
+    trusted: isTrustedCallbackUrlForResponse(c.env, raw),
   };
-}
-
-export function applyDefaultSocialCallbackUrls<E extends AppEnv<{ requestId: string }>>(
-  c: Context<E>,
-  body: Record<string, unknown>,
-) {
-  const defaultOrigin = resolveTrustedRequestOrigin(c);
-  if (!defaultOrigin) {
-    return body;
-  }
-
-  const nextBody = { ...body };
-  const callbackURL =
-    resolveTrustedCallbackUrl(c, nextBody.callbackURL, defaultOrigin) ?? defaultOrigin;
-  nextBody.callbackURL = callbackURL;
-  nextBody.newUserCallbackURL =
-    resolveTrustedCallbackUrl(c, nextBody.newUserCallbackURL, defaultOrigin) ?? callbackURL;
-  nextBody.errorCallbackURL =
-    resolveTrustedCallbackUrl(c, nextBody.errorCallbackURL, defaultOrigin) ?? callbackURL;
-
-  return nextBody;
 }
 
 export async function attachSessionExchangeCode<E extends AppEnv<{ requestId: string }>>(
@@ -194,7 +169,7 @@ export async function attachSessionExchangeCode<E extends AppEnv<{ requestId: st
   }
 
   const location = better_auth_response.headers.get("location");
-  if (!location || !isTrustedCallbackUrlForResponse(c, location)) {
+  if (!location || !isTrustedCallbackUrlForResponse(c.env, location)) {
     console.warn("[auth][oauth-callback] skipped session exchange code", {
       provider: getProviderFromCallbackPath(c.req.path),
       status: better_auth_response.status,
