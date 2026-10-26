@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { migrations as migrationFiles } from "@/test/database/migrations";
 
-import { getImageSubmissionByFilePath, getPublicSubmissionByFilePath } from "./statusSubmission";
+import { getImageSubmissionByFilePath, getPublicSubmissionByFilePath } from "./imageAssets";
 import { countSubmissionUpvotes } from "./voteSubmission";
 
 const migrations = new URL("../../../migrations/", import.meta.url);
@@ -52,11 +52,20 @@ describe("read path index migration on the repository schema", () => {
 
   async function lookup() {
     return Promise.all([
-      getImageSubmissionByFilePath(database.db, "files/shared.webp", { uid: "owner", role: "n" }),
+      getImageSubmissionByFilePath(database.db, "files/shared.webp", {
+        userId: "owner",
+        includeAllOwners: false,
+      }),
       getPublicSubmissionByFilePath(database.db, "files/shared.webp"),
       getPublicSubmissionByFilePath(database.db, "files/removed.webp"),
-      getImageSubmissionByFilePath(database.db, "files/comment.webp", { uid: "owner", role: "n" }),
-      getImageSubmissionByFilePath(database.db, "files/missing.webp", { uid: "owner", role: "n" }),
+      getImageSubmissionByFilePath(database.db, "files/comment.webp", {
+        userId: "owner",
+        includeAllOwners: false,
+      }),
+      getImageSubmissionByFilePath(database.db, "files/missing.webp", {
+        userId: "owner",
+        includeAllOwners: false,
+      }),
       countSubmissionUpvotes(database.db, "public"),
       countSubmissionUpvotes(database.db, "missing"),
     ]);
@@ -111,30 +120,28 @@ describe("read path index migration on the repository schema", () => {
       }
       expect(
         await getImageSubmissionByFilePath(database.db, "files/shared.webp", {
-          uid: "other",
-          role: "n",
+          userId: "other",
+          includeAllOwners: false,
         }),
       ).toMatchObject({ id: "public" });
       expect(
         await getImageSubmissionByFilePath(database.db, "files/shared.webp", {
-          uid: "stranger",
-          role: "n",
+          userId: "stranger",
+          includeAllOwners: false,
         }),
       ).toBeNull();
       expect(
         await getImageSubmissionByFilePath(database.db, "files/removed.webp", {
-          uid: "owner",
-          role: "n",
+          userId: "owner",
+          includeAllOwners: false,
         }),
       ).toBeNull();
-      for (const role of ["p", "a", "r"] as const) {
-        expect(
-          await getImageSubmissionByFilePath(database.db, "files/removed.webp", {
-            uid: "stranger",
-            role,
-          }),
-        ).toMatchObject({ id: "removed", status: "stale" });
-      }
+      expect(
+        await getImageSubmissionByFilePath(database.db, "files/removed.webp", {
+          userId: "stranger",
+          includeAllOwners: true,
+        }),
+      ).toMatchObject({ id: "removed", status: "stale" });
     }
   });
 });

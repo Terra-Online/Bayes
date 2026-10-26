@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { PublicSubmissionImage } from "@/repositories/submission/types";
+import { publicReadResponse } from "@/routes/uploads/responses";
 
 const mocks = vi.hoisted(() => ({
   fetch: vi.fn<(request: Request, init?: RequestInit) => Promise<Response>>(),
@@ -14,7 +15,7 @@ vi.mock("cloudflare:workers", () => ({
   },
 }));
 
-import { publicReadResponse, readPublicImagesFromWorkersCache } from "./client";
+import { readPublicImagesFromWorkersCache } from "./client";
 
 describe("public image cache responses", () => {
   const image: PublicSubmissionImage = {

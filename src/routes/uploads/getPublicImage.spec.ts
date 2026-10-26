@@ -1,8 +1,7 @@
-import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { createApp } from "@/app";
 import { runWithAuthRequest } from "@/lib/auth/createAuth";
-import { onAppError } from "@/middleware/error-handler";
 import type { PublicSubmissionImage } from "@/repositories/submission/types";
 import { createMockBindings, type MockBindings } from "@/test/bindings";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
@@ -13,16 +12,13 @@ import {
   type SessionHeaders,
 } from "@/test/fixtures/auth";
 import { seedImageReadScenario } from "@/test/fixtures/imageReadScenario";
-import type { AppEnv } from "@/types/app";
-
-import { createRoutes } from "./createRoutes";
 
 vi.mock("cloudflare:workers", () => ({ DurableObject: class {}, exports: {} }));
 vi.mock("@cloudflare/containers", () => ({ getRandom: vi.fn() }));
 
 let database: TestDatabase;
 let mocks: MockBindings;
-let app: Hono<AppEnv>;
+let app: ReturnType<typeof createApp>;
 let viewerHeaders: SessionHeaders;
 let otherViewerHeaders: SessionHeaders;
 
@@ -35,9 +31,7 @@ beforeEach(() => {
   mocks = createMockBindings({ DB: database.db });
   mocks.bindings.UGC_ASSET_BASE_URL = "https://assets.example.com";
   mocks.bindings.UGC_UPLOAD_TEST_PREFIX = "";
-  app = new Hono<AppEnv>();
-  app.onError(onAppError);
-  app.route("/uploads/v1", createRoutes());
+  app = createApp();
 });
 
 afterEach(() => database.close());

@@ -8,25 +8,25 @@ import {
   upsertTextTranslation,
 } from "@/repositories/submission/textTranslationCache";
 import type { TextTranslationRecord } from "@/repositories/submission/types";
-import { shouldUseGlossary, shouldUseAutoDetectedGlossary } from "@/services/translation/glossary";
+import { shouldUseAutoDetectedGlossary, shouldUseGlossary } from "@/services/translation/glossary";
 import {
   GOOGLE_TRANSLATION_PROVIDER,
   translateText,
 } from "@/services/translation/googleTranslation";
 import {
-  normalizeTranslationLanguage,
-  isSameTranslationLanguage,
   hasTranslationLanguage,
+  isSameTranslationLanguage,
+  normalizeTranslationLanguage,
 } from "@/services/translation/languages";
 import type { Bindings } from "@/types/app";
 
 import {
-  buildTargetDescriptor,
   buildCacheKeys,
+  buildTargetDescriptor,
   normalizeTextForTranslationCache,
   type CacheDescriptor,
-  type TargetDescriptor,
   type CacheKeys,
+  type TargetDescriptor,
 } from "./contract/cacheDescriptors";
 
 const MAX_TRANSLATION_BATCH_SIZE = 100;

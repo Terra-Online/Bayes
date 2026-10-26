@@ -21,7 +21,12 @@ import { createRoutes as createNotifyRoutes } from "./notify/createRoutes";
 import { createRoutes as createProgressRoutes } from "./progress/createRoutes";
 import { createRoutes as createRootRoutes } from "./root/createRoutes";
 import { createRoutes as createSyncRoutes } from "./sync/createRoutes";
-import { createRoutes as createUploadsRoutes } from "./uploads/createRoutes";
+import { createRoutes as createCommentReadRoutes } from "./uploads/commentReadRoutes";
+import { createRoutes as createCommentTranslationRoutes } from "./uploads/commentTranslationRoutes";
+import { createRoutes as createCommentWriteRoutes } from "./uploads/commentWriteRoutes";
+import { createRoutes as createImageFileRoutes } from "./uploads/imageFileRoutes";
+import { createRoutes as createImageReadRoutes } from "./uploads/imageReadRoutes";
+import { createRoutes as createImageWriteRoutes } from "./uploads/imageWriteRoutes";
 
 export function mountRoutes<E extends AppEnv<{ requestId: string }>>(app: Hono<E>): void {
   // @waf-ignore: local/demo-only helper; keep this path out of the production allowlist.
@@ -40,7 +45,12 @@ export function mountRoutes<E extends AppEnv<{ requestId: string }>>(app: Hono<E
   app.route("/locator", createLocatorRoutes());
   app.route("/progress/v1", createProgressRoutes());
   app.route("/sync/v1", createSyncRoutes());
-  app.route("/uploads/v1", createUploadsRoutes());
+  app.route("/uploads/v1", createCommentReadRoutes());
+  app.route("/uploads/v1", createCommentWriteRoutes());
+  app.route("/uploads/v1", createImageReadRoutes());
+  app.route("/uploads/v1", createImageWriteRoutes());
+  app.route("/uploads/v1", createImageFileRoutes());
+  app.route("/uploads/v1", createCommentTranslationRoutes());
   app.route("/moderation/v1", createModerationRoutes());
   app.route("/notify/v1", createNotifyRoutes());
   app.route("/me/v1", createMeRoutes());

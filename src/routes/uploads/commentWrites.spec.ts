@@ -1,14 +1,12 @@
-import { Hono, type ExecutionContext } from "hono";
+import { type ExecutionContext } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { onAppError } from "@/middleware/error-handler";
+import { createApp } from "@/app";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { insertAuthUser, insertSession, testAuthConfig } from "@/test/fixtures/auth";
 import { insertSubmission } from "@/test/fixtures/submissions";
 import { insertUser } from "@/test/fixtures/users";
-import type { AppEnv, Bindings } from "@/types/app";
-
-import { createRoutes } from "./createRoutes";
+import type { Bindings } from "@/types/app";
 
 const { publicReadCache, redis } = vi.hoisted(() => ({
   publicReadCache: {
@@ -38,7 +36,7 @@ describe.each(["new comments", "comment edits"] as const)("%s content boundaries
   let database: TestDatabase;
   const send = vi.fn<Queue["send"]>();
   let bindings: Bindings;
-  let app: Hono<AppEnv>;
+  let app: ReturnType<typeof createApp>;
   let sessionHeaders: ReturnType<typeof insertSession>["headers"];
 
   beforeEach(() => {
@@ -61,9 +59,7 @@ describe.each(["new comments", "comment edits"] as const)("%s content boundaries
       UPSTASH_REDIS_REST_TOKEN: "test-token",
       OEM_MODERATION_Q: { send } as unknown as Queue,
     } as Bindings;
-    app = new Hono<AppEnv>();
-    app.onError(onAppError);
-    app.route("/uploads/v1", createRoutes());
+    app = createApp();
   });
 
   afterEach(() => database.close());

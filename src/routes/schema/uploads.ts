@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { commentContentSchema } from "@/services/upload/contract/commentContent";
+import { commentContentSchema } from "@/services/ugc/contract/commentContent";
 
 export const imagesQuerySchema = z.object({
   markerId: z.string().min(1).max(128).optional(),

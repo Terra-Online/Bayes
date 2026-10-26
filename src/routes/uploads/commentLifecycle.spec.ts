@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { onAppError } from "@/middleware/error-handler";
+import { createApp } from "@/app";
 import type { AutoModerationMsg, WebhookMsg } from "@/queues/types/messages";
 import type { UserSubmissionComment } from "@/repositories/submission/types";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
@@ -8,8 +8,6 @@ import { insertAuthUser, insertSession, testAuthConfig } from "@/test/fixtures/a
 import { insertSubmission } from "@/test/fixtures/submissions";
 import { insertUser } from "@/test/fixtures/users";
 import type { AppEnv } from "@/types/app";
-
-import { createRoutes } from "./createRoutes";
 
 let database: TestDatabase;
 let env: AppEnv["Bindings"];
@@ -79,11 +77,10 @@ afterEach(() => {
 });
 
 async function request(path: string, user: string | null = "author", body?: unknown) {
-  const app = createRoutes();
-  app.onError(onAppError);
+  const app = createApp();
   const pending: Promise<unknown>[] = [];
   const response = await app.request(
-    `http://localhost${path}`,
+    `http://localhost/uploads/v1${path}`,
     {
       method: body === undefined ? "GET" : "POST",
       headers: { ...((user && sessions[user]) || {}), "content-type": "application/json" },
@@ -256,6 +253,36 @@ describe("comment submission and replies", () => {
     expect(persistedState()).toEqual(before);
     expect(moderation).toEqual([]);
     expect(webhooks).toEqual([]);
+  });
+});
+
+describe("comment votes", () => {
+  it("toggles matching votes, replaces opposite votes and keeps each reader's vote separate", async () => {
+    insertSubmission(database.sqlite, { id: "target", userId: "author" });
+
+    const steps = [
+      { user: "reader", action: "upvote", previousVote: 0, vote: 1, score: 1 },
+      { user: "reader", action: "upvote", previousVote: 1, vote: 0, score: 0 },
+      { user: "reader", action: "downvote", previousVote: 0, vote: -1, score: -1 },
+      { user: "reader", action: "upvote", previousVote: -1, vote: 1, score: 1 },
+      { user: "other-reader", action: "downvote", previousVote: 0, vote: -1, score: 0 },
+    ];
+    for (const { user, action, previousVote, vote, score } of steps) {
+      const response = await post(`/comments/target/${action}`, user);
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ ok: true, previousVote, vote, score });
+    }
+
+    expect(
+      database.sqlite
+        .prepare(
+          "SELECT user_id, value, active FROM ugc_submission_votes WHERE submission_id = 'target' ORDER BY user_id",
+        )
+        .all(),
+    ).toEqual([
+      { user_id: "other-reader", value: -1, active: 1 },
+      { user_id: "reader", value: 1, active: 1 },
+    ]);
   });
 });
 

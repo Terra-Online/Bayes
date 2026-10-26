@@ -1,7 +1,6 @@
-import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { onAppError } from "@/middleware/error-handler";
+import { createApp } from "@/app";
 import { createMockBindings, type MockBindings } from "@/test/bindings";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import {
@@ -11,16 +10,13 @@ import {
   type SeededSession,
 } from "@/test/fixtures/auth";
 import { seedImageReadScenario } from "@/test/fixtures/imageReadScenario";
-import type { AppEnv } from "@/types/app";
-
-import { createRoutes } from "./createRoutes";
 
 vi.mock("cloudflare:workers", () => ({ DurableObject: class {}, exports: {} }));
 vi.mock("@cloudflare/containers", () => ({ getRandom: vi.fn() }));
 
 let database: TestDatabase;
 let mocks: MockBindings;
-let app: Hono<AppEnv>;
+let app: ReturnType<typeof createApp>;
 let activeSession: SeededSession;
 let suspendedSession: SeededSession;
 
@@ -33,9 +29,7 @@ beforeEach(() => {
   suspendedSession = insertAuthenticatedUser(database.sqlite, { uid: "suspended-user", role: "s" });
   mocks = createMockBindings({ DB: database.db });
   mocks.publicRateLimit.limit.mockResolvedValue({ success: true });
-  app = new Hono<AppEnv>();
-  app.onError(onAppError);
-  app.route("/uploads/v1", createRoutes());
+  app = createApp();
 });
 
 afterEach(() => {

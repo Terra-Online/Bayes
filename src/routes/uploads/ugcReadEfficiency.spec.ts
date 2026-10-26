@@ -1,8 +1,7 @@
-import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { createApp } from "@/app";
 import { runWithAuthRequest } from "@/lib/auth/createAuth";
-import { onAppError } from "@/middleware/error-handler";
 import { PublicReadCache } from "@/publicRead/origin/entrypoint";
 import type { PublicSubmissionComment } from "@/repositories/submission/types";
 import { createMockBindings, type MockBindings } from "@/test/bindings";
@@ -10,9 +9,7 @@ import { createTestDatabase, type TestDatabase } from "@/test/database/createTes
 import { insertAuthenticatedUser, type SessionHeaders } from "@/test/fixtures/auth";
 import { insertSubmission } from "@/test/fixtures/submissions";
 import { insertUser } from "@/test/fixtures/users";
-import type { AppEnv, Bindings } from "@/types/app";
-
-import { createRoutes } from "./createRoutes";
+import type { Bindings } from "@/types/app";
 
 const workersCache = vi.hoisted(() => ({
   fetch: vi.fn<(request: Request, init?: RequestInit) => Promise<Response>>(),
@@ -31,7 +28,7 @@ vi.mock("@cloudflare/containers", () => ({ getRandom: vi.fn() }));
 
 let database: TestDatabase;
 let bindings: MockBindings;
-let app: Hono<AppEnv>;
+let app: ReturnType<typeof createApp>;
 let viewerHeaders: SessionHeaders;
 let lifetimes: Promise<unknown>[][];
 
@@ -43,7 +40,7 @@ beforeEach(() => {
   bindings = createMockBindings({ DB: database.db });
   bindings.bindings.UGC_ASSET_BASE_URL = "https://assets.example";
   bindings.bindings.UGC_UPLOAD_TEST_PREFIX = "";
-  app = new Hono<AppEnv>().onError(onAppError).route("/uploads/v1", createRoutes());
+  app = createApp();
   lifetimes = [];
   // Simulate the external Workers transport while executing the actual origin and SQL.
   workersCache.fetch.mockImplementation((request: Request) => {

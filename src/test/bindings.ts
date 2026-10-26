@@ -1,7 +1,7 @@
 import { vi, type Mocked, type MockInstance } from "vitest";
 
 import type { AutoModerationMsg, TranslationMsg, WebhookMsg } from "@/queues/types/messages";
-import type { oem_imgTrans } from "@/services/upload/imageTranscoderContainer";
+import type { oem_imgTrans } from "@/services/ugc/submission/imageTranscoderContainer";
 import type { Bindings } from "@/types/app";
 
 import { testAuthConfig } from "./fixtures/auth";

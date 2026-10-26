@@ -1,6 +1,8 @@
+import type { Context } from "hono";
+
 import { ApiError } from "@/lib/errors";
 import { resolveAuthIdentity, type AuthIdentity } from "@/middleware/auth";
-import type { AppEnv } from "@/types/app";
+import type { AppEnv, AuthUser } from "@/types/app";
 
 export function pickString(
   value: FormDataEntryValue | FormDataEntryValue[] | undefined,
@@ -119,4 +121,18 @@ export function parseObjectKeyFromRequestPath(path: string): string {
     }
     throw new ApiError(422, "VALIDATION_ERROR", "Invalid image path.");
   }
+}
+
+export function requireUserAndSubmissionId<E extends AppEnv<{ authUser: AuthUser }>>(
+  c: Context<E>,
+) {
+  const user = c.get("authUser");
+  const submissionId = c.req.param("id");
+  if (!user) {
+    throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
+  }
+  if (!submissionId) {
+    throw new ApiError(422, "VALIDATION_ERROR", "Submission id is required.");
+  }
+  return { user, submissionId };
 }
