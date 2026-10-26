@@ -3,8 +3,8 @@ import { createMiddleware } from "hono/factory";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createAuth, runWithAuthRequest } from "@/lib/auth/createAuth";
-import emailTemplates from "@/lib/email/templateLocales.json";
 import { onAppError } from "@/middleware/error-handler";
+import emailTemplates from "@/services/email/templateLocales.json";
 import { createMockBindings, type MockBindings } from "@/test/bindings";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { insertUser } from "@/test/fixtures/users";
@@ -13,7 +13,9 @@ import type { AppEnv, Bindings } from "@/types/app";
 import { createRoutes as createEmailRoutes } from "./emailRoutes";
 import { createRoutes as createPasswordResetRoutes } from "./passwordResetRoutes";
 
-vi.mock("@/lib/email/blacklist.json", () => ({ default: ["disposable.example.test"] }));
+vi.mock("@/lib/auth/rules/disposableEmailDomains.json", () => ({
+  default: ["disposable.example.test"],
+}));
 
 interface RegisteredEmailIdentity {
   token: string;

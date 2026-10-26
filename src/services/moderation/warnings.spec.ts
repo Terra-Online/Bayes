@@ -6,7 +6,8 @@ import type { Bindings } from "@/types/app";
 
 const sendEmail = vi.hoisted(() => vi.fn());
 
-vi.mock("@/lib/email/sender", () => ({
+vi.mock("@/services/email", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/services/email")>()),
   sendEmail,
 }));
 

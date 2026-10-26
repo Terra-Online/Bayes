@@ -1,6 +1,9 @@
-import { sendEmail, type SendEmailResult } from "@/lib/email/sender";
-import { createModerationWarningEmailTemplate } from "@/lib/email/templates";
 import { getUserByPublicUid, formatPublicUid } from "@/repositories/users";
+import {
+  createModerationWarningEmailTemplate,
+  sendEmail,
+  type SendEmailResult,
+} from "@/services/email";
 import type { Bindings } from "@/types/app";
 
 export interface ModerationWarningResult {

@@ -1,4 +1,4 @@
-import bannedEmails from "./blacklist.json";
+import bannedEmails from "./disposableEmailDomains.json";
 
 function normalizeDomain(domain: string): string {
   return domain.trim().toLowerCase().replace(/\.+$/, "");
