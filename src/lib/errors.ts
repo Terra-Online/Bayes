@@ -15,6 +15,15 @@ export function isApiError(error: unknown): error is ApiError {
   return error instanceof ApiError;
 }
 
+export function toApiError(error: unknown): ApiError {
+  if (isApiError(error)) {
+    return error;
+  }
+  return (
+    transientDependencyError(error) ?? new ApiError(500, "INTERNAL_ERROR", "Internal server error.")
+  );
+}
+
 export function transientDependencyError(error: unknown): ApiError | undefined {
   const messages: string[] = [];
   let current = error;

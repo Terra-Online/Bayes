@@ -9,7 +9,10 @@ import type { AppEnv, Bindings } from "@/types/app";
 
 import { forwardToAuthJsonPath } from "./forwarding";
 
-vi.mock("@/lib/auth/betterAuth", () => ({ createAuth: vi.fn() }));
+vi.mock("@/lib/auth/betterAuth/createAuth", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/auth/betterAuth/createAuth")>()),
+  createAuth: vi.fn(),
+}));
 // Specialist library boundary: the installed Better Auth version cannot naturally
 // produce every supported throw/onError/opaque-response combination. Browser header
 // handling and conflict classification still execute normally (no cookie in these cases).

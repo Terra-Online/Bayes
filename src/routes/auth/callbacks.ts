@@ -91,15 +91,15 @@ function readSessionTokenFromSetCookie(
 
 function readSessionTokenFromResponse<E extends AppEnv<{ requestId: string }>>(
   c: Context<E>,
-  response: Response,
+  better_auth_response: Response,
 ): string | null {
-  const authToken = response.headers.get("set-auth-token")?.trim();
+  const authToken = better_auth_response.headers.get("set-auth-token")?.trim();
   if (authToken) {
     return authToken;
   }
 
   const cookieName = getCookies(createAuth(c.env).options).sessionToken.name;
-  return readSessionTokenFromSetCookie(response.headers.get("set-cookie"), cookieName);
+  return readSessionTokenFromSetCookie(better_auth_response.headers.get("set-cookie"), cookieName);
 }
 
 function appendQueryParam(rawUrl: string, name: string, value: string): string {
@@ -187,59 +187,59 @@ export function applyDefaultSocialCallbackUrls<E extends AppEnv<{ requestId: str
 
 export async function attachSessionExchangeCode<E extends AppEnv<{ requestId: string }>>(
   c: Context<E>,
-  response: Response,
+  better_auth_response: Response,
 ): Promise<Response> {
-  if (!response.status.toString().startsWith("3")) {
-    return response;
+  if (!better_auth_response.status.toString().startsWith("3")) {
+    return better_auth_response;
   }
 
-  const location = response.headers.get("location");
+  const location = better_auth_response.headers.get("location");
   if (!location || !isTrustedCallbackUrlForResponse(c, location)) {
     console.warn("[auth][oauth-callback] skipped session exchange code", {
       provider: getProviderFromCallbackPath(c.req.path),
-      status: response.status,
+      status: better_auth_response.status,
       hasLocation: Boolean(location),
       location: toSafeTrustedUrlLog(c, location),
-      hasSetCookie: Boolean(response.headers.get("set-cookie")),
-      hasSetAuthToken: Boolean(response.headers.get("set-auth-token")),
+      hasSetCookie: Boolean(better_auth_response.headers.get("set-cookie")),
+      hasSetAuthToken: Boolean(better_auth_response.headers.get("set-auth-token")),
     });
-    return response;
+    return better_auth_response;
   }
 
-  const sessionToken = readSessionTokenFromResponse(c, response);
+  const sessionToken = readSessionTokenFromResponse(c, better_auth_response);
   if (!sessionToken) {
     console.warn("[auth][oauth-callback] missing session token for exchange code", {
       provider: getProviderFromCallbackPath(c.req.path),
-      status: response.status,
+      status: better_auth_response.status,
       hasLocation: Boolean(location),
       location: toSafeTrustedUrlLog(c, location),
-      hasSetCookie: Boolean(response.headers.get("set-cookie")),
-      hasSetAuthToken: Boolean(response.headers.get("set-auth-token")),
+      hasSetCookie: Boolean(better_auth_response.headers.get("set-cookie")),
+      hasSetAuthToken: Boolean(better_auth_response.headers.get("set-auth-token")),
     });
-    return response;
+    return better_auth_response;
   }
 
   const frontendUrl = new URL(location);
   const challenge = frontendUrl.searchParams.get(AUTH_EXCHANGE_CHALLENGE_PARAM);
   if (!challenge || !/^[a-f0-9]{64}$/.test(challenge)) {
-    return response;
+    return better_auth_response;
   }
   frontendUrl.searchParams.delete(AUTH_EXCHANGE_CHALLENGE_PARAM);
   const code = await createSessionExchangeCode(c, sessionToken, frontendUrl.origin, challenge);
-  const headers = new Headers(response.headers);
+  const headers = new Headers(better_auth_response.headers);
   headers.set("location", appendQueryParam(frontendUrl.toString(), "auth_code", code));
   headers.set("Cache-Control", "private, no-store");
   headers.set("Referrer-Policy", "no-referrer");
   console.warn("[auth][oauth-callback] attached session exchange code", {
     provider: getProviderFromCallbackPath(c.req.path),
-    status: response.status,
+    status: better_auth_response.status,
     location: toSafeTrustedUrlLog(c, location),
-    hasSetCookie: Boolean(response.headers.get("set-cookie")),
-    hasSetAuthToken: Boolean(response.headers.get("set-auth-token")),
+    hasSetCookie: Boolean(better_auth_response.headers.get("set-cookie")),
+    hasSetAuthToken: Boolean(better_auth_response.headers.get("set-auth-token")),
   });
-  return new Response(response.body, {
-    status: response.status,
-    statusText: response.statusText,
+  return new Response(better_auth_response.body, {
+    status: better_auth_response.status,
+    statusText: better_auth_response.statusText,
     headers,
   });
 }

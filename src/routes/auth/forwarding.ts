@@ -1,98 +1,7 @@
 import type { Context } from "hono";
 
-import { createAuth } from "@/lib/auth/betterAuth";
-import { resolveBrowserSessionHeaders } from "@/lib/auth/browserSession";
+import { buildAuthForwardHeaders, invokeBetterAuthHandler } from "@/lib/auth/betterAuth";
 import type { AppEnv } from "@/types/app";
-
-import { authConflictResponse } from "./conflicts";
-
-function authInvocation<E extends AppEnv<{ requestId: string }>>(c: Context<E>, path: string) {
-  const errors: unknown[] = [];
-  const auth = createAuth(c.env, { onError: (error) => errors.push(error) });
-  return {
-    auth,
-    async handle(request: Request): Promise<Response> {
-      try {
-        const response = await auth.handler(request);
-        if (response.status >= 500) {
-          for (const error of errors) {
-            const conflict = authConflictResponse(c, path, error);
-            if (conflict) {
-              return conflict;
-            }
-          }
-        }
-        return response;
-      } catch (error) {
-        for (const original of [error, ...errors]) {
-          const conflict = authConflictResponse(c, path, original);
-          if (conflict) {
-            return conflict;
-          }
-        }
-        throw error;
-      }
-    },
-  };
-}
-
-const HOP_BY_HOP_HEADERS = [
-  "connection",
-  "keep-alive",
-  "proxy-authenticate",
-  "proxy-authorization",
-  "te",
-  "trailer",
-  "transfer-encoding",
-  "upgrade",
-  "host",
-  "content-length",
-];
-
-const FORWARDED_HEADER_ALLOWLIST = [
-  "authorization",
-  "cookie",
-  "user-agent",
-  "accept",
-  "accept-language",
-  "content-type",
-  "cf-connecting-ip",
-  "x-request-id",
-  "x-oem-locale",
-  "origin",
-  "referer",
-];
-
-function buildForwardHeaders(
-  source: Headers,
-  options?: { forceJson?: boolean; headers?: Record<string, string> },
-): Headers {
-  const forwardedHeaders = new Headers();
-
-  for (const headerName of FORWARDED_HEADER_ALLOWLIST) {
-    const value = source.get(headerName);
-    if (value) {
-      forwardedHeaders.set(headerName, value);
-    }
-  }
-
-  if (options?.forceJson) {
-    forwardedHeaders.set("content-type", "application/json");
-    forwardedHeaders.set("accept", "application/json");
-  }
-
-  if (options?.headers) {
-    for (const [name, value] of Object.entries(options.headers)) {
-      forwardedHeaders.set(name, value);
-    }
-  }
-
-  for (const headerName of HOP_BY_HOP_HEADERS) {
-    forwardedHeaders.delete(headerName);
-  }
-
-  return forwardedHeaders;
-}
 
 export function forwardToAuthJsonPath<E extends AppEnv<{ requestId: string }>>(
   c: Context<E>,
@@ -100,39 +9,43 @@ export function forwardToAuthJsonPath<E extends AppEnv<{ requestId: string }>>(
   body: Record<string, unknown>,
   options?: { headers?: Record<string, string> },
 ) {
-  const invocation = authInvocation(c, path);
-  const { auth } = invocation;
   const targetUrl = new URL(c.req.url);
   targetUrl.pathname = `/auth/v1${path}`;
 
-  const forwardedHeaders = buildForwardHeaders(c.req.raw.headers, {
+  const forwardedHeaders = buildAuthForwardHeaders(c.req.raw.headers, {
     forceJson: true,
     headers: options?.headers,
   });
 
   const request = new Request(targetUrl.toString(), {
     method: "POST",
-    headers: resolveBrowserSessionHeaders(auth, forwardedHeaders).headers,
+    headers: forwardedHeaders,
     body: JSON.stringify(body),
   });
 
-  return invocation.handle(request);
+  return invokeBetterAuthHandler(c.env, request, {
+    publicPath: c.req.path,
+    authPath: path,
+    requestId: c.get("requestId"),
+  });
 }
 
 export function forwardToAuthRawRequest<E extends AppEnv<{ requestId: string }>>(c: Context<E>) {
   const targetUrl = new URL(c.req.url);
-  const invocation = authInvocation(c, targetUrl.pathname.replace(/^\/auth\/v1/, ""));
-  const { auth } = invocation;
   const method = c.req.method.toUpperCase();
   const hasRequestBody = !["GET", "HEAD"].includes(method);
 
-  const forwardedHeaders = buildForwardHeaders(c.req.raw.headers);
+  const forwardedHeaders = buildAuthForwardHeaders(c.req.raw.headers);
 
   const request = new Request(targetUrl.toString(), {
     method,
-    headers: resolveBrowserSessionHeaders(auth, forwardedHeaders).headers,
+    headers: forwardedHeaders,
     body: hasRequestBody ? c.req.raw.body : undefined,
   });
 
-  return invocation.handle(request);
+  return invokeBetterAuthHandler(c.env, request, {
+    publicPath: c.req.path,
+    authPath: targetUrl.pathname.replace(/^\/auth\/v1/, ""),
+    requestId: c.get("requestId"),
+  });
 }

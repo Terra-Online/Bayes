@@ -1,6 +1,7 @@
 import type { Context } from "hono";
 import { Hono } from "hono";
 
+import { normalizeEmail } from "@/lib/auth/contract/email";
 import { ApiError } from "@/lib/errors";
 import { rateLimit } from "@/middleware/rate-limit";
 import {
@@ -10,7 +11,6 @@ import {
 } from "@/routes/schema/auth";
 import type { AppEnv } from "@/types/app";
 
-import { normalizeEmail } from "./emailUtils";
 import { forwardToAuthJsonPath } from "./forwarding";
 import type { ForwardToAuthJsonPath } from "./types";
 

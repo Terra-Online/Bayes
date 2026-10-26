@@ -1,98 +1,52 @@
+import type { Context } from "hono";
 import { Hono } from "hono";
+import type { StatusCode } from "hono/utils/http-status";
 
-import { createAuth } from "@/lib/auth/betterAuth";
-import { toSerializableError } from "@/lib/auth/errors";
-import { isDisposableEmail } from "@/lib/auth/rules/disposableEmail";
+import { normalizeEmail } from "@/lib/auth/contract/email";
+import {
+  registerViaOTP,
+  requestRegistrationOtp,
+  type RegistrationRequest,
+  type RegistrationResult,
+} from "@/lib/auth/registerViaOTP";
 import { ApiError } from "@/lib/errors";
-import { toApiError } from "@/middleware/error-handler";
 import { rateLimit } from "@/middleware/rate-limit";
 import { registerWithOtpSchema, sendTemplateOtpSchema } from "@/routes/schema/auth";
 import type { AppEnv } from "@/types/app";
 
-import { deriveDisplayName, normalizeEmail } from "./emailUtils";
-import { forwardToAuthJsonPath, forwardToAuthRawRequest } from "./forwarding";
-import type { ForwardToAuthJsonPath, ForwardToAuthRawRequest } from "./types";
+import { forwardToAuthJsonPath } from "./forwarding";
+import type { ForwardToAuthJsonPath } from "./types";
 
-type AuthSignInResult = {
-  token: string;
-  userId: string;
-};
-
-async function readAuthSignInResult(response: Response): Promise<AuthSignInResult | null> {
-  try {
-    const parsed = (await response.clone().json()) as Record<string, unknown>;
-    const token = parsed.token;
-    const user = parsed.user as Record<string, unknown> | undefined;
-    const userId = user?.id;
-    if (
-      typeof token === "string" &&
-      token.length > 0 &&
-      typeof userId === "string" &&
-      userId.length > 0
-    ) {
-      return {
-        token,
-        userId,
-      };
-    }
-  } catch {
-    return null;
-  }
-
-  return null;
-}
-
-function readCodeFromUnknownError(error: unknown): string | null {
-  if (!error || typeof error !== "object") {
-    return null;
-  }
-
-  const maybeError = error as {
-    code?: unknown;
-    body?: { code?: unknown };
-    cause?: { code?: unknown; body?: { code?: unknown } };
+function registrationRequest(c: Context<AppEnv<{ requestId: string }>>): RegistrationRequest {
+  return {
+    url: c.req.url,
+    origin: c.req.header("origin"),
+    referer: c.req.header("referer"),
+    cookie: c.req.header("cookie"),
+    authorization: c.req.header("authorization"),
+    clientIp: c.req.header("cf-connecting-ip"),
+    userAgent: c.req.header("user-agent"),
+    acceptedLanguages: c.req.header("accept-language"),
+    emailLocale: c.req.header("x-oem-locale"),
+    requestIdHeader: c.req.header("x-request-id"),
   };
-
-  if (typeof maybeError.code === "string" && maybeError.code.length > 0) {
-    return maybeError.code;
-  }
-
-  if (typeof maybeError.body?.code === "string" && maybeError.body.code.length > 0) {
-    return maybeError.body.code;
-  }
-
-  if (typeof maybeError.cause?.code === "string" && maybeError.cause.code.length > 0) {
-    return maybeError.cause.code;
-  }
-
-  if (typeof maybeError.cause?.body?.code === "string" && maybeError.cause.body.code.length > 0) {
-    return maybeError.cause.body.code;
-  }
-
-  return null;
 }
 
-async function revokeRegistrationSession(input: { env: AppEnv["Bindings"]; sessionToken: string }) {
-  const auth = createAuth(input.env);
-
-  try {
-    await auth.api.signOut({
-      headers: new Headers({
-        authorization: `Bearer ${input.sessionToken}`,
-      }),
-    });
-  } catch (error) {
-    console.error("[auth][register] failed to revoke session during rollback", {
-      error: toSerializableError(error),
-    });
+function registrationResponse(
+  c: Context<AppEnv<{ requestId: string }>>,
+  result: RegistrationResult,
+): Response {
+  const headers = new Headers(result.headers);
+  for (const cookie of result.cookies) {
+    headers.append("set-cookie", cookie);
   }
+  return c.newResponse(result.body, { status: result.status as StatusCode, headers });
 }
 
 export function createRoutes(
   deps: {
     forwardToAuthJsonPath: ForwardToAuthJsonPath;
-    forwardToAuthRawRequest: ForwardToAuthRawRequest;
-  } = { forwardToAuthJsonPath, forwardToAuthRawRequest },
+  } = { forwardToAuthJsonPath },
 ) {
   return new Hono<AppEnv<{ requestId: string }>>()
     .post("/register", rateLimit("public"), async (c) => {
@@ -108,67 +62,14 @@ export function createRoutes(
         throw new ApiError(422, "VALIDATION_ERROR", "Invalid payload.", parsed.error.flatten());
       }
 
-      const email = normalizeEmail(parsed.data.email);
-      if (isDisposableEmail(email)) {
-        throw new ApiError(
-          422,
-          "DISPOSABLE_EMAIL_NOT_ALLOWED",
-          "Disposable email addresses are not allowed for registration.",
-        );
-      }
-
-      const password = parsed.data.password;
-      const otp = parsed.data.otp;
-      const name = parsed.data.name?.trim() || deriveDisplayName(email);
-
-      const signInWithOtpResponse = await deps.forwardToAuthJsonPath(c, "/sign-in/email-otp", {
-        email,
-        otp,
-        name,
-      });
-
-      if (!signInWithOtpResponse.ok) {
-        return signInWithOtpResponse;
-      }
-
-      const signInResult = await readAuthSignInResult(signInWithOtpResponse);
-      if (!signInResult) {
-        throw new ApiError(500, "AUTH_FLOW_FAILED", "Missing session token after OTP sign-in.");
-      }
-
-      const auth = createAuth(c.env);
-      try {
-        await auth.api.setPassword({
-          body: { newPassword: password },
-          headers: new Headers({
-            authorization: `Bearer ${signInResult.token}`,
-          }),
-        });
-      } catch (error) {
-        const code = readCodeFromUnknownError(error);
-        if (code !== "PASSWORD_ALREADY_SET") {
-          console.warn("[auth][register] password setup failed", {
-            requestId: c.get("requestId"),
-            code,
-            error: toSerializableError(error),
-          });
-          await revokeRegistrationSession({
-            env: c.env,
-            sessionToken: signInResult.token,
-          });
-
-          const status =
-            error && typeof error === "object" && "statusCode" in error
-              ? Number(error.statusCode)
-              : undefined;
-          if (status && status >= 400 && status < 500) {
-            throw new ApiError(status, code ?? "SET_PASSWORD_FAILED", "Failed to set password.");
-          }
-          throw toApiError(error);
-        }
-      }
-
-      return signInWithOtpResponse;
+      return registrationResponse(
+        c,
+        await registerViaOTP(c.env, {
+          ...parsed.data,
+          request: registrationRequest(c),
+          requestId: c.get("requestId"),
+        }),
+      );
     })
     .post("/email-otp/send-verification-otp", rateLimit("otp-send"), async (c) => {
       let body: unknown;
@@ -183,32 +84,14 @@ export function createRoutes(
         throw new ApiError(422, "VALIDATION_ERROR", "Invalid payload.", parsed.error.flatten());
       }
 
-      const email = normalizeEmail(parsed.data.email);
-      if (isDisposableEmail(email)) {
-        throw new ApiError(
-          422,
-          "DISPOSABLE_EMAIL_NOT_ALLOWED",
-          "Disposable email addresses are not allowed for registration.",
-        );
-      }
-
-      const locale = parsed.data.locale?.trim();
-      const requestHeaders = locale
-        ? {
-            "x-oem-locale": locale,
-          }
-        : undefined;
-
-      return deps.forwardToAuthJsonPath(
+      return registrationResponse(
         c,
-        "/email-otp/send-verification-otp",
-        {
-          email,
-          type: parsed.data.type,
-        },
-        {
-          headers: requestHeaders,
-        },
+        await requestRegistrationOtp(c.env, {
+          email: parsed.data.email,
+          locale: parsed.data.locale,
+          request: registrationRequest(c),
+          requestId: c.get("requestId"),
+        }),
       );
     })
     .post("/sign-in/email", rateLimit("public"), async (c) => {

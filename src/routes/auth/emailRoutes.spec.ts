@@ -236,6 +236,27 @@ describe("email authentication HTTP behavior", () => {
   );
 
   it.each([
+    [undefined, "ko-KR"],
+    ["ja", "ja-JP"],
+  ] as const)(
+    "preserves the received mail locale and lets payload locale %s override it",
+    async (locale, expectedLocale) => {
+      const response = await request(
+        "/email-otp/send-verification-otp",
+        { email: "locale-header@example.com", locale },
+        { "x-oem-locale": "ko", "accept-language": "fr-CA" },
+      );
+      expect(response.status).toBe(200);
+      expect(response.headers.get("x-ratelimit-backend")).toBe("redis");
+      expect(delivery).toHaveBeenCalledWith(
+        expect.objectContaining({
+          subject: emailTemplates[expectedLocale].otp["email-verification"].subject,
+        }),
+      );
+    },
+  );
+
+  it.each([
     [
       "/register",
       { email: "new@disposable.example.test", otp: "123456", password: "Password123" },
@@ -340,6 +361,60 @@ describe("email authentication HTTP behavior", () => {
     expect(storedIdentity().users).toHaveLength(1);
     expect(storedIdentity().accounts).toHaveLength(1);
     expect(storedIdentity().sessions).toHaveLength(1);
+  });
+
+  it("establishes the browser session with request metadata and preserves its signed cookie", async () => {
+    const email = "browser-registration@example.com";
+    const otp = await issueOtp(email);
+    const body = { email, otp, password: "Password123" };
+    const registered = await request("/register", body, {
+      cookie: "analytics=present",
+      "user-agent": "Registration Browser/1.0",
+    });
+    expect(registered.status).toBe(200);
+    expect(registered.headers.get("content-type")).toContain("application/json");
+    const identity = (await registered.json()) as RegisteredEmailIdentity;
+    const cookies = registered.headers.getSetCookie();
+    const sessionCookie = cookies.find((cookie) =>
+      cookie.startsWith("__Secure-oem-chips.session_token="),
+    );
+    expect(sessionCookie).toContain("HttpOnly");
+    expect(sessionCookie).toContain("Partitioned");
+    expect(sessionCookie).toContain("Max-Age=15552000");
+    expect(storedIdentity().sessions).toEqual([
+      expect.objectContaining({
+        userId: identity.user.id,
+        ipAddress: testIp,
+        userAgent: "Registration Browser/1.0",
+      }),
+    ]);
+    await expect(
+      createAuth(env).api.getSession({
+        headers: new Headers({ cookie: cookies.map((cookie) => cookie.split(";")[0]).join("; ") }),
+      }),
+    ).resolves.toMatchObject({ user: { id: identity.user.id, email } });
+  });
+
+  it("keeps Better Auth's OTP submission budget per client IP in addition to the outer public limit", async () => {
+    const body = {
+      email: "submission-budget@example.com",
+      otp: "123456",
+      password: "Password123",
+    };
+    // No OTP exists, so Better Auth rejects each attempt before creating a user.
+    // The public limiter allows these requests. Better Auth limits them separately.
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      expect((await request("/register", body)).status).toBe(400);
+    }
+    const blocked = await request("/register", body);
+    expect(blocked.status).toBe(429);
+    // Better Auth's handler returns the wait time in X-Retry-After.
+    expect(Number(blocked.headers.get("x-retry-after"))).toBeGreaterThan(0);
+    expect((await request("/register", body, { "cf-connecting-ip": "203.0.113.200" })).status).toBe(
+      400,
+    );
+    vi.setSystemTime(Date.now() + 61_000);
+    expect((await request("/register", body)).status).toBe(400);
   });
 
   it("retains an existing password, business profile and prior session when registration is repeated with fresh email proof", async () => {

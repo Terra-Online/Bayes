@@ -2,8 +2,10 @@ import type { Context } from "hono";
 import type { StatusCode } from "hono/utils/http-status";
 
 import { toSerializableError } from "@/lib/auth/errors";
-import { ApiError, isApiError, transientDependencyError } from "@/lib/errors";
+import { toApiError } from "@/lib/errors";
 import type { AppEnv } from "@/types/app";
+
+export { toApiError } from "@/lib/errors";
 
 function errorJson<E extends AppEnv<{ requestId?: string }>>(
   c: Context<E>,
@@ -33,15 +35,6 @@ function errorJson<E extends AppEnv<{ requestId?: string }>>(
         ...(status === 503 ? { "retry-after": "5" } : {}),
       },
     },
-  );
-}
-
-export function toApiError(error: unknown): ApiError {
-  if (isApiError(error)) {
-    return error;
-  }
-  return (
-    transientDependencyError(error) ?? new ApiError(500, "INTERNAL_ERROR", "Internal server error.")
   );
 }
 
