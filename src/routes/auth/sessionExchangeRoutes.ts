@@ -81,10 +81,6 @@ export async function createSessionExchangeCode<E extends AppEnv<{ requestId: st
 export function createRoutes() {
   return new Hono<AppEnv<{ requestId: string }>>().post(
     "/session/exchange",
-    async (c, next) => {
-      await next();
-      c.header("Cache-Control", "private, no-store");
-    },
     rateLimit("public"),
     async (c) => {
       const origin = c.req.header("origin");

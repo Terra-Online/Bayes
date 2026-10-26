@@ -4,7 +4,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { Hono } from "hono";
 
 import { createAuth, runWithAuthRequest } from "@/lib/auth/createAuth";
-import { resolveAuthIdentity } from "@/middleware/auth";
+import { resolveAuthIdentity } from "@/lib/auth/identity";
 import { onAppError } from "@/middleware/error-handler";
 import { createRoutes as createSessionAuthRoutes } from "@/routes/auth/sessionRoutes";
 import type { AppEnv, Bindings } from "@/types/app";

@@ -1,6 +1,5 @@
 import { Hono } from "hono";
 
-import { ApiError } from "@/lib/errors";
 import { rateLimit } from "@/middleware/rate-limit";
 import { UGC_PUBLIC_IMAGE_CACHE_CONTROL } from "@/services/ugc/contract/imageDelivery";
 import { loadImageAsset } from "@/services/ugc/read/imageAssets";
@@ -31,9 +30,6 @@ export function createRoutes() {
     })
     .get("/file/*", requireActiveUser, rateLimit("auth"), async (c) => {
       const user = c.get("authUser");
-      if (!user) {
-        throw new ApiError(401, "UNAUTHORIZED", "Session is invalid.");
-      }
       const objectKey = parseObjectKeyFromRequestPath(c.req.path);
       const { object, contentType } = await loadImageAsset(
         { db: c.env.DB, bucket: c.env.UGC_BUCKET },

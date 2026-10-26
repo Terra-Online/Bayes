@@ -11,7 +11,7 @@ const mocks = vi.hoisted(() => ({ connect: vi.fn(), binding: vi.fn() }));
 vi.mock("@/services/official/client/positionSocket", () => ({
   connectEndfieldPositionSocket: mocks.connect,
 }));
-vi.mock("@/middleware/auth", () => ({ resolveAuthIdentity: vi.fn() }));
+vi.mock("@/lib/auth/identity", () => ({ resolveAuthIdentity: vi.fn() }));
 vi.mock("@/services/official/auth/credentials", () => ({
   createCredentialRecoveryScope: () => new Map(),
   readBindingCredentials: mocks.binding,

@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { createMiddleware } from "hono/factory";
 
 import { getRuntimeConfig } from "@/lib/config";
 import { ApiError } from "@/lib/errors";
@@ -88,16 +89,19 @@ function resolveImageScope(
 
 export function createRoutes() {
   return new Hono<AppEnv>()
-    .use("*", async (c, next) => {
-      if (isModerationLocked(c.env.LOCK_MODERATION_ENDPOINTS)) {
-        throw new ApiError(
-          503,
-          "MODERATION_TEMPORARILY_DISABLED",
-          "Moderation endpoints are temporarily disabled during stabilization.",
-        );
-      }
-      await next();
-    })
+    .use(
+      "*",
+      createMiddleware<AppEnv>(async (c, next) => {
+        if (isModerationLocked(c.env.LOCK_MODERATION_ENDPOINTS)) {
+          throw new ApiError(
+            503,
+            "MODERATION_TEMPORARILY_DISABLED",
+            "Moderation endpoints are temporarily disabled during stabilization.",
+          );
+        }
+        await next();
+      }),
+    )
     .post("/warnings", requireAuth, requireRole(["a"]), rateLimit("auth"), async (c) => {
       const parsed = warningSchema.safeParse(await c.req.json().catch(() => ({})));
       if (!parsed.success) {
@@ -270,7 +274,7 @@ export function createRoutes() {
           excludePathPrefix: scope.excludePathPrefix,
           limit: parsed.data.limit ?? 100,
           offset: parsed.data.offset ?? 0,
-          viewerUserId: user?.uid,
+          viewerUserId: user.uid,
         });
 
         return c.json({

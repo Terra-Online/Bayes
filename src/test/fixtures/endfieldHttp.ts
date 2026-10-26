@@ -1,6 +1,7 @@
 import type { StatementSync } from "node:sqlite";
 
 import { Hono } from "hono";
+import { createMiddleware } from "hono/factory";
 import { expect, vi, type Mock } from "vitest";
 
 import { onAppError } from "@/middleware/error-handler";
@@ -75,10 +76,13 @@ export function createEndfieldHttpFixture(pending: PendingEndfieldFlows): Endfie
     OEM_BINDING_RATE_LIMIT: { limit: async () => ({ success: true }) },
   } as unknown as Bindings;
   const app = new Hono<AppEnv<{ requestId: string }>>()
-    .use("*", async (c, next) => {
-      c.set("requestId", "endfield-lifecycle");
-      await next();
-    })
+    .use(
+      "*",
+      createMiddleware<AppEnv<{ requestId: string }>>(async (c, next) => {
+        c.set("requestId", "endfield-lifecycle");
+        await next();
+      }),
+    )
     .onError(onAppError)
     .route("/binding/v1", bindingRoutes())
     .route("/sync/v1", syncRoutes())

@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { createMiddleware } from "hono/factory";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { runWithAuthRequest } from "@/lib/auth/createAuth";
@@ -123,10 +124,13 @@ function configureDeviceReplacementRecovery(): void {
 function request(operation: "sync" | "unlink" = "sync"): Promise<Response> {
   const app = new Hono<AppEnv<{ requestId: string }>>()
     .onError(onAppError)
-    .use("*", async (c, next) => {
-      c.set("requestId", "credentials-request");
-      await next();
-    })
+    .use(
+      "*",
+      createMiddleware<AppEnv<{ requestId: string }>>(async (c, next) => {
+        c.set("requestId", "credentials-request");
+        await next();
+      }),
+    )
     .route("/sync/v1", createSyncRoutes())
     .route("/binding/v1", createBindingRoutes());
   const unlink = operation === "unlink";
