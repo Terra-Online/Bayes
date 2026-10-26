@@ -1,4 +1,4 @@
-import type { EndfieldProvider } from "@/lib/endfieldClient/types";
+import type { EndfieldProvider } from "@/services/official/contract/provider";
 
 export type BindingStatus = "enabled" | "disabled";
 export type EndfieldBindingRow = {

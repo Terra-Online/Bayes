@@ -1,10 +1,9 @@
-import { Hono, type Context } from "hono";
+import { Hono } from "hono";
 
 import { ApiError } from "@/lib/errors";
-import { createRedisClient } from "@/lib/redis";
 import { requireAuth } from "@/middleware/auth";
 import { rateLimit } from "@/middleware/rate-limit";
-import { getBinding, publicBinding } from "@/repositories/binding/repository";
+import { getBinding } from "@/repositories/binding/repository";
 import { bindRoleSchema, exchangeCodeSchema, exchangeTokenSchema } from "@/routes/schema/binding";
 import {
   exchangeBindingToken,
@@ -12,25 +11,9 @@ import {
   bindRole,
   disableBinding,
   unlinkBinding,
-  type BindingDependencies,
-} from "@/services/binding/binding";
-import { getPendingKey } from "@/services/binding/pendingSession";
-import { deleteLocatorCaches } from "@/services/locator/cache";
+} from "@/services/official/auth/binding";
+import { publicBinding } from "@/services/official/auth/publicBinding";
 import type { AppEnv } from "@/types/app";
-
-import { getCredentialSecret } from "./credentials";
-
-function bindingDependencies<E extends AppEnv>(c: Context<E>): BindingDependencies {
-  return {
-    db: c.env.DB,
-    pending: {
-      redis: () => createRedisClient(c.env),
-      key: (uid, flowId) => getPendingKey(c.env, uid, flowId),
-    },
-    credentialSecret: () => getCredentialSecret(c),
-    invalidateCaches: (uid) => deleteLocatorCaches(c.env, uid),
-  };
-}
 
 export function createRoutes() {
   return new Hono<AppEnv<{ requestId: string }>>()
@@ -56,7 +39,7 @@ export function createRoutes() {
       try {
         const result = await exchangeBindingToken(
           { uid: user.uid, ...parsed.data, userAgent: c.req.header("user-agent") },
-          bindingDependencies(c),
+          c.env,
         );
         return c.json(result);
       } catch (error) {
@@ -86,7 +69,7 @@ export function createRoutes() {
 
       const result = await exchangeBindingCode(
         { uid: user.uid, ...parsed.data, userAgent: c.req.header("user-agent") },
-        bindingDependencies(c),
+        c.env,
       );
       return c.json(result);
     })
@@ -102,17 +85,17 @@ export function createRoutes() {
         );
       }
 
-      const binding = await bindRole({ uid: user.uid, ...parsed.data }, bindingDependencies(c));
+      const binding = await bindRole({ uid: user.uid, ...parsed.data }, c.env);
       return c.json({ ok: true, binding: publicBinding(binding) });
     })
     .post("/endfield/disable", async (c): Promise<Response> => {
       const user = c.get("authUser");
-      const binding = await disableBinding({ uid: user.uid }, bindingDependencies(c));
+      const binding = await disableBinding({ uid: user.uid }, c.env);
       return c.json({ ok: true, binding: publicBinding(binding) });
     })
     .post("/endfield/unlink", async (c): Promise<Response> => {
       const user = c.get("authUser");
-      await unlinkBinding({ uid: user.uid }, bindingDependencies(c));
+      await unlinkBinding({ uid: user.uid }, c.env);
       return c.json({ ok: true, binding: publicBinding(null) });
     });
 }

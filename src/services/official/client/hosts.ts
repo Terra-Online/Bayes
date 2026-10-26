@@ -1,4 +1,7 @@
-import type { EndfieldDeviceProfile, EndfieldHostConfig, EndfieldProvider } from "./types";
+import type { EndfieldDeviceProfile } from "@/services/official/contract/deviceProfile";
+import type { EndfieldProvider } from "@/services/official/contract/provider";
+
+import type { EndfieldHostConfig } from "./types";
 
 const HOSTS: Record<EndfieldProvider, EndfieldHostConfig> = {
   skland: {

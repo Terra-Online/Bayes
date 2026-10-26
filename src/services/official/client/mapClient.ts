@@ -1,12 +1,10 @@
+import type { EndfieldDeviceProfile } from "@/services/official/contract/deviceProfile";
+import type { EndfieldProvider } from "@/services/official/contract/provider";
+
 import { parseApiEnvelope, parseRawApiEnvelope } from "./envelope";
 import { buildDeviceHeaders, buildUrl, getEndfieldHosts } from "./hosts";
 import { getEndfieldTimestamp, getSignature } from "./signature";
-import type {
-  EndfieldDeviceProfile,
-  EndfieldMapId,
-  EndfieldMapMarkListEnvelope,
-  EndfieldProvider,
-} from "./types";
+import type { EndfieldMapId, EndfieldMapMarkListEnvelope } from "./types";
 
 export async function getEndfieldMapMarkList(args: {
   provider: EndfieldProvider;

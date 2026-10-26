@@ -1,4 +1,4 @@
-import type { EndfieldMapMarkListEnvelope } from "@/lib/endfieldClient/types";
+import type { EndfieldMapMarkListEnvelope } from "@/services/official/client/types";
 
 export type OfficialMapMark = {
   id: string;

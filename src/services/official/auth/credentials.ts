@@ -1,40 +1,46 @@
-import type { Context } from "hono";
-
 import { decryptSecret, encryptSecret } from "@/lib/crypto";
+import { ApiError } from "@/lib/errors";
+import { updateBindingCredentials } from "@/repositories/binding/repository";
+import { publicBinding } from "@/services/official/auth/publicBinding";
+import type { DecryptedBinding } from "@/services/official/auth/types";
 import {
   generateEndfieldCredByCode,
   grantEndfieldOAuthCode,
   refreshEndfieldAuth,
-} from "@/lib/endfieldClient/authClient";
+} from "@/services/official/client/authClient";
 import {
   createEndfieldDeviceId,
   createEndfieldDeviceProfile,
   SKLAND_DEVICE_PROFILE_USER_AGENT,
-} from "@/lib/endfieldClient/deviceProfile";
+} from "@/services/official/client/deviceProfile";
 import {
   isEndfieldCredentialErrorCode,
   isEndfieldCredentialExpiredErrorCode,
   isEndfieldDeviceErrorCode,
-} from "@/lib/endfieldClient/positionParser";
-import { ApiError } from "@/lib/errors";
+} from "@/services/official/client/positionParser";
+import type { Bindings } from "@/types/app";
+
 import {
-  getBindingWithDeviceProfile,
-  publicBinding,
-  updateBindingCredentials,
-} from "@/repositories/binding/repository";
-import type { DecryptedBinding } from "@/services/binding/types";
-import {
-  deleteLocatorCaches,
-  getLocatorCache,
+  invalidateBindingCaches,
+  getCredentialCache,
   readDecryptedBindingCache,
   writeDecryptedBindingCache,
-} from "@/services/locator/cache";
-import type { AppEnv } from "@/types/app";
+} from "./credentialCache";
+import { getBindingWithDeviceProfile } from "./deviceProfile";
 
-const credentialRequests = new WeakMap<object, Map<string, Promise<DecryptedBinding>>>();
+// Create once per request or connection. Completed credentials use the separate short-lived cache.
+export type CredentialRecoveryScope = Map<string, Promise<DecryptedBinding>>;
+export type CredentialDependencies = {
+  env: Bindings;
+  recoveryScope: CredentialRecoveryScope;
+};
 
-export function getCredentialSecret<E extends AppEnv>(c: Context<E>): string {
-  const secret = c.env.ENDFIELD_CREDENTIAL_SECRET ?? c.env.BETTER_AUTH_SECRET;
+export function createCredentialRecoveryScope(): CredentialRecoveryScope {
+  return new Map();
+}
+
+export function getCredentialSecret(env: Bindings): string {
+  const secret = env.ENDFIELD_CREDENTIAL_SECRET ?? env.BETTER_AUTH_SECRET;
   if (!secret || secret.trim().length < 16) {
     throw new ApiError(
       503,
@@ -45,19 +51,19 @@ export function getCredentialSecret<E extends AppEnv>(c: Context<E>): string {
   return secret;
 }
 
-export async function getDecryptedBinding<E extends AppEnv>(
-  c: Context<E>,
+async function loadBindingCredentials(
+  env: Bindings,
   uid: string,
   options: { bypassCache?: boolean } = {},
 ): Promise<DecryptedBinding> {
-  const cache = getLocatorCache(c.env);
+  const cache = getCredentialCache(env);
   const revision = cache.revision;
-  const cached = options.bypassCache ? null : readDecryptedBindingCache(c.env, uid);
+  const cached = options.bypassCache ? null : readDecryptedBindingCache(env, uid);
   if (cached) {
     return cached;
   }
 
-  const stored = await getBindingWithDeviceProfile(c.env.DB, uid);
+  const stored = await getBindingWithDeviceProfile(env.DB, uid);
   if (!stored) {
     throw new ApiError(404, "ENDFIELD_BINDING_NOT_FOUND", "Endfield binding is not configured.");
   }
@@ -66,7 +72,7 @@ export async function getDecryptedBinding<E extends AppEnv>(
     throw new ApiError(409, "ENDFIELD_BINDING_DISABLED", "Endfield binding is disabled.");
   }
 
-  const secret = getCredentialSecret(c);
+  const secret = getCredentialSecret(env);
   const [cred, token, accountToken] = await Promise.all([
     decryptSecret(binding.cred_enc, secret),
     decryptSecret(binding.token_enc, secret),
@@ -81,11 +87,11 @@ export async function getDecryptedBinding<E extends AppEnv>(
     cred,
     token,
     accountToken,
-    wsBaseUrl: c.env.ENDFIELD_WS_BASE_URL,
+    wsBaseUrl: env.ENDFIELD_WS_BASE_URL,
     deviceProfile,
   };
-  if (getLocatorCache(c.env) === cache && cache.revision === revision) {
-    writeDecryptedBindingCache(c.env, uid, decrypted);
+  if (getCredentialCache(env) === cache && cache.revision === revision) {
+    writeDecryptedBindingCache(env, uid, decrypted);
   }
   return decrypted;
 }
@@ -108,19 +114,19 @@ export function isAutoRefreshableEndfieldError(error: unknown): boolean {
   );
 }
 
-async function updateStoredCredential<E extends AppEnv>(
-  c: Context<E>,
+async function updateStoredCredential(
+  env: Bindings,
   uid: string,
   binding: DecryptedBinding,
   generated: { cred: string; token: string },
   deviceProfile = binding.deviceProfile,
 ): Promise<DecryptedBinding> {
-  const secret = getCredentialSecret(c);
+  const secret = getCredentialSecret(env);
   const [encryptedCred, encryptedToken] = await Promise.all([
     encryptSecret(generated.cred, secret),
     encryptSecret(generated.token, secret),
   ]);
-  const updated = await updateBindingCredentials(c.env.DB, {
+  const updated = await updateBindingCredentials(env.DB, {
     uid,
     binding: binding.binding,
     credEnc: encryptedCred,
@@ -128,9 +134,9 @@ async function updateStoredCredential<E extends AppEnv>(
     deviceProfile: deviceProfile !== binding.deviceProfile ? deviceProfile : undefined,
   });
   if (!updated) {
-    return getDecryptedBinding(c, uid, { bypassCache: true });
+    return loadBindingCredentials(env, uid, { bypassCache: true });
   }
-  deleteLocatorCaches(c.env, uid);
+  invalidateBindingCaches(env, uid);
 
   const updatedBinding = {
     ...binding.binding,
@@ -147,16 +153,16 @@ async function updateStoredCredential<E extends AppEnv>(
     token: generated.token,
     deviceProfile,
   };
-  writeDecryptedBindingCache(c.env, uid, refreshed);
+  writeDecryptedBindingCache(env, uid, refreshed);
   return refreshed;
 }
 
-async function performCredentialRefresh<E extends AppEnv>(
-  c: Context<E>,
+async function performCredentialRefresh(
+  env: Bindings,
   uid: string,
   binding: DecryptedBinding,
 ): Promise<DecryptedBinding> {
-  const latest = await getDecryptedBinding(c, uid, { bypassCache: true });
+  const latest = await loadBindingCredentials(env, uid, { bypassCache: true });
   if (
     latest.binding.cred_enc !== binding.binding.cred_enc ||
     latest.binding.token_enc !== binding.binding.token_enc
@@ -170,7 +176,7 @@ async function performCredentialRefresh<E extends AppEnv>(
       cred: binding.cred,
       deviceProfile: binding.deviceProfile,
     });
-    return updateStoredCredential(c, uid, binding, {
+    return updateStoredCredential(env, uid, binding, {
       cred: refreshed.cred ?? binding.cred,
       token: refreshed.token!,
     });
@@ -197,7 +203,7 @@ async function performCredentialRefresh<E extends AppEnv>(
           deviceProfile,
         });
         return updateStoredCredential(
-          c,
+          env,
           uid,
           binding,
           {
@@ -226,53 +232,41 @@ async function performCredentialRefresh<E extends AppEnv>(
         grant.code,
         deviceProfile,
       );
-      return updateStoredCredential(c, uid, binding, generated, deviceProfile);
+      return updateStoredCredential(env, uid, binding, generated, deviceProfile);
     } catch {
       throw refreshError;
     }
   }
 }
 
-export async function refreshBindingCredentials<E extends AppEnv>(
-  c: Context<E>,
-  uid: string,
-  binding: DecryptedBinding,
+/** Returns a local credential snapshot; the next official operation can still reject it. */
+export function readBindingCredentials(
+  input: { uid: string },
+  env: Bindings,
 ): Promise<DecryptedBinding> {
-  let requests = credentialRequests.get(c);
-  if (!requests) {
-    requests = new Map();
-    credentialRequests.set(c, requests);
+  return loadBindingCredentials(env, input.uid);
+}
+
+/** Best-effort recovery after an observed rejection. It does not retry the business operation. */
+export async function recoverBindingCredentials(
+  input: { uid: string; rejectedCredentials: DecryptedBinding; rejection: unknown },
+  { env, recoveryScope }: CredentialDependencies,
+): Promise<DecryptedBinding> {
+  if (!isAutoRefreshableEndfieldError(input.rejection)) {
+    throw input.rejection;
   }
-  const pending = requests.get(uid);
+  const pending = recoveryScope.get(input.uid);
   if (pending) {
     return pending;
   }
 
-  const refresh = performCredentialRefresh(c, uid, binding);
-  requests.set(uid, refresh);
+  const refresh = performCredentialRefresh(env, input.uid, input.rejectedCredentials);
+  recoveryScope.set(input.uid, refresh);
   try {
     return await refresh;
   } finally {
-    if (requests.get(uid) === refresh) {
-      requests.delete(uid);
+    if (recoveryScope.get(input.uid) === refresh) {
+      recoveryScope.delete(input.uid);
     }
-  }
-}
-
-export async function withAutoRefreshedBinding<T, E extends AppEnv>(
-  c: Context<E>,
-  uid: string,
-  operation: (binding: DecryptedBinding) => Promise<T>,
-  initialBinding?: DecryptedBinding,
-): Promise<T> {
-  const binding = initialBinding ?? (await getDecryptedBinding(c, uid));
-  try {
-    return await operation(binding);
-  } catch (error) {
-    if (!isAutoRefreshableEndfieldError(error)) {
-      throw error;
-    }
-    const refreshed = await refreshBindingCredentials(c, uid, binding);
-    return operation(refreshed);
   }
 }

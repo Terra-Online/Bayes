@@ -1,7 +1,14 @@
-import { getEndfieldMapMarkList } from "@/lib/endfieldClient/mapClient";
-import officialMarkerHashToPointId from "@/routes/binding/officialMarkerHashToPointId.json";
-import type { DecryptedBinding } from "@/services/binding/types";
-import type { OfficialMapMark, OfficialMarksResult } from "@/services/sync/types";
+import type { DecryptedBinding } from "@/services/official/auth/types";
+import { getEndfieldMapMarkList } from "@/services/official/client/mapClient";
+import officialMarkerHashToPointId from "@/services/official/officialMarkerHashToPointId.json";
+import type { OfficialMapMark, OfficialMarksResult } from "@/services/official/types";
+import type { Bindings } from "@/types/app";
+
+import {
+  createCredentialRecoveryScope,
+  readBindingCredentials,
+  recoverBindingCredentials,
+} from "./auth/credentials";
 
 const OFFICIAL_MARKER_HASH_TO_POINT_ID = officialMarkerHashToPointId as Record<string, string>;
 
@@ -41,7 +48,7 @@ function collectOfficialMarkers(value: unknown, output: OfficialMapMark[] = []):
   return output;
 }
 
-export async function getOfficialMarks(binding: DecryptedBinding): Promise<OfficialMarksResult> {
+async function getOfficialMarks(binding: DecryptedBinding): Promise<OfficialMarksResult> {
   const [map01, map02] = await Promise.all([
     getEndfieldMapMarkList({
       provider: binding.binding.provider,
@@ -70,7 +77,7 @@ export async function getOfficialMarks(binding: DecryptedBinding): Promise<Offic
   };
 }
 
-export function officialMarkedPointIds(markedIds: string[]): string[] {
+function officialMarkedPointIds(markedIds: string[]): string[] {
   return [
     ...new Set(
       markedIds
@@ -78,4 +85,30 @@ export function officialMarkedPointIds(markedIds: string[]): string[] {
         .filter((id): id is string => Boolean(id)),
     ),
   ];
+}
+
+export async function readOfficialMarks(input: { uid: string }, env: Bindings) {
+  let binding = await readBindingCredentials(input, env);
+  let result: OfficialMarksResult;
+  try {
+    result = await getOfficialMarks(binding);
+  } catch (rejection) {
+    binding = await recoverBindingCredentials(
+      { uid: input.uid, rejectedCredentials: binding, rejection },
+      { env, recoveryScope: createCredentialRecoveryScope() },
+    );
+    // Preserve the existing single retry. A recovered identity can still be rejected.
+    result = await getOfficialMarks(binding);
+  }
+  const markedIds = [
+    ...new Set(result.markers.filter((marker) => marker.isUserMarked).map((marker) => marker.id)),
+  ];
+  return {
+    binding: binding.publicBinding,
+    timestamp: new Date().toISOString(),
+    markedIds,
+    pointIds: officialMarkedPointIds(markedIds),
+    markers: result.markers,
+    raw: result.raw,
+  };
 }

@@ -3,9 +3,10 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 import { runWithAuthRequest } from "@/lib/auth/createAuth";
 import { decryptSecret } from "@/lib/crypto";
-import type { EndfieldProvider, EndfieldRoleOption } from "@/lib/endfieldClient/types";
 import { onAppError } from "@/middleware/error-handler";
 import type { PendingSessionRedis } from "@/repositories/binding/pendingSession";
+import type { EndfieldRoleOption } from "@/services/official/client/types";
+import type { EndfieldProvider } from "@/services/official/contract/provider";
 import { createMockBindings } from "@/test/bindings";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { insertAuthenticatedUser, type AuthenticatedUserFixture } from "@/test/fixtures/auth";

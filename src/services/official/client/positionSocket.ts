@@ -1,4 +1,6 @@
 import { ApiError } from "@/lib/errors";
+import type { EndfieldDeviceProfile } from "@/services/official/contract/deviceProfile";
+import type { EndfieldProvider } from "@/services/official/contract/provider";
 
 import { parseApiEnvelope } from "./envelope";
 import { buildDeviceHeaders, buildUrl, buildWebSocketHttpUrl, getEndfieldHosts } from "./hosts";
@@ -11,12 +13,7 @@ import {
   parseEndfieldSocketEnvelope,
 } from "./positionParser";
 import { createMessageId, getEndfieldTimestamp, getSignature } from "./signature";
-import type {
-  EndfieldDeviceProfile,
-  EndfieldPositionData,
-  EndfieldProvider,
-  WebSocketTokenData,
-} from "./types";
+import type { EndfieldPositionData, WebSocketTokenData } from "./types";
 
 const ENDFIELD_POSITION_SOCKET_HEARTBEAT_MS = 10_000;
 const ENDFIELD_POSITION_SOCKET_AUTH_TIMEOUT_MS = 8_000;

@@ -1,28 +1,28 @@
 import type { Context } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { EndfieldPositionTermination } from "@/lib/endfieldClient/positionSocket";
 import { ApiError } from "@/lib/errors";
-import type { DecryptedBinding } from "@/services/binding/types";
-import { positionReconnectDelay } from "@/services/locator/reconnect";
+import type { DecryptedBinding } from "@/services/official/auth/types";
+import type { EndfieldPositionTermination } from "@/services/official/client/positionSocket";
+import { positionReconnectDelay } from "@/services/official/locator/reconnect";
 import type { AppEnv } from "@/types/app";
 
 const mocks = vi.hoisted(() => ({ connect: vi.fn(), binding: vi.fn() }));
-vi.mock("@/lib/endfieldClient/positionSocket", () => ({
+vi.mock("@/services/official/client/positionSocket", () => ({
   connectEndfieldPositionSocket: mocks.connect,
 }));
 vi.mock("@/middleware/auth", () => ({ resolveAuthIdentity: vi.fn() }));
-vi.mock("@/routes/binding/credentials", () => ({
-  getDecryptedBinding: mocks.binding,
+vi.mock("@/services/official/auth/credentials", () => ({
+  createCredentialRecoveryScope: () => new Map(),
+  readBindingCredentials: mocks.binding,
   isAutoRefreshableEndfieldError: () => false,
-  refreshBindingCredentials: vi.fn(),
-  withAutoRefreshedBinding: vi.fn(),
+  recoverBindingCredentials: vi.fn(),
 }));
-vi.mock("@/services/locator/ticket", () => ({
+vi.mock("@/services/official/locator/ticket", () => ({
   verifyLocatorSocketTicket: async () => "user-1",
   issueLocatorSocketTicket: vi.fn(),
 }));
-vi.mock("@/services/locator/cache", () => ({
+vi.mock("@/services/official/locator/cache", () => ({
   readPositionCache: vi.fn(),
   writePositionCache: vi.fn(),
   getPositionCacheKey: () => "key",

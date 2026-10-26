@@ -1,5 +1,3 @@
-export type EndfieldProvider = "skland" | "skport";
-
 export interface EndfieldRoleOption {
   serverId: number;
   roleId: string;
@@ -19,19 +17,6 @@ export interface EndfieldPositionData {
   levelId: string;
   isOnline: boolean;
   mapId: string;
-}
-
-export interface EndfieldDeviceProfile {
-  version: 3;
-  userAgent: string;
-  secChUa?: string;
-  secChUaMobile?: string;
-  secChUaPlatform?: string;
-  deviceModel: string;
-  osVersion: string;
-  deviceType: string;
-  platform: "android" | "ios" | "windows";
-  deviceId: string;
 }
 
 export type ApiEnvelope<T> = {
