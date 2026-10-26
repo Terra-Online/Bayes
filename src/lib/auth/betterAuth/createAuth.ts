@@ -3,11 +3,11 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { betterAuth, type BetterAuthOptions } from "better-auth";
 import { getSchema } from "better-auth/db";
 
-import { sameAuthEnvironment } from "@/lib/auth/environment";
-import { toSerializableError } from "@/lib/auth/errors";
+import { toSerializableError } from "@/lib/errors";
 import type { Bindings } from "@/types/app";
 
 import { createAuthConfiguration } from "./configuration";
+import { sameAuthEnvironment } from "./environment";
 import * as schemaCache from "./schemaCache";
 import { wrapDatabaseWithSchemaCache, type SchemaQueryResults } from "./schemaCacheWrapper";
 

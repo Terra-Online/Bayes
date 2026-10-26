@@ -3,9 +3,8 @@
 // Better Auth's Request, Headers and Response objects.
 
 import { normalizeEmail } from "@/lib/auth/contract/email";
-import { toSerializableError } from "@/lib/auth/errors";
 import { isDisposableEmail } from "@/lib/auth/rules/disposableEmail";
-import { ApiError, toApiError } from "@/lib/errors";
+import { ApiError, toApiError, toSerializableError } from "@/lib/errors";
 import type { Bindings } from "@/types/app";
 
 import {

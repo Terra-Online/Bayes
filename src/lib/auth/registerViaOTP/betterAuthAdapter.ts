@@ -3,8 +3,7 @@ import {
   createAuth,
   invokeBetterAuthHandler,
 } from "@/lib/auth/betterAuth";
-import { toSerializableError } from "@/lib/auth/errors";
-import { ApiError } from "@/lib/errors";
+import { ApiError, toSerializableError } from "@/lib/errors";
 import type { Bindings } from "@/types/app";
 
 import type { RegistrationRequest, RegistrationResult } from "./types";

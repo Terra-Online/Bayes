@@ -2,7 +2,7 @@ import type { Context } from "hono";
 import { Hono } from "hono";
 import { createMiddleware } from "hono/factory";
 
-import { createAuth } from "@/lib/auth/betterAuth";
+import { createAuth, hasSessionCredentials } from "@/lib/auth/betterAuth";
 import {
   getLegacyCookieExpirations,
   resolveBrowserSessionHeaders,
@@ -10,7 +10,6 @@ import {
 } from "@/lib/auth/browserSession";
 import { invalidateAuthUserCache, resolveAuthUser } from "@/lib/auth/identity";
 import { getRequestAuthHeaders } from "@/lib/auth/requestHeaders";
-import { hasSessionCredentials } from "@/lib/auth/sessionCredentials";
 import { ApiError } from "@/lib/errors";
 import { requireAuth } from "@/middleware/auth";
 import { rateLimit } from "@/middleware/rate-limit";

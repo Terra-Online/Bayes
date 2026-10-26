@@ -1,8 +1,7 @@
 import type { Context } from "hono";
 import type { StatusCode } from "hono/utils/http-status";
 
-import { toSerializableError } from "@/lib/auth/errors";
-import { toApiError } from "@/lib/errors";
+import { toApiError, toSerializableError } from "@/lib/errors";
 import type { AppEnv } from "@/types/app";
 
 export { toApiError } from "@/lib/errors";

@@ -1,6 +1,6 @@
-import { toSerializableError } from "@/lib/auth/errors";
 import { resolveAuthUser } from "@/lib/auth/identity";
 import { getRequestAuthHeaders } from "@/lib/auth/requestHeaders";
+import { toSerializableError } from "@/lib/errors";
 import { ApiError } from "@/lib/errors";
 import { hmacServiceIdentifier } from "@/lib/serviceIdentity";
 import { toApiError } from "@/middleware/error-handler";

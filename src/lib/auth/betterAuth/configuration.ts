@@ -1,13 +1,13 @@
 import type { BetterAuthOptions } from "better-auth";
 import { bearer, emailOTP } from "better-auth/plugins";
 
-import { pickRequestFromCtx, resolvePreferredEmailLocale } from "@/lib/auth/locale";
-import { authCookieOptions, parseAuthTrustedOrigins } from "@/lib/auth/origins";
 import { getSessionTtlSeconds } from "@/lib/config";
 import { envOrThrow } from "@/lib/utils";
 import { sendAuthOtpEmail, sendPasswordResetEmail } from "@/services/email";
 import type { Bindings } from "@/types/app";
 
+import { pickRequestFromCtx, resolvePreferredEmailLocale } from "./emailLocale";
+import { authCookieOptions, parseAuthTrustedOrigins } from "./origins";
 import { createAuthSocialProviders } from "./providers";
 
 function generateNumericOtp(length: number): string {
