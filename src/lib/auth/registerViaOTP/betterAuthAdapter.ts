@@ -1,42 +1,24 @@
 import {
-  buildAuthForwardHeaders,
+  buildBetterAuthRequestHeaders,
+  readBetterAuthResponseData,
+  type BetterAuthRequestInfo,
+  type BetterAuthResponseData,
   createAuth,
   invokeBetterAuthHandler,
 } from "@/lib/auth/betterAuth";
 import { ApiError, toSerializableError } from "@/lib/errors";
 import type { Bindings } from "@/types/app";
 
-import type { RegistrationRequest, RegistrationResult } from "./types";
-
 type AuthOperation = "request-otp" | "register";
 
 async function invokeRegistrationOperation(
   env: Bindings,
-  input: { request: RegistrationRequest; requestId: string },
+  input: { request: BetterAuthRequestInfo; requestId: string },
   operation: AuthOperation,
   body: Record<string, unknown>,
   locale?: string,
 ): Promise<Response> {
   const source = input.request;
-  const receivedHeaders = new Headers();
-  const fields: Array<[string, string | undefined]> = [
-    ["origin", source.origin],
-    ["referer", source.referer],
-    ["cookie", source.cookie],
-    ["authorization", source.authorization],
-    // Better Auth reads cf-connecting-ip for rate limits and session metadata.
-    // Callers supply the client IP. This adapter sets the header.
-    ["cf-connecting-ip", source.clientIp],
-    ["user-agent", source.userAgent],
-    ["accept-language", source.acceptedLanguages],
-    ["x-oem-locale", source.emailLocale],
-    ["x-request-id", source.requestIdHeader],
-  ];
-  for (const [name, value] of fields) {
-    if (value) {
-      receivedHeaders.set(name, value);
-    }
-  }
   // Callers do not need to provide these paths.
   // These paths are required by Better Auth plugins.
   // OTP sign-in verifies the email and creates a session.
@@ -48,7 +30,7 @@ async function invokeRegistrationOperation(
   target.pathname = `/auth/v1${authPath}`;
   const request = new Request(target.toString(), {
     method: "POST",
-    headers: buildAuthForwardHeaders(receivedHeaders, {
+    headers: buildBetterAuthRequestHeaders(source, {
       forceJson: true,
       // The email callback reads x-oem-locale. The payload locale overrides
       // the incoming header. If neither provides a locale, the callback uses
@@ -66,8 +48,8 @@ async function invokeRegistrationOperation(
 
 export async function requestOtp(
   env: Bindings,
-  input: { email: string; locale?: string; request: RegistrationRequest; requestId: string },
-): Promise<RegistrationResult> {
+  input: { email: string; locale?: string; request: BetterAuthRequestInfo; requestId: string },
+): Promise<BetterAuthResponseData> {
   const response = await invokeRegistrationOperation(
     env,
     input,
@@ -76,7 +58,7 @@ export async function requestOtp(
     { email: input.email, type: "sign-in" },
     input.locale,
   );
-  return readRegistrationResult(response);
+  return readBetterAuthResponseData(response);
 }
 
 export async function signInWithOtp(
@@ -85,10 +67,10 @@ export async function signInWithOtp(
     email: string;
     otp: string;
     name: string;
-    request: RegistrationRequest;
+    request: BetterAuthRequestInfo;
     requestId: string;
   },
-): Promise<{ result: RegistrationResult; token: string | null }> {
+): Promise<{ result: BetterAuthResponseData; token: string | null }> {
   const response = await invokeRegistrationOperation(env, input, "register", {
     email: input.email,
     otp: input.otp,
@@ -115,7 +97,7 @@ export async function signInWithOtp(
       throw new ApiError(500, "AUTH_FLOW_FAILED", "Missing session token after OTP sign-in.");
     }
   }
-  return { result: await readRegistrationResult(response), token };
+  return { result: await readBetterAuthResponseData(response), token };
 }
 
 type PasswordSetupResult =
@@ -159,21 +141,6 @@ export async function revokeRegistrationSession(env: Bindings, token: string): P
       error: toSerializableError(error),
     });
   }
-}
-
-async function readRegistrationResult(better_auth_response: Response): Promise<RegistrationResult> {
-  const headers: RegistrationResult["headers"] = [];
-  better_auth_response.headers.forEach((value, name) => {
-    if (name !== "set-cookie") {
-      headers.push([name, value]);
-    }
-  });
-  return {
-    status: better_auth_response.status,
-    body: better_auth_response.body === null ? null : await better_auth_response.arrayBuffer(),
-    headers,
-    cookies: better_auth_response.headers.getSetCookie(),
-  };
 }
 
 function readErrorCode(error: unknown): string | null {

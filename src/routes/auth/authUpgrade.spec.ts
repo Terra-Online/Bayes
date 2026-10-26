@@ -243,7 +243,62 @@ describe("Better Auth 1.7 with the production D1 table layout", () => {
     ).not.toBeNull();
   });
 
-  it("preserves password reset preview, reset and single-use token behavior", async () => {
+  it("resets the password with a single-use token and keeps existing sessions active", async () => {
+    const registered = await register(await issueOTP());
+    expect(registered.status).toBe(200);
+    const identity = (await registered.json()) as { token: string };
+    expect(
+      (await request("/forget-password", { email, redirectTo: "https://opendfieldmap.org" }))
+        .status,
+    ).toBe(200);
+    const row = database.sqlite
+      .prepare("SELECT identifier FROM auth_verifications WHERE identifier LIKE 'reset-password:%'")
+      .get()!;
+    const token = String(row.identifier).replace("reset-password:", "");
+    const linkPath = `/reset-password/${token}?callbackURL=${encodeURIComponent("https://opendfieldmap.org/reset-password?source=email")}`;
+    // Hono dispatches HEAD through the GET route. Better Auth has no HEAD endpoint for reset links.
+    const head = await app.request(
+      `https://api.opendfieldmap.org/auth/v1${linkPath}`,
+      { method: "HEAD", headers: { "cf-connecting-ip": testIp } },
+      env,
+    );
+    expect(head.status).toBe(404);
+    expect(head.headers.get("location")).toBeNull();
+    const followed = await request(linkPath);
+    expect(followed.status).toBe(302);
+    const destination = new URL(followed.headers.get("location")!);
+    expect(destination.origin + destination.pathname).toBe(
+      "https://opendfieldmap.org/reset-password",
+    );
+    expect(destination.searchParams.get("source")).toBe("email");
+    expect(destination.searchParams.get("token")).toBe(token);
+    const preview = await request(`/reset-password-preview?token=${encodeURIComponent(token)}`);
+    expect(preview.status).toBe(200);
+    expect(await preview.json()).toMatchObject({ tokenValid: true, email });
+    const reset = { token, newPassword: "Reset-password123", repeatPassword: "Reset-password123" };
+    const completed = await request("/reset-password", reset);
+    expect(completed.status).toBe(200);
+    expect(await completed.json()).toEqual({ status: true });
+    expect(completed.headers.getSetCookie()).toEqual([]);
+    expect(count("auth_sessions")).toBe(1);
+    await expect(
+      auth.api.getSession({ headers: new Headers({ authorization: `Bearer ${identity.token}` }) }),
+    ).resolves.not.toBeNull();
+    const login = await request("/sign-in/email", { email, password: "Reset-password123" });
+    expect(login.status).toBe(200);
+    expect(await login.json()).toMatchObject({ user: { email } });
+    expect(
+      (await request(`/reset-password-preview?token=${encodeURIComponent(token)}`)).status,
+    ).toBe(400);
+    expect((await request("/reset-password", reset)).status).toBe(400);
+    const replayedLink = await request(linkPath);
+    expect(replayedLink.status).toBe(302);
+    expect(new URL(replayedLink.headers.get("location")!).searchParams.get("error")).toBe(
+      "INVALID_TOKEN",
+    );
+  });
+
+  it("rejects token reuse after a password write failure and accepts the unchanged password", async () => {
     expect((await register(await issueOTP())).status).toBe(200);
     expect(
       (await request("/forget-password", { email, redirectTo: "https://opendfieldmap.org" }))
@@ -253,18 +308,24 @@ describe("Better Auth 1.7 with the production D1 table layout", () => {
       .prepare("SELECT identifier FROM auth_verifications WHERE identifier LIKE 'reset-password:%'")
       .get()!;
     const token = String(row.identifier).replace("reset-password:", "");
-    const preview = await request(`/reset-password-preview?token=${encodeURIComponent(token)}`);
-    expect(preview.status).toBe(200);
-    expect(await preview.json()).toMatchObject({ tokenValid: true, email });
     const reset = { token, newPassword: "Reset-password123", repeatPassword: "Reset-password123" };
-    expect((await request("/reset-password", reset)).status).toBe(200);
-    const login = await request("/sign-in/email", { email, password: "Reset-password123" });
-    expect(login.status).toBe(200);
-    expect(await login.json()).toMatchObject({ user: { email } });
-    expect(
-      (await request(`/reset-password-preview?token=${encodeURIComponent(token)}`)).status,
-    ).toBe(400);
+    database.hooks.beforeQuery = (sql) => {
+      if (/^update "auth_accounts"/i.test(sql)) {
+        throw new Error("D1_ERROR: password write failed");
+      }
+    };
+    const failed = await request("/reset-password", reset);
+    expect(failed.status).toBe(500);
+    expect(await failed.text()).not.toContain("password write failed");
+    database.hooks.beforeQuery = undefined;
     expect((await request("/reset-password", reset)).status).toBe(400);
+    expect((await request(`/reset-password-preview?token=${token}`)).status).toBe(400);
+    expect((await request("/sign-in/email", { email, password: "New-password123" })).status).toBe(
+      200,
+    );
+    expect((await request("/sign-in/email", { email, password: "Reset-password123" })).status).toBe(
+      401,
+    );
   });
 
   it("revokes only this session when password storage fails and retains the verified user", async () => {

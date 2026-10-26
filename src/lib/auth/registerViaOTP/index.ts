@@ -2,6 +2,7 @@
 // we use explicit data for this module's interface. The internal adapter handles
 // Better Auth's Request, Headers and Response objects.
 
+import type { BetterAuthResponseData } from "@/lib/auth/betterAuth";
 import { normalizeEmail } from "@/lib/auth/contract/email";
 import { isDisposableEmail } from "@/lib/auth/rules/disposableEmail";
 import { ApiError, toApiError, toSerializableError } from "@/lib/errors";
@@ -13,21 +14,16 @@ import {
   setRegistrationPassword,
   signInWithOtp,
 } from "./betterAuthAdapter";
-import type { RegisterViaOTPInput, RegistrationResult, RequestRegistrationOtpInput } from "./types";
+import type { RegisterViaOTPInput, RequestRegistrationOtpInput } from "./types";
 
-export type {
-  RegisterViaOTPInput,
-  RegistrationRequest,
-  RegistrationResult,
-  RequestRegistrationOtpInput,
-} from "./types";
+export type { RegisterViaOTPInput, RequestRegistrationOtpInput } from "./types";
 
 // The route validates input before calling these operations.
 // This order keeps an OTP usable after an input validation error.
 export async function requestRegistrationOtp(
   env: Bindings,
   input: RequestRegistrationOtpInput,
-): Promise<RegistrationResult> {
+): Promise<BetterAuthResponseData> {
   const email = registrationEmail(input.email);
   return requestOtp(env, { ...input, email, locale: input.locale?.trim() });
 }
@@ -35,7 +31,7 @@ export async function requestRegistrationOtp(
 export async function registerViaOTP(
   env: Bindings,
   input: RegisterViaOTPInput,
-): Promise<RegistrationResult> {
+): Promise<BetterAuthResponseData> {
   const email = registrationEmail(input.email);
   const signIn = await signInWithOtp(env, {
     email,

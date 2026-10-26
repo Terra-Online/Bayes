@@ -1,47 +1,15 @@
-import type { Context } from "hono";
 import { Hono } from "hono";
-import type { StatusCode } from "hono/utils/http-status";
 
 import { normalizeEmail } from "@/lib/auth/contract/email";
-import {
-  registerViaOTP,
-  requestRegistrationOtp,
-  type RegistrationRequest,
-  type RegistrationResult,
-} from "@/lib/auth/registerViaOTP";
+import { registerViaOTP, requestRegistrationOtp } from "@/lib/auth/registerViaOTP";
 import { ApiError } from "@/lib/errors";
 import { rateLimit } from "@/middleware/rate-limit";
 import { registerWithOtpSchema, sendTemplateOtpSchema } from "@/routes/schema/auth";
 import type { AppEnv } from "@/types/app";
 
 import { forwardToAuthJsonPath } from "./forwarding";
+import { authRequestInfo, authResponse } from "./honoAdapter";
 import type { ForwardToAuthJsonPath } from "./types";
-
-function registrationRequest(c: Context<AppEnv<{ requestId: string }>>): RegistrationRequest {
-  return {
-    url: c.req.url,
-    origin: c.req.header("origin"),
-    referer: c.req.header("referer"),
-    cookie: c.req.header("cookie"),
-    authorization: c.req.header("authorization"),
-    clientIp: c.req.header("cf-connecting-ip"),
-    userAgent: c.req.header("user-agent"),
-    acceptedLanguages: c.req.header("accept-language"),
-    emailLocale: c.req.header("x-oem-locale"),
-    requestIdHeader: c.req.header("x-request-id"),
-  };
-}
-
-function registrationResponse(
-  c: Context<AppEnv<{ requestId: string }>>,
-  result: RegistrationResult,
-): Response {
-  const headers = new Headers(result.headers);
-  for (const cookie of result.cookies) {
-    headers.append("set-cookie", cookie);
-  }
-  return c.newResponse(result.body, { status: result.status as StatusCode, headers });
-}
 
 export function createRoutes(
   deps: {
@@ -62,11 +30,11 @@ export function createRoutes(
         throw new ApiError(422, "VALIDATION_ERROR", "Invalid payload.", parsed.error.flatten());
       }
 
-      return registrationResponse(
+      return authResponse(
         c,
         await registerViaOTP(c.env, {
           ...parsed.data,
-          request: registrationRequest(c),
+          request: authRequestInfo(c),
           requestId: c.get("requestId"),
         }),
       );
@@ -84,12 +52,12 @@ export function createRoutes(
         throw new ApiError(422, "VALIDATION_ERROR", "Invalid payload.", parsed.error.flatten());
       }
 
-      return registrationResponse(
+      return authResponse(
         c,
         await requestRegistrationOtp(c.env, {
           email: parsed.data.email,
           locale: parsed.data.locale,
-          request: registrationRequest(c),
+          request: authRequestInfo(c),
           requestId: c.get("requestId"),
         }),
       );

@@ -77,9 +77,6 @@ export function createRoutes(
       response.headers.set("Cache-Control", "private, no-store");
       return response;
     })
-    .get("/reset-password/*", rateLimit("public"), async (c) => {
-      return deps.forwardToAuthRawRequest(c);
-    })
     .on(["GET", "POST", "OPTIONS"], "/callback/*", rateLimit("public"), async (c) => {
       console.warn("[auth][oauth-callback] incoming", {
         provider: getProviderFromCallbackPath(c.req.path),
