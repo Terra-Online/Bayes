@@ -1,83 +1,14 @@
-import type { Context } from "hono";
 import { Hono } from "hono";
-import { z } from "zod";
 
-import { createAuth } from "@/lib/auth/betterAuth";
-import {
-  expireOAuthExchangeProof,
-  inspectOAuthExchangeProof,
-  serializeBrowserSessionCookie,
-} from "@/lib/auth/browserSession";
 import { parseTrustedFrontendOrigins } from "@/lib/auth/rules/frontendOrigins";
+import { exchangeSession } from "@/lib/auth/sessionExchange";
 import { ApiError } from "@/lib/errors";
 import { rateLimit } from "@/middleware/rate-limit";
-import { ensureUserProfile, formatPublicUid } from "@/repositories/users";
 import { parseInput, readJsonBody } from "@/routes/input";
 import { sessionExchangeSchema } from "@/routes/schema/auth";
 import type { AppEnv } from "@/types/app";
 
 import { toSessionUser } from "./sessionUser";
-
-const SESSION_EXCHANGE_CODE_PREFIX = "auth-session-exchange:";
-const SESSION_EXCHANGE_CODE_TTL_SECONDS = 120;
-const exchangeValueSchema = z.object({
-  token: z.string().min(1),
-  origin: z.string().url(),
-  challenge: z.string().regex(/^[a-f0-9]{64}$/),
-});
-
-function classifyBrowser(
-  userAgent: string | undefined,
-): "firefox" | "chromium" | "safari" | "other" {
-  if (!userAgent) {
-    return "other";
-  }
-  if (/firefox\//i.test(userAgent)) {
-    return "firefox";
-  }
-  if (/(?:chrome|chromium|crios)\//i.test(userAgent)) {
-    return "chromium";
-  }
-  if (/safari\//i.test(userAgent)) {
-    return "safari";
-  }
-  return "other";
-}
-
-function logExchangeFailure<E extends AppEnv<{ requestId: string }>>(
-  c: Context<E>,
-  phase: "code_lookup" | "proof_missing" | "proof_mismatch" | "session_lookup" | "consume_conflict",
-) {
-  console.error("[auth][session-exchange] rejected", {
-    requestId: c.get("requestId"),
-    phase,
-    origin: c.req.header("origin") ?? null,
-    browser: classifyBrowser(c.req.header("user-agent")),
-    hasCookieHeader: Boolean(c.req.header("cookie")),
-  });
-}
-
-export async function createSessionExchangeCode<E extends AppEnv<{ requestId: string }>>(
-  c: Context<E>,
-  sessionToken: string,
-  origin: string,
-  challenge: string,
-): Promise<string> {
-  const code = crypto.randomUUID();
-  const expiresAt = new Date(Date.now() + SESSION_EXCHANGE_CODE_TTL_SECONDS * 1000).toISOString();
-  await c.env.DB.prepare(
-    `INSERT INTO auth_verifications (id, identifier, value, expiresAt, createdAt, updatedAt)
-       VALUES (?1, ?2, ?3, ?4, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
-  )
-    .bind(
-      crypto.randomUUID(),
-      `${SESSION_EXCHANGE_CODE_PREFIX}${code}`,
-      JSON.stringify({ token: sessionToken, origin, challenge }),
-      expiresAt,
-    )
-    .run();
-  return code;
-}
 
 export function createRoutes() {
   return new Hono<AppEnv<{ requestId: string }>>().post(
@@ -88,95 +19,19 @@ export function createRoutes() {
       if (!origin || !parseTrustedFrontendOrigins(c.env).includes(origin)) {
         throw new ApiError(403, "ORIGIN_NOT_ALLOWED", "A trusted frontend origin is required.");
       }
-
       const input = parseInput(sessionExchangeSchema, await readJsonBody(c.req));
-
-      const identifier = `${SESSION_EXCHANGE_CODE_PREFIX}${input.code}`;
-      const verification = await c.env.DB.prepare(
-        "SELECT value, expiresAt FROM auth_verifications WHERE identifier = ?1 LIMIT 1",
-      )
-        .bind(identifier)
-        .first<{ value: string; expiresAt: string }>();
-
-      const expiresAt = verification ? Date.parse(verification.expiresAt) : Number.NaN;
-      if (!verification || !Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
-        logExchangeFailure(c, "code_lookup");
-        throw new ApiError(400, "INVALID_AUTH_CODE", "Auth code is invalid or expired.");
-      }
-
-      let value: unknown;
-      try {
-        value = JSON.parse(verification.value);
-      } catch {
-        throw new ApiError(400, "INVALID_AUTH_CODE", "Auth code is invalid or expired.");
-      }
-      const exchange = exchangeValueSchema.safeParse(value);
-      if (!exchange.success || exchange.data.origin !== origin) {
-        throw new ApiError(400, "INVALID_AUTH_CODE", "Auth code is invalid or expired.");
-      }
-
-      const auth = createAuth(c.env);
-      const proofResult = await inspectOAuthExchangeProof(
-        auth,
-        c.req.raw.headers,
-        exchange.data.challenge,
-      );
-      if (proofResult !== "valid") {
-        logExchangeFailure(c, proofResult === "missing" ? "proof_missing" : "proof_mismatch");
-        throw new ApiError(
-          400,
-          "INVALID_AUTH_CODE",
-          "Auth code does not belong to this browser login attempt.",
-        );
-      }
-
-      const session = await auth.api.getSession({
-        query: { disableRefresh: true },
-        headers: new Headers({
-          authorization: `Bearer ${exchange.data.token}`,
-        }),
+      const result = await exchangeSession(c.env, {
+        code: input.code,
+        origin,
+        cookie: c.req.header("cookie"),
+        userAgent: c.req.header("user-agent"),
+        requestId: c.get("requestId"),
       });
-
-      if (!session) {
-        logExchangeFailure(c, "session_lookup");
-        throw new ApiError(401, "SESSION_REQUIRED", "Session is required.");
+      for (const cookie of result.cookies) {
+        c.header("Set-Cookie", cookie, { append: true });
       }
-
-      const consumed = await c.env.DB.prepare(
-        "DELETE FROM auth_verifications WHERE identifier = ?1 AND value = ?2 RETURNING id",
-      )
-        .bind(identifier, verification.value)
-        .first<{ id: string }>();
-      if (!consumed || expiresAt <= Date.now()) {
-        logExchangeFailure(c, "consume_conflict");
-        throw new ApiError(400, "INVALID_AUTH_CODE", "Auth code is invalid or expired.");
-      }
-
-      const profile = await ensureUserProfile(c.env.DB, {
-        uid: session.user.id,
-        email: session.user.email,
-        displayName: session.user.name,
-      });
-
-      c.header("Set-Cookie", await serializeBrowserSessionCookie(auth, session.session), {
-        append: true,
-      });
-      c.header("Set-Cookie", expireOAuthExchangeProof(auth), { append: true });
       c.header("Cache-Control", "private, no-store");
-
-      return c.json({
-        user: toSessionUser({
-          uid: profile.uid,
-          publicUid: formatPublicUid(profile.uidNumber, profile.uidSuffix),
-          role: profile.role,
-          karma: profile.karma,
-          avatar: profile.avt,
-          email: profile.email,
-          nickname: profile.nickname,
-          registeredAt: profile.createdAt,
-          needsProfileSetup: !profile.nicknameCustomized,
-        }),
-      });
+      return c.json({ user: toSessionUser(result.user) });
     },
   );
 }

@@ -4,9 +4,8 @@ import type { Context } from "hono";
 import { createAuth } from "@/lib/auth/betterAuth";
 import { AUTH_EXCHANGE_CHALLENGE_PARAM } from "@/lib/auth/browserSession";
 import { isTrustedCallbackUrlForResponse } from "@/lib/auth/rules/frontendOrigins";
+import { createSessionExchangeCode } from "@/lib/auth/sessionExchange";
 import type { AppEnv } from "@/types/app";
-
-import { createSessionExchangeCode } from "./sessionExchangeRoutes";
 
 function splitSetCookieHeader(setCookie: string): string[] {
   const result: string[] = [];
@@ -200,7 +199,11 @@ export async function attachSessionExchangeCode<E extends AppEnv<{ requestId: st
     return better_auth_response;
   }
   frontendUrl.searchParams.delete(AUTH_EXCHANGE_CHALLENGE_PARAM);
-  const code = await createSessionExchangeCode(c, sessionToken, frontendUrl.origin, challenge);
+  const code = await createSessionExchangeCode(c.env.DB, {
+    sessionToken,
+    origin: frontendUrl.origin,
+    challenge,
+  });
   const headers = new Headers(better_auth_response.headers);
   headers.set("location", appendQueryParam(frontendUrl.toString(), "auth_code", code));
   headers.set("Cache-Control", "private, no-store");
