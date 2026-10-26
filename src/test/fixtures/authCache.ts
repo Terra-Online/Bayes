@@ -5,6 +5,7 @@ import { runWithAuthRequest } from "@/lib/auth/betterAuth";
 import { onAppError } from "@/middleware/error-handler";
 import { createRoutes as createAuthRoutes } from "@/routes/auth/createRoutes";
 import { createRoutes as createSessionRoutes } from "@/routes/auth/sessionRoutes";
+import { createRoutes as createSignOutRoutes } from "@/routes/auth/signOutRoutes";
 import { createRoutes as createBindingRoutes } from "@/routes/binding/createRoutes";
 import { createRoutes as createMeRoutes } from "@/routes/me/createRoutes";
 import { createMockBindings, type MockBindings } from "@/test/bindings";
@@ -36,6 +37,7 @@ export function createAuthCacheFixture(): AuthCacheFixture {
   app.route("/me/v1", createMeRoutes());
   app.route("/binding/v1", createBindingRoutes());
   app.route("/auth/v1", createSessionRoutes());
+  app.route("/auth/v1", createSignOutRoutes());
   app.route("/auth/v1", createAuthRoutes());
   const requests: Promise<Response>[] = [];
   const gates: AuthReadGate[] = [];

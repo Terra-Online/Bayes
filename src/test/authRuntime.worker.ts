@@ -6,6 +6,7 @@ import { Hono } from "hono";
 import { createAuth, runWithAuthRequest } from "@/lib/auth/betterAuth";
 import { resolveAuthIdentity } from "@/lib/auth/identity";
 import { onAppError } from "@/middleware/error-handler";
+import { createRoutes as createEmailAuthRoutes } from "@/routes/auth/emailRoutes";
 import { createRoutes as createSessionAuthRoutes } from "@/routes/auth/sessionRoutes";
 import type { AppEnv, Bindings } from "@/types/app";
 
@@ -96,6 +97,7 @@ function observe(database: D1Database): D1Database {
 
 const app = new Hono<AppEnv<{ requestId: string }>>();
 app.onError(onAppError);
+app.route("/auth/v1", createEmailAuthRoutes());
 app.route("/auth/v1", createSessionAuthRoutes());
 
 export default {

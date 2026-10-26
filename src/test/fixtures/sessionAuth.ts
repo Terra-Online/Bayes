@@ -7,9 +7,11 @@ import { onAppError } from "@/middleware/error-handler";
 import { createRoutes as createAuthRoutes } from "@/routes/auth/createRoutes";
 import { createRoutes as createSessionExchangeRoutes } from "@/routes/auth/sessionExchangeRoutes";
 import { createRoutes as createSessionRoutes } from "@/routes/auth/sessionRoutes";
+import { createRoutes as createSignOutRoutes } from "@/routes/auth/signOutRoutes";
 import { createRoutes as createSocialRoutes } from "@/routes/auth/socialRoutes";
 import { createMockBindings } from "@/test/bindings";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
+import { stubRequestWithDuplex } from "@/test/fixtures/request";
 import type { AppEnv, Bindings } from "@/types/app";
 
 export interface SessionAuthFixture {
@@ -49,6 +51,7 @@ export function createSessionAuthFixture(baseURL: string): SessionAuthFixture {
     .route("/auth/v1", createSocialRoutes())
     .route("/auth/v1", createSessionExchangeRoutes())
     .route("/auth/v1", createSessionRoutes())
+    .route("/auth/v1", createSignOutRoutes())
     .route("/auth/v1", createAuthRoutes());
   const oauthFetch = vi.fn<typeof fetch>(async (input, init) => {
     const request = new Request(input, init);
@@ -77,16 +80,7 @@ export function createSessionAuthFixture(baseURL: string): SessionAuthFixture {
     throw new Error(`Unconfigured OAuth fetch: ${request.method} ${request.url}`);
   });
   vi.stubGlobal("fetch", oauthFetch);
-  // Node requires duplex for forwarded request streams; Workers does not.
-  const NativeRequest = Request;
-  vi.stubGlobal(
-    "Request",
-    class extends NativeRequest {
-      constructor(input: RequestInfo | URL, init?: RequestInit) {
-        super(input, { ...init, duplex: "half" } as RequestInit);
-      }
-    },
-  );
+  stubRequestWithDuplex();
   return { database, env, app, oauthFetch };
 }
 

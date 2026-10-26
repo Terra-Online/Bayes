@@ -1,21 +1,15 @@
 import { Hono } from "hono";
 
-import { normalizeEmail } from "@/lib/auth/contract/email";
+import { loginViaPassword } from "@/lib/auth/loginViaPassword";
 import { registerViaOTP, requestRegistrationOtp } from "@/lib/auth/registerViaOTP";
 import { rateLimit } from "@/middleware/rate-limit";
 import { parseInput, readJsonBody, readJsonObject } from "@/routes/input";
 import { registerWithOtpSchema, sendTemplateOtpSchema } from "@/routes/schema/auth";
 import type { AppEnv } from "@/types/app";
 
-import { forwardToAuthJsonPath } from "./forwarding";
 import { authRequestInfo, authResponse } from "./honoAdapter";
-import type { ForwardToAuthJsonPath } from "./types";
 
-export function createRoutes(
-  deps: {
-    forwardToAuthJsonPath: ForwardToAuthJsonPath;
-  } = { forwardToAuthJsonPath },
-) {
+export function createRoutes() {
   return new Hono<AppEnv<{ requestId: string }>>()
     .post("/register", rateLimit("public"), async (c) => {
       const input = parseInput(registerWithOtpSchema, await readJsonBody(c.req));
@@ -44,13 +38,19 @@ export function createRoutes(
     })
     .post("/sign-in/email", rateLimit("public"), async (c) => {
       const payload = await readJsonObject(c.req);
-      const rawEmail = payload.email;
-      if (typeof rawEmail !== "string") {
-        return deps.forwardToAuthJsonPath(c, "/sign-in/email", payload);
-      }
-
-      const email = normalizeEmail(rawEmail);
-      payload.email = email;
-      return deps.forwardToAuthJsonPath(c, "/sign-in/email", payload);
+      return authResponse(
+        c,
+        await loginViaPassword(c.env, {
+          email: payload.email,
+          password: payload.password,
+          rememberMe: payload.rememberMe,
+          callbackURL: payload.callbackURL,
+          redirectTo: payload.redirectTo,
+          errorCallbackURL: payload.errorCallbackURL,
+          newUserCallbackURL: payload.newUserCallbackURL,
+          request: authRequestInfo(c),
+          requestId: c.get("requestId"),
+        }),
+      );
     });
 }

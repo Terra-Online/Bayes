@@ -296,6 +296,38 @@ describe("email authentication HTTP behavior", () => {
     expect(delivery).not.toHaveBeenCalled();
   });
 
+  it("logs in with an existing lowercase password, honors session persistence and callback options, and retains provider validation errors", async () => {
+    const email = "password-options@example.test";
+    const password = "lowercase-password";
+    const account = await createAuth(env).api.signUpEmail({
+      body: { email, password, name: "PasswordOwner" },
+    });
+    // Field validation belongs to Better Auth. Its response differs from route JSON validation.
+    const invalid = await request("/sign-in/email", { email: 42, password });
+    expect(invalid.status).toBe(400);
+    expect(await invalid.json()).toMatchObject({ code: "VALIDATION_ERROR" });
+    const callbackURL = "https://opendfieldmap.org/map";
+    const login = await request("/sign-in/email", {
+      email: " PASSWORD-OPTIONS@EXAMPLE.TEST ",
+      password,
+      rememberMe: false,
+      callbackURL,
+    });
+    expect(login.status).toBe(200);
+    expect(await login.json()).toMatchObject({
+      redirect: true,
+      url: callbackURL,
+      user: { id: account.user.id, email },
+    });
+    expect(login.headers.get("location")).toBe(callbackURL);
+    const cookie = login.headers
+      .getSetCookie()
+      .find((value) => value.startsWith("__Secure-oem-chips.session_token="));
+    expect(cookie).toBeDefined();
+    expect(cookie).toContain("HttpOnly");
+    expect(cookie).not.toContain("Max-Age");
+  });
+
   it("keeps a registration OTP usable after password validation fails and permits normalized email sign-in", async () => {
     const email = "X@example.com";
     const otp = await issueOtp(email, "ja");

@@ -6,6 +6,7 @@ import { onAppError } from "@/middleware/error-handler";
 import { createRoutes as createProfileRoutes } from "@/routes/profile/createRoutes";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { insertAuthUser, insertSession, testAuthConfig } from "@/test/fixtures/auth";
+import { stubRequestWithDuplex } from "@/test/fixtures/request";
 import { insertUser } from "@/test/fixtures/users";
 import type { AppEnv, Bindings } from "@/types/app";
 
@@ -13,6 +14,7 @@ import { createRoutes as createAccountRoutes } from "./accountRoutes";
 import { createRoutes as createAuthRoutes } from "./createRoutes";
 import { createRoutes as createEmailRoutes } from "./emailRoutes";
 import { createRoutes as createSessionRoutes } from "./sessionRoutes";
+import { createRoutes as createSignOutRoutes } from "./signOutRoutes";
 import { createRoutes as createSocialRoutes } from "./socialRoutes";
 
 type Credentials = { authorization?: string; cookie?: string };
@@ -27,6 +29,7 @@ describe("authenticated account and profile HTTP lifecycle", () => {
   let testIp: string;
 
   beforeEach(() => {
+    stubRequestWithDuplex();
     database = createTestDatabase();
     testIp = `192.0.2.${++testNumber}`;
     env = {
@@ -66,11 +69,13 @@ describe("authenticated account and profile HTTP lifecycle", () => {
     app.route("/auth/v1", createSessionRoutes());
     app.route("/auth/v1", createProfileRoutes());
     app.route("/auth/v1", createAccountRoutes());
+    app.route("/auth/v1", createSignOutRoutes());
     app.route("/auth/v1", createAuthRoutes());
   });
 
   afterEach(() => {
     database.close();
+    vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
 
@@ -518,6 +523,30 @@ describe("authenticated account and profile HTTP lifecycle", () => {
     },
   );
 
+  it("clears browser cookies but leaves the session usable when session deletion fails", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    expect((await request("/list-accounts")).status).toBe(200);
+    const session = database.sqlite
+      .prepare("SELECT token FROM auth_sessions WHERE userId = 'owner'")
+      .get()!;
+    database.hooks.beforeQuery = (sql) => {
+      if (/^delete from "auth_sessions"/i.test(sql)) {
+        throw new Error("session deletion unavailable");
+      }
+    };
+    const response = await request("/sign-out", { method: "POST" });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ success: true });
+    expect(response.headers.getSetCookie().some((cookie) => cookie.includes("Max-Age=0"))).toBe(
+      true,
+    );
+    database.hooks.beforeQuery = undefined;
+    expect(
+      database.sqlite.prepare("SELECT token FROM auth_sessions WHERE token = ?").get(session.token),
+    ).toEqual(session);
+    expect((await request("/list-accounts")).status).toBe(200);
+  });
+
   it.each(["bearer", "browser", "legacy browser"])(
     "signs out a %s login immediately without revoking other sessions or deleting the profile",
     async (transport) => {
@@ -568,6 +597,18 @@ describe("authenticated account and profile HTTP lifecycle", () => {
       const originalProfile = storedProfile(existing.user.id);
       const originalAccounts = database.sqlite.prepare("SELECT * FROM auth_accounts").all();
 
+      const invalid = await request(
+        "/sign-out",
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: "{",
+        },
+        credentials,
+      );
+      expect(invalid.status).toBe(400);
+      expect(invalid.headers.get("cache-control")).toBe("private, no-store");
+      expect((await request("/list-accounts", {}, credentials)).status).toBe(200);
       const response = await request("/sign-out", { method: "POST" }, credentials);
       expect(response.status).toBe(200);
       expect(await response.json()).toEqual({ success: true });

@@ -9,6 +9,7 @@ import { createRoutes as createEmailAuthRoutes } from "./auth/emailRoutes";
 import { createRoutes as createPasswordResetRoutes } from "./auth/passwordResetRoutes";
 import { createRoutes as createSessionExchangeRoutes } from "./auth/sessionExchangeRoutes";
 import { createRoutes as createSessionAuthRoutes } from "./auth/sessionRoutes";
+import { createRoutes as createSignOutRoutes } from "./auth/signOutRoutes";
 import { createRoutes as createSocialAuthRoutes } from "./auth/socialRoutes";
 import { createRoutes as createBindingRoutes } from "./binding/createRoutes";
 import { createRoutes as createDemoRoutes } from "./demo/createRoutes";
@@ -41,6 +42,7 @@ export function mountRoutes<E extends AppEnv<{ requestId: string }>>(app: Hono<E
   app.route("/auth/v1", createSessionAuthRoutes());
   app.route("/auth/v1", createProfileRoutes());
   app.route("/auth/v1", createAccountAuthRoutes());
+  app.route("/auth/v1", createSignOutRoutes());
   app.route("/auth/v1", createAuthRoutes());
   app.route("/binding/v1", createBindingRoutes());
   app.route("/locator", createLocatorPositionRoutes());
