@@ -17,40 +17,36 @@ export type AuthIdentity = {
 const AUTH_USER_CACHE_TTL_MS = 10_000;
 const AUTH_USER_CACHE_MAX_ENTRIES = 1000;
 
-type CachedAuthUser = {
-  user: AuthUser;
-  expiresAt: number;
-};
-
-type CachedAuthIdentity = {
-  identity: AuthIdentity;
+type Cached<T> = {
+  value: T;
   expiresAt: number;
 };
 
 type AuthCache = {
   env: AppEnv["Bindings"];
   revision: number;
-  users: Map<string, CachedAuthUser>;
-  identities: Map<string, CachedAuthIdentity>;
+  users: Map<string, Cached<AuthUser>>;
+  identities: Map<string, Cached<AuthIdentity>>;
 };
+type AuthLookup = {
+  cache: AuthCache;
+  key: string | null;
+  revision: number;
+  now: number;
+};
+
 const authCaches = new WeakMap<D1Database, AuthCache>();
 
 export async function resolveAuthIdentity(
   env: AppEnv["Bindings"],
   credentials: AuthCredentials,
 ): Promise<AuthIdentity> {
-  const now = Date.now();
-  const cacheKey = getAuthCacheKey(credentials);
-  const cache = getAuthCache(env);
-  const cachedUser = cacheKey ? cache.users.get(cacheKey) : undefined;
-  if (cachedUser && cachedUser.expiresAt > now) {
-    return identityFromAuthUser(cachedUser.user);
+  const lookup = beginAuthLookup(env, credentials);
+  const user = readCached(lookup, lookup.cache.users);
+  if (user) {
+    return identityFromAuthUser(user);
   }
-  const cachedIdentity = cacheKey ? cache.identities.get(cacheKey) : undefined;
-  if (cachedIdentity && cachedIdentity.expiresAt > now) {
-    return cachedIdentity.identity;
-  }
-  return fetchAuthIdentity(env, credentials, cacheKey, now);
+  return resolveIdentity(env, credentials, lookup);
 }
 
 export async function resolveAuthUser(
@@ -58,18 +54,13 @@ export async function resolveAuthUser(
   credentials: AuthCredentials,
   verifiedIdentity?: AuthIdentity,
 ): Promise<AuthUser> {
-  const now = Date.now();
-  const cacheKey = getAuthCacheKey(credentials);
-  const cached = cacheKey ? getAuthCache(env).users.get(cacheKey) : undefined;
-  if (
-    cached &&
-    cached.expiresAt > now &&
-    (!verifiedIdentity || cached.user.uid === verifiedIdentity.uid)
-  ) {
-    return cached.user;
+  const lookup = beginAuthLookup(env, credentials);
+  const user = readCached(lookup, lookup.cache.users);
+  if (user && (!verifiedIdentity || user.uid === verifiedIdentity.uid)) {
+    return user;
   }
-  // Never share pending D1 work between Workers requests; cache only completed values.
-  return fetchAuthUser(env, credentials, cacheKey, now, verifiedIdentity);
+  const identity = verifiedIdentity ?? (await resolveIdentity(env, credentials, lookup));
+  return loadAuthUser(env, identity, lookup);
 }
 
 export function invalidateAuthUserCache(
@@ -82,6 +73,38 @@ export function invalidateAuthUserCache(
     cache.revision += 1;
     cache.users.delete(cacheKey);
     cache.identities.delete(cacheKey);
+  }
+}
+
+function beginAuthLookup(env: AppEnv["Bindings"], credentials: AuthCredentials): AuthLookup {
+  const now = Date.now();
+  const key = getAuthCacheKey(credentials);
+  const cache = getAuthCache(env);
+  return { cache, key, revision: cache.revision, now };
+}
+
+function readCached<T>(lookup: AuthLookup, values: Map<string, Cached<T>>): T | undefined {
+  const cached = lookup.key ? values.get(lookup.key) : undefined;
+  return cached && cached.expiresAt > lookup.now ? cached.value : undefined;
+}
+
+function storeCompleted<T>(
+  env: AppEnv["Bindings"],
+  lookup: AuthLookup,
+  values: Map<string, Cached<T>>,
+  value: T,
+): void {
+  const { cache, key, revision, now } = lookup;
+  // Invalidated or replaced caches must not receive results from older lookups.
+  if (
+    key &&
+    authCaches.get(env.DB) === cache &&
+    cache.revision === revision &&
+    sameAuthCacheEnvironment(cache.env, env)
+  ) {
+    // Never share pending D1 work between Workers requests; cache only completed values.
+    pruneAuthCache(values, now);
+    values.set(key, { value, expiresAt: now + AUTH_USER_CACHE_TTL_MS });
   }
 }
 
@@ -126,14 +149,15 @@ function identityFromAuthUser(user: AuthUser): AuthIdentity {
   };
 }
 
-async function fetchAuthIdentity(
+async function resolveIdentity(
   env: AppEnv["Bindings"],
   credentials: AuthCredentials,
-  cacheKey: string | null,
-  now: number,
+  lookup: AuthLookup,
 ): Promise<AuthIdentity> {
-  const cache = getAuthCache(env);
-  const revision = cache.revision;
+  const cached = readCached(lookup, lookup.cache.identities);
+  if (cached) {
+    return cached;
+  }
   if (!hasSessionCredentials(env, credentials)) {
     throw new ApiError(401, "SESSION_REQUIRED", "Session is required.");
   }
@@ -147,32 +171,15 @@ async function fetchAuthIdentity(
     throw new ApiError(401, "SESSION_REQUIRED", "Session is required.");
   }
 
-  if (
-    cacheKey &&
-    authCaches.get(env.DB) === cache &&
-    cache.revision === revision &&
-    sameAuthCacheEnvironment(cache.env, env)
-  ) {
-    pruneAuthCache(cache.identities, now);
-    cache.identities.set(cacheKey, {
-      identity,
-      expiresAt: now + AUTH_USER_CACHE_TTL_MS,
-    });
-  }
+  storeCompleted(env, lookup, lookup.cache.identities, identity);
   return identity;
 }
 
-async function fetchAuthUser(
+async function loadAuthUser(
   env: AppEnv["Bindings"],
-  credentials: AuthCredentials,
-  cacheKey: string | null,
-  now: number,
-  verifiedIdentity?: AuthIdentity,
+  identity: AuthIdentity,
+  lookup: AuthLookup,
 ): Promise<AuthUser> {
-  const cache = getAuthCache(env);
-  const revision = cache.revision;
-  const identity = verifiedIdentity ?? (await resolveAuthIdentity(env, credentials));
-
   const profile = await ensureUserProfile(env.DB, {
     uid: identity.uid,
     email: identity.email,
@@ -191,18 +198,7 @@ async function fetchAuthUser(
     needsProfileSetup: !profile.nicknameCustomized,
   };
 
-  if (
-    cacheKey &&
-    authCaches.get(env.DB) === cache &&
-    cache.revision === revision &&
-    sameAuthCacheEnvironment(cache.env, env)
-  ) {
-    pruneAuthCache(cache.users, now);
-    cache.users.set(cacheKey, {
-      user: authUser,
-      expiresAt: now + AUTH_USER_CACHE_TTL_MS,
-    });
-  }
+  storeCompleted(env, lookup, lookup.cache.users, authUser);
 
   return authUser;
 }
