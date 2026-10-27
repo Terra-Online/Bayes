@@ -10,12 +10,7 @@ import { stubRequestWithDuplex } from "@/test/fixtures/request";
 import { insertUser } from "@/test/fixtures/users";
 import type { AppEnv, Bindings } from "@/types/app";
 
-import { createRoutes as createAccountRoutes } from "./accountRoutes";
 import { createRoutes as createAuthRoutes } from "./createRoutes";
-import { createRoutes as createEmailRoutes } from "./emailRoutes";
-import { createRoutes as createSessionRoutes } from "./sessionRoutes";
-import { createRoutes as createSignOutRoutes } from "./signOutRoutes";
-import { createRoutes as createSocialRoutes } from "./socialRoutes";
 
 type Credentials = { authorization?: string; cookie?: string };
 
@@ -64,12 +59,7 @@ describe("authenticated account and profile HTTP lifecycle", () => {
 
     app = new Hono<AppEnv<{ requestId: string }>>();
     app.onError(onAppError);
-    app.route("/auth/v1", createEmailRoutes());
-    app.route("/auth/v1", createSocialRoutes());
-    app.route("/auth/v1", createSessionRoutes());
     app.route("/auth/v1", createProfileRoutes());
-    app.route("/auth/v1", createAccountRoutes());
-    app.route("/auth/v1", createSignOutRoutes());
     app.route("/auth/v1", createAuthRoutes());
   });
 

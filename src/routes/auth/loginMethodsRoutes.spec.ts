@@ -8,7 +8,7 @@ import { createTestDatabase, type TestDatabase } from "@/test/database/createTes
 import { insertAuthenticatedUser, type AuthenticatedUserFixture } from "@/test/fixtures/auth";
 import type { AppEnv } from "@/types/app";
 
-import { createRoutes as createAccountAuthRoutes } from "./accountRoutes";
+import { createRoutes as createLoginMethodsRoutes } from "./loginMethodsRoutes";
 
 describe("provider-based unlink compatibility", () => {
   let database: TestDatabase;
@@ -23,7 +23,7 @@ describe("provider-based unlink compatibility", () => {
     insertAuthenticatedUser(database.sqlite, { uid: "other" });
     app = new Hono<AppEnv<{ requestId: string }>>();
     app.onError(onAppError);
-    app.route("/auth/v1", createAccountAuthRoutes());
+    app.route("/auth/v1", createLoginMethodsRoutes());
   });
   afterEach(() => database.close());
   function request(provider: string) {

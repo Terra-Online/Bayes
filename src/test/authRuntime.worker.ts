@@ -6,8 +6,7 @@ import { Hono } from "hono";
 import { createAuth, runWithAuthRequest } from "@/lib/auth/betterAuth";
 import { resolveAuthIdentity } from "@/lib/auth/identity";
 import { onAppError } from "@/middleware/error-handler";
-import { createRoutes as createEmailAuthRoutes } from "@/routes/auth/emailRoutes";
-import { createRoutes as createSessionAuthRoutes } from "@/routes/auth/sessionRoutes";
+import { createRoutes as createAuthRoutes } from "@/routes/auth/createRoutes";
 import type { AppEnv, Bindings } from "@/types/app";
 
 type TestEnv = Bindings & { DB_SECOND: D1Database; TEST_GATE: Fetcher };
@@ -97,8 +96,7 @@ function observe(database: D1Database): D1Database {
 
 const app = new Hono<AppEnv<{ requestId: string }>>();
 app.onError(onAppError);
-app.route("/auth/v1", createEmailAuthRoutes());
-app.route("/auth/v1", createSessionAuthRoutes());
+app.route("/auth/v1", createAuthRoutes());
 
 export default {
   async fetch(request: Request, raw: TestEnv, context: ExecutionContext): Promise<Response> {

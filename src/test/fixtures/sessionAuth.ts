@@ -5,10 +5,6 @@ import { expect, vi, type Mock } from "vitest";
 import { runWithAuthRequest } from "@/lib/auth/betterAuth";
 import { onAppError } from "@/middleware/error-handler";
 import { createRoutes as createAuthRoutes } from "@/routes/auth/createRoutes";
-import { createRoutes as createSessionExchangeRoutes } from "@/routes/auth/sessionExchangeRoutes";
-import { createRoutes as createSessionRoutes } from "@/routes/auth/sessionRoutes";
-import { createRoutes as createSignOutRoutes } from "@/routes/auth/signOutRoutes";
-import { createRoutes as createSocialRoutes } from "@/routes/auth/socialRoutes";
 import { createMockBindings } from "@/test/bindings";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { stubRequestWithDuplex } from "@/test/fixtures/request";
@@ -48,10 +44,6 @@ export function createSessionAuthFixture(baseURL: string): SessionAuthFixture {
       }),
     )
     .onError(onAppError)
-    .route("/auth/v1", createSocialRoutes())
-    .route("/auth/v1", createSessionExchangeRoutes())
-    .route("/auth/v1", createSessionRoutes())
-    .route("/auth/v1", createSignOutRoutes())
     .route("/auth/v1", createAuthRoutes());
   const oauthFetch = vi.fn<typeof fetch>(async (input, init) => {
     const request = new Request(input, init);

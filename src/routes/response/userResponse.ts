@@ -1,6 +1,6 @@
 import type { AuthUser } from "@/types/app";
 
-export function toSessionUser(user: AuthUser) {
+export function toUserResponse(user: AuthUser) {
   return {
     uid: user.publicUid,
     role: user.role,
