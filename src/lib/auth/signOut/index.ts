@@ -2,7 +2,6 @@
 // we use explicit data for this module's interface. HTTP objects stay inside this module.
 
 import {
-  buildBetterAuthRequestHeaders,
   createAuth,
   readBetterAuthResponseData,
   type BetterAuthResponseData,
@@ -20,7 +19,10 @@ export async function signOut(env: Bindings, input: SignOutInput): Promise<Bette
   const response = await invokeSignOut(env, input);
   if (response.ok) {
     // Cache entries use the original credentials, before Better Auth aliases legacy cookies.
-    invalidateAuthUserCache(buildBetterAuthRequestHeaders(input.request), env);
+    invalidateAuthUserCache(env, {
+      cookie: input.request.cookie,
+      authorization: input.request.authorization,
+    });
     for (const cookie of getLegacyCookieExpirations(createAuth(env))) {
       response.headers.append("Set-Cookie", cookie);
     }

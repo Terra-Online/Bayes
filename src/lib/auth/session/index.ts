@@ -2,38 +2,38 @@
 // we use explicit data for this module's interface. HTTP objects stay inside this module.
 
 import { hasSessionCredentials } from "@/lib/auth/betterAuth";
+import { resolveAuthorization, type AuthCredentials } from "@/lib/auth/contract/credentials";
 import { invalidateAuthUserCache, resolveAuthUser } from "@/lib/auth/identity";
 import { ApiError } from "@/lib/errors";
 import type { Bindings } from "@/types/app";
 
-import { buildSessionCredentialHeaders, createBetterAuthSessionAdapter } from "./betterAuthAdapter";
-import type { ReadSessionInput, ReadSessionResult } from "./types";
+import { createBetterAuthSessionAdapter } from "./betterAuthAdapter";
+import type { ReadSessionResult } from "./types";
 
-export type { ReadSessionInput, ReadSessionResult } from "./types";
+export type { ReadSessionResult } from "./types";
 
 export async function readSession(
   env: Bindings,
-  input: ReadSessionInput,
+  credentials: AuthCredentials,
 ): Promise<ReadSessionResult> {
   const cookies: string[] = [];
   try {
-    const authHeaders = buildSessionCredentialHeaders(input);
-    if (!hasSessionCredentials(env, authHeaders)) {
+    if (!hasSessionCredentials(env, credentials)) {
       throw new ApiError(401, "SESSION_REQUIRED", "Session is required.");
     }
-    const adapter = createBetterAuthSessionAdapter(env, authHeaders);
+    const adapter = createBetterAuthSessionAdapter(env, credentials);
     const result = await adapter.readFreshSession();
     cookies.push(...result.cookies);
     if (!result.session) {
-      invalidateAuthUserCache(authHeaders, env);
-      if (authHeaders.get("authorization")?.trim().toLowerCase().startsWith("bearer ")) {
+      invalidateAuthUserCache(env, credentials);
+      if (resolveAuthorization(credentials)?.trim().toLowerCase().startsWith("bearer ")) {
         throw new ApiError(401, "TOKEN_EXPIRED", "Token is expired, missing, or invalid.");
       }
       throw new ApiError(401, "SESSION_REQUIRED", "Session is required.");
     }
 
     // Use the freshly verified identity so a warm cache cannot authenticate a revoked session.
-    const user = await resolveAuthUser(env, authHeaders, {
+    const user = await resolveAuthUser(env, credentials, {
       uid: result.session.user.id,
       email: result.session.user.email,
       displayName: result.session.user.name,

@@ -123,6 +123,17 @@ describe("public image details through HTTP", () => {
     expect((await request("/images/photo?markerId=42&scope=test")).status).toBe(404);
   });
 
+  it("keeps query-only credentials anonymous while header credentials return viewer reactions", async () => {
+    const token = viewerHeaders.authorization.slice(7);
+    const path = `/images/photo?markerId=42&access_token=${encodeURIComponent(token)}`;
+    const anonymous = await requestImage(path);
+    expect(anonymous.upvoted).toBeUndefined();
+    expect(anonymous.flagged).toBeUndefined();
+
+    const authenticated = await requestImage(path, viewerHeaders);
+    expect(authenticated).toMatchObject({ upvoted: true, flagged: true });
+  });
+
   it("returns reactions for the authenticated viewer without exposing another viewer's state", async () => {
     const viewerImage = await requestImage("/images/photo?markerId=42&scope=prod", viewerHeaders);
     expect(viewerImage).toMatchObject({

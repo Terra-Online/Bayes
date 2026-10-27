@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 
 import { invalidateAuthUserCache } from "@/lib/auth/identity";
-import { getRequestAuthHeaders } from "@/lib/auth/requestHeaders";
+import { getRequestAuthCredentials } from "@/lib/auth/requestCredentials";
 import { requireAuth } from "@/middleware/auth";
 import { rateLimit } from "@/middleware/rate-limit";
 import { updateProfile } from "@/services/profile";
@@ -20,7 +20,7 @@ export function createRoutes() {
         userId: c.get("authUser").uid,
         ...input,
       });
-      invalidateAuthUserCache(getRequestAuthHeaders(c.req.raw), c.env);
+      invalidateAuthUserCache(c.env, getRequestAuthCredentials(c.req.raw));
       return c.json({ user });
     },
   );

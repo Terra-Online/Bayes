@@ -4,6 +4,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { Hono } from "hono";
 
 import { createAuth, runWithAuthRequest } from "@/lib/auth/betterAuth";
+import type { AuthCredentials } from "@/lib/auth/contract/credentials";
 import { resolveAuthIdentity } from "@/lib/auth/identity";
 import { onAppError } from "@/middleware/error-handler";
 import { createRoutes as createAuthRoutes } from "@/routes/auth/createRoutes";
@@ -26,13 +27,13 @@ async function singletonAuth(env: Bindings) {
   }
   return auth;
 }
-async function legacyIdentity(env: Bindings, headers: Headers) {
-  const key = headers.get("authorization")!;
+async function legacyIdentity(env: Bindings, credentials: AuthCredentials) {
+  const key = credentials.authorization!;
   const existing = legacyPending.get(key);
   if (existing) {
     return existing;
   }
-  const pending = resolveAuthIdentity(env, headers);
+  const pending = resolveAuthIdentity(env, credentials);
   legacyPending.set(key, pending);
   try {
     return await pending;
@@ -127,7 +128,10 @@ export default {
             response = Response.json(
               await (url.pathname === "/legacy-identity" ? legacyIdentity : resolveAuthIdentity)(
                 env,
-                request.headers,
+                {
+                  cookie: request.headers.get("cookie") ?? undefined,
+                  authorization: request.headers.get("authorization") ?? undefined,
+                },
               ),
             );
           } else {

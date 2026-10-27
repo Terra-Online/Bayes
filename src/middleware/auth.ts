@@ -2,7 +2,7 @@ import type { Context } from "hono";
 import { createMiddleware } from "hono/factory";
 
 import { resolveAuthUser } from "@/lib/auth/identity";
-import { getRequestAuthHeaders } from "@/lib/auth/requestHeaders";
+import { getRequestAuthCredentials } from "@/lib/auth/requestCredentials";
 import { ApiError } from "@/lib/errors";
 import type { AppEnv, AuthUser, Role } from "@/types/app";
 
@@ -25,5 +25,5 @@ export function requireRole(roles: Role[]) {
 export async function getAuthUser<E extends AppEnv<{ authUser?: AuthUser }>>(
   c: Context<E>,
 ): Promise<AuthUser> {
-  return c.get("authUser") ?? (await resolveAuthUser(c.env, getRequestAuthHeaders(c.req.raw)));
+  return c.get("authUser") ?? (await resolveAuthUser(c.env, getRequestAuthCredentials(c.req.raw)));
 }

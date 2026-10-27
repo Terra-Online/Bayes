@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { createMiddleware } from "hono/factory";
 
+import { getRequestAuthCredentials } from "@/lib/auth/requestCredentials";
 import { parseTrustedFrontendOrigins } from "@/lib/auth/rules/frontendOrigins";
 import { readSession } from "@/lib/auth/session";
 import { exchangeSession } from "@/lib/auth/sessionExchange";
@@ -20,11 +21,7 @@ export function createRoutes() {
       "/session",
       createMiddleware<AppEnv<{ authUser: AuthUser; requiresCookieConfirmation: boolean }>>(
         async (c, next) => {
-          const result = await readSession(c.env, {
-            cookie: c.req.header("cookie"),
-            authorization: c.req.header("authorization"),
-            accessToken: new URL(c.req.url).searchParams.get("access_token") ?? undefined,
-          });
+          const result = await readSession(c.env, getRequestAuthCredentials(c.req.raw));
           for (const cookie of result.cookies) {
             c.header("Set-Cookie", cookie, { append: true });
           }

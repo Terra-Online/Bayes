@@ -19,31 +19,25 @@ describe("session credential presence", () => {
       }).sessionToken.name;
       for (const name of [current, legacy]) {
         expect(
-          hasSessionCredentials(
-            env,
-            new Headers({ cookie: `analytics=abc;${name}=token.signature; other=123` }),
-          ),
+          hasSessionCredentials(env, {
+            cookie: `analytics=abc;${name}=token.signature; other=123`,
+          }),
         ).toBe(true);
-        // Malformed and expired credentials must still reach the auth library.
-        expect(hasSessionCredentials(env, new Headers({ cookie: `${name}=invalid` }))).toBe(true);
+        // Malformed and expired credentials must reach the auth library for verification.
+        expect(hasSessionCredentials(env, { cookie: `${name}=invalid` })).toBe(true);
       }
       expect(
-        hasSessionCredentials(
-          env,
-          new Headers({ cookie: "analytics=abc; cf_clearance=xyz; session=test" }),
-        ),
+        hasSessionCredentials(env, { cookie: "analytics=abc; cf_clearance=xyz; session=test" }),
       ).toBe(false);
-      expect(hasSessionCredentials(env, new Headers())).toBe(false);
-      expect(hasSessionCredentials(env, new Headers({ cookie: `other=${current}=value` }))).toBe(
-        false,
-      );
+      expect(hasSessionCredentials(env, {})).toBe(false);
+      expect(hasSessionCredentials(env, { cookie: `other=${current}=value` })).toBe(false);
     },
   );
 
   it.each(["Bearer opaque", "Bearer malformed.signature", "Basic invalid"])(
     "passes authorization through unchanged: %s",
     (authorization) => {
-      expect(hasSessionCredentials({} as Bindings, new Headers({ authorization }))).toBe(true);
+      expect(hasSessionCredentials({} as Bindings, { authorization })).toBe(true);
     },
   );
 });

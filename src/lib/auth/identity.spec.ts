@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import * as authFactory from "@/lib/auth/betterAuth";
+import * as authFactory from "@/lib/auth/betterAuth/createAuth";
 import { createMockBindings } from "@/test/bindings";
 import { insertAuthenticatedUser, type AuthenticatedUserFixture } from "@/test/fixtures/auth";
 import { createAuthCacheFixture, type AuthCacheFixture } from "@/test/fixtures/authCache";
@@ -38,7 +38,7 @@ describe("request-owned auth lookups", () => {
       // Observational spy: construction is itself the precheck contract.
       const createAuth = vi.spyOn(authFactory, "createAuth");
       await expect(
-        resolveAuthIdentity(fixture.external.bindings, requestHeaders),
+        resolveAuthIdentity(fixture.external.bindings, { cookie }),
       ).rejects.toMatchObject({ code: "SESSION_REQUIRED" });
       const response = await fixture.request(overview, requestHeaders);
       expect(response.status).toBe(401);
@@ -48,6 +48,21 @@ describe("request-owned auth lookups", () => {
     },
   );
 
+  it("shares and invalidates cached identity across equivalent query and Bearer credentials", async () => {
+    const env = fixture.external.bindings;
+    const query = { accessToken: `  ${owner.headers.authorization.slice(7)}  ` };
+    await expect(resolveAuthIdentity(env, query)).resolves.toMatchObject({ uid: owner.user.uid });
+    await expect(resolveAuthIdentity(env, owner.headers)).resolves.toMatchObject({
+      uid: owner.user.uid,
+    });
+    expect(sessionReads()).toHaveLength(1);
+
+    fixture.database.sqlite.exec("DELETE FROM auth_sessions");
+    await expect(resolveAuthIdentity(env, query)).resolves.toMatchObject({ uid: owner.user.uid });
+    invalidateAuthUserCache(env, owner.headers);
+    await expect(resolveAuthIdentity(env, query)).rejects.toMatchObject({ code: "TOKEN_EXPIRED" });
+  });
+
   it("does not join another request's pending identity lookup, and can retry failure", async () => {
     const gate = fixture.pauseRead("auth_sessions");
     const first = fixture.request(status, owner.headers);
@@ -56,10 +71,7 @@ describe("request-owned auth lookups", () => {
     // mask a broken identity cache with the separate completed-user cache.
     let secondUid: string | undefined;
     const next = authFactory.runWithAuthRequest(async () => {
-      const identity = await resolveAuthIdentity(
-        fixture.external.bindings,
-        new Headers(owner.headers),
-      );
+      const identity = await resolveAuthIdentity(fixture.external.bindings, owner.headers);
       expect(identity).toMatchObject({ uid: owner.user.uid, email: owner.user.email });
       secondUid = identity.uid;
     });
@@ -69,7 +81,7 @@ describe("request-owned auth lookups", () => {
     gate.fail(new Error("owner canceled"));
     expect((await first).status).toBe(500);
     await expect(
-      resolveAuthIdentity(fixture.external.bindings, new Headers(owner.headers)),
+      resolveAuthIdentity(fixture.external.bindings, owner.headers),
     ).resolves.toMatchObject({ uid: owner.user.uid });
     expect(sessionReads()).toHaveLength(2);
     const completed = await fixture.request(status, owner.headers);
@@ -110,29 +122,35 @@ describe("request-owned auth lookups", () => {
         .prepare("UPDATE auth_sessions SET token = ?")
         .run(owner.headers.authorization.slice(7));
       const env = fixture.external.bindings;
-      const headers = new Headers(owner.headers);
-      await expect(resolveAuthIdentity(env, headers)).resolves.toMatchObject({
+      const credentials = owner.headers;
+      await expect(resolveAuthIdentity(env, credentials)).resolves.toMatchObject({
         uid: owner.user.uid,
       });
-      await expect(resolveAuthIdentity(other.external.bindings, headers)).resolves.toMatchObject({
+      await expect(
+        resolveAuthIdentity(other.external.bindings, credentials),
+      ).resolves.toMatchObject({
         uid: second.user.uid,
       });
-      await expect(resolveAuthIdentity(env, headers)).resolves.toMatchObject({
+      await expect(resolveAuthIdentity(env, credentials)).resolves.toMatchObject({
         uid: owner.user.uid,
       });
-      invalidateAuthUserCache(headers, env);
+      invalidateAuthUserCache(env, credentials);
       fixture.database.sqlite.exec("DELETE FROM auth_sessions");
       other.database.sqlite.exec("DELETE FROM auth_sessions");
-      await expect(resolveAuthIdentity(env, headers)).rejects.toMatchObject({
+      await expect(resolveAuthIdentity(env, credentials)).rejects.toMatchObject({
         code: "TOKEN_EXPIRED",
       });
-      await expect(resolveAuthIdentity(other.external.bindings, headers)).resolves.toMatchObject({
+      await expect(
+        resolveAuthIdentity(other.external.bindings, credentials),
+      ).resolves.toMatchObject({
         uid: "second",
       });
       other.external.bindings.BETTER_AUTH_SECRET = "rotated-secret-at-least-32-characters-long";
-      await expect(resolveAuthIdentity(other.external.bindings, headers)).rejects.toMatchObject({
-        code: "TOKEN_EXPIRED",
-      });
+      await expect(resolveAuthIdentity(other.external.bindings, credentials)).rejects.toMatchObject(
+        {
+          code: "TOKEN_EXPIRED",
+        },
+      );
     } finally {
       await other.close();
     }
@@ -140,8 +158,8 @@ describe("request-owned auth lookups", () => {
 
   it("keeps completed auth values when an unrelated binding wrapper changes", async () => {
     const env = fixture.external.bindings;
-    const headers = new Headers(owner.headers);
-    await resolveAuthIdentity(env, headers);
+    const credentials = owner.headers;
+    await resolveAuthIdentity(env, credentials);
     const next = {
       ...env,
       OEM_KV: {} as KVNamespace,
@@ -150,7 +168,7 @@ describe("request-owned auth lookups", () => {
       UPSTASH_REDIS_REST_TOKEN: "unrelated-token",
     };
     fixture.database.sqlite.exec("DELETE FROM auth_sessions");
-    await expect(resolveAuthIdentity(next, headers)).resolves.toMatchObject({
+    await expect(resolveAuthIdentity(next, credentials)).resolves.toMatchObject({
       uid: owner.user.uid,
       email: owner.user.email,
     });
@@ -174,7 +192,7 @@ describe("request-owned auth lookups", () => {
     });
     // Also retain the helper's verified-identity protocol: it must not reauthenticate.
     const createAuth = vi.spyOn(authFactory, "createAuth");
-    const user = await resolveAuthUser(fixture.external.bindings, new Headers(owner.headers), {
+    const user = await resolveAuthUser(fixture.external.bindings, owner.headers, {
       uid: owner.user.uid,
       email: owner.user.email,
     });

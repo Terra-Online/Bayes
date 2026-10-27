@@ -1,5 +1,9 @@
-import { createAuth, hasSessionCredentials, sameAuthCacheEnvironment } from "@/lib/auth/betterAuth";
-import { resolveBrowserSessionHeaders } from "@/lib/auth/browserSession";
+import {
+  hasSessionCredentials,
+  readSessionIdentity,
+  sameAuthCacheEnvironment,
+} from "@/lib/auth/betterAuth";
+import { resolveAuthorization, type AuthCredentials } from "@/lib/auth/contract/credentials";
 import { ApiError } from "@/lib/errors";
 import { ensureUserProfile, formatPublicUid } from "@/repositories/users";
 import type { AppEnv, AuthUser } from "@/types/app";
@@ -33,10 +37,10 @@ const authCaches = new WeakMap<D1Database, AuthCache>();
 
 export async function resolveAuthIdentity(
   env: AppEnv["Bindings"],
-  headers: Headers,
+  credentials: AuthCredentials,
 ): Promise<AuthIdentity> {
   const now = Date.now();
-  const cacheKey = getAuthCacheKey(headers);
+  const cacheKey = getAuthCacheKey(credentials);
   const cache = getAuthCache(env);
   const cachedUser = cacheKey ? cache.users.get(cacheKey) : undefined;
   if (cachedUser && cachedUser.expiresAt > now) {
@@ -46,16 +50,16 @@ export async function resolveAuthIdentity(
   if (cachedIdentity && cachedIdentity.expiresAt > now) {
     return cachedIdentity.identity;
   }
-  return fetchAuthIdentity(env, headers, cacheKey, now);
+  return fetchAuthIdentity(env, credentials, cacheKey, now);
 }
 
 export async function resolveAuthUser(
   env: AppEnv["Bindings"],
-  headers: Headers,
+  credentials: AuthCredentials,
   verifiedIdentity?: AuthIdentity,
 ): Promise<AuthUser> {
   const now = Date.now();
-  const cacheKey = getAuthCacheKey(headers);
+  const cacheKey = getAuthCacheKey(credentials);
   const cached = cacheKey ? getAuthCache(env).users.get(cacheKey) : undefined;
   if (
     cached &&
@@ -65,11 +69,14 @@ export async function resolveAuthUser(
     return cached.user;
   }
   // Never share pending D1 work between Workers requests; cache only completed values.
-  return fetchAuthUser(env, headers, cacheKey, now, verifiedIdentity);
+  return fetchAuthUser(env, credentials, cacheKey, now, verifiedIdentity);
 }
 
-export function invalidateAuthUserCache(headers: Headers, env: AppEnv["Bindings"]): void {
-  const cacheKey = getAuthCacheKey(headers);
+export function invalidateAuthUserCache(
+  env: AppEnv["Bindings"],
+  credentials: AuthCredentials,
+): void {
+  const cacheKey = getAuthCacheKey(credentials);
   if (cacheKey) {
     const cache = getAuthCache(env);
     cache.revision += 1;
@@ -87,13 +94,13 @@ function getAuthCache(env: AppEnv["Bindings"]): AuthCache {
   return cache;
 }
 
-function getAuthCacheKey(headers: Headers): string | null {
-  const authorization = headers.get("authorization")?.trim();
+function getAuthCacheKey(credentials: AuthCredentials): string | null {
+  const authorization = resolveAuthorization(credentials)?.trim();
   if (authorization) {
     return `authorization:${authorization}`;
   }
 
-  const cookie = headers.get("cookie")?.trim();
+  const cookie = credentials.cookie?.trim();
   return cookie ? `cookie:${cookie}` : null;
 }
 
@@ -121,23 +128,18 @@ function identityFromAuthUser(user: AuthUser): AuthIdentity {
 
 async function fetchAuthIdentity(
   env: AppEnv["Bindings"],
-  headers: Headers,
+  credentials: AuthCredentials,
   cacheKey: string | null,
   now: number,
 ): Promise<AuthIdentity> {
   const cache = getAuthCache(env);
   const revision = cache.revision;
-  if (!hasSessionCredentials(env, headers)) {
+  if (!hasSessionCredentials(env, credentials)) {
     throw new ApiError(401, "SESSION_REQUIRED", "Session is required.");
   }
-  const auth = createAuth(env);
-  const browserSession = resolveBrowserSessionHeaders(auth, headers);
-  const session = await auth.api.getSession({
-    headers: browserSession.headers,
-    query: { disableRefresh: true },
-  });
-  if (!session) {
-    const authorization = headers.get("authorization")?.trim() ?? "";
+  const identity = await readSessionIdentity(env, credentials);
+  if (!identity) {
+    const authorization = resolveAuthorization(credentials)?.trim() ?? "";
     const hasBearerToken = authorization.toLowerCase().startsWith("bearer ");
     if (hasBearerToken) {
       throw new ApiError(401, "TOKEN_EXPIRED", "Token is expired, missing, or invalid.");
@@ -145,11 +147,6 @@ async function fetchAuthIdentity(
     throw new ApiError(401, "SESSION_REQUIRED", "Session is required.");
   }
 
-  const identity = {
-    uid: session.user.id,
-    email: session.user.email,
-    displayName: session.user.name,
-  };
   if (
     cacheKey &&
     authCaches.get(env.DB) === cache &&
@@ -167,14 +164,14 @@ async function fetchAuthIdentity(
 
 async function fetchAuthUser(
   env: AppEnv["Bindings"],
-  headers: Headers,
+  credentials: AuthCredentials,
   cacheKey: string | null,
   now: number,
   verifiedIdentity?: AuthIdentity,
 ): Promise<AuthUser> {
   const cache = getAuthCache(env);
   const revision = cache.revision;
-  const identity = verifiedIdentity ?? (await resolveAuthIdentity(env, headers));
+  const identity = verifiedIdentity ?? (await resolveAuthIdentity(env, credentials));
 
   const profile = await ensureUserProfile(env.DB, {
     uid: identity.uid,

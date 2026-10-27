@@ -1,10 +1,11 @@
 import { createCookieGetter } from "better-auth/cookies";
 
+import { resolveAuthorization, type AuthCredentials } from "@/lib/auth/contract/credentials";
 import type { Bindings } from "@/types/app";
 
 import { authCookieOptions } from "./origins";
 
-// This is only a presence check. Better Auth still verifies every credential.
+// This is only a presence check. Better Auth verifies each credential.
 const sessionCookieNames = new Map<string, readonly string[]>();
 
 function getSessionCookieNames(env: Bindings): readonly string[] {
@@ -45,11 +46,11 @@ function cookieHeaderHasName(header: string, name: string): boolean {
   return false;
 }
 
-export function hasSessionCredentials(env: Bindings, headers: Headers): boolean {
-  if (headers.get("authorization")?.trim()) {
+export function hasSessionCredentials(env: Bindings, credentials: AuthCredentials): boolean {
+  if (resolveAuthorization(credentials)?.trim()) {
     return true;
   }
-  const raw = headers.get("cookie");
+  const raw = credentials.cookie;
   if (!raw) {
     return false;
   }

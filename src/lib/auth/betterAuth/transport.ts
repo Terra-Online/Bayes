@@ -1,3 +1,5 @@
+import { resolveAuthorization, type AuthCredentials } from "@/lib/auth/contract/credentials";
+
 import { buildAuthForwardHeaders } from "./forwarding";
 
 // The route extracts these facts from the incoming request.
@@ -71,4 +73,16 @@ export async function readBetterAuthResponseData(
     headers,
     cookies: better_auth_response.headers.getSetCookie(),
   };
+}
+
+export function buildSessionCredentialHeaders(credentials: AuthCredentials): Headers {
+  const headers = new Headers();
+  if (credentials.cookie !== undefined) {
+    headers.set("cookie", credentials.cookie);
+  }
+  const authorization = resolveAuthorization(credentials);
+  if (authorization !== undefined) {
+    headers.set("authorization", authorization);
+  }
+  return headers;
 }

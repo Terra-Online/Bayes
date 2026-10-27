@@ -1,31 +1,15 @@
-import { createAuth } from "@/lib/auth/betterAuth";
+import { buildSessionCredentialHeaders, createAuth } from "@/lib/auth/betterAuth";
 import {
   getLegacyCookieExpirations,
   resolveBrowserSessionHeaders,
   serializeBrowserSessionCookie,
 } from "@/lib/auth/browserSession";
+import type { AuthCredentials } from "@/lib/auth/contract/credentials";
 import type { Bindings } from "@/types/app";
 
-import type { ReadSessionInput } from "./types";
-
-export function buildSessionCredentialHeaders(input: ReadSessionInput): Headers {
-  const headers = new Headers();
-  if (input.cookie !== undefined) {
-    headers.set("cookie", input.cookie);
-  }
-  if (input.authorization !== undefined) {
-    headers.set("authorization", input.authorization);
-  }
-  const accessToken = input.accessToken?.trim();
-  // The query token is a fallback. Even an empty Authorization header takes precedence.
-  if (accessToken && !headers.has("authorization")) {
-    headers.set("authorization", `Bearer ${accessToken}`);
-  }
-  return headers;
-}
-
-export function createBetterAuthSessionAdapter(env: Bindings, authHeaders: Headers) {
+export function createBetterAuthSessionAdapter(env: Bindings, credentials: AuthCredentials) {
   const auth = createAuth(env);
+  const authHeaders = buildSessionCredentialHeaders(credentials);
   const browserSession = resolveBrowserSessionHeaders(auth, authHeaders);
   return {
     requiresCookieConfirmation: browserSession.migrating,

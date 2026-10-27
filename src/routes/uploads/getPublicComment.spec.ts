@@ -154,7 +154,7 @@ describe("public comment context through HTTP", () => {
     expect(context.path[2]?.flagged).toBeUndefined();
   });
 
-  it("includes viewer vote and flag state for linked context", async () => {
+  it("returns viewer reactions for header credentials while query-only requests remain anonymous", async () => {
     insertComment({ id: "root", userId: "root-author" });
     insertComment({ id: "target", parentId: "root", depth: 1 });
     insertComment({ id: "reply", parentId: "target", depth: 2 });
@@ -189,6 +189,15 @@ describe("public comment context through HTTP", () => {
       viewerVote: -1,
       flagged: true,
     });
+
+    const queryOnly = await request(
+      `/comments/target?markerId=marker-1&access_token=${encodeURIComponent(viewer.headers.authorization.slice(7))}`,
+    );
+    expect(queryOnly.status).toBe(200);
+    const anonymous = (await queryOnly.json()) as { item: PublicCommentContext };
+    expect(anonymous.item.path[1]?.viewerVote).toBeUndefined();
+    expect(anonymous.item.path[0]?.flagged).toBeUndefined();
+    expect(anonymous.item.replies[0]?.viewerVote).toBeUndefined();
   });
 
   it("omits a non-public ancestor without exposing its content", async () => {

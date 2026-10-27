@@ -119,7 +119,9 @@ describe.each(["http://localhost:8787", "https://api.opendfieldmap.org"])(
       for (const visitDay of [40, 80, 120, 160, 200, 240, 280, 320, 360, 400]) {
         vi.setSystemTime(START_MS + visitDay * DAY_MS);
         const previousExpiry = sessionRecord().expiresAt;
-        await runWithAuthRequest(() => resolveAuthIdentity(env, headers));
+        await runWithAuthRequest(() =>
+          resolveAuthIdentity(env, { cookie: headers.get("cookie") ?? undefined }),
+        );
         expect(sessionRecord().expiresAt).toEqual(previousExpiry);
 
         const response = await app.request("/auth/v1/session", { headers }, env);
