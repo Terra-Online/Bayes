@@ -2,9 +2,9 @@ import { getCookies } from "better-auth/cookies";
 import type { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import * as authModule from "@/lib/auth/betterAuth";
-import { createAuth, runWithAuthRequest } from "@/lib/auth/betterAuth";
-import { resolveAuthIdentity } from "@/lib/auth/identity";
+import * as authModule from "@/services/auth/betterAuth";
+import { createAuth, runWithAuthRequest } from "@/services/auth/betterAuth";
+import { resolveAuthIdentity } from "@/services/auth/identity";
 import type { TestDatabase } from "@/test/database/createTestDatabase";
 import {
   createSessionAuthFixture,

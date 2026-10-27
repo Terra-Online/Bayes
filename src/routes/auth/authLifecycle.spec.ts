@@ -1,9 +1,9 @@
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createAuth } from "@/lib/auth/betterAuth";
 import { onAppError } from "@/middleware/error-handler";
 import { createRoutes as createProfileRoutes } from "@/routes/profile/createRoutes";
+import { createAuth } from "@/services/auth/betterAuth";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { insertAuthUser, insertSession, testAuthConfig } from "@/test/fixtures/auth";
 import { stubRequestWithDuplex } from "@/test/fixtures/request";

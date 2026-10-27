@@ -1,7 +1,6 @@
 // Local workerd fixture for public reads, upstream sockets, and outbox delivery.
 import { Hono } from "hono";
 
-import { runWithAuthRequest } from "@/lib/auth/betterAuth";
 import { decryptSecret, encryptSecret } from "@/lib/crypto";
 import { ApiError } from "@/lib/errors";
 import { onAppError } from "@/middleware/error-handler";
@@ -14,6 +13,7 @@ import { getNotificationById } from "@/repositories/notifications";
 import { createRoutes as positionRoutes } from "@/routes/locator/positionRoutes";
 import { createRoutes as notificationRoutes } from "@/routes/notify/createRoutes";
 import { handleNotificationLiveUpgrade } from "@/routes/notify/liveUpgrade";
+import { runWithAuthRequest } from "@/services/auth/betterAuth";
 import { publishNotificationsCreated } from "@/services/notify/live";
 import { invalidateBindingCaches } from "@/services/official/auth/credentialCache";
 import { createEndfieldDeviceProfile } from "@/services/official/client/deviceProfile";

@@ -1,11 +1,11 @@
 import { Hono, type ExecutionContext } from "hono";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
-import { runWithAuthRequest } from "@/lib/auth/betterAuth";
 import { encryptSecret } from "@/lib/crypto";
 import { onAppError } from "@/middleware/error-handler";
 import { requestIdMiddleware } from "@/middleware/request-id";
 import { saveBinding, saveRoleDeviceProfile } from "@/repositories/binding/repository";
+import { runWithAuthRequest } from "@/services/auth/betterAuth";
 import { createEndfieldDeviceProfile } from "@/services/official/client/deviceProfile";
 import { POSITION_CACHE_FRESH_MS } from "@/services/official/locator/cache";
 import { createMockBindings } from "@/test/bindings";

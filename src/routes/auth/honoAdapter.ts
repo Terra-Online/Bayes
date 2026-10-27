@@ -1,7 +1,7 @@
 import type { Context } from "hono";
 import type { StatusCode } from "hono/utils/http-status";
 
-import type { BetterAuthRequestInfo, BetterAuthResponseData } from "@/lib/auth/betterAuth";
+import type { BetterAuthRequestInfo, BetterAuthResponseData } from "@/services/auth/betterAuth";
 import type { AppEnv } from "@/types/app";
 
 export function authRequestInfo<E extends AppEnv<{ requestId: string }>>(

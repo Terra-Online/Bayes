@@ -1,11 +1,5 @@
 import { Hono } from "hono";
 
-import {
-  followPasswordResetLink,
-  previewPasswordReset,
-  requestPasswordReset,
-  resetPassword,
-} from "@/lib/auth/resetPassword";
 import { rateLimit } from "@/middleware/rate-limit";
 import { parseInput, readJsonBody } from "@/routes/input";
 import {
@@ -13,6 +7,12 @@ import {
   resetPasswordPreviewSchema,
   resetPasswordSchema,
 } from "@/routes/schema/auth";
+import {
+  followPasswordResetLink,
+  previewPasswordReset,
+  requestPasswordReset,
+  resetPassword,
+} from "@/services/auth/resetPassword";
 import type { AppEnv } from "@/types/app";
 
 import { authRequestInfo, authResponse } from "./honoAdapter";

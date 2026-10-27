@@ -1,10 +1,14 @@
 import { Hono } from "hono";
 
-import { beginLinkLoginMethod, listLoginMethods, unlinkLoginMethod } from "@/lib/auth/loginMethods";
 import { requireAuth } from "@/middleware/auth";
 import { rateLimit } from "@/middleware/rate-limit";
 import { parseInput } from "@/routes/input";
 import { linkAccountSchema, unlinkAccountSchema } from "@/routes/schema/auth";
+import {
+  beginLinkLoginMethod,
+  listLoginMethods,
+  unlinkLoginMethod,
+} from "@/services/auth/loginMethods";
 import type { AppEnv } from "@/types/app";
 
 import { authRequestInfo, authResponse } from "./honoAdapter";

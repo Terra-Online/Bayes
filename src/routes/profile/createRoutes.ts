@@ -1,9 +1,9 @@
 import { Hono } from "hono";
 
-import { invalidateAuthUserCache } from "@/lib/auth/identity";
-import { getRequestAuthCredentials } from "@/lib/auth/requestCredentials";
 import { requireAuth } from "@/middleware/auth";
 import { rateLimit } from "@/middleware/rate-limit";
+import { invalidateAuthUserCache } from "@/services/auth/identity";
+import { getRequestAuthCredentials } from "@/services/auth/requestCredentials";
 import { updateProfile } from "@/services/profile";
 import type { AppEnv } from "@/types/app";
 

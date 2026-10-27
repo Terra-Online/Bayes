@@ -1,7 +1,7 @@
 import type { Context } from "hono";
 
-import { resolveAuthIdentity } from "@/lib/auth/identity";
-import { getRequestAuthCredentials } from "@/lib/auth/requestCredentials";
+import { resolveAuthIdentity } from "@/services/auth/identity";
+import { getRequestAuthCredentials } from "@/services/auth/requestCredentials";
 import type { LocatorIdentity } from "@/services/official/locator/access";
 import type { AppEnv } from "@/types/app";
 

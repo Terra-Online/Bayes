@@ -1,16 +1,16 @@
 import { Hono } from "hono";
 import { createMiddleware } from "hono/factory";
 
-import { getRequestAuthCredentials } from "@/lib/auth/requestCredentials";
-import { parseTrustedFrontendOrigins } from "@/lib/auth/rules/frontendOrigins";
-import { readSession } from "@/lib/auth/session";
-import { exchangeSession } from "@/lib/auth/sessionExchange";
-import { signOut } from "@/lib/auth/signOut";
 import { ApiError } from "@/lib/errors";
 import { rateLimit } from "@/middleware/rate-limit";
 import { parseInput, readJsonBody } from "@/routes/input";
 import { toUserResponse } from "@/routes/response/userResponse";
 import { sessionExchangeSchema } from "@/routes/schema/auth";
+import { getRequestAuthCredentials } from "@/services/auth/requestCredentials";
+import { parseTrustedFrontendOrigins } from "@/services/auth/rules/frontendOrigins";
+import { readSession } from "@/services/auth/session";
+import { exchangeSession } from "@/services/auth/sessionExchange";
+import { signOut } from "@/services/auth/signOut";
 import type { AppEnv, AuthUser } from "@/types/app";
 
 import { authRequestInfo, authResponse } from "./honoAdapter";

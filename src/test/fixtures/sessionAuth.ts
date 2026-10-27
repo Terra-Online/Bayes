@@ -2,9 +2,9 @@ import { Hono } from "hono";
 import { createMiddleware } from "hono/factory";
 import { expect, vi, type Mock } from "vitest";
 
-import { runWithAuthRequest } from "@/lib/auth/betterAuth";
 import { onAppError } from "@/middleware/error-handler";
 import { createRoutes as createAuthRoutes } from "@/routes/auth/createRoutes";
+import { runWithAuthRequest } from "@/services/auth/betterAuth";
 import { createMockBindings } from "@/test/bindings";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { stubRequestWithDuplex } from "@/test/fixtures/request";

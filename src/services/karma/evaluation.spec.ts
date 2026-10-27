@@ -2,10 +2,10 @@ import { Redis } from "@upstash/redis";
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { runWithAuthRequest } from "@/lib/auth/betterAuth";
 import * as rules from "@/lib/karma/rules";
 import { onAppError } from "@/middleware/error-handler";
 import { createRoutes } from "@/routes/moderation/createRoutes";
+import { runWithAuthRequest } from "@/services/auth/betterAuth";
 import { createMockBindings, type MockBindings } from "@/test/bindings";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { insertAuthenticatedUser, type SessionHeaders } from "@/test/fixtures/auth";

@@ -1,10 +1,10 @@
 import { Hono } from "hono";
 
-import { loginViaPassword } from "@/lib/auth/loginViaPassword";
-import { registerViaOTP, requestRegistrationOtp } from "@/lib/auth/registerViaOTP";
 import { rateLimit } from "@/middleware/rate-limit";
 import { parseInput, readJsonBody, readJsonObject } from "@/routes/input";
 import { registerWithOtpSchema, sendTemplateOtpSchema } from "@/routes/schema/auth";
+import { loginViaPassword } from "@/services/auth/loginViaPassword";
+import { registerViaOTP, requestRegistrationOtp } from "@/services/auth/registerViaOTP";
 import type { AppEnv } from "@/types/app";
 
 import { authRequestInfo, authResponse } from "./honoAdapter";

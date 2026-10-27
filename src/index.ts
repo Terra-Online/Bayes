@@ -1,12 +1,12 @@
 import { handleNotificationLiveUpgrade } from "@/routes/notify/liveUpgrade";
 
 import { createApp } from "./app";
-import { runWithAuthRequest } from "./lib/auth/betterAuth";
 import { getRuntimeConfig } from "./lib/config";
 import { createRedisClient } from "./lib/redis";
 import { withRequestTelemetry } from "./lib/requestTelemetry";
 import { ensureAutoModerationBackfill } from "./queues/client/autoModeration";
 import { handleQueue } from "./queues/runtime/entrypoint";
+import { runWithAuthRequest } from "./services/auth/betterAuth";
 import { evaluateKarmaIfDue } from "./services/karma/evaluation";
 import { drainProgressStatsOutbox } from "./services/progress/outbox";
 import {

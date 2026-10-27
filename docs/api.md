@@ -129,9 +129,9 @@ a short-lived exchange code bound to the frontend origin and proof challenge.
 proof and establishes the browser session. A code alone is not sufficient.
 
 When changing this flow, inspect the frontend caller together with
-[`browserSession.ts`](../src/lib/auth/browserSession.ts),
+[`browserSession.ts`](../src/services/auth/browserSession.ts),
 [`socialRoutes.ts`](../src/routes/auth/socialRoutes.ts),
-[`oauthCallback/index.ts`](../src/lib/auth/oauthCallback/index.ts), and
+[`oauthCallback/index.ts`](../src/services/auth/oauthCallback/index.ts), and
 [`sessionRoutes.ts`](../src/routes/auth/sessionRoutes.ts).
 Do not replace the proof flow with a URL containing a session token.
 

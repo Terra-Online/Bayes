@@ -2,8 +2,8 @@ import { Hono } from "hono";
 import { createMiddleware } from "hono/factory";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createAuth, runWithAuthRequest } from "@/lib/auth/betterAuth";
 import { onAppError } from "@/middleware/error-handler";
+import { createAuth, runWithAuthRequest } from "@/services/auth/betterAuth";
 import emailTemplates from "@/services/email/templateLocales.json";
 import { createMockBindings, type MockBindings } from "@/test/bindings";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
@@ -13,7 +13,7 @@ import type { AppEnv, Bindings } from "@/types/app";
 import { createRoutes as createEmailRoutes } from "./emailRoutes";
 import { createRoutes as createPasswordResetRoutes } from "./passwordResetRoutes";
 
-vi.mock("@/lib/auth/rules/disposableEmailDomains.json", () => ({
+vi.mock("@/services/auth/rules/disposableEmailDomains.json", () => ({
   default: ["disposable.example.test"],
 }));
 

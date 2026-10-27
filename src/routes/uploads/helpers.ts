@@ -1,6 +1,6 @@
-import { resolveAuthorization, type AuthCredentials } from "@/lib/auth/contract/credentials";
-import { resolveAuthIdentity, type AuthIdentity } from "@/lib/auth/identity";
 import { ApiError } from "@/lib/errors";
+import { resolveAuthorization, type AuthCredentials } from "@/services/auth/contract/credentials";
+import { resolveAuthIdentity, type AuthIdentity } from "@/services/auth/identity";
 import type { AppEnv } from "@/types/app";
 
 export function pickString(

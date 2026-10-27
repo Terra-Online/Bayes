@@ -1,9 +1,9 @@
 import { Hono } from "hono";
 
-import { beginSocialLogin } from "@/lib/auth/loginViaSocial";
-import { completeOAuthCallback, handleOAuthError } from "@/lib/auth/oauthCallback";
 import { rateLimit } from "@/middleware/rate-limit";
 import { readJsonObject } from "@/routes/input";
+import { beginSocialLogin } from "@/services/auth/loginViaSocial";
+import { completeOAuthCallback, handleOAuthError } from "@/services/auth/oauthCallback";
 import type { AppEnv } from "@/types/app";
 
 import { authRequestInfo, authResponse } from "./honoAdapter";
