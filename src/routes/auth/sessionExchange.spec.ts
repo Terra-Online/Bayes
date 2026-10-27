@@ -1,7 +1,7 @@
 import type { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { AUTH_EXCHANGE_CHALLENGE_PARAM } from "@/lib/auth/browserSession";
+import { AUTH_EXCHANGE_CHALLENGE_PARAM } from "@/services/auth/browserSession";
 import type { TestDatabase } from "@/test/database/createTestDatabase";
 import {
   createSessionAuthFixture,
@@ -9,8 +9,6 @@ import {
   type SessionAuthFixture,
 } from "@/test/fixtures/sessionAuth";
 import type { AppEnv, Bindings } from "@/types/app";
-
-import * as authForwarding from "./forwarding";
 
 interface IssuedExchangeCode {
   code: string;
@@ -37,7 +35,6 @@ describe("CHIPS OAuth exchange", () => {
     // these tests assert auth timestamps, never users.last_active.
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-09-05T00:00:00.000Z"));
-    vi.spyOn(authForwarding, "forwardToAuthRawRequest");
     fixture = createSessionAuthFixture(API_ORIGIN);
     ({ database, env, app } = fixture);
   });
@@ -95,7 +92,7 @@ describe("CHIPS OAuth exchange", () => {
     );
   }
 
-  it("rejects malformed social sign-in JSON before forwarding the consumed request", async () => {
+  it("rejects malformed social sign-in JSON without starting provider authorization", async () => {
     const response = await app.request(
       `${API_ORIGIN}/auth/v1/sign-in/social`,
       {
@@ -108,7 +105,107 @@ describe("CHIPS OAuth exchange", () => {
 
     expect(response.status).toBe(422);
     expect(await response.json()).toMatchObject({ code: "VALIDATION_ERROR" });
-    expect(authForwarding.forwardToAuthRawRequest).not.toHaveBeenCalled();
+    expect(fixture.oauthFetch).not.toHaveBeenCalled();
+  });
+
+  it("retains requested provider scopes and completes a form callback through Better Auth's GET redirect", async () => {
+    const initiated = await app.request(
+      `${API_ORIGIN}/auth/v1/sign-in/social`,
+      {
+        method: "POST",
+        headers: { origin: CN_ORIGIN, "content-type": "application/json" },
+        body: JSON.stringify({
+          provider: "github",
+          callbackURL: `${CN_ORIGIN}/map`,
+          disableRedirect: true,
+          scopes: ["read:org"],
+        }),
+      },
+      env,
+    );
+    expect(initiated.status).toBe(200);
+    const authorization = new URL(((await initiated.json()) as { url: string }).url);
+    expect(authorization.searchParams.get("scope")?.split(" ")).toContain("read:org");
+    const state = authorization.searchParams.get("state")!;
+    const cookies = initiated.headers
+      .getSetCookie()
+      .map((cookie) => cookie.split(";")[0])
+      .join("; ");
+
+    const posted = await app.request(
+      `${API_ORIGIN}/auth/v1/callback/github?code=query-code`,
+      {
+        method: "POST",
+        headers: {
+          origin: CN_ORIGIN,
+          cookie: cookies,
+          "content-type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams({ code: "form-code", state }).toString(),
+      },
+      env,
+    );
+    expect(posted.status).toBe(302);
+    const redirect = new URL(posted.headers.get("location")!);
+    expect(redirect.origin + redirect.pathname).toBe(`${API_ORIGIN}/auth/v1/callback/github`);
+    expect(redirect.searchParams.get("state")).toBe(state);
+    expect(redirect.searchParams.get("code")).toBe("query-code");
+    expect(redirect.searchParams.has("auth_code")).toBe(false);
+
+    const completed = await app.request(redirect.toString(), { headers: { cookie: cookies } }, env);
+    expect(completed.status).toBe(302);
+    const destination = new URL(completed.headers.get("location")!);
+    expect(destination.origin + destination.pathname).toBe(`${CN_ORIGIN}/map`);
+    expect(destination.searchParams.get("auth_code")).toBeTruthy();
+    expect(
+      completed.headers.getSetCookie().some((cookie) => cookie.includes(".session_token=")),
+    ).toBe(true);
+  });
+
+  it("returns provider denial to the configured error page without a session exchange code", async () => {
+    const initiated = await app.request(
+      `${API_ORIGIN}/auth/v1/sign-in/social`,
+      {
+        method: "POST",
+        headers: { origin: CN_ORIGIN, "content-type": "application/json" },
+        body: JSON.stringify({
+          provider: "github",
+          callbackURL: `${CN_ORIGIN}/map`,
+          errorCallbackURL: `${CN_ORIGIN}/login-error?source=github`,
+          disableRedirect: true,
+        }),
+      },
+      env,
+    );
+    expect(initiated.status).toBe(200);
+    const authorization = new URL(((await initiated.json()) as { url: string }).url);
+    const query = new URLSearchParams({
+      state: authorization.searchParams.get("state")!,
+      error: "access_denied",
+      error_description: "Authorization declined",
+    });
+    const denied = await app.request(
+      `${API_ORIGIN}/auth/v1/callback/github?${query}`,
+      {
+        headers: {
+          cookie: initiated.headers
+            .getSetCookie()
+            .map((cookie) => cookie.split(";")[0])
+            .join("; "),
+        },
+      },
+      env,
+    );
+    expect(denied.status).toBe(302);
+    const destination = new URL(denied.headers.get("location")!);
+    expect(destination.origin + destination.pathname).toBe(`${CN_ORIGIN}/login-error`);
+    expect(destination.searchParams.get("source")).toBe("github");
+    expect(destination.searchParams.get("error")).toBe("access_denied");
+    expect(destination.searchParams.get("error_description")).toBe("Authorization declined");
+    expect(destination.searchParams.has("auth_code")).toBe(false);
+    expect(denied.headers.getSetCookie().some((cookie) => cookie.includes(".session_token="))).toBe(
+      false,
+    );
     expect(fixture.oauthFetch).not.toHaveBeenCalled();
   });
 
@@ -237,6 +334,7 @@ describe("CHIPS OAuth exchange", () => {
     ["/\\attacker.example/steal", `${CN_ORIGIN}/`],
     ["https://attacker.example/steal", `${CN_ORIGIN}/`],
     ["not a URL", `${CN_ORIGIN}/`],
+    [42, `${CN_ORIGIN}/`],
   ])("keeps OAuth return destinations trusted for %s", async (callbackURL, expected) => {
     const response = await app.request(
       `${API_ORIGIN}/auth/v1/sign-in/social`,

@@ -2,11 +2,11 @@ import { Hono } from "hono";
 import { createMiddleware } from "hono/factory";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { runWithAuthRequest } from "@/lib/auth/createAuth";
 import { decryptSecret, encryptSecret } from "@/lib/crypto";
 import { ApiError } from "@/lib/errors";
 import { onAppError } from "@/middleware/error-handler";
 import { createRoutes as createSyncRoutes } from "@/routes/sync/createRoutes";
+import { runWithAuthRequest } from "@/services/auth/betterAuth";
 import { readDecryptedBindingCache } from "@/services/official/auth/credentialCache";
 import {
   createCredentialRecoveryScope,

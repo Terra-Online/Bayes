@@ -1,18 +1,16 @@
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createAuth } from "@/lib/auth/createAuth";
 import { onAppError } from "@/middleware/error-handler";
+import { createRoutes as createProfileRoutes } from "@/routes/profile/createRoutes";
+import { createAuth } from "@/services/auth/betterAuth";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { insertAuthUser, insertSession, testAuthConfig } from "@/test/fixtures/auth";
+import { stubRequestWithDuplex } from "@/test/fixtures/request";
 import { insertUser } from "@/test/fixtures/users";
 import type { AppEnv, Bindings } from "@/types/app";
 
-import { createRoutes as createAccountRoutes } from "./accountRoutes";
 import { createRoutes as createAuthRoutes } from "./createRoutes";
-import { createRoutes as createEmailRoutes } from "./emailRoutes";
-import { createRoutes as createSessionRoutes } from "./sessionRoutes";
-import { createRoutes as createSocialRoutes } from "./socialRoutes";
 
 type Credentials = { authorization?: string; cookie?: string };
 
@@ -26,6 +24,7 @@ describe("authenticated account and profile HTTP lifecycle", () => {
   let testIp: string;
 
   beforeEach(() => {
+    stubRequestWithDuplex();
     database = createTestDatabase();
     testIp = `192.0.2.${++testNumber}`;
     env = {
@@ -60,15 +59,13 @@ describe("authenticated account and profile HTTP lifecycle", () => {
 
     app = new Hono<AppEnv<{ requestId: string }>>();
     app.onError(onAppError);
-    app.route("/auth/v1", createEmailRoutes());
-    app.route("/auth/v1", createSocialRoutes());
-    app.route("/auth/v1", createSessionRoutes());
-    app.route("/auth/v1", createAccountRoutes());
+    app.route("/auth/v1", createProfileRoutes());
     app.route("/auth/v1", createAuthRoutes());
   });
 
   afterEach(() => {
     database.close();
+    vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
 
@@ -169,8 +166,8 @@ describe("authenticated account and profile HTTP lifecycle", () => {
   });
 
   it("completes historical nickname onboarding once and keeps the chosen public UID on later renames", async () => {
-    // Current compatibility: an uncustomized profile chooses its suffix on its
-    // first nickname update. Later edits preserve that public identity.
+    // An uncustomized profile chooses its suffix on the first nickname update.
+    // Later edits keep that public identity.
     database.sqlite.exec("UPDATE users SET nickname_customized = 0 WHERE uid = 'owner'");
     expect(await (await request("/session")).json()).toMatchObject({
       user: { uid: "123456AB", needsProfileSetup: true },
@@ -181,7 +178,7 @@ describe("authenticated account and profile HTTP lifecycle", () => {
     const profile = (await onboarded.json()) as { user: { uid: string } };
     expect(profile).toMatchObject({
       user: {
-        uid: expect.stringMatching(/^123456[A-Z]{2}$/),
+        uid: "123456ER",
         nickname: "Explorer",
         avatar: 7,
         needsProfileSetup: false,
@@ -407,72 +404,80 @@ describe("authenticated account and profile HTTP lifecycle", () => {
     expect((await request("/session")).status).toBe(200);
   });
 
-  it("links a verified GitHub identity to the signed-in user without replacing the public profile", async () => {
-    addAccount("owner-password", "credential");
-    const originalProfile = storedProfile();
-    const response = await jsonRequest("POST", "/link-social", {
-      provider: "github",
-      callbackURL: "https://opendfieldmap.org/settings",
-    });
-    expect(response.status).toBe(200);
-    const authorization = new URL(((await response.json()) as { url: string }).url);
-    expect(authorization.hostname).toBe("github.com");
-    expect(authorization.searchParams.get("redirect_uri")).toBe(
-      "https://api.opendfieldmap.org/auth/v1/callback/github",
-    );
-    const state = authorization.searchParams.get("state");
-    expect(state).toBeTruthy();
+  it.each([
+    ["absolute", "https://opendfieldmap.org/settings", "https://opendfieldmap.org/settings"],
+    ["relative", "/settings", "https://opendfieldmap.org/settings"],
+    ["untrusted", "https://untrusted.example/settings", "https://opendfieldmap.org"],
+    ["omitted", undefined, "https://opendfieldmap.org"],
+  ] as const)(
+    "binds GitHub with %s callback input and returns to the trusted frontend",
+    async (_kind, callbackURL, expectedDestination) => {
+      addAccount("owner-password", "credential");
+      const originalProfile = storedProfile();
+      const response = await jsonRequest("POST", "/link-social", {
+        provider: "github",
+        callbackURL,
+      });
+      expect(response.status).toBe(200);
+      const authorization = new URL(((await response.json()) as { url: string }).url);
+      expect(authorization.hostname).toBe("github.com");
+      expect(authorization.searchParams.get("redirect_uri")).toBe(
+        "https://api.opendfieldmap.org/auth/v1/callback/github",
+      );
+      const state = authorization.searchParams.get("state");
+      expect(state).toBeTruthy();
 
-    // Only the remote provider boundary is substituted. The callback, database
-    // state, auth linking, and route response all use production application code.
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      const url = String(input instanceof Request ? input.url : input);
-      let data: unknown;
-      if (url === "https://github.com/login/oauth/access_token") {
-        data = { access_token: "github-provider-token", token_type: "Bearer" };
-      } else if (url === "https://api.github.com/user") {
-        data = {
-          id: 12345,
-          email: "owner@example.test",
-          name: "GitHub Name",
-          login: "github-owner",
-        };
-      } else if (url === "https://api.github.com/user/emails") {
-        data = [{ email: "owner@example.test", primary: true, verified: true }];
-      } else {
-        throw new Error(`Unexpected OAuth request: ${url}`);
-      }
-      return Response.json(data);
-    });
-    const callback = await request(
-      `/callback/github?state=${encodeURIComponent(state!)}&code=github-code`,
-    );
-    expect(callback.status).toBe(302);
-    expect(callback.headers.get("location")).toBe("https://opendfieldmap.org/settings");
-    expect(storedProfile()).toEqual(originalProfile);
-    expect(
-      database.sqlite
-        .prepare("SELECT userId, accountId FROM auth_accounts WHERE providerId = 'github'")
-        .all(),
-    ).toEqual([{ userId: "owner", accountId: "12345" }]);
-    const accounts = await request("/list-accounts");
-    expect(accounts.status).toBe(200);
-    expect(await accounts.json()).toEqual({
-      accounts: [
-        {
-          provider: "email",
-          linkedAt: "2026-09-02T00:00:00.000Z",
-          verified: true,
-          unlinkable: true,
-        },
-        { provider: "github", linkedAt: expect.any(String), unlinkable: true },
-      ],
-    });
-    expect(await (await request("/session")).json()).toMatchObject({
-      user: { uid: "123456AB", nickname: "OriginalName" },
-    });
-    expect(await (await request("/list-accounts", {}, other)).json()).toEqual({ accounts: [] });
-  });
+      // Only the remote provider boundary is substituted. The callback, database
+      // state, auth linking, and route response all use production application code.
+      vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+        const url = String(input instanceof Request ? input.url : input);
+        let data: unknown;
+        if (url === "https://github.com/login/oauth/access_token") {
+          data = { access_token: "github-provider-token", token_type: "Bearer" };
+        } else if (url === "https://api.github.com/user") {
+          data = {
+            id: 12345,
+            email: "owner@example.test",
+            name: "GitHub Name",
+            login: "github-owner",
+          };
+        } else if (url === "https://api.github.com/user/emails") {
+          data = [{ email: "owner@example.test", primary: true, verified: true }];
+        } else {
+          throw new Error(`Unexpected OAuth request: ${url}`);
+        }
+        return Response.json(data);
+      });
+      const callback = await request(
+        `/callback/github?state=${encodeURIComponent(state!)}&code=github-code`,
+      );
+      expect(callback.status).toBe(302);
+      expect(callback.headers.get("location")).toBe(expectedDestination);
+      expect(storedProfile()).toEqual(originalProfile);
+      expect(
+        database.sqlite
+          .prepare("SELECT userId, accountId FROM auth_accounts WHERE providerId = 'github'")
+          .all(),
+      ).toEqual([{ userId: "owner", accountId: "12345" }]);
+      const accounts = await request("/list-accounts");
+      expect(accounts.status).toBe(200);
+      expect(await accounts.json()).toEqual({
+        accounts: [
+          {
+            provider: "email",
+            linkedAt: "2026-09-02T00:00:00.000Z",
+            verified: true,
+            unlinkable: true,
+          },
+          { provider: "github", linkedAt: expect.any(String), unlinkable: true },
+        ],
+      });
+      expect(await (await request("/session")).json()).toMatchObject({
+        user: { uid: "123456AB", nickname: "OriginalName" },
+      });
+      expect(await (await request("/list-accounts", {}, other)).json()).toEqual({ accounts: [] });
+    },
+  );
 
   it.each(["anonymous", "expired"])(
     "protects profiles and login methods from an %s session",
@@ -507,6 +512,30 @@ describe("authenticated account and profile HTTP lifecycle", () => {
       ).toBe(0);
     },
   );
+
+  it("clears browser cookies but leaves the session usable when session deletion fails", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    expect((await request("/list-accounts")).status).toBe(200);
+    const session = database.sqlite
+      .prepare("SELECT token FROM auth_sessions WHERE userId = 'owner'")
+      .get()!;
+    database.hooks.beforeQuery = (sql) => {
+      if (/^delete from "auth_sessions"/i.test(sql)) {
+        throw new Error("session deletion unavailable");
+      }
+    };
+    const response = await request("/sign-out", { method: "POST" });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ success: true });
+    expect(response.headers.getSetCookie().some((cookie) => cookie.includes("Max-Age=0"))).toBe(
+      true,
+    );
+    database.hooks.beforeQuery = undefined;
+    expect(
+      database.sqlite.prepare("SELECT token FROM auth_sessions WHERE token = ?").get(session.token),
+    ).toEqual(session);
+    expect((await request("/list-accounts")).status).toBe(200);
+  });
 
   it.each(["bearer", "browser", "legacy browser"])(
     "signs out a %s login immediately without revoking other sessions or deleting the profile",
@@ -558,6 +587,18 @@ describe("authenticated account and profile HTTP lifecycle", () => {
       const originalProfile = storedProfile(existing.user.id);
       const originalAccounts = database.sqlite.prepare("SELECT * FROM auth_accounts").all();
 
+      const invalid = await request(
+        "/sign-out",
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: "{",
+        },
+        credentials,
+      );
+      expect(invalid.status).toBe(400);
+      expect(invalid.headers.get("cache-control")).toBe("private, no-store");
+      expect((await request("/list-accounts", {}, credentials)).status).toBe(200);
       const response = await request("/sign-out", { method: "POST" }, credentials);
       expect(response.status).toBe(200);
       expect(await response.json()).toEqual({ success: true });

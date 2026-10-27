@@ -1,185 +1,76 @@
-import type { Context } from "hono";
 import { Hono } from "hono";
 import { createMiddleware } from "hono/factory";
 
-import {
-  getLegacyCookieExpirations,
-  resolveBrowserSessionHeaders,
-  serializeBrowserSessionCookie,
-} from "@/lib/auth/browserSession";
-import { createAuth } from "@/lib/auth/createAuth";
-import { invalidateAuthUserCache, resolveAuthUser } from "@/lib/auth/identity";
-import { getRequestAuthHeaders } from "@/lib/auth/requestHeaders";
-import { hasSessionCredentials } from "@/lib/auth/sessionCredentials";
 import { ApiError } from "@/lib/errors";
-import { requireAuth } from "@/middleware/auth";
 import { rateLimit } from "@/middleware/rate-limit";
-import { formatPublicUid, getErrorMessage, updateUserNickname } from "@/repositories/users";
-import { profileUpdateSchema } from "@/routes/schema/auth";
+import { parseInput, readJsonBody } from "@/routes/input";
+import { toUserResponse } from "@/routes/response/userResponse";
+import { sessionExchangeSchema } from "@/routes/schema/auth";
+import { getRequestAuthCredentials } from "@/services/auth/requestCredentials";
+import { parseTrustedFrontendOrigins } from "@/services/auth/rules/frontendOrigins";
+import { readSession } from "@/services/auth/session";
+import { exchangeSession } from "@/services/auth/sessionExchange";
+import { signOut } from "@/services/auth/signOut";
 import type { AppEnv, AuthUser } from "@/types/app";
 
-import { toSessionUser } from "./sessionUser";
-
-async function readProfileUpdateBody<E extends AppEnv>(c: Context<E>): Promise<unknown> {
-  const contentType = c.req.header("content-type")?.toLowerCase() ?? "";
-
-  if (contentType.includes("application/json") || contentType.length === 0) {
-    try {
-      return await c.req.json();
-    } catch {
-      throw new ApiError(422, "VALIDATION_ERROR", "Request body must be valid JSON.");
-    }
-  }
-
-  if (
-    contentType.includes("application/x-www-form-urlencoded") ||
-    contentType.includes("multipart/form-data")
-  ) {
-    const form = await c.req.parseBody();
-    let rawAvatar: number | undefined;
-    if (typeof form.avatar === "string") {
-      rawAvatar = Number(form.avatar);
-    } else if (typeof form.avt === "string") {
-      rawAvatar = Number(form.avt);
-    }
-    return {
-      nickname: typeof form.nickname === "string" ? form.nickname : undefined,
-      avatar: rawAvatar,
-    };
-  }
-
-  throw new ApiError(415, "UNSUPPORTED_MEDIA_TYPE", "Unsupported content-type for profile update.");
-}
-
-function normalizeProfileUpdateBody(body: unknown): unknown {
-  if (!body || typeof body !== "object" || Array.isArray(body)) {
-    return body;
-  }
-
-  const nextBody = { ...(body as Record<string, unknown>) };
-  if (nextBody.avatar === undefined && nextBody.avt !== undefined) {
-    nextBody.avatar = nextBody.avt;
-  }
-  return nextBody;
-}
-
-function mapProfileUpdateError(error: unknown): never {
-  const message = getErrorMessage(error);
-  if (message.includes("INVALID_NICKNAME_FORMAT")) {
-    throw new ApiError(422, "INVALID_NICKNAME_FORMAT", "Nickname format is invalid.");
-  }
-  if (message.includes("INVALID_AVATAR")) {
-    throw new ApiError(422, "INVALID_AVATAR", "Avatar is invalid.");
-  }
-  if (message.includes("NICKNAME_CONFLICT")) {
-    throw new ApiError(409, "NICKNAME_TAKEN", "Nickname is already in use.");
-  }
-  if (message.includes("USER_NOT_FOUND")) {
-    throw new ApiError(404, "USER_NOT_FOUND", "User profile not found.");
-  }
-  throw new ApiError(500, "PROFILE_UPDATE_FAILED", message);
-}
+import { authRequestInfo, authResponse } from "./honoAdapter";
 
 export function createRoutes() {
   return new Hono<AppEnv<{ requestId: string }>>()
     .get(
       "/session",
-      createMiddleware<AppEnv<{ authUser: AuthUser; authSessionMigrating: boolean }>>(
+      createMiddleware<AppEnv<{ authUser: AuthUser; requiresCookieConfirmation: boolean }>>(
         async (c, next) => {
-          const authHeaders = getRequestAuthHeaders(c.req.raw);
-          if (!hasSessionCredentials(c.env, authHeaders)) {
-            throw new ApiError(401, "SESSION_REQUIRED", "Session is required.");
-          }
-          const auth = createAuth(c.env);
-          const browserSession = resolveBrowserSessionHeaders(auth, authHeaders);
-          const { response: session, headers } = await auth.api.getSession({
-            headers: browserSession.headers,
-            returnHeaders: true,
-          });
-          for (const cookie of headers.getSetCookie()) {
+          const result = await readSession(c.env, getRequestAuthCredentials(c.req.raw));
+          for (const cookie of result.cookies) {
             c.header("Set-Cookie", cookie, { append: true });
           }
-          if (!session) {
-            invalidateAuthUserCache(authHeaders, c.env);
-            if (authHeaders.get("authorization")?.trim().toLowerCase().startsWith("bearer ")) {
-              throw new ApiError(401, "TOKEN_EXPIRED", "Token is expired, missing, or invalid.");
-            }
-            throw new ApiError(401, "SESSION_REQUIRED", "Session is required.");
+          if (!result.ok) {
+            throw result.error;
           }
-
-          // This fresh, renewing session check also authenticates the middleware.
-          // A cached identity with disableRefresh must never replace it.
-          c.set(
-            "authUser",
-            await resolveAuthUser(c.env, authHeaders, {
-              uid: session.user.id,
-              email: session.user.email,
-              displayName: session.user.name,
-            }),
-          );
-
-          if (browserSession.migrating) {
-            c.header("Set-Cookie", await serializeBrowserSessionCookie(auth, session.session), {
-              append: true,
-            });
-          } else if (c.req.header("cookie")?.includes("better-auth.")) {
-            for (const cookie of getLegacyCookieExpirations(auth)) {
-              c.header("Set-Cookie", cookie, { append: true });
-            }
-          }
-          c.set("authSessionMigrating", browserSession.migrating);
+          c.set("authUser", result.user);
+          c.set("requiresCookieConfirmation", result.requiresCookieConfirmation);
           await next();
         },
       ),
       rateLimit("auth"),
       (c) => {
-        const user = c.get("authUser");
         const response = c.json({
-          user: toSessionUser(user),
-          ...(c.get("authSessionMigrating") ? { requiresCookieConfirmation: true } : {}),
+          user: toUserResponse(c.get("authUser")),
+          ...(c.get("requiresCookieConfirmation") ? { requiresCookieConfirmation: true } : {}),
         });
         response.headers.set("Cache-Control", "private, no-store");
         return response;
       },
     )
-    .patch("/profile", requireAuth, rateLimit("auth"), async (c) => {
-      const user = c.get("authUser");
-
-      const parsed = profileUpdateSchema.safeParse(
-        normalizeProfileUpdateBody(await readProfileUpdateBody(c)),
+    .post("/session/exchange", rateLimit("public"), async (c) => {
+      const origin = c.req.header("origin");
+      if (!origin || !parseTrustedFrontendOrigins(c.env).includes(origin)) {
+        throw new ApiError(403, "ORIGIN_NOT_ALLOWED", "A trusted frontend origin is required.");
+      }
+      const input = parseInput(sessionExchangeSchema, await readJsonBody(c.req));
+      const result = await exchangeSession(c.env, {
+        code: input.code,
+        origin,
+        cookie: c.req.header("cookie"),
+        userAgent: c.req.header("user-agent"),
+        requestId: c.get("requestId"),
+      });
+      for (const cookie of result.cookies) {
+        c.header("Set-Cookie", cookie, { append: true });
+      }
+      c.header("Cache-Control", "private, no-store");
+      return c.json({ user: toUserResponse(result.user) });
+    })
+    .post("/sign-out", rateLimit("public"), async (c) => {
+      const body = c.req.raw.body === null ? null : await c.req.arrayBuffer();
+      return authResponse(
+        c,
+        await signOut(c.env, {
+          body,
+          request: authRequestInfo(c),
+          requestId: c.get("requestId"),
+        }),
       );
-      if (!parsed.success) {
-        throw new ApiError(
-          422,
-          "VALIDATION_ERROR",
-          "Invalid profile payload.",
-          parsed.error.flatten(),
-        );
-      }
-
-      try {
-        const updated = await updateUserNickname(c.env.DB, {
-          uid: user.uid,
-          nickname: parsed.data.nickname,
-          avatar: parsed.data.avatar,
-        });
-
-        invalidateAuthUserCache(getRequestAuthHeaders(c.req.raw), c.env);
-
-        return c.json({
-          user: {
-            uid: formatPublicUid(updated.uidNumber, updated.uidSuffix),
-            role: updated.role,
-            karma: updated.karma,
-            avatar: updated.avt,
-            email: updated.email,
-            nickname: updated.nickname,
-            registeredAt: updated.createdAt,
-            needsProfileSetup: !updated.nicknameCustomized,
-          },
-        });
-      } catch (error) {
-        mapProfileUpdateError(error);
-      }
     });
 }

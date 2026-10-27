@@ -1,5 +1,6 @@
-import { resolveAuthIdentity, type AuthIdentity } from "@/lib/auth/identity";
 import { ApiError } from "@/lib/errors";
+import { resolveAuthorization, type AuthCredentials } from "@/services/auth/contract/credentials";
+import { resolveAuthIdentity, type AuthIdentity } from "@/services/auth/identity";
 import type { AppEnv } from "@/types/app";
 
 export function pickString(
@@ -44,20 +45,20 @@ export function requireMarkerIds(
   return ids;
 }
 
-export function hasAuthHeaders(headers: Headers): boolean {
-  return Boolean(headers.get("authorization")?.trim() || headers.get("cookie")?.trim());
+export function hasAuthCredentials(credentials: AuthCredentials): boolean {
+  return Boolean(resolveAuthorization(credentials)?.trim() || credentials.cookie?.trim());
 }
 
 export async function getOptionalAuthIdentity(
   env: AppEnv["Bindings"],
-  headers: Headers,
+  credentials: AuthCredentials,
 ): Promise<AuthIdentity | null> {
-  if (!hasAuthHeaders(headers)) {
+  if (!hasAuthCredentials(credentials)) {
     return null;
   }
 
   try {
-    return await resolveAuthIdentity(env, headers);
+    return await resolveAuthIdentity(env, credentials);
   } catch (error) {
     console.warn("[uploads] optional identity lookup failed; serving anonymous response", {
       error: error instanceof Error ? error.message : String(error),

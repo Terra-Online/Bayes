@@ -1,9 +1,9 @@
 import { Hono } from "hono";
 import { afterEach, expect, it, vi } from "vitest";
 
-import { runWithAuthRequest } from "@/lib/auth/createAuth";
 import { onAppError } from "@/middleware/error-handler";
 import { createRoutes } from "@/routes/me/createRoutes";
+import { runWithAuthRequest } from "@/services/auth/betterAuth";
 import { createMockBindings, createMockR2Object } from "@/test/bindings";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { insertAuthenticatedUser, type SessionHeaders } from "@/test/fixtures/auth";

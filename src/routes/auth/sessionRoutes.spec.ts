@@ -2,9 +2,9 @@ import { getCookies } from "better-auth/cookies";
 import type { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import * as authModule from "@/lib/auth/createAuth";
-import { createAuth, runWithAuthRequest } from "@/lib/auth/createAuth";
-import { resolveAuthIdentity } from "@/lib/auth/identity";
+import * as authModule from "@/services/auth/betterAuth";
+import { createAuth, runWithAuthRequest } from "@/services/auth/betterAuth";
+import { resolveAuthIdentity } from "@/services/auth/identity";
 import type { TestDatabase } from "@/test/database/createTestDatabase";
 import {
   createSessionAuthFixture,
@@ -44,7 +44,7 @@ describe.each(["http://localhost:8787", "https://api.opendfieldmap.org"])(
       fixture = createSessionAuthFixture(baseURL);
       ({ database, env, app } = fixture);
       auth = createAuth(env);
-      await auth.$context;
+      await auth.api.getSession({ headers: new Headers() });
       vi.spyOn(console, "warn").mockImplementation(() => undefined);
     });
 
@@ -108,7 +108,10 @@ describe.each(["http://localhost:8787", "https://api.opendfieldmap.org"])(
       expect(configured.options.session).toMatchObject({ expiresIn: 3600, updateAge: 1800 });
       const invalid = createAuth({ ...env, SESSION_TTL_SECONDS: "invalid" });
       expect(invalid.options.session?.expiresIn).toBe(15_552_000);
-      await Promise.all([configured.$context, invalid.$context]);
+      await Promise.all([
+        configured.api.getSession({ headers: new Headers() }),
+        invalid.api.getSession({ headers: new Headers() }),
+      ]);
     });
 
     it("renews both database and browser on repeated 40-day returns, beyond the original expiry", async () => {
@@ -116,7 +119,9 @@ describe.each(["http://localhost:8787", "https://api.opendfieldmap.org"])(
       for (const visitDay of [40, 80, 120, 160, 200, 240, 280, 320, 360, 400]) {
         vi.setSystemTime(START_MS + visitDay * DAY_MS);
         const previousExpiry = sessionRecord().expiresAt;
-        await runWithAuthRequest(() => resolveAuthIdentity(env, headers));
+        await runWithAuthRequest(() =>
+          resolveAuthIdentity(env, { cookie: headers.get("cookie") ?? undefined }),
+        );
         expect(sessionRecord().expiresAt).toEqual(previousExpiry);
 
         const response = await app.request("/auth/v1/session", { headers }, env);
@@ -132,6 +137,50 @@ describe.each(["http://localhost:8787", "https://api.opendfieldmap.org"])(
         expect(sessionRecord().expiresAt).toEqual(new Date(START_MS + (visitDay + 180) * DAY_MS));
         headers = new Headers({ cookie: renewedCookie.split(";")[0]! });
       }
+    });
+
+    it("renews the session and returns its cookie even when the authenticated read budget is exhausted", async () => {
+      const { headers } = await signIn();
+      for (let request = 0; request < 120; request += 1) {
+        expect((await app.request("/auth/v1/session", { headers }, env)).status).toBe(200);
+      }
+      database.sqlite
+        .prepare("UPDATE auth_sessions SET expiresAt = ?")
+        .run(new Date(START_MS + 7 * DAY_MS).toISOString());
+
+      const limited = await app.request("/auth/v1/session", { headers }, env);
+      expect(limited.status).toBe(429);
+      expect(await limited.json()).toMatchObject({ code: "RATE_LIMITED" });
+      expect(limited.headers.get("x-ratelimit-backend")).toBe("local");
+      expect(limited.headers.get("set-cookie")).toContain("Max-Age=15552000");
+      expect(sessionRecord().expiresAt).toEqual(new Date(START_MS + 180 * DAY_MS));
+    });
+
+    it("retains a renewed cookie when profile creation fails and allows the browser to retry", async () => {
+      const { headers } = await signIn();
+      vi.setSystemTime(START_MS + 40 * DAY_MS);
+      database.sqlite.exec(`
+        CREATE TEMP TRIGGER fail_profile_insert BEFORE INSERT ON users
+        BEGIN SELECT RAISE(FAIL, 'D1_ERROR: database temporarily unavailable'); END;
+      `);
+
+      const failed = await app.request("/auth/v1/session", { headers }, env);
+      expect(failed.status).toBe(503);
+      expect(await failed.json()).toMatchObject({ code: "DEPENDENCY_UNAVAILABLE" });
+      const renewedCookie = failed.headers
+        .getSetCookie()
+        .find((cookie) => cookie.startsWith(`${getCookies(auth.options).sessionToken.name}=`))!;
+      expect(renewedCookie).toContain("Max-Age=15552000");
+      expect(sessionRecord().expiresAt).toEqual(new Date(START_MS + 220 * DAY_MS));
+
+      database.sqlite.exec("DROP TRIGGER fail_profile_insert");
+      const retried = await app.request(
+        "/auth/v1/session",
+        { headers: { cookie: renewedCookie.split(";")[0]! } },
+        env,
+      );
+      expect(retried.status).toBe(200);
+      expect(await retried.json()).toMatchObject({ user: { email: "session@example.com" } });
     });
 
     it("does not renew repeatedly within a day", async () => {
@@ -163,6 +212,23 @@ describe.each(["http://localhost:8787", "https://api.opendfieldmap.org"])(
         expect(sessionRecord().expiresAt).toEqual(new Date(START_MS + 220 * DAY_MS));
       },
     );
+
+    it("uses the query token only when the Authorization header is absent", async () => {
+      await signIn();
+      const token = sessionRecord().token;
+      const path = `/auth/v1/session?access_token=${encodeURIComponent(token)}`;
+      for (const [authorization, code] of [
+        ["Bearer missing-token", "TOKEN_EXPIRED"],
+        ["", "SESSION_REQUIRED"],
+      ] as const) {
+        const rejected = await app.request(path, { headers: { authorization } }, env);
+        expect(rejected.status).toBe(401);
+        expect(await rejected.json()).toMatchObject({ code });
+      }
+      const accepted = await app.request(path, {}, env);
+      expect(accepted.status).toBe(200);
+      expect(await accepted.json()).toMatchObject({ user: { email: "session@example.com" } });
+    });
 
     it("upgrades a still-valid seven-day session on its next visit", async () => {
       const { headers } = await signIn();
@@ -267,6 +333,15 @@ describe.each(["http://localhost:8787", "https://api.opendfieldmap.org"])(
       expect(response.status).toBe(401);
       expect(response.headers.get("cache-control")).toBe("private, no-store");
       expect(response.headers.get("set-cookie") ?? "").not.toContain("Max-Age=15552000");
+      expect(
+        response.headers
+          .getSetCookie()
+          .some(
+            (cookie) =>
+              cookie.startsWith(`${getCookies(auth.options).sessionToken.name}=`) &&
+              cookie.includes("Max-Age=0"),
+          ),
+      ).toBe(true);
     });
 
     it("rejects a revoked session even while the middleware user cache is warm", async () => {

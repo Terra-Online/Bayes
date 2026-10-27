@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createApp } from "@/app";
-import { runWithAuthRequest } from "@/lib/auth/createAuth";
 import type { PublicSubmissionImage } from "@/repositories/submission/types";
+import { runWithAuthRequest } from "@/services/auth/betterAuth";
 import { createMockBindings, type MockBindings } from "@/test/bindings";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import {
@@ -121,6 +121,17 @@ describe("public image details through HTTP", () => {
       id: "test-photo",
     });
     expect((await request("/images/photo?markerId=42&scope=test")).status).toBe(404);
+  });
+
+  it("keeps query-only credentials anonymous while header credentials return viewer reactions", async () => {
+    const token = viewerHeaders.authorization.slice(7);
+    const path = `/images/photo?markerId=42&access_token=${encodeURIComponent(token)}`;
+    const anonymous = await requestImage(path);
+    expect(anonymous.upvoted).toBeUndefined();
+    expect(anonymous.flagged).toBeUndefined();
+
+    const authenticated = await requestImage(path, viewerHeaders);
+    expect(authenticated).toMatchObject({ upvoted: true, flagged: true });
   });
 
   it("returns reactions for the authenticated viewer without exposing another viewer's state", async () => {

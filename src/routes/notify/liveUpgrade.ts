@@ -1,9 +1,9 @@
-import { toSerializableError } from "@/lib/auth/errors";
-import { resolveAuthUser } from "@/lib/auth/identity";
-import { getRequestAuthHeaders } from "@/lib/auth/requestHeaders";
+import { toSerializableError } from "@/lib/errors";
 import { ApiError } from "@/lib/errors";
 import { hmacServiceIdentifier } from "@/lib/serviceIdentity";
 import { toApiError } from "@/middleware/error-handler";
+import { resolveAuthUser } from "@/services/auth/identity";
+import { getRequestAuthCredentials } from "@/services/auth/requestCredentials";
 import type { Bindings } from "@/types/app";
 
 const NOTIFICATION_LIVE_PATH = "/notify/v1/live";
@@ -95,7 +95,7 @@ export async function handleNotificationLiveUpgrade(
     stageStartedAt = Date.now();
   };
   try {
-    const user = await resolveAuthUser(env, getRequestAuthHeaders(request));
+    const user = await resolveAuthUser(env, getRequestAuthCredentials(request));
     beginStage("rate_limit");
     if (user.role !== "r") {
       const requestIp = request.headers.get("cf-connecting-ip") ?? "anonymous";

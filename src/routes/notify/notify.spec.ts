@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Bindings } from "@/types/app";
 
 const mocks = vi.hoisted(() => ({ auth: vi.fn(), fetch: vi.fn() }));
-vi.mock("@/lib/auth/identity", () => ({ resolveAuthUser: mocks.auth }));
+vi.mock("@/services/auth/identity", () => ({ resolveAuthUser: mocks.auth }));
 import { hmacServiceIdentifier } from "@/lib/serviceIdentity";
 
 import { handleNotificationLiveUpgrade } from "./liveUpgrade";

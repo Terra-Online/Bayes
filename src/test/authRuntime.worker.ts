@@ -3,10 +3,11 @@ import { AsyncLocalStorage } from "node:async_hooks";
 
 import { Hono } from "hono";
 
-import { createAuth, runWithAuthRequest } from "@/lib/auth/createAuth";
-import { resolveAuthIdentity } from "@/lib/auth/identity";
 import { onAppError } from "@/middleware/error-handler";
-import { createRoutes as createSessionAuthRoutes } from "@/routes/auth/sessionRoutes";
+import { createRoutes as createAuthRoutes } from "@/routes/auth/createRoutes";
+import { createAuth, runWithAuthRequest } from "@/services/auth/betterAuth";
+import type { AuthCredentials } from "@/services/auth/contract/credentials";
+import { resolveAuthIdentity } from "@/services/auth/identity";
 import type { AppEnv, Bindings } from "@/types/app";
 
 type TestEnv = Bindings & { DB_SECOND: D1Database; TEST_GATE: Fetcher };
@@ -21,18 +22,18 @@ async function singletonAuth(env: Bindings) {
   let auth = unsafeSingletons.get(env.DB);
   if (!auth) {
     auth = createAuth(env);
-    await auth.$context;
+    await auth.api.getSession({ headers: new Headers() });
     unsafeSingletons.set(env.DB, auth);
   }
   return auth;
 }
-async function legacyIdentity(env: Bindings, headers: Headers) {
-  const key = headers.get("authorization")!;
+async function legacyIdentity(env: Bindings, credentials: AuthCredentials) {
+  const key = credentials.authorization!;
   const existing = legacyPending.get(key);
   if (existing) {
     return existing;
   }
-  const pending = resolveAuthIdentity(env, headers);
+  const pending = resolveAuthIdentity(env, credentials);
   legacyPending.set(key, pending);
   try {
     return await pending;
@@ -96,7 +97,7 @@ function observe(database: D1Database): D1Database {
 
 const app = new Hono<AppEnv<{ requestId: string }>>();
 app.onError(onAppError);
-app.route("/auth/v1", createSessionAuthRoutes());
+app.route("/auth/v1", createAuthRoutes());
 
 export default {
   async fetch(request: Request, raw: TestEnv, context: ExecutionContext): Promise<Response> {
@@ -113,7 +114,7 @@ export default {
         let response: Response;
         try {
           if (url.pathname === "/init") {
-            await createAuth(env).$context;
+            await createAuth(env).api.getSession({ headers: new Headers() });
             response = Response.json({ initialized: true });
           } else if (url.pathname === "/singleton-init") {
             await singletonAuth(env);
@@ -127,7 +128,10 @@ export default {
             response = Response.json(
               await (url.pathname === "/legacy-identity" ? legacyIdentity : resolveAuthIdentity)(
                 env,
-                request.headers,
+                {
+                  cookie: request.headers.get("cookie") ?? undefined,
+                  authorization: request.headers.get("authorization") ?? undefined,
+                },
               ),
             );
           } else {
