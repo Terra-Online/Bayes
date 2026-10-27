@@ -1,11 +1,43 @@
 import { getCookies } from "better-auth/cookies";
-import type { Context } from "hono";
 
-import { createAuth } from "@/lib/auth/betterAuth";
+import {
+  buildBetterAuthRequestHeaders,
+  createAuth,
+  invokeBetterAuthHandler,
+} from "@/lib/auth/betterAuth";
 import { AUTH_EXCHANGE_CHALLENGE_PARAM } from "@/lib/auth/browserSession";
-import { isTrustedCallbackUrlForResponse } from "@/lib/auth/rules/frontendOrigins";
-import { createSessionExchangeCode } from "@/lib/auth/sessionExchange";
-import type { AppEnv } from "@/types/app";
+import {
+  isTrustedCallbackUrlForResponse,
+  toSafeTrustedUrlLog,
+} from "@/lib/auth/rules/frontendOrigins";
+import type { Bindings } from "@/types/app";
+
+import type { OAuthCallbackInput } from "./types";
+
+type SessionHandoff = {
+  sessionToken: string;
+  frontendUrl: URL;
+  challenge: string;
+};
+
+export function invokeOAuthRequest(env: Bindings, input: OAuthCallbackInput): Promise<Response> {
+  const target = new URL(input.request.url);
+  const method = input.request.method.toUpperCase();
+  const request = new Request(target.toString(), {
+    method,
+    headers: buildBetterAuthRequestHeaders(input.request),
+    body: !["GET", "HEAD"].includes(method) ? input.body : undefined,
+  });
+  return invokeBetterAuthHandler(env, request, {
+    publicPath: target.pathname,
+    authPath: target.pathname.replace(/^\/auth\/v1/, ""),
+    requestId: input.requestId,
+  });
+}
+
+export function getProviderFromCallbackPath(path: string): string {
+  return path.split("/").pop() || "unknown";
+}
 
 function splitSetCookieHeader(setCookie: string): string[] {
   const result: string[] = [];
@@ -84,8 +116,8 @@ function readSessionTokenFromSetCookie(
   return null;
 }
 
-function readSessionTokenFromResponse<E extends AppEnv<{ requestId: string }>>(
-  c: Context<E>,
+function readSessionTokenFromResponse(
+  env: Bindings,
   better_auth_response: Response,
 ): string | null {
   const authToken = better_auth_response.headers.get("set-auth-token")?.trim();
@@ -93,7 +125,7 @@ function readSessionTokenFromResponse<E extends AppEnv<{ requestId: string }>>(
     return authToken;
   }
 
-  const cookieName = getCookies(createAuth(c.env).options).sessionToken.name;
+  const cookieName = getCookies(createAuth(env).options).sessionToken.name;
   return readSessionTokenFromSetCookie(better_auth_response.headers.get("set-cookie"), cookieName);
 }
 
@@ -103,115 +135,66 @@ function appendQueryParam(rawUrl: string, name: string, value: string): string {
   return url.toString();
 }
 
-export function getProviderFromCallbackPath(path: string): string {
-  return path.split("/").pop() || "unknown";
-}
-
-function toSafeUrlLog(raw: string | null): {
-  origin: string | null;
-  pathname: string | null;
-  hasError: boolean;
-  hasAuthCode: boolean;
-  trusted: boolean | null;
-} {
-  if (!raw) {
-    return {
-      origin: null,
-      pathname: null,
-      hasError: false,
-      hasAuthCode: false,
-      trusted: null,
-    };
-  }
-
-  try {
-    const url = new URL(raw);
-    return {
-      origin: url.origin,
-      pathname: url.pathname,
-      hasError: url.searchParams.has("error"),
-      hasAuthCode: url.searchParams.has("auth_code"),
-      trusted: null,
-    };
-  } catch {
-    return {
-      origin: null,
-      pathname: null,
-      hasError: false,
-      hasAuthCode: false,
-      trusted: null,
-    };
-  }
-}
-
-export function toSafeTrustedUrlLog<E extends AppEnv<{ requestId: string }>>(
-  c: Context<E>,
-  raw: string | null,
-) {
-  const details = toSafeUrlLog(raw);
-  if (!raw) {
-    return details;
-  }
-
-  return {
-    ...details,
-    trusted: isTrustedCallbackUrlForResponse(c.env, raw),
-  };
-}
-
-export async function attachSessionExchangeCode<E extends AppEnv<{ requestId: string }>>(
-  c: Context<E>,
+export function inspectSessionHandoff(
+  env: Bindings,
+  publicPath: string,
   better_auth_response: Response,
-): Promise<Response> {
+): SessionHandoff | null {
   if (!better_auth_response.status.toString().startsWith("3")) {
-    return better_auth_response;
+    return null;
   }
 
   const location = better_auth_response.headers.get("location");
-  if (!location || !isTrustedCallbackUrlForResponse(c.env, location)) {
+  if (!location || !isTrustedCallbackUrlForResponse(env, location)) {
     console.warn("[auth][oauth-callback] skipped session exchange code", {
-      provider: getProviderFromCallbackPath(c.req.path),
+      provider: getProviderFromCallbackPath(publicPath),
       status: better_auth_response.status,
       hasLocation: Boolean(location),
-      location: toSafeTrustedUrlLog(c, location),
+      location: toSafeTrustedUrlLog(env, location),
       hasSetCookie: Boolean(better_auth_response.headers.get("set-cookie")),
       hasSetAuthToken: Boolean(better_auth_response.headers.get("set-auth-token")),
     });
-    return better_auth_response;
+    return null;
   }
 
-  const sessionToken = readSessionTokenFromResponse(c, better_auth_response);
+  const sessionToken = readSessionTokenFromResponse(env, better_auth_response);
   if (!sessionToken) {
     console.warn("[auth][oauth-callback] missing session token for exchange code", {
-      provider: getProviderFromCallbackPath(c.req.path),
+      provider: getProviderFromCallbackPath(publicPath),
       status: better_auth_response.status,
       hasLocation: Boolean(location),
-      location: toSafeTrustedUrlLog(c, location),
+      location: toSafeTrustedUrlLog(env, location),
       hasSetCookie: Boolean(better_auth_response.headers.get("set-cookie")),
       hasSetAuthToken: Boolean(better_auth_response.headers.get("set-auth-token")),
     });
-    return better_auth_response;
+    return null;
   }
 
   const frontendUrl = new URL(location);
   const challenge = frontendUrl.searchParams.get(AUTH_EXCHANGE_CHALLENGE_PARAM);
   if (!challenge || !/^[a-f0-9]{64}$/.test(challenge)) {
-    return better_auth_response;
+    return null;
   }
   frontendUrl.searchParams.delete(AUTH_EXCHANGE_CHALLENGE_PARAM);
-  const code = await createSessionExchangeCode(c.env.DB, {
-    sessionToken,
-    origin: frontendUrl.origin,
-    challenge,
-  });
+  return { sessionToken, frontendUrl, challenge };
+}
+
+export function attachSessionExchangeCode(
+  env: Bindings,
+  publicPath: string,
+  better_auth_response: Response,
+  frontendUrl: URL,
+  code: string,
+): Response {
+  const location = better_auth_response.headers.get("location");
   const headers = new Headers(better_auth_response.headers);
   headers.set("location", appendQueryParam(frontendUrl.toString(), "auth_code", code));
   headers.set("Cache-Control", "private, no-store");
   headers.set("Referrer-Policy", "no-referrer");
   console.warn("[auth][oauth-callback] attached session exchange code", {
-    provider: getProviderFromCallbackPath(c.req.path),
+    provider: getProviderFromCallbackPath(publicPath),
     status: better_auth_response.status,
-    location: toSafeTrustedUrlLog(c, location),
+    location: toSafeTrustedUrlLog(env, location),
     hasSetCookie: Boolean(better_auth_response.headers.get("set-cookie")),
     hasSetAuthToken: Boolean(better_auth_response.headers.get("set-auth-token")),
   });

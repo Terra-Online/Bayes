@@ -1,13 +1,9 @@
-import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createAuth } from "@/lib/auth/betterAuth";
-import { onAppError } from "@/middleware/error-handler";
+import { createAuth, invokeBetterAuthHandler } from "@/lib/auth/betterAuth";
 import { createMockBindings } from "@/test/bindings";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
-import type { AppEnv, Bindings } from "@/types/app";
-
-import { forwardToAuthJsonPath } from "./forwarding";
+import type { Bindings } from "@/types/app";
 
 vi.mock("@/lib/auth/betterAuth/createAuth", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/auth/betterAuth/createAuth")>()),
@@ -15,7 +11,7 @@ vi.mock("@/lib/auth/betterAuth/createAuth", async (importOriginal) => ({
 }));
 // Specialist library boundary: the installed Better Auth version cannot naturally
 // produce every supported throw/onError/opaque-response combination. Browser header
-// handling and conflict classification still execute normally (no cookie in these cases).
+// handling and conflict classification execute normally (no cookie in these cases).
 
 describe("authentication conflict boundaries", () => {
   let database: TestDatabase;
@@ -62,10 +58,11 @@ describe("authentication conflict boundaries", () => {
               },
             }) as unknown as ReturnType<typeof createAuth>,
         );
-        const app = new Hono<AppEnv<{ requestId: string }>>();
-        app.onError(onAppError);
-        app.post(publicPath, (c) => forwardToAuthJsonPath(c, authPath, {}));
-        const response = await app.request(publicPath, { method: "POST" }, env);
+        const response = await invokeBetterAuthHandler(
+          env,
+          new Request(`https://auth.example.test/auth/v1${authPath}`, { method: "POST" }),
+          { publicPath, authPath, requestId: "conflict-test" },
+        );
         expect(response.status).toBe(status);
         expect(await response.json()).toMatchObject({ code });
         expect(response.headers.get("retry-after")).toBe(status === 429 ? "1" : null);
@@ -87,9 +84,11 @@ describe("authentication conflict boundaries", () => {
           },
         }) as unknown as ReturnType<typeof createAuth>,
     );
-    const app = new Hono<AppEnv<{ requestId: string }>>();
-    app.post("/register", (c) => forwardToAuthJsonPath(c, "/sign-in/email-otp", {}));
-    const response = await app.request("/register", { method: "POST" }, env);
+    const response = await invokeBetterAuthHandler(
+      env,
+      new Request("https://auth.example.test/auth/v1/sign-in/email-otp", { method: "POST" }),
+      { publicPath: "/register", authPath: "/sign-in/email-otp", requestId: "conflict-test" },
+    );
     expect(response.status).toBe(500);
     expect(await response.text()).toBe("opaque");
   });
@@ -106,9 +105,13 @@ describe("authentication conflict boundaries", () => {
           },
         }) as unknown as ReturnType<typeof createAuth>,
     );
-    const app = new Hono<AppEnv<{ requestId: string }>>();
-    app.post("/register", (c) => forwardToAuthJsonPath(c, "/sign-in/email-otp", {}));
-    expect((await app.request("/register", { method: "POST" }, env)).status).toBe(409);
-    expect((await app.request("/register", { method: "POST" }, env)).status).toBe(500);
+    const invoke = () =>
+      invokeBetterAuthHandler(
+        env,
+        new Request("https://auth.example.test/auth/v1/sign-in/email-otp", { method: "POST" }),
+        { publicPath: "/register", authPath: "/sign-in/email-otp", requestId: "conflict-test" },
+      );
+    expect((await invoke()).status).toBe(409);
+    expect((await invoke()).status).toBe(500);
   });
 });

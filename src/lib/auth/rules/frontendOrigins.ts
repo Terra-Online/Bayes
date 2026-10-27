@@ -142,3 +142,52 @@ export function applyDefaultSocialCallbackUrls(
       resolveTrustedCallbackUrl(env, input.errorCallbackURL, defaultOrigin) ?? callbackURL,
   };
 }
+
+function toSafeUrlLog(raw: string | null): {
+  origin: string | null;
+  pathname: string | null;
+  hasError: boolean;
+  hasAuthCode: boolean;
+  trusted: boolean | null;
+} {
+  if (!raw) {
+    return {
+      origin: null,
+      pathname: null,
+      hasError: false,
+      hasAuthCode: false,
+      trusted: null,
+    };
+  }
+
+  try {
+    const url = new URL(raw);
+    return {
+      origin: url.origin,
+      pathname: url.pathname,
+      hasError: url.searchParams.has("error"),
+      hasAuthCode: url.searchParams.has("auth_code"),
+      trusted: null,
+    };
+  } catch {
+    return {
+      origin: null,
+      pathname: null,
+      hasError: false,
+      hasAuthCode: false,
+      trusted: null,
+    };
+  }
+}
+
+export function toSafeTrustedUrlLog(env: FrontendOriginSettings, raw: string | null) {
+  const details = toSafeUrlLog(raw);
+  if (!raw) {
+    return details;
+  }
+
+  return {
+    ...details,
+    trusted: isTrustedCallbackUrlForResponse(env, raw),
+  };
+}
