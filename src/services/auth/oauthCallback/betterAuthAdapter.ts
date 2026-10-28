@@ -1,10 +1,6 @@
 import { getCookies } from "better-auth/cookies";
 
-import {
-  buildBetterAuthRequestHeaders,
-  createAuth,
-  invokeBetterAuthHandler,
-} from "@/services/auth/betterAuth";
+import { createAuth, invokeBetterAuthHandler } from "@/services/auth/betterAuth";
 import { AUTH_EXCHANGE_CHALLENGE_PARAM } from "@/services/auth/browserSession";
 import {
   isTrustedCallbackUrlForResponse,
@@ -21,18 +17,7 @@ type SessionHandoff = {
 };
 
 export function invokeOAuthRequest(env: Bindings, input: OAuthCallbackInput): Promise<Response> {
-  const target = new URL(input.request.url);
-  const method = input.request.method.toUpperCase();
-  const request = new Request(target.toString(), {
-    method,
-    headers: buildBetterAuthRequestHeaders(input.request),
-    body: !["GET", "HEAD"].includes(method) ? input.body : undefined,
-  });
-  return invokeBetterAuthHandler(env, request, {
-    publicPath: target.pathname,
-    authPath: target.pathname.replace(/^\/auth\/v1/, ""),
-    requestId: input.requestId,
-  });
+  return invokeBetterAuthHandler(env, input.raw_request, { requestId: input.requestId });
 }
 
 export function getProviderFromCallbackPath(path: string): string {

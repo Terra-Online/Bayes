@@ -1,9 +1,5 @@
-import type { BetterAuthRequestInfo } from "@/services/auth/betterAuth";
-
 export type SignOutInput = {
-  request: BetterAuthRequestInfo;
+  // The HTTP entrypoint must leave this body unread. Better Auth consumes its stream.
+  raw_request: Request;
   requestId: string;
-  // Better Auth parses these bytes according to the incoming content type.
-  // null represents a request without a body.
-  body: ArrayBuffer | null;
 };

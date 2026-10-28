@@ -1,56 +1,33 @@
 import { ApiError, toSerializableError } from "@/lib/errors";
-import {
-  buildBetterAuthRequestHeaders,
-  readBetterAuthResponseData,
-  type BetterAuthRequestInfo,
-  type BetterAuthResponseData,
-  createAuth,
-  invokeBetterAuthHandler,
-} from "@/services/auth/betterAuth";
+import { createAuth, invokeBetterAuthHandler } from "@/services/auth/betterAuth";
 import type { Bindings } from "@/types/app";
 
 type AuthOperation = "request-otp" | "register";
 
-async function invokeRegistrationOperation(
+function invokeRegistrationOperation(
   env: Bindings,
-  input: { request: BetterAuthRequestInfo; requestId: string },
+  input: { raw_request: Request; requestId: string },
   operation: AuthOperation,
   body: Record<string, unknown>,
   locale?: string,
 ): Promise<Response> {
-  const source = input.request;
-  // Callers do not need to provide these paths.
-  // These paths are required by Better Auth plugins.
-  // OTP sign-in verifies the email and creates a session.
-  // Password setup uses this session to identify the user.
-  const authPath =
-    operation === "request-otp" ? "/email-otp/send-verification-otp" : "/sign-in/email-otp";
-  const target = new URL(source.url);
-  const publicPath = target.pathname;
-  target.pathname = `/auth/v1${authPath}`;
-  const request = new Request(target.toString(), {
-    method: "POST",
-    headers: buildBetterAuthRequestHeaders(source, {
-      forceJson: true,
-      // The email callback reads x-oem-locale. The payload locale overrides
-      // the incoming header. If neither provides a locale, the callback uses
-      // the browser language or the deployment default.
-      headers: locale ? { "x-oem-locale": locale } : undefined,
-    }),
-    body: JSON.stringify(body),
-  });
-  return invokeBetterAuthHandler(env, request, {
-    publicPath,
-    authPath,
+  // OTP sign-in verifies the email and creates the session used for password setup.
+  return invokeBetterAuthHandler(env, input.raw_request, {
     requestId: input.requestId,
+    authPath:
+      operation === "request-otp" ? "/email-otp/send-verification-otp" : "/sign-in/email-otp",
+    jsonBody: body,
+    // The payload locale overrides the incoming email-locale header.
+    // Without it, Better Auth uses the received header, browser language or default.
+    headerOverrides: locale ? { "x-oem-locale": locale } : undefined,
   });
 }
 
-export async function requestOtp(
+export function requestOtp(
   env: Bindings,
-  input: { email: string; locale?: string; request: BetterAuthRequestInfo; requestId: string },
-): Promise<BetterAuthResponseData> {
-  const response = await invokeRegistrationOperation(
+  input: { email: string; locale?: string; raw_request: Request; requestId: string },
+): Promise<Response> {
+  return invokeRegistrationOperation(
     env,
     input,
     "request-otp",
@@ -58,7 +35,6 @@ export async function requestOtp(
     { email: input.email, type: "sign-in" },
     input.locale,
   );
-  return readBetterAuthResponseData(response);
 }
 
 export async function signInWithOtp(
@@ -67,10 +43,10 @@ export async function signInWithOtp(
     email: string;
     otp: string;
     name: string;
-    request: BetterAuthRequestInfo;
+    raw_request: Request;
     requestId: string;
   },
-): Promise<{ result: BetterAuthResponseData; token: string | null }> {
+): Promise<{ result: Response; token: string | null }> {
   const response = await invokeRegistrationOperation(env, input, "register", {
     email: input.email,
     otp: input.otp,
@@ -97,7 +73,7 @@ export async function signInWithOtp(
       throw new ApiError(500, "AUTH_FLOW_FAILED", "Missing session token after OTP sign-in.");
     }
   }
-  return { result: await readBetterAuthResponseData(response), token };
+  return { result: response, token };
 }
 
 type PasswordSetupResult =

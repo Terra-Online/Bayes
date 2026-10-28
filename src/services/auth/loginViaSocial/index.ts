@@ -1,8 +1,4 @@
-// To avoid confusion between Hono's request and Better Auth's inputs and outputs,
-// we use explicit data for this module's interface. HTTP objects stay inside the adapter.
-
 import { ApiError } from "@/lib/errors";
-import type { BetterAuthResponseData } from "@/services/auth/betterAuth";
 import { AUTH_EXCHANGE_CHALLENGE_PARAM } from "@/services/auth/browserSession";
 import {
   applyDefaultSocialCallbackUrls,
@@ -20,8 +16,12 @@ export type { BeginSocialLoginInput } from "./types";
 export async function beginSocialLogin(
   env: Bindings,
   input: BeginSocialLoginInput,
-): Promise<BetterAuthResponseData> {
-  const { payload, request } = input;
+): Promise<Response> {
+  const { payload, raw_request } = input;
+  const requestOrigin = {
+    origin: raw_request.headers.get("origin") ?? undefined,
+    referer: raw_request.headers.get("referer") ?? undefined,
+  };
   const callbackInput = {
     callbackURL: typeof payload.callbackURL === "string" ? payload.callbackURL : undefined,
     newUserCallbackURL:
@@ -33,8 +33,9 @@ export async function beginSocialLogin(
   const requestSignUp = typeof payload.requestSignUp === "boolean" ? payload.requestSignUp : null;
   const disableRedirect =
     typeof payload.disableRedirect === "boolean" ? payload.disableRedirect : null;
-  const callbackUrls = applyDefaultSocialCallbackUrls(env, request, callbackInput) ?? callbackInput;
-  if (!request.origin || !parseTrustedFrontendOrigins(env).includes(request.origin)) {
+  const callbackUrls =
+    applyDefaultSocialCallbackUrls(env, requestOrigin, callbackInput) ?? callbackInput;
+  if (!requestOrigin.origin || !parseTrustedFrontendOrigins(env).includes(requestOrigin.origin)) {
     throw new ApiError(403, "ORIGIN_NOT_ALLOWED", "A trusted frontend origin is required.");
   }
   const proof = await createSocialLoginProof(env);
@@ -51,7 +52,7 @@ export async function beginSocialLogin(
     provider,
     requestSignUp,
     disableRedirect,
-    requestOrigin: resolveTrustedRequestOrigin(env, request),
+    requestOrigin: resolveTrustedRequestOrigin(env, requestOrigin),
     callbackURL: toSafeTrustedUrlLog(env, callbackUrls.callbackURL ?? null),
     newUserCallbackURL: toSafeTrustedUrlLog(env, callbackUrls.newUserCallbackURL ?? null),
     errorCallbackURL: toSafeTrustedUrlLog(env, callbackUrls.errorCallbackURL ?? null),

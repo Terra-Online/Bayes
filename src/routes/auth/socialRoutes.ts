@@ -6,7 +6,7 @@ import { beginSocialLogin } from "@/services/auth/loginViaSocial";
 import { completeOAuthCallback, handleOAuthError } from "@/services/auth/oauthCallback";
 import type { AppEnv } from "@/types/app";
 
-import { authRequestInfo, authResponse } from "./honoAdapter";
+import { authResponse } from "./honoAdapter";
 
 export function createRoutes() {
   return new Hono<AppEnv<{ requestId: string }>>()
@@ -15,7 +15,7 @@ export function createRoutes() {
       return authResponse(
         c,
         await beginSocialLogin(c.env, {
-          request: authRequestInfo(c),
+          raw_request: c.req.raw,
           requestId: c.get("requestId"),
           payload,
         }),
@@ -25,9 +25,8 @@ export function createRoutes() {
       return authResponse(
         c,
         await completeOAuthCallback(c.env, {
-          request: authRequestInfo(c),
+          raw_request: c.req.raw,
           requestId: c.get("requestId"),
-          body: c.req.raw.body === null ? null : await c.req.arrayBuffer(),
         }),
       );
     })
@@ -35,9 +34,8 @@ export function createRoutes() {
       return authResponse(
         c,
         await handleOAuthError(c.env, {
-          request: authRequestInfo(c),
+          raw_request: c.req.raw,
           requestId: c.get("requestId"),
-          body: null,
         }),
       );
     });

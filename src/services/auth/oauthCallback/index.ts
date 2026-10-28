@@ -1,10 +1,3 @@
-// To avoid confusion between Hono's request and Better Auth's inputs and outputs,
-// we use explicit data for this module's interface. HTTP objects stay inside this module.
-
-import {
-  readBetterAuthResponseData,
-  type BetterAuthResponseData,
-} from "@/services/auth/betterAuth";
 import { toSafeTrustedUrlLog } from "@/services/auth/rules/frontendOrigins";
 import { createSessionExchangeCode } from "@/services/auth/sessionExchange";
 import type { Bindings } from "@/types/app";
@@ -22,12 +15,12 @@ export type { OAuthCallbackInput } from "./types";
 export async function completeOAuthCallback(
   env: Bindings,
   input: OAuthCallbackInput,
-): Promise<BetterAuthResponseData> {
-  const url = new URL(input.request.url);
+): Promise<Response> {
+  const url = new URL(input.raw_request.url);
   const provider = getProviderFromCallbackPath(url.pathname);
   console.warn("[auth][oauth-callback] incoming", {
     provider,
-    method: input.request.method,
+    method: input.raw_request.method,
     hasState: Boolean(url.searchParams.get("state")),
     hasCode: Boolean(url.searchParams.get("code")),
     hasError: Boolean(url.searchParams.get("error")),
@@ -45,21 +38,16 @@ export async function completeOAuthCallback(
   // Better Auth validates state and completes login or binding before returning this response.
   const handoff = inspectSessionHandoff(env, url.pathname, response);
   if (!handoff) {
-    return readBetterAuthResponseData(response);
+    return response;
   }
   const code = await createSessionExchangeCode(env.DB, {
     sessionToken: handoff.sessionToken,
     origin: handoff.frontendUrl.origin,
     challenge: handoff.challenge,
   });
-  return readBetterAuthResponseData(
-    attachSessionExchangeCode(env, url.pathname, response, handoff.frontendUrl, code),
-  );
+  return attachSessionExchangeCode(env, url.pathname, response, handoff.frontendUrl, code);
 }
 
-export async function handleOAuthError(
-  env: Bindings,
-  input: OAuthCallbackInput,
-): Promise<BetterAuthResponseData> {
-  return readBetterAuthResponseData(await invokeOAuthRequest(env, input));
+export function handleOAuthError(env: Bindings, input: OAuthCallbackInput): Promise<Response> {
+  return invokeOAuthRequest(env, input);
 }

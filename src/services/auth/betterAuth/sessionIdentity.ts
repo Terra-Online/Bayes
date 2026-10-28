@@ -4,7 +4,7 @@ import type { AuthIdentity } from "@/services/auth/identity";
 import type { Bindings } from "@/types/app";
 
 import { createAuth } from "./createAuth";
-import { buildSessionCredentialHeaders } from "./transport";
+import { buildSessionCredentialHeaders } from "./sessionCredentials";
 
 export async function readSessionIdentity(
   env: Bindings,

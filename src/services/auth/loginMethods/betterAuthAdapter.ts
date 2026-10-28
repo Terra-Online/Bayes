@@ -1,10 +1,4 @@
-import {
-  buildBetterAuthRequestHeaders,
-  invokeBetterAuthHandler,
-  readBetterAuthResponseData,
-  type BetterAuthRequestInfo,
-  type BetterAuthResponseData,
-} from "@/services/auth/betterAuth";
+import { invokeBetterAuthHandler } from "@/services/auth/betterAuth";
 import {
   applyDefaultSocialCallbackUrls,
   type SocialCallbackUrls,
@@ -18,37 +12,34 @@ type LinkAccountBody = Partial<SocialCallbackUrls> & {
   disableRedirect: boolean;
 };
 
-async function invokeAccountOperation(
+function invokeAccountOperation(
   env: Bindings,
-  input: { request: BetterAuthRequestInfo; requestId: string },
+  input: { raw_request: Request; requestId: string },
   authPath: "/link-social" | "/unlink-account",
   body: LinkAccountBody | { accountId: string },
-): Promise<BetterAuthResponseData> {
-  const target = new URL(input.request.url);
-  const publicPath = target.pathname;
-  // Better Auth dispatches these operations under its configured /auth/v1 base path.
-  target.pathname = `/auth/v1${authPath}`;
-  const request = new Request(target.toString(), {
-    method: "POST",
-    headers: buildBetterAuthRequestHeaders(input.request, { forceJson: true }),
-    body: JSON.stringify(body),
-  });
-  const response = await invokeBetterAuthHandler(env, request, {
-    publicPath,
-    authPath,
+): Promise<Response> {
+  return invokeBetterAuthHandler(env, input.raw_request, {
     requestId: input.requestId,
+    authPath,
+    jsonBody: body,
   });
-  return readBetterAuthResponseData(response);
 }
 
 export function beginAccountLink(
   env: Bindings,
   input: BeginLinkLoginMethodInput,
-): Promise<BetterAuthResponseData> {
-  const callbackUrls = applyDefaultSocialCallbackUrls(env, input.request, {
-    callbackURL: input.callbackURL,
-    errorCallbackURL: input.errorCallbackURL,
-  });
+): Promise<Response> {
+  const callbackUrls = applyDefaultSocialCallbackUrls(
+    env,
+    {
+      origin: input.raw_request.headers.get("origin") ?? undefined,
+      referer: input.raw_request.headers.get("referer") ?? undefined,
+    },
+    {
+      callbackURL: input.callbackURL,
+      errorCallbackURL: input.errorCallbackURL,
+    },
+  );
   const body: LinkAccountBody = {
     provider: input.provider,
     callbackURL: input.callbackURL,
@@ -64,7 +55,7 @@ export function unlinkAccount(
   env: Bindings,
   input: UnlinkLoginMethodInput,
   localAccountId: string,
-): Promise<BetterAuthResponseData> {
+): Promise<Response> {
   // Better Auth's accountId parameter requires auth_accounts.id, not the provider's external ID.
   // Its handler checks session age, account ownership and the last-account restriction.
   return invokeAccountOperation(env, input, "/unlink-account", { accountId: localAccountId });

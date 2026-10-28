@@ -1,9 +1,4 @@
-// To avoid confusion between Hono's request and Better Auth's inputs and outputs,
-// we use explicit data for this module's interface. The internal adapter handles
-// Better Auth's Request, Headers and Response objects.
-
 import { ApiError } from "@/lib/errors";
-import type { BetterAuthResponseData } from "@/services/auth/betterAuth";
 import type { Bindings } from "@/types/app";
 
 import { findUserProviderAccounts, listUserAccounts } from "./accountRepository";
@@ -40,14 +35,14 @@ export async function listLoginMethods(
 export function beginLinkLoginMethod(
   env: Bindings,
   input: BeginLinkLoginMethodInput,
-): Promise<BetterAuthResponseData> {
+): Promise<Response> {
   return beginAccountLink(env, input);
 }
 
 export async function unlinkLoginMethod(
   env: Bindings,
   input: UnlinkLoginMethodInput,
-): Promise<BetterAuthResponseData> {
+): Promise<Response> {
   const providerId = input.provider === "email" ? "credential" : input.provider;
   const accounts = await findUserProviderAccounts(env.DB, input.currentUserId, providerId);
   if (accounts.length === 0) {

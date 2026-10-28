@@ -7,7 +7,7 @@ import { loginViaPassword } from "@/services/auth/loginViaPassword";
 import { registerViaOTP, requestRegistrationOtp } from "@/services/auth/registerViaOTP";
 import type { AppEnv } from "@/types/app";
 
-import { authRequestInfo, authResponse } from "./honoAdapter";
+import { authResponse } from "./honoAdapter";
 
 export function createRoutes() {
   return new Hono<AppEnv<{ requestId: string }>>()
@@ -18,7 +18,7 @@ export function createRoutes() {
         c,
         await registerViaOTP(c.env, {
           ...input,
-          request: authRequestInfo(c),
+          raw_request: c.req.raw,
           requestId: c.get("requestId"),
         }),
       );
@@ -31,7 +31,7 @@ export function createRoutes() {
         await requestRegistrationOtp(c.env, {
           email: input.email,
           locale: input.locale,
-          request: authRequestInfo(c),
+          raw_request: c.req.raw,
           requestId: c.get("requestId"),
         }),
       );
@@ -41,14 +41,8 @@ export function createRoutes() {
       return authResponse(
         c,
         await loginViaPassword(c.env, {
-          email: payload.email,
-          password: payload.password,
-          rememberMe: payload.rememberMe,
-          callbackURL: payload.callbackURL,
-          redirectTo: payload.redirectTo,
-          errorCallbackURL: payload.errorCallbackURL,
-          newUserCallbackURL: payload.newUserCallbackURL,
-          request: authRequestInfo(c),
+          payload,
+          raw_request: c.req.raw,
           requestId: c.get("requestId"),
         }),
       );

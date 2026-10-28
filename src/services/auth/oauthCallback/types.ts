@@ -1,8 +1,5 @@
-import type { BetterAuthRequestInfo } from "@/services/auth/betterAuth";
-
 export type OAuthCallbackInput = {
-  request: BetterAuthRequestInfo;
+  // The HTTP entrypoint must leave this body unread. Better Auth consumes its stream.
+  raw_request: Request;
   requestId: string;
-  // Callback bodies are copied as bytes. Better Auth parses GET/POST provider responses.
-  body: ArrayBuffer | null;
 };

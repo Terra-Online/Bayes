@@ -1,16 +1,8 @@
-import type { BetterAuthRequestInfo } from "@/services/auth/betterAuth";
-
 export type LoginViaPasswordInput = {
-  // Better Auth validates these fields and returns their public validation errors.
-  // The route validates JSON syntax and the top-level object before calling this module.
-  email: unknown;
-  password: unknown;
-  rememberMe?: unknown;
-  callbackURL?: unknown;
-  // Better Auth's origin middleware also validates these redirect fields.
-  redirectTo?: unknown;
-  errorCallbackURL?: unknown;
-  newUserCallbackURL?: unknown;
-  request: BetterAuthRequestInfo;
+  // The route parses JSON first. The adapter reads only this request's URL and headers.
+  raw_request: Request;
   requestId: string;
+  // This invocation owns the parsed object. Email normalization updates it in place.
+  // Better Auth validates the fields and retains its public validation errors.
+  payload: Record<string, unknown>;
 };

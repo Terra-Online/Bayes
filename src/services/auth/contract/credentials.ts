@@ -1,3 +1,4 @@
+// Keep the received header and query token separate until authorization is resolved.
 export type AuthCredentials = {
   cookie?: string;
   authorization?: string;

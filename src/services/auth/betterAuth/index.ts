@@ -1,12 +1,5 @@
 export { createAuth, runWithAuthRequest } from "./createAuth";
 export { sameAuthCacheEnvironment } from "./environment";
-export { buildAuthForwardHeaders, invokeBetterAuthHandler } from "./forwarding";
-export { hasSessionCredentials } from "./sessionCredentials";
-export {
-  buildBetterAuthRequestHeaders,
-  buildSessionCredentialHeaders,
-  readBetterAuthResponseData,
-  type BetterAuthRequestInfo,
-  type BetterAuthResponseData,
-} from "./transport";
+export { invokeBetterAuthHandler } from "./forwarding";
+export { hasSessionCredentials, buildSessionCredentialHeaders } from "./sessionCredentials";
 export { readSessionIdentity } from "./sessionIdentity";

@@ -1,9 +1,10 @@
 import type { AuthCredentials } from "./contract/credentials";
 
-export function getRequestAuthCredentials(request: Request): AuthCredentials {
+// Extract original values without injecting headers or changing the request.
+export function getRequestAuthCredentials(raw_request: Request): AuthCredentials {
   return {
-    cookie: request.headers.get("cookie") ?? undefined,
-    authorization: request.headers.get("authorization") ?? undefined,
-    accessToken: new URL(request.url).searchParams.get("access_token") ?? undefined,
+    cookie: raw_request.headers.get("cookie") ?? undefined,
+    authorization: raw_request.headers.get("authorization") ?? undefined,
+    accessToken: new URL(raw_request.url).searchParams.get("access_token") ?? undefined,
   };
 }

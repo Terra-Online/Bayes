@@ -60,8 +60,8 @@ describe("authentication conflict boundaries", () => {
         );
         const response = await invokeBetterAuthHandler(
           env,
-          new Request(`https://auth.example.test/auth/v1${authPath}`, { method: "POST" }),
-          { publicPath, authPath, requestId: "conflict-test" },
+          new Request(`https://auth.example.test${publicPath}`, { method: "POST" }),
+          { authPath, requestId: "conflict-test" },
         );
         expect(response.status).toBe(status);
         expect(await response.json()).toMatchObject({ code });
@@ -86,8 +86,8 @@ describe("authentication conflict boundaries", () => {
     );
     const response = await invokeBetterAuthHandler(
       env,
-      new Request("https://auth.example.test/auth/v1/sign-in/email-otp", { method: "POST" }),
-      { publicPath: "/register", authPath: "/sign-in/email-otp", requestId: "conflict-test" },
+      new Request("https://auth.example.test/register", { method: "POST" }),
+      { authPath: "/sign-in/email-otp", requestId: "conflict-test" },
     );
     expect(response.status).toBe(500);
     expect(await response.text()).toBe("opaque");
@@ -108,8 +108,8 @@ describe("authentication conflict boundaries", () => {
     const invoke = () =>
       invokeBetterAuthHandler(
         env,
-        new Request("https://auth.example.test/auth/v1/sign-in/email-otp", { method: "POST" }),
-        { publicPath: "/register", authPath: "/sign-in/email-otp", requestId: "conflict-test" },
+        new Request("https://auth.example.test/register", { method: "POST" }),
+        { authPath: "/sign-in/email-otp", requestId: "conflict-test" },
       );
     expect((await invoke()).status).toBe(409);
     expect((await invoke()).status).toBe(500);

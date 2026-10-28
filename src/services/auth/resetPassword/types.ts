@@ -1,7 +1,7 @@
-import type { BetterAuthRequestInfo } from "@/services/auth/betterAuth";
-
 export type PasswordResetContext = {
-  request: BetterAuthRequestInfo;
+  // JSON operations supply parsed fields and use only this request's URL and headers.
+  // Reset-link forwarding preserves the original method and leaves the body unread.
+  raw_request: Request;
   requestId: string;
 };
 

@@ -14,19 +14,53 @@ type BetterAuthInvocationContext = {
   requestId: string;
 };
 
+type BetterAuthRequestOptions = {
+  requestId: string;
+  // Omit this path when the public URL already addresses the Better Auth endpoint.
+  authPath?: string;
+  // Routes may have consumed raw_request's JSON body. Use this replacement body instead.
+  jsonBody?: object;
+  headerOverrides?: Record<string, string>;
+};
+
+// raw_request is borrowed from the HTTP entrypoint. Do not modify its headers.
+// Keep its body unread for raw forwarding. JSON operations supply jsonBody instead.
+// This path never injects Authorization from the access_token query parameter.
 // Better Auth's handler runs router middleware and IP rate limits.
 export async function invokeBetterAuthHandler(
   env: Bindings,
-  request: Request,
-  context: BetterAuthInvocationContext,
+  raw_request: Request,
+  options: BetterAuthRequestOptions,
 ): Promise<Response> {
   const errors: unknown[] = [];
   const auth = createAuth(env, { onError: (error) => errors.push(error) });
-  const browserRequest = new Request(request, {
-    headers: resolveBrowserSessionHeaders(auth, request.headers).headers,
+  const target = new URL(raw_request.url);
+  const context: BetterAuthInvocationContext = {
+    publicPath: target.pathname,
+    authPath: options.authPath ?? target.pathname.replace(/^\/auth\/v1/, ""),
+    requestId: options.requestId,
+  };
+  if (options.authPath !== undefined) {
+    target.pathname = `/auth/v1${options.authPath}`;
+  }
+  const hasJsonBody = options.jsonBody !== undefined;
+  const method = hasJsonBody ? "POST" : raw_request.method.toUpperCase();
+  const raw_headers = raw_request.headers;
+  const forwarded_headers = buildAuthForwardHeaders(raw_headers, {
+    forceJson: hasJsonBody,
+    headerOverrides: options.headerOverrides,
+  });
+  // This helper copies headers only when a legacy cookie needs an alias.
+  // The original credentials remain available on raw_request for cache invalidation.
+  const patched_headers = resolveBrowserSessionHeaders(auth, forwarded_headers).headers;
+  const body = hasJsonBody ? JSON.stringify(options.jsonBody) : raw_request.body;
+  const request = new Request(target.toString(), {
+    method,
+    headers: patched_headers,
+    body: !["GET", "HEAD"].includes(method) ? body : undefined,
   });
   try {
-    const response = await auth.handler(browserRequest);
+    const response = await auth.handler(request);
     if (response.status >= 500) {
       for (const error of errors) {
         const conflict = authConflictResponse(context, error);
@@ -74,14 +108,16 @@ const FORWARDED_HEADER_ALLOWLIST = [
   "referer",
 ];
 
-export function buildAuthForwardHeaders(
-  source: Headers,
-  options?: { forceJson?: boolean; headers?: Record<string, string> },
+// Create one owned header set from the original request allowlist.
+// Preserve the existing omission of empty header values.
+function buildAuthForwardHeaders(
+  raw_headers: Headers,
+  options?: { forceJson?: boolean; headerOverrides?: Record<string, string> },
 ): Headers {
   const forwardedHeaders = new Headers();
 
   for (const headerName of FORWARDED_HEADER_ALLOWLIST) {
-    const value = source.get(headerName);
+    const value = raw_headers.get(headerName);
     if (value) {
       forwardedHeaders.set(headerName, value);
     }
@@ -92,8 +128,8 @@ export function buildAuthForwardHeaders(
     forwardedHeaders.set("accept", "application/json");
   }
 
-  if (options?.headers) {
-    for (const [name, value] of Object.entries(options.headers)) {
+  if (options?.headerOverrides) {
+    for (const [name, value] of Object.entries(options.headerOverrides)) {
       forwardedHeaders.set(name, value);
     }
   }

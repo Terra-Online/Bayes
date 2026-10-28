@@ -15,7 +15,7 @@ import {
 } from "@/services/auth/resetPassword";
 import type { AppEnv } from "@/types/app";
 
-import { authRequestInfo, authResponse } from "./honoAdapter";
+import { authResponse } from "./honoAdapter";
 
 export function createRoutes() {
   return new Hono<AppEnv<{ requestId: string }>>()
@@ -26,7 +26,7 @@ export function createRoutes() {
         c,
         await requestPasswordReset(c.env, {
           ...input,
-          request: authRequestInfo(c),
+          raw_request: c.req.raw,
           requestId: c.get("requestId"),
         }),
       );
@@ -38,7 +38,7 @@ export function createRoutes() {
         c,
         await resetPassword(c.env, {
           ...input,
-          request: authRequestInfo(c),
+          raw_request: c.req.raw,
           requestId: c.get("requestId"),
         }),
       );
@@ -54,7 +54,7 @@ export function createRoutes() {
       return authResponse(
         c,
         await followPasswordResetLink(c.env, {
-          request: authRequestInfo(c),
+          raw_request: c.req.raw,
           requestId: c.get("requestId"),
         }),
       );

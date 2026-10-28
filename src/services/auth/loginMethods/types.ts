@@ -1,7 +1,6 @@
-import type { BetterAuthRequestInfo } from "@/services/auth/betterAuth";
-
 type LoginMethodContext = {
-  request: BetterAuthRequestInfo;
+  // The route parses JSON first. The adapter reads only this request's URL and headers.
+  raw_request: Request;
   requestId: string;
 };
 

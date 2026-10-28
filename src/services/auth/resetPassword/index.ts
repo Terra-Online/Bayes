@@ -1,9 +1,4 @@
-// To avoid confusion between Hono's request and Better Auth's inputs and outputs,
-// we use explicit data for this module's interface. The internal adapter handles
-// Better Auth's Request, Headers and Response objects.
-
 import { ApiError } from "@/lib/errors";
-import type { BetterAuthResponseData } from "@/services/auth/betterAuth";
 import { normalizeEmail } from "@/services/auth/contract/email";
 import type { Bindings } from "@/types/app";
 
@@ -26,7 +21,7 @@ export type {
 export function requestPasswordReset(
   env: Bindings,
   input: RequestPasswordResetInput,
-): Promise<BetterAuthResponseData> {
+): Promise<Response> {
   return requestResetEmail(env, {
     ...input,
     email: normalizeEmail(input.email),
@@ -34,10 +29,7 @@ export function requestPasswordReset(
   });
 }
 
-export function resetPassword(
-  env: Bindings,
-  input: ResetPasswordInput,
-): Promise<BetterAuthResponseData> {
+export function resetPassword(env: Bindings, input: ResetPasswordInput): Promise<Response> {
   // Reject mismatched passwords before Better Auth can consume the token.
   if (input.newPassword !== input.repeatPassword) {
     throw new ApiError(400, "PASSWORD_MISMATCH", "Repeated password does not match.");
@@ -68,7 +60,7 @@ export async function previewPasswordReset(
 export function followPasswordResetLink(
   env: Bindings,
   input: PasswordResetContext,
-): Promise<BetterAuthResponseData> {
+): Promise<Response> {
   // Link validation and preview only read the token. Submission consumes it.
   return followResetLink(env, input);
 }

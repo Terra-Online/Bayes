@@ -1,10 +1,4 @@
-import {
-  buildBetterAuthRequestHeaders,
-  createAuth,
-  invokeBetterAuthHandler,
-  readBetterAuthResponseData,
-  type BetterAuthResponseData,
-} from "@/services/auth/betterAuth";
+import { createAuth, invokeBetterAuthHandler } from "@/services/auth/betterAuth";
 import { createOAuthExchangeProof } from "@/services/auth/browserSession";
 import type { Bindings } from "@/types/app";
 
@@ -21,24 +15,14 @@ export async function invokeSocialSignIn(
   input: BeginSocialLoginInput,
   body: Record<string, unknown>,
   proofCookie: string,
-): Promise<BetterAuthResponseData> {
-  const target = new URL(input.request.url);
-  const publicPath = target.pathname;
-  // Better Auth dispatches social sign-in under its configured /auth/v1 base path.
-  target.pathname = "/auth/v1/sign-in/social";
-  const request = new Request(target.toString(), {
-    method: "POST",
-    headers: buildBetterAuthRequestHeaders(input.request, { forceJson: true }),
-    body: JSON.stringify(body),
-  });
-  const response = await invokeBetterAuthHandler(env, request, {
-    publicPath,
-    authPath: "/sign-in/social",
+): Promise<Response> {
+  const response = await invokeBetterAuthHandler(env, input.raw_request, {
     requestId: input.requestId,
+    jsonBody: body,
   });
   if (response.ok) {
     response.headers.append("Set-Cookie", proofCookie);
   }
   response.headers.set("Cache-Control", "private, no-store");
-  return readBetterAuthResponseData(response);
+  return response;
 }

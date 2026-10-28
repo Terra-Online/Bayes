@@ -1,9 +1,4 @@
-// To avoid confusion between Hono's request and Better Auth's inputs and outputs,
-// we use explicit data for this module's interface. The internal adapter handles
-// Better Auth's Request, Headers and Response objects.
-
 import { ApiError, toApiError, toSerializableError } from "@/lib/errors";
-import type { BetterAuthResponseData } from "@/services/auth/betterAuth";
 import { normalizeEmail } from "@/services/auth/contract/email";
 import { isDisposableEmail } from "@/services/auth/rules/disposableEmail";
 import type { Bindings } from "@/types/app";
@@ -23,21 +18,18 @@ export type { RegisterViaOTPInput, RequestRegistrationOtpInput } from "./types";
 export async function requestRegistrationOtp(
   env: Bindings,
   input: RequestRegistrationOtpInput,
-): Promise<BetterAuthResponseData> {
+): Promise<Response> {
   const email = registrationEmail(input.email);
   return requestOtp(env, { ...input, email, locale: input.locale?.trim() });
 }
 
-export async function registerViaOTP(
-  env: Bindings,
-  input: RegisterViaOTPInput,
-): Promise<BetterAuthResponseData> {
+export async function registerViaOTP(env: Bindings, input: RegisterViaOTPInput): Promise<Response> {
   const email = registrationEmail(input.email);
   const signIn = await signInWithOtp(env, {
     email,
     otp: input.otp,
     name: input.name?.trim() || deriveDisplayName(email),
-    request: input.request,
+    raw_request: input.raw_request,
     requestId: input.requestId,
   });
   if (!signIn.token) {

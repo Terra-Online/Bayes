@@ -56,3 +56,18 @@ export function hasSessionCredentials(env: Bindings, credentials: AuthCredential
   }
   return getSessionCookieNames(env).some((name) => cookieHeaderHasName(raw, name));
 }
+
+// Only session-reading paths call this conversion. An explicitly supplied
+// Authorization header, including an empty one, suppresses query-token fallback.
+// The returned headers are owned by the caller; the received credentials stay unchanged.
+export function buildSessionCredentialHeaders(credentials: AuthCredentials): Headers {
+  const headers = new Headers();
+  if (credentials.cookie !== undefined) {
+    headers.set("cookie", credentials.cookie);
+  }
+  const authorization = resolveAuthorization(credentials);
+  if (authorization !== undefined) {
+    headers.set("authorization", authorization);
+  }
+  return headers;
+}
