@@ -125,7 +125,7 @@ target executor/restore procedure on the isolated actual target copy, including
 atomic failure and migration registration. Obtain explicit release authorization
 separately; keep all gates closed throughout the following steps.
 
-1. Pin the final Bayes commit, Atlos `9389a7de49179919e0aa0d8fabbc48eb5ee1838b`
+1. Pin the final Bayes commit, Atlos `997daac7def9d0b052f21aeffc59d176d96b835e`
    and Cor `5e4a863684ac805eb0704d28a194fbdb1bf1261c`. Record build artifacts and
    deployment identities. The Bayes final SHA belongs in the release receipt, not
    a self-referential source constant. Verify actual deployment routing, auth,
