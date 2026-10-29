@@ -1,11 +1,14 @@
 import { getRuntimeConfig } from "@/lib/config";
-import { getSubmissionById } from "@/repositories/submission/statusSubmission";
+import {
+  getPublicTranslationTarget,
+  type PublicTranslationTarget,
+} from "@/repositories/submission/commentTranslation";
 import type { SubmissionModerationSource } from "@/services/moderation/messages";
 import { notifyCommentTransPrewarmDone } from "@/services/moderation/notifications";
 import { isGoogleTranslateConfigured } from "@/services/translation/googleTranslation";
 import type { Bindings } from "@/types/app";
 
-import { translateVisibleComments } from "./comments";
+import { translateResolvedComments } from "./comments";
 import type { CommentTranslationPrewarmTarget } from "./types";
 
 export async function prewarmCommentTranslationWithNotification(
@@ -16,7 +19,12 @@ export async function prewarmCommentTranslationWithNotification(
     return;
   }
 
-  const result = await prewarmApprovedCommentTrans(env, input.submissionId).catch((error) => {
+  const target = await getPublicTranslationTarget(env.DB, input.submissionId);
+  if (!target) {
+    return;
+  }
+
+  const result = await prewarmApprovedCommentTrans(env, target).catch((error) => {
     console.warn("comment translation prewarm failed", {
       submissionId: input.submissionId,
       error: error instanceof Error ? error.message : String(error),
@@ -24,7 +32,7 @@ export async function prewarmCommentTranslationWithNotification(
     return null;
   });
   if (result && !result.skipped) {
-    const submission = await getSubmissionById(env.DB, input.submissionId);
+    const submission = await getPublicTranslationTarget(env.DB, target.id, target.snapshotId);
     if (submission) {
       await notifyCommentTransPrewarmDone(env, {
         submission,
@@ -45,35 +53,11 @@ const APPROVED_COMMENT_PREWARM_TARGET_LANGUAGES = [
 
 async function prewarmApprovedCommentTrans(
   env: Bindings,
-  commentId: string,
+  target: PublicTranslationTarget,
 ): Promise<{ ok: boolean; skipped?: string; targets: CommentTranslationPrewarmTarget[] }> {
-  const id = commentId.trim();
+  const id = target.id;
   const targetLangs = [...APPROVED_COMMENT_PREWARM_TARGET_LANGUAGES];
   const runtimeConfig = getRuntimeConfig(env);
-  if (!runtimeConfig.commentTranslationPrewarmEnabled) {
-    return {
-      ok: true,
-      skipped: "COMMENT_TRANSLATION_PREWARM_DISABLED",
-      targets: targetLangs.map((lang) => ({
-        lang,
-        status: "skipped",
-        error: "COMMENT_TRANSLATION_PREWARM_DISABLED",
-      })),
-    };
-  }
-
-  if (!id) {
-    return {
-      ok: false,
-      skipped: "COMMENT_ID_EMPTY",
-      targets: targetLangs.map((lang) => ({
-        lang,
-        status: "failed",
-        error: "COMMENT_ID_EMPTY",
-      })),
-    };
-  }
-
   const config = runtimeConfig.googleTranslate;
   if (!isGoogleTranslateConfigured(config)) {
     return {
@@ -89,11 +73,15 @@ async function prewarmApprovedCommentTrans(
 
   const results = await Promise.allSettled(
     targetLangs.map((targetLang) =>
-      translateVisibleComments(env, {
-        commentIds: [id],
-        sourceLanguage: "auto",
-        targetLanguage: targetLang,
-      }),
+      translateResolvedComments(
+        env,
+        {
+          commentIds: [id],
+          sourceLanguage: "auto",
+          targetLanguage: targetLang,
+        },
+        [target],
+      ),
     ),
   );
 

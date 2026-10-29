@@ -1,6 +1,6 @@
 import { buildSubmissionShareUrl } from "@/lib/pointShare";
 import { enqueueModerationNotification } from "@/queues/client/moderationWebhook";
-import type { SubmissionRecord, SubmissionStatus } from "@/repositories/submission/types";
+import type { SubmissionStatus } from "@/repositories/submission/types";
 import type { CommentTranslationPrewarmTarget } from "@/services/ugc/translation/types";
 import type { AuthUser, Bindings } from "@/types/app";
 
@@ -54,7 +54,7 @@ export async function notifySubmissionModerationResult(
 export async function notifyCommentTransPrewarmDone(
   env: Bindings,
   payload: {
-    submission: SubmissionRecord;
+    submission: ModerationSubmission;
     source: SubmissionModerationSource;
     targets: CommentTranslationPrewarmTarget[];
   },
