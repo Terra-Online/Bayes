@@ -4,7 +4,6 @@ import {
   countSubmissionUpvotes,
   createSubmissionUpvote,
   deleteSubmissionUpvote,
-  getSubmissionScore,
   setSubmissionVote,
 } from "@/repositories/submission/voteSubmission";
 import { publishNotificationsCreated } from "@/services/notify/live";
@@ -17,30 +16,25 @@ interface VoteCommentInput extends UgcActionInput {
 
 export async function voteComment(dependencies: UgcActionDependencies, input: VoteCommentInput) {
   const { bindings } = dependencies;
-  const submission = await requireSubmission(bindings.DB, {
-    submissionId: input.submissionId,
-    kind: "comment",
-  });
-  if (!["active", "flagged", "remove_request"].includes(submission.status)) {
-    throw new ApiError(409, "INVALID_SUBMISSION_STATUS", "Only visible comments can be voted.", {
-      status: submission.status,
-    });
-  }
-
   const vote = await setSubmissionVote(bindings.DB, {
     submissionId: input.submissionId,
     actor: input.actor,
     value: input.value,
   });
-  const score = await getSubmissionScore(bindings.DB, input.submissionId);
+  if (vote.outcome === "missing") {
+    throw new ApiError(404, "SUBMISSION_NOT_FOUND", "Comment submission was not found.");
+  }
+  if (vote.outcome !== "voted") {
+    throw new ApiError(409, "INVALID_SUBMISSION_STATUS", "Only visible comments can be voted.");
+  }
   dependencies.defer(
-    invalidateUploadCaches({ kv: bindings.OEM_KV, kind: "comment", markerId: submission.markerId }),
+    invalidateUploadCaches({ kv: bindings.OEM_KV, kind: "comment", markerId: vote.markerId }),
   );
   if (vote.notifications.length > 0) {
     dependencies.defer(publishNotificationsCreated(bindings, vote.notifications));
   }
 
-  return { vote: vote.currentVote, previousVote: vote.previousVote, score };
+  return { vote: vote.currentVote, previousVote: vote.previousVote, score: vote.score };
 }
 
 export async function upvoteImage(dependencies: UgcActionDependencies, input: UgcActionInput) {

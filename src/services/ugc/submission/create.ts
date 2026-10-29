@@ -2,14 +2,15 @@ import { nanoid } from "nanoid";
 
 import { getRuntimeConfig } from "@/lib/config";
 import { ApiError } from "@/lib/errors";
-import { enqueueAutoModeration } from "@/queues/client/autoModeration";
 import { getDuplicateImageMarkerSummary } from "@/repositories/submission-duplicates";
+import {
+  createPendingComment,
+  markCommentModerationQueued,
+} from "@/repositories/submission/createComment";
 import {
   createPendingImage,
   markImageModerationQueued,
 } from "@/repositories/submission/createImage";
-import { createPendingSubmission } from "@/repositories/submission/createSubmission";
-import { getSubmissionById } from "@/repositories/submission/statusSubmission";
 import { UGC_PUBLIC_IMAGE_CACHE_CONTROL } from "@/services/ugc/contract/imageDelivery";
 import type { ImageReadScope } from "@/services/ugc/contract/imageScope";
 import type { AuthUser, Bindings } from "@/types/app";
@@ -48,60 +49,58 @@ export async function submitComment(bindings: Bindings, input: SubmitCommentInpu
   const snapshotId = nanoid(12);
   const poiType = normalizePoiField(input.poiType);
   const poiHash = normalizePoiField(input.poiHash);
-  let parentId: string | null = null;
-  let commentDepth = 0;
-
-  if (input.parentId) {
-    const parent = await getSubmissionById(bindings.DB, input.parentId);
-    if (!parent || parent.kind !== "comment") {
-      throw new ApiError(404, "PARENT_COMMENT_NOT_FOUND", "Parent comment was not found.");
-    }
-    if (
-      parent.markerId !== input.markerId ||
-      parent.poiHash !== poiHash ||
-      parent.poiType !== poiType
-    ) {
-      throw new ApiError(
-        409,
-        "PARENT_COMMENT_MISMATCH",
-        "Parent comment belongs to a different POI.",
-      );
-    }
-    if (!["active", "flagged", "remove_request"].includes(parent.status)) {
-      throw new ApiError(
-        409,
-        "PARENT_COMMENT_NOT_VISIBLE",
-        "Replies can only target visible comments.",
-        {
-          status: parent.status,
-        },
-      );
-    }
-    parentId = parent.id;
-    commentDepth = parent.commentDepth + 1;
-  }
-
-  await createPendingSubmission(bindings.DB, {
+  const created = await createPendingComment(bindings.DB, {
     id: submissionId,
+    snapshotId,
+    userId: input.actor.uid,
     markerId: input.markerId,
     poiHash,
     poiType,
-    snapshotId,
-    userId: input.actor.uid,
-    content: input.content,
-    kind: "comment",
-    status: "pending_openai",
-    parentId,
-    commentDepth,
+    content: input.content.trim(),
+    parentId: input.parentId,
   });
-  await enqueueAutoModeration(bindings, submissionId, snapshotId);
+  if (created.outcome === "parent_missing") {
+    throw new ApiError(404, "PARENT_COMMENT_NOT_FOUND", "Parent comment was not found.");
+  }
+  if (created.outcome === "parent_mismatch") {
+    throw new ApiError(
+      409,
+      "PARENT_COMMENT_MISMATCH",
+      "Parent comment belongs to a different POI.",
+    );
+  }
+  if (created.outcome !== "created") {
+    throw new ApiError(
+      409,
+      "PARENT_COMMENT_NOT_VISIBLE",
+      "Replies can only target visible comments.",
+    );
+  }
+  const queuedAt = new Date().toISOString();
+  await bindings.OEM_MODERATION_Q.send({
+    type: "moderation",
+    submissionId: created.id,
+    snapshotId: created.snapshotId,
+    source: "upload",
+    queuedAt,
+  });
+  await markCommentModerationQueued(bindings.DB, {
+    submissionId: created.id,
+    snapshotId: created.snapshotId,
+    queuedAt,
+  }).catch((error) => {
+    console.warn("moderation queued marker update failed", {
+      submissionId: created.id,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  });
 
   return {
     submission: {
       id: submissionId,
       markerId: input.markerId,
-      parentId,
-      depth: commentDepth,
+      parentId: created.parentId,
+      depth: created.depth,
       status: "pending_openai" as const,
       snapshotId,
     },

@@ -529,6 +529,10 @@ function prepareCommunityVoteNotificationWrite(
     return [];
   }
 
+  const visibilityCondition =
+    payload.kind === "comment"
+      ? "EXISTS (SELECT 1 FROM ugc_submission_visibility visibility WHERE visibility.submission_id=s.id AND visibility.public_snapshot_id IS NOT NULL)"
+      : "s.status IN ('active', 'flagged', 'remove_request')";
   const notificationId = nanoid(18);
   const messageId = nanoid(18);
   const createdAt = payload.changedAt;
@@ -557,9 +561,23 @@ function prepareCommunityVoteNotificationWrite(
         `UPDATE notifications
        SET open_aggregation_key = NULL
        WHERE open_aggregation_key = ?1
-         AND window_expires_at <= ?2`,
+         AND window_expires_at <= ?2
+         ${
+           payload.kind === "comment"
+             ? `AND EXISTS (
+           SELECT 1 FROM ugc_submission_votes vote
+           JOIN ugc_submission_visibility visibility ON visibility.submission_id=vote.submission_id
+           WHERE vote.submission_id=?3 AND vote.user_id=?4 AND vote.active=1 AND vote.value=1
+             AND vote.updated_at=?2 AND visibility.public_snapshot_id IS NOT NULL
+         )`
+             : ""
+         }`,
       )
-      .bind(openKey, createdAt),
+      .bind(
+        openKey,
+        createdAt,
+        ...(payload.kind === "comment" ? [payload.submissionId, payload.actor.uid] : []),
+      ),
     db
       .prepare(
         `INSERT INTO notifications (
@@ -578,7 +596,7 @@ function prepareCommunityVoteNotificationWrite(
        FROM ugc_submissions s${voteSource}
        WHERE s.id = ?8
          AND s.kind = ?10
-         AND s.status IN ('active', 'flagged', 'remove_request')
+         AND ${visibilityCondition}
          AND s.user_id <> ?2
          AND NOT EXISTS (
            SELECT 1 FROM notification_messages WHERE dedupe_key = ?9
@@ -612,7 +630,7 @@ function prepareCommunityVoteNotificationWrite(
        INNER JOIN notifications n ON n.open_aggregation_key = ?6
        WHERE s.id = ?7
          AND s.kind = ?8
-         AND s.status IN ('active', 'flagged', 'remove_request')
+         AND ${visibilityCondition}
          AND s.user_id <> ?2
          AND ?5 < n.window_expires_at
        ON CONFLICT(dedupe_key) DO NOTHING`,

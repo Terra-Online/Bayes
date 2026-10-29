@@ -2,7 +2,6 @@ import {
   notificationsFromResult,
   prepareCommentVoteNotificationWrite,
   prepareImageUpvoteNotificationWrite,
-  type CommentVoteResult,
   type NotificationRecord,
 } from "@/repositories/notifications";
 import type { AuthUser } from "@/types/app";
@@ -68,74 +67,69 @@ export async function deleteSubmissionUpvote(
   return (result.meta.changes ?? 0) > 0;
 }
 
+export type SetCommentVoteResult =
+  | { outcome: "missing" | "hidden" }
+  | {
+      outcome: "voted";
+      markerId: string;
+      previousVote: SubmissionVoteValue | 0;
+      currentVote: SubmissionVoteValue | 0;
+      score: number;
+      notifications: NotificationRecord[];
+    };
+
+/** Eligibility, toggle/reversal, notification writes and result share one transaction. */
 export async function setSubmissionVote(
   db: D1Database,
-  payload: {
-    submissionId: string;
-    actor: AuthUser;
-    value: SubmissionVoteValue;
-  },
-): Promise<CommentVoteResult> {
-  const current = await db
-    .prepare(
-      `SELECT value, active
-       FROM ugc_submission_votes
-       WHERE submission_id = ?1
-         AND user_id = ?2
-       LIMIT 1`,
-    )
-    .bind(payload.submissionId, payload.actor.uid)
-    .first<{ value: number | string; active: number | string }>();
-
-  const previousVote = Number(current?.active ?? 0) === 1 ? mapVoteValue(current?.value) : 0;
+  payload: { submissionId: string; actor: AuthUser; value: SubmissionVoteValue },
+): Promise<SetCommentVoteResult> {
   const changedAt = new Date().toISOString();
-  if (previousVote === payload.value) {
-    const result = await db
-      .prepare(
-        `UPDATE ugc_submission_votes
-         SET active = 0,
-             updated_at = ?3
-         WHERE submission_id = ?1
-           AND user_id = ?2
-           AND active = 1`,
-      )
-      .bind(payload.submissionId, payload.actor.uid, changedAt)
-      .run();
-    return {
-      previousVote,
-      currentVote: (result.meta.changes ?? 0) > 0 ? 0 : previousVote,
-      notifications: [],
-    };
-  }
-
   const notificationStatements = prepareCommentVoteNotificationWrite(db, {
-    submissionId: payload.submissionId,
-    actor: payload.actor,
-    value: payload.value,
+    ...payload,
     changedAt,
   });
   const results = await db.batch<Record<string, unknown>>([
     db
-      .prepare(
-        `INSERT INTO ugc_submission_votes (submission_id, user_id, value, active, created_at, updated_at)
-       VALUES (?1, ?2, ?3, 1, ?4, ?4)
-       ON CONFLICT(submission_id, user_id)
-       DO UPDATE SET value = excluded.value,
-                     active = 1,
-                     updated_at = excluded.updated_at
-       RETURNING submission_id`,
-      )
+      .prepare(`SELECT value,active FROM ugc_submission_votes
+      WHERE submission_id=?1 AND user_id=?2`)
+      .bind(payload.submissionId, payload.actor.uid),
+    db
+      .prepare(`INSERT INTO ugc_submission_votes
+      (submission_id,user_id,value,active,created_at,updated_at)
+      SELECT submission_id,?2,?3,1,?4,?4 FROM ugc_submission_visibility
+      WHERE submission_id=?1 AND kind='comment' AND public_snapshot_id IS NOT NULL
+      ON CONFLICT(submission_id,user_id) DO UPDATE SET
+        value=excluded.value,
+        active=CASE WHEN ugc_submission_votes.active=1 AND ugc_submission_votes.value=excluded.value THEN 0 ELSE 1 END,
+        updated_at=excluded.updated_at
+      RETURNING submission_id`)
       .bind(payload.submissionId, payload.actor.uid, payload.value, changedAt),
     ...notificationStatements,
+    db
+      .prepare(`SELECT s.poi_id,v.public_snapshot_id,
+        COALESCE((SELECT value FROM ugc_submission_votes WHERE submission_id=s.id AND user_id=?2 AND active=1),0) AS vote,
+        (SELECT COALESCE(SUM(value),0) FROM ugc_submission_votes WHERE submission_id=s.id AND active=1) AS score
+      FROM ugc_submissions s JOIN ugc_submission_visibility v ON v.submission_id=s.id
+      WHERE s.id=?1 AND s.kind='comment'`)
+      .bind(payload.submissionId, payload.actor.uid),
   ]);
-  const voteResult = results[0];
-  const notificationResult =
-    notificationStatements.length > 0 ? results[notificationStatements.length] : undefined;
-
+  const row = results.at(-1)?.results[0];
+  if (!row) {
+    return { outcome: "missing" };
+  }
+  if (!row.public_snapshot_id || results[1].results.length === 0) {
+    return { outcome: "hidden" };
+  }
+  const previous = results[0].results[0];
   return {
-    previousVote,
-    currentVote: (voteResult.results ?? []).length > 0 ? payload.value : previousVote,
-    notifications: notificationsFromResult(notificationResult),
+    outcome: "voted",
+    markerId: String(row.poi_id),
+    previousVote: Number(previous?.active) === 1 ? mapVoteValue(previous?.value) : 0,
+    currentVote: mapVoteValue(row.vote),
+    score: Number(row.score),
+    notifications: notificationStatements.length
+      ? notificationsFromResult(results[1 + notificationStatements.length])
+      : [],
   };
 }
 

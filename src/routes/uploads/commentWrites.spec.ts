@@ -5,6 +5,7 @@ import { createApp } from "@/app";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { insertAuthUser, insertSession, testAuthConfig } from "@/test/fixtures/auth";
 import { insertSubmission } from "@/test/fixtures/submissions";
+import { importCurrentSubmissions } from "@/test/fixtures/ugcSnapshots";
 import { insertUser } from "@/test/fixtures/users";
 import type { Bindings } from "@/types/app";
 
@@ -47,6 +48,9 @@ describe.each(["new comments", "comment edits"] as const)("%s content boundaries
     redis.expire.mockResolvedValue(1);
     publicReadCache.purgeMarker.mockResolvedValue({ success: true });
     database = createTestDatabase();
+    if (operation === "new comments") {
+      importCurrentSubmissions(database);
+    }
     insertUser(database.sqlite, { uid: "author" });
     insertAuthUser(database.sqlite, { id: "author" });
     sessionHeaders = insertSession(database.sqlite, { userId: "author" }).headers;
@@ -112,7 +116,11 @@ describe.each(["new comments", "comment edits"] as const)("%s content boundaries
     expect(payload).toMatchObject({ ok: true, submission: { status: "pending_openai" } });
     expect(
       database.sqlite
-        .prepare("SELECT content, snapshot_id, status FROM ugc_submissions WHERE id = ?")
+        .prepare(
+          operation === "new comments"
+            ? "SELECT content, id AS snapshot_id, review_status AS status FROM ugc_snapshots WHERE submission_id = ?"
+            : "SELECT content, snapshot_id, status FROM ugc_submissions WHERE id = ?",
+        )
         .get(payload.submission.id),
     ).toEqual({
       content: storedContent,
