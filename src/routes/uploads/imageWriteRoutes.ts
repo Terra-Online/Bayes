@@ -3,7 +3,7 @@ import { Hono } from "hono";
 import { getUgcReadConfig } from "@/lib/config";
 import { ApiError } from "@/lib/errors";
 import { rateLimit } from "@/middleware/rate-limit";
-import { imageUploadFieldsSchema } from "@/routes/schema/uploads";
+import { imageUploadFieldsSchema, submissionReportSchema } from "@/routes/schema/uploads";
 import { flagSubmission, unflagSubmission } from "@/services/ugc/interact/flags";
 import { unvoteImage, upvoteImage } from "@/services/ugc/interact/votes";
 import { deleteSubmissionByAuthor } from "@/services/ugc/owner/deletion";
@@ -100,9 +100,18 @@ export function createRoutes() {
       async (c) => {
         const user = c.get("authUser");
         const submissionId = c.req.param("id");
+        const parsed = submissionReportSchema.safeParse(await c.req.json().catch(() => null));
+        if (!parsed.success) {
+          throw new ApiError(
+            422,
+            "VALIDATION_ERROR",
+            "Invalid report payload.",
+            parsed.error.flatten(),
+          );
+        }
         const result = await flagSubmission(
           { bindings: c.env, defer: (task) => c.executionCtx.waitUntil(task) },
-          { actor: user, submissionId, kind: "image" },
+          { actor: user, submissionId, kind: "image", ...parsed.data },
         );
         return c.json({ ok: true, ...result });
       },
@@ -115,9 +124,18 @@ export function createRoutes() {
       async (c) => {
         const user = c.get("authUser");
         const submissionId = c.req.param("id");
+        const parsed = submissionReportSchema.safeParse(await c.req.json().catch(() => null));
+        if (!parsed.success) {
+          throw new ApiError(
+            422,
+            "VALIDATION_ERROR",
+            "Invalid report payload.",
+            parsed.error.flatten(),
+          );
+        }
         const result = await unflagSubmission(
           { bindings: c.env, defer: (task) => c.executionCtx.waitUntil(task) },
-          { actor: user, submissionId, kind: "image" },
+          { actor: user, submissionId, kind: "image", ...parsed.data },
         );
         return c.json({ ok: true, ...result });
       },

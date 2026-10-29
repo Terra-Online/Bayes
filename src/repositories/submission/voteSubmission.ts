@@ -9,62 +9,71 @@ import type { AuthUser } from "@/types/app";
 import { mapVoteValue, toCount } from "./mapper";
 import type { SubmissionVoteValue } from "./types";
 
-export async function createSubmissionUpvote(
+export type SetImageUpvoteResult =
+  | { outcome: "missing" | "hidden" }
+  | {
+      outcome: "committed";
+      changed: boolean;
+      markerId: string;
+      upvoteCount: number;
+      notifications: NotificationRecord[];
+    };
+
+/** Set/cancel is idempotent. Visibility, notifications and counts share one batch. */
+export async function setImageUpvote(
   db: D1Database,
-  payload: {
-    submissionId: string;
-    actor: AuthUser;
-  },
-): Promise<{ created: boolean; notifications: NotificationRecord[] }> {
+  payload: { submissionId: string; actor: AuthUser; active: boolean },
+): Promise<SetImageUpvoteResult> {
   const changedAt = new Date().toISOString();
-  const notificationStatements = prepareImageUpvoteNotificationWrite(db, {
-    submissionId: payload.submissionId,
-    actor: payload.actor,
-    changedAt,
-  });
+  const notificationStatements = payload.active
+    ? prepareImageUpvoteNotificationWrite(db, {
+        submissionId: payload.submissionId,
+        actor: payload.actor,
+        changedAt,
+      })
+    : [];
   const results = await db.batch<Record<string, unknown>>([
-    db
-      .prepare(
-        `INSERT INTO ugc_submission_upvotes (submission_id, user_id, active, created_at)
-       VALUES (?1, ?2, 1, ?3)
-       ON CONFLICT(submission_id, user_id)
-       DO UPDATE SET active = 1,
-                     created_at = excluded.created_at
-       WHERE ugc_submission_upvotes.active = 0
-       RETURNING submission_id`,
-      )
-      .bind(payload.submissionId, payload.actor.uid, changedAt),
+    // Notification eligibility predicts the exact conditional set below, in this
+    // transaction. A failure of either part rolls back both.
     ...notificationStatements,
+    payload.active
+      ? db
+          .prepare(`INSERT INTO ugc_submission_upvotes (submission_id,user_id,active,created_at)
+          SELECT submission_id,?2,1,?3 FROM ugc_submission_visibility
+          WHERE submission_id=?1 AND kind='image' AND public_snapshot_id IS NOT NULL
+          ON CONFLICT(submission_id,user_id) DO UPDATE SET active=1,created_at=excluded.created_at
+          WHERE ugc_submission_upvotes.active=0 RETURNING submission_id`)
+          .bind(payload.submissionId, payload.actor.uid, changedAt)
+      : db
+          .prepare(`UPDATE ugc_submission_upvotes SET active=0
+          WHERE submission_id=?1 AND user_id=?2 AND active=1
+            AND EXISTS (SELECT 1 FROM ugc_submission_visibility
+              WHERE submission_id=?1 AND kind='image' AND public_snapshot_id IS NOT NULL)
+          RETURNING submission_id`)
+          .bind(payload.submissionId, payload.actor.uid),
+    db
+      .prepare(`SELECT s.poi_id,v.public_snapshot_id,
+      (SELECT COUNT(*) FROM ugc_submission_upvotes WHERE submission_id=s.id AND active=1) AS count
+      FROM ugc_submissions s JOIN ugc_submission_visibility v ON v.submission_id=s.id
+      WHERE s.id=?1 AND s.kind='image'`)
+      .bind(payload.submissionId),
   ]);
-
+  const row = results.at(-1)?.results[0];
+  if (!row) {
+    return { outcome: "missing" };
+  }
+  if (!row.public_snapshot_id) {
+    return { outcome: "hidden" };
+  }
   return {
-    created: (results[0]?.results ?? []).length > 0,
-    notifications:
-      notificationStatements.length > 0
-        ? notificationsFromResult(results[notificationStatements.length])
-        : [],
+    outcome: "committed",
+    changed: results[notificationStatements.length].results.length > 0,
+    markerId: String(row.poi_id),
+    upvoteCount: toCount(row.count),
+    notifications: notificationStatements.length
+      ? notificationsFromResult(results[notificationStatements.length - 1])
+      : [],
   };
-}
-
-export async function deleteSubmissionUpvote(
-  db: D1Database,
-  payload: {
-    submissionId: string;
-    userId: string;
-  },
-): Promise<boolean> {
-  const result = await db
-    .prepare(
-      `UPDATE ugc_submission_upvotes
-       SET active = 0
-       WHERE submission_id = ?1
-         AND user_id = ?2
-         AND active = 1`,
-    )
-    .bind(payload.submissionId, payload.userId)
-    .run();
-
-  return (result.meta.changes ?? 0) > 0;
 }
 
 export type SetCommentVoteResult =

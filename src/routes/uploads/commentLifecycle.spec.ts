@@ -6,7 +6,6 @@ import type { UserSubmissionComment } from "@/repositories/submission/types";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { insertAuthUser, insertSession, testAuthConfig } from "@/test/fixtures/auth";
 import { insertCommentSnapshot } from "@/test/fixtures/commentSnapshots";
-import { insertSubmission } from "@/test/fixtures/submissions";
 import { importCurrentSubmissions } from "@/test/fixtures/ugcSnapshots";
 import { insertUser } from "@/test/fixtures/users";
 import type { AppEnv } from "@/types/app";
@@ -133,143 +132,9 @@ function activeFlaggers(id: string) {
     .map((row) => row.user_id);
 }
 
-function persistedState() {
-  return {
-    comments: database.sqlite.prepare("SELECT * FROM ugc_submissions ORDER BY id").all(),
-    flags: database.sqlite
-      .prepare("SELECT * FROM ugc_submission_flags ORDER BY submission_id, user_id")
-      .all(),
-    notifications: database.sqlite.prepare("SELECT * FROM notifications ORDER BY id").all(),
-    notificationMessages: database.sqlite
-      .prepare("SELECT * FROM notification_messages ORDER BY id")
-      .all(),
-    reviews: database.sqlite.prepare("SELECT * FROM ugc_review_events ORDER BY id").all(),
-  };
-}
-
 // Creation, replies and votes use the explicit snapshot-schema HTTP suite in commentCreationVotes.spec.ts.
 
-describe("comment flags", () => {
-  it("lets a reader flag a comment again after withdrawing their earlier flag", async () => {
-    insertSubmission(database.sqlite, { id: "target", userId: "author" });
-    await post("/comments/target/flag", "reader");
-    await post("/comments/target/unflag", "reader");
-    const response = await post("/comments/target/flag", "reader");
-    expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({
-      ok: true,
-      created: true,
-      status: "flagged",
-      flagCount: 1,
-    });
-    expect(submission("target").status).toBe("flagged");
-    expect(activeFlaggers("target")).toEqual(["reader"]);
-    expect(webhooks.map((message) => message.event.type)).toEqual([
-      "flag_created",
-      "flag_removed",
-      "flag_created",
-    ]);
-  });
-
-  it("counts each reader once and restores the comment only after the last flag is withdrawn", async () => {
-    insertSubmission(database.sqlite, { id: "target", userId: "author" });
-
-    const flag = await post("/comments/target/flag", "reader");
-    expect(flag.status).toBe(200);
-    expect(await flag.json()).toEqual({ ok: true, created: true, status: "flagged", flagCount: 1 });
-    expect(submission("target").status).toBe("flagged");
-    expect(activeFlaggers("target")).toEqual(["reader"]);
-    expect(webhooks).toEqual([
-      expect.objectContaining({
-        event: expect.objectContaining({
-          type: "flag_created",
-          actor: expect.objectContaining({ uid: "reader" }),
-          submission: expect.objectContaining({ id: "target" }),
-          previousStatus: "active",
-          nextStatus: "flagged",
-          flagCount: 1,
-        }),
-      }),
-    ]);
-
-    const duplicate = await post("/comments/target/flag", "reader");
-    expect(await duplicate.json()).toEqual({
-      ok: true,
-      created: false,
-      status: "flagged",
-      flagCount: 1,
-    });
-    expect(activeFlaggers("target")).toEqual(["reader"]);
-    expect(webhooks).toHaveLength(1);
-
-    const second = await post("/comments/target/flag", "other-reader");
-    expect(await second.json()).toMatchObject({ created: true, flagCount: 2 });
-    expect(activeFlaggers("target")).toEqual(["other-reader", "reader"]);
-    const withdrawn = await post("/comments/target/unflag", "reader");
-    expect(await withdrawn.json()).toEqual({
-      ok: true,
-      deleted: true,
-      status: "flagged",
-      flagCount: 1,
-    });
-    expect(activeFlaggers("target")).toEqual(["other-reader"]);
-    expect(submission("target").status).toBe("flagged");
-
-    const absent = await post("/comments/target/unflag", "reader");
-    expect(await absent.json()).toEqual({
-      ok: true,
-      deleted: false,
-      status: "flagged",
-      flagCount: 1,
-    });
-    expect(webhooks).toHaveLength(3);
-    const last = await post("/comments/target/unflag", "other-reader");
-    expect(await last.json()).toEqual({ ok: true, deleted: true, status: "active", flagCount: 0 });
-    expect(submission("target").status).toBe("active");
-    expect(activeFlaggers("target")).toEqual([]);
-    expect(webhooks.at(-1)).toMatchObject({
-      event: {
-        type: "flag_removed",
-        actor: { uid: "other-reader" },
-        submission: { id: "target" },
-        previousStatus: "flagged",
-        nextStatus: "active",
-        flagCount: 0,
-      },
-    });
-    expect((await mine())[0]).toMatchObject({ id: "target", status: "active", flagCount: 0 });
-    expect(moderation).toEqual([]);
-  });
-
-  it.each([
-    ["flag", "CANNOT_FLAG_OWN_SUBMISSION"],
-    ["unflag", "CANNOT_UNFLAG_OWN_SUBMISSION"],
-  ])("prevents an author from attempting to %s their own comment", async (action, code) => {
-    insertSubmission(database.sqlite, { id: "target", userId: "author" });
-    await post("/comments/target/flag", "reader");
-    const before = persistedState();
-    const response = await post(`/comments/target/${action}`);
-    expect(response.status).toBe(403);
-    expect(await response.json()).toMatchObject({ code });
-    expect(persistedState()).toEqual(before);
-    expect(webhooks).toHaveLength(1);
-  });
-
-  it.each(["pending_openai", "pending_audit", "remove_request", "stale"])(
-    "does not accept or withdraw flags while a comment is %s",
-    async (status) => {
-      insertSubmission(database.sqlite, { id: "target", userId: "author", status });
-      const before = persistedState();
-      for (const action of ["flag", "unflag"]) {
-        const response = await post(`/comments/target/${action}`, "reader");
-        expect(response.status).toBe(409);
-        expect(await response.json()).toMatchObject({ code: "INVALID_SUBMISSION_STATUS" });
-      }
-      expect(persistedState()).toEqual(before);
-      expect(webhooks).toEqual([]);
-    },
-  );
-});
+// Version-bound reports are covered in reportAndImageVoteLifecycle.spec.ts.
 
 describe("comment edits", () => {
   beforeEach(() => importCurrentSubmissions(database));

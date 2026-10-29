@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { migrations } from "@/test/database/migrations";
+import { insertImageSnapshot } from "@/test/fixtures/imageSnapshots";
 import { insertSubmission as seedSubmission } from "@/test/fixtures/submissions";
 import { importCurrentSubmissions } from "@/test/fixtures/ugcSnapshots";
 import { insertUser } from "@/test/fixtures/users";
@@ -23,7 +24,7 @@ import {
 import { archiveTestImageSubmissions } from "./submission-review";
 import { transitionSubmissionStatusWithNotifications } from "./submission/statusSubmission";
 import type { SubmissionRecord, SubmissionStatus } from "./submission/types";
-import { createSubmissionUpvote } from "./submission/voteSubmission";
+import { setImageUpvote } from "./submission/voteSubmission";
 
 const submission = (id: string, updatedAt: string): SubmissionRecord => ({
   id,
@@ -538,17 +539,9 @@ describe("notification aggregation SQL", () => {
     const db = database.db;
     insertUser(database.sqlite, { uid: "owner" });
     insertUser(database.sqlite, { uid: "actor" });
-    database.sqlite.exec(`
-
-      INSERT INTO ugc_submissions (file_path,
-        id, user_id, poi_id, poi_hash, poi_type, snapshot_id,
-        status, updated_at, kind, content
-      ) VALUES
-        ('fixture.webp', 'image-1', 'owner', 'marker-1', 'hash-1', 'type-1', 'snapshot-1',
-         'active', '2026-08-02T12:00:00.000Z', 'image', NULL),
-        ('fixture.webp', 'image-self', 'actor', 'marker-2', 'hash-2', 'type-1', 'snapshot-2',
-         'active', '2026-08-02T12:00:00.000Z', 'image', NULL);
-    `);
+    importCurrentSubmissions(database);
+    insertImageSnapshot(database.sqlite, { id: "image-1", userId: "owner" });
+    insertImageSnapshot(database.sqlite, { id: "image-self", userId: "actor" });
 
     const actor = {
       uid: "actor",
@@ -560,15 +553,22 @@ describe("notification aggregation SQL", () => {
       karma: 0,
       needsProfileSetup: false,
     };
-    const first = await createSubmissionUpvote(db, { submissionId: "image-1", actor });
-    const duplicate = await createSubmissionUpvote(db, { submissionId: "image-1", actor });
-    const self = await createSubmissionUpvote(db, { submissionId: "image-self", actor });
+    const first = await setImageUpvote(db, { submissionId: "image-1", actor, active: true });
+    const duplicate = await setImageUpvote(db, { submissionId: "image-1", actor, active: true });
+    const self = await setImageUpvote(db, { submissionId: "image-self", actor, active: true });
 
-    expect(first.created).toBe(true);
+    if (
+      first.outcome !== "committed" ||
+      duplicate.outcome !== "committed" ||
+      self.outcome !== "committed"
+    ) {
+      throw new Error("Expected visible image votes");
+    }
+    expect(first.changed).toBe(true);
     expect(first.notifications).toHaveLength(1);
-    expect(duplicate.created).toBe(false);
+    expect(duplicate.changed).toBe(false);
     expect(duplicate.notifications).toHaveLength(0);
-    expect(self.created).toBe(true);
+    expect(self.changed).toBe(true);
     expect(self.notifications).toHaveLength(0);
 
     const listed = await listNotifications(db, {

@@ -530,24 +530,26 @@ function prepareCommunityVoteNotificationWrite(
     return [];
   }
 
-  const visibilityCondition =
-    payload.kind === "comment"
-      ? "EXISTS (SELECT 1 FROM ugc_submission_visibility visibility WHERE visibility.submission_id=s.id AND visibility.public_snapshot_id IS NOT NULL)"
-      : "s.status IN ('active', 'flagged', 'remove_request')";
+  // Image notifications run before the conditional set in the same transaction.
+  // Eligibility cannot change between these statements: notifications never mutate
+  // visibility or votes. This gates every aggregation mutation, including expiry,
+  // without treating a matching millisecond timestamp as proof of a new vote.
+  const visibilityCondition = `EXISTS (SELECT 1 FROM ugc_submission_visibility visibility
+    WHERE visibility.submission_id=s.id AND visibility.public_snapshot_id IS NOT NULL)${
+      payload.kind === "image"
+        ? ` AND NOT EXISTS (SELECT 1 FROM ugc_submission_upvotes existing
+      WHERE existing.submission_id=s.id AND existing.user_id=?2 AND existing.active=1)`
+        : ""
+    }`;
   const notificationId = nanoid(18);
   const messageId = nanoid(18);
   const createdAt = payload.changedAt;
   const openKey = JSON.stringify(["community", "vote", payload.submissionId]);
-  const eventDedupeKey = `vote:${payload.submissionId}:${payload.actor.uid}:${createdAt}`;
+  const eventDedupeKey = `vote:${payload.submissionId}:${payload.actor.uid}:${payload.kind === "image" ? messageId : createdAt}`;
   const basePayloadJson = serializePayload(communityPayload(payload.kind));
   const voteSource =
     payload.kind === "image"
-      ? `
-       INNER JOIN ugc_submission_upvotes v
-         ON v.submission_id = s.id
-        AND v.user_id = ?2
-        AND v.active = 1
-        AND v.created_at = ?5`
+      ? ""
       : `
        INNER JOIN ugc_submission_votes v
          ON v.submission_id = s.id
@@ -571,14 +573,15 @@ function prepareCommunityVoteNotificationWrite(
            WHERE vote.submission_id=?3 AND vote.user_id=?4 AND vote.active=1 AND vote.value=1
              AND vote.updated_at=?2 AND visibility.public_snapshot_id IS NOT NULL
          )`
-             : ""
+             : `AND EXISTS (SELECT 1 FROM ugc_submissions s
+               JOIN ugc_submission_visibility visibility ON visibility.submission_id=s.id
+               WHERE s.id=?3 AND s.kind='image' AND s.user_id<>?4
+                 AND visibility.public_snapshot_id IS NOT NULL
+                 AND NOT EXISTS (SELECT 1 FROM ugc_submission_upvotes vote
+                   WHERE vote.submission_id=s.id AND vote.user_id=?4 AND vote.active=1))`
          }`,
       )
-      .bind(
-        openKey,
-        createdAt,
-        ...(payload.kind === "comment" ? [payload.submissionId, payload.actor.uid] : []),
-      ),
+      .bind(openKey, createdAt, payload.submissionId, payload.actor.uid),
     db
       .prepare(
         `INSERT INTO notifications (

@@ -13,16 +13,20 @@ const requireRuntime = createRequire(
 );
 const { build } = requireRuntime("esbuild");
 const compiled = await build({
-  entryPoints: [
-    new URL("../../src/repositories/submission/reviewSnapshot.ts", import.meta.url).pathname,
-  ],
+  stdin: {
+    contents: `export * from "./reviewSnapshot.ts";
+      export { setSubmissionReport } from "./flagSubmission.ts";
+      export { setImageUpvote } from "./voteSubmission.ts";`,
+    resolveDir: new URL("../../src/repositories/submission/", import.meta.url).pathname,
+    loader: "ts",
+  },
   bundle: true,
   write: false,
   format: "esm",
   platform: "node",
   target: "es2022",
 });
-const { getReviewTarget, reviewSnapshot } = await import(
+const { getReviewTarget, reviewSnapshot, setSubmissionReport, setImageUpvote } = await import(
   `data:text/javascript;base64,${Buffer.from(compiled.outputFiles[0].text).toString("base64")}`
 );
 const candidate = await readFile(
@@ -160,5 +164,142 @@ test("native D1 admin takeover defeats in-flight AI and deletion defeats a later
       { outcome: "ignored" },
     );
     assert.deepEqual(await state(db), before);
+  });
+});
+
+const actor = {
+  uid: "admin",
+  publicUid: "100002AA",
+  nickname: "Admin",
+  avatar: 1,
+  email: "admin@example.test",
+  role: "a",
+  karma: 0,
+  needsProfileSetup: false,
+};
+const report = (db, active, snapshotId = "A") =>
+  setSubmissionReport(db, {
+    submissionId: "comment",
+    kind: "comment",
+    userId: "admin",
+    snapshotId,
+    active,
+  });
+
+test("native D1 serializes both report directions against a real public replacement", async () => {
+  for (const active of [true, false]) {
+    await withDatabase(async (db, command) => {
+      if (active) {
+        await report(db, false);
+      }
+      const [reported, reviewed] = await Promise.all([
+        report(db, active),
+        reviewSnapshot(db, command),
+      ]);
+      assert.equal(reviewed.outcome, "committed");
+      assert.ok(["committed", "conflict"].includes(reported.outcome));
+      assert.equal((await db.prepare("SELECT active FROM ugc_submission_flags").first()).active, 0);
+      assert.deepEqual(await report(db, active), { outcome: "conflict" });
+      assert.equal((await report(db, true, "B")).changed, true);
+      assert.deepEqual(await reviewSnapshot(db, { ...command, auditId: "duplicate" }), {
+        outcome: "ignored",
+      });
+      assert.equal((await db.prepare("SELECT active FROM ugc_submission_flags").first()).active, 1);
+    });
+  }
+});
+
+test("native D1 report no-ops retain classification and hide preserves reports", async () => {
+  await withDatabase(async (db) => {
+    const duplicate = await report(db, true);
+    assert.equal(duplicate.outcome, "committed");
+    assert.equal(duplicate.changed, false);
+    assert.equal(duplicate.flagCount, 1);
+    await db.prepare("UPDATE ugc_submissions SET author_deleted_at='gone'").run();
+    assert.deepEqual(await report(db, false), { outcome: "conflict" });
+    assert.deepEqual(await report(db, true), { outcome: "conflict" });
+    assert.equal((await db.prepare("SELECT active FROM ugc_submission_flags").first()).active, 1);
+  });
+});
+
+async function addImage(db) {
+  await batchSql(
+    db,
+    `INSERT INTO ugc_submissions(id,kind,poi_id,poi_hash,poi_type,user_id)
+    VALUES ('image','image','point','hash','item','author');
+    INSERT INTO ugc_snapshots(id,submission_id,kind,revision,file_path,review_status,creator_user_id)
+    VALUES ('image-A','image','image',1,'images/A.webp','approved','author');`,
+  );
+}
+
+test("native D1 serializes like and unlike against deletion without late notifications or cancellations", async () => {
+  for (const active of [true, false]) {
+    await withDatabase(async (db) => {
+      await addImage(db);
+      if (!active) {
+        await setImageUpvote(db, { submissionId: "image", actor, active: true });
+      }
+      const [result] = await Promise.all([
+        setImageUpvote(db, { submissionId: "image", actor, active }),
+        db.prepare("UPDATE ugc_submissions SET author_deleted_at='gone' WHERE id='image'").run(),
+      ]);
+      assert.ok(["committed", "hidden"].includes(result.outcome));
+      const before = await db.prepare("SELECT * FROM ugc_submission_upvotes").all();
+      const notifications = await db.prepare("SELECT * FROM notification_messages").all();
+      assert.deepEqual(await setImageUpvote(db, { submissionId: "image", actor, active }), {
+        outcome: "hidden",
+      });
+      assert.deepEqual(
+        (await db.prepare("SELECT * FROM ugc_submission_upvotes").all()).results,
+        before.results,
+      );
+      assert.deepEqual(
+        (await db.prepare("SELECT * FROM notification_messages").all()).results,
+        notifications.results,
+      );
+      if (active && result.outcome === "hidden") {
+        assert.equal(notifications.results.length, 0);
+      }
+      if (active && result.outcome === "committed") {
+        assert.equal(notifications.results.length, 1);
+      }
+      if (!active) {
+        assert.equal(notifications.results.length, 1);
+      }
+    });
+  }
+});
+
+test("native D1 rolls back image aggregation when the vote fails and notification failure rolls back the vote", async () => {
+  await withDatabase(async (db) => {
+    await addImage(db);
+    for (const table of ["ugc_submission_upvotes", "notification_messages"]) {
+      await db
+        .prepare(`CREATE TRIGGER fail_like BEFORE INSERT ON ${table}
+        BEGIN SELECT RAISE(ABORT,'like unavailable'); END`)
+        .run();
+      await assert.rejects(
+        setImageUpvote(db, { submissionId: "image", actor, active: true }),
+        /like unavailable/,
+      );
+      for (const name of [
+        "ugc_submission_upvotes",
+        "notifications",
+        "notification_messages",
+        "notification_counters",
+      ]) {
+        assert.deepEqual((await db.prepare(`SELECT * FROM ${name}`).all()).results, []);
+      }
+      await db.prepare("DROP TRIGGER fail_like").run();
+    }
+    const first = await setImageUpvote(db, { submissionId: "image", actor, active: true });
+    assert.equal(first.changed, true);
+    const duplicate = await setImageUpvote(db, { submissionId: "image", actor, active: true });
+    assert.equal(duplicate.changed, false);
+    assert.deepEqual(duplicate.notifications, []);
+    assert.equal(
+      (await db.prepare("SELECT message_count FROM notifications").first()).message_count,
+      1,
+    );
   });
 });

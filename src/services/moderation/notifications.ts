@@ -15,7 +15,7 @@ const DISCORD_WEBHOOK_TIMEOUT_MS = 5_000;
 export async function notifyFlagCreated(
   env: Bindings,
   payload: {
-    submission: SubmissionRecord;
+    submission: ModerationSubmission & { status: SubmissionStatus };
     actor: AuthUser;
     changed: boolean;
     flagCount: number;
@@ -70,7 +70,7 @@ export async function notifyCommentTransPrewarmDone(
 export async function notifyFlagRemoved(
   env: Bindings,
   payload: {
-    submission: SubmissionRecord;
+    submission: ModerationSubmission & { status: SubmissionStatus };
     actor: AuthUser;
     changed: boolean;
     flagCount: number;
