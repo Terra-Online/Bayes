@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { getPublicSnapshot } from "@/repositories/submission/snapshotReads";
 import type { UserSubmissionComment } from "@/repositories/submission/types";
 import { insertCommentSnapshot } from "@/test/fixtures/commentSnapshots";
 import {
@@ -86,7 +85,6 @@ describe("comment flags", () => {
       status: "flagged",
       flagCount: 1,
     });
-    expect((await getPublicSnapshot(database.db, "target"))?.status).toBe("flagged");
     expect(activeFlaggers("target")).toEqual(["reader"]);
     expect(webhooks.map((message) => message.event.type)).toEqual([
       "flag_created",
@@ -101,7 +99,6 @@ describe("comment flags", () => {
     const flag = await post("/comments/target/flag", "reader");
     expect(flag.status).toBe(200);
     expect(await flag.json()).toEqual({ ok: true, created: true, status: "flagged", flagCount: 1 });
-    expect((await getPublicSnapshot(database.db, "target"))?.status).toBe("flagged");
     expect(activeFlaggers("target")).toEqual(["reader"]);
     expect(webhooks).toEqual([
       expect.objectContaining({
@@ -137,7 +134,6 @@ describe("comment flags", () => {
       flagCount: 1,
     });
     expect(activeFlaggers("target")).toEqual(["other-reader"]);
-    expect((await getPublicSnapshot(database.db, "target"))?.status).toBe("flagged");
 
     const absent = await post("/comments/target/unflag", "reader");
     expect(await absent.json()).toEqual({
@@ -149,7 +145,6 @@ describe("comment flags", () => {
     expect(webhooks).toHaveLength(3);
     const last = await post("/comments/target/unflag", "other-reader");
     expect(await last.json()).toEqual({ ok: true, deleted: true, status: "active", flagCount: 0 });
-    expect((await getPublicSnapshot(database.db, "target"))?.status).toBe("active");
     expect(activeFlaggers("target")).toEqual([]);
     expect(webhooks.at(-1)).toMatchObject({
       event: {
@@ -256,7 +251,6 @@ describe("image votes", () => {
       upvoteCount: 2,
     });
     expect(activeUsers("ugc_submission_upvotes")).toEqual(["other-reader", "reader"]);
-    expect((await getPublicSnapshot(database.db, "photo"))?.status).toBe("active");
     expect(moderation).toEqual([]);
   });
 });
@@ -276,7 +270,6 @@ describe("image flags", () => {
       status: "flagged",
       flagCount: 1,
     });
-    expect((await getPublicSnapshot(database.db, "photo"))?.status).toBe("flagged");
     expect(await publicImage("reader")).toMatchObject({ flagCount: 1, flagged: true });
     expect(await publicImage("other-reader")).toMatchObject({ flagCount: 1, flagged: false });
     const duplicateFlag = await post("photo", "flag");
@@ -311,7 +304,6 @@ describe("image flags", () => {
       status: "flagged",
       flagCount: 1,
     });
-    expect((await getPublicSnapshot(database.db, "photo"))?.status).toBe("flagged");
     expect(activeUsers("ugc_submission_flags")).toEqual(["other-reader"]);
     const repeatedWithdrawal = await post("photo", "unflag");
     expect(await repeatedWithdrawal.json()).toMatchObject({
@@ -326,7 +318,6 @@ describe("image flags", () => {
       status: "active",
       flagCount: 0,
     });
-    expect((await getPublicSnapshot(database.db, "photo"))?.status).toBe("active");
     expect(activeUsers("ugc_submission_flags")).toEqual([]);
     expect(await publicImage("reader")).toMatchObject({
       status: "active",

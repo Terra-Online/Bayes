@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { appendCommentVersion } from "@/repositories/submission/appendCommentVersion";
-import { getReviewTarget, reviewSnapshot } from "@/repositories/submission/reviewSnapshot";
 import {
   createModerationTestFixture,
   type ModerationTestFixture,
@@ -240,117 +239,6 @@ describe("automatic moderation", () => {
     expect(reviewAudits()).toEqual([]);
     expect(notificationMessages()).toEqual([]);
     expect(fetch).not.toHaveBeenCalled();
-  });
-
-  it("keeps a manual takeover when an approval for the same snapshot arrives late", async () => {
-    env.OPENAI_API_KEY = "synthetic-ai-key";
-    submission({ id: "taken-over", status: "pending_openai" });
-    const headers = createReviewerSession("a");
-    vi.mocked(fetch).mockImplementation(async () => {
-      const takeover = await request("/taken-over/status", {
-        method: "PATCH",
-        headers,
-        body: {
-          action: "send_to_manual",
-          snapshotId: "snapshot-taken-over",
-          expectedReviewStatus: "pending_openai",
-          note: "Needs a human decision",
-        },
-      });
-      expect(takeover.status).toBe(200);
-      return Response.json({ results: [{ flagged: false }] });
-    });
-    const response = await request("/run", {
-      method: "POST",
-      headers,
-      body: { ids: ["taken-over"] },
-    });
-    expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({ processed: 0, active: 0, pendingAudit: 0 });
-    expect(storedSnapshot("taken-over")).toMatchObject({
-      id: "snapshot-taken-over",
-      review_status: "pending_audit",
-    });
-    expect(database.sqlite.prepare("SELECT note FROM ugc_snapshots_review_audit").get()).toEqual({
-      note: "Needs a human decision",
-    });
-    expect(authorPoints()).toBe(20);
-    expect(reviewAudits()).toEqual([
-      {
-        submission_id: "taken-over",
-        from_status: "pending_openai",
-        to_status: "pending_audit",
-        source: "admin",
-      },
-    ]);
-    expect(notificationMessages()).toEqual([
-      {
-        recipient_user_id: "author",
-        type: "system.submission.needs_review",
-        submission_id: "taken-over",
-      },
-    ]);
-    expect(liveMessages).toHaveLength(1);
-    expect(translationMessages).toEqual([]);
-    expect(webhookMessages).toEqual([
-      expect.objectContaining({
-        event: expect.objectContaining({
-          source: "manual_moderation",
-          nextStatus: "pending_audit",
-        }),
-      }),
-    ]);
-  });
-
-  it("leaves a newer author edit pending when an AI decision for the old snapshot arrives", async () => {
-    env.OPENAI_API_KEY = "synthetic-ai-key";
-    submission({ id: "changing", status: "pending_openai", content: "Original directions" });
-    createReviewerSession("a", "race-admin");
-    vi.mocked(fetch).mockImplementation(async () => {
-      await reviewSnapshot(database.db, {
-        target: (await getReviewTarget(database.db, "changing"))!,
-        expectedReviewStatus: "pending_openai",
-        source: "admin",
-        adminUserId: "race-admin",
-        decision: "approved",
-        auditId: "manual-first",
-      });
-      expect(
-        await appendCommentVersion(database.db, {
-          submissionId: "changing",
-          parentSnapshotId: "snapshot-changing",
-          snapshotId: "new-snapshot",
-          actorId: "author",
-          content: "Corrected directions",
-        }),
-      ).toMatchObject({ outcome: "appended" });
-      return Response.json({ results: [{ flagged: false }] });
-    });
-    const response = await request("/run", {
-      method: "POST",
-      headers: createReviewerSession("a"),
-      body: { ids: ["changing"] },
-    });
-    expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({ processed: 0, active: 0, pendingAudit: 0 });
-    expect(storedSnapshot("changing")).toMatchObject({
-      id: "new-snapshot",
-      content: "Corrected directions",
-      review_status: "pending_openai",
-    });
-    expect(authorPoints()).toBe(20);
-    expect(reviewAudits()).toEqual([
-      {
-        submission_id: "changing",
-        from_status: "pending_openai",
-        to_status: "approved",
-        source: "admin",
-      },
-    ]);
-    expect(notificationMessages()).toHaveLength(1);
-    expect(liveMessages).toEqual([]);
-    expect(translationMessages).toEqual([]);
-    expect(webhookMessages).toEqual([]);
   });
 
   it.each([

@@ -8,11 +8,10 @@ import { onAppError } from "@/middleware/error-handler";
 import { createRoutes } from "@/routes/moderation/createRoutes";
 import { createMockBindings, type MockBindings } from "@/test/bindings";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
-import { migrations } from "@/test/database/migrations";
+import { applyMigrations, migrations } from "@/test/database/migrations";
 import { insertAuthenticatedUser, type SessionHeaders } from "@/test/fixtures/auth";
 import { insertImageSnapshot } from "@/test/fixtures/imageSnapshots";
 import { insertSubmission as insertLegacySubmission } from "@/test/fixtures/legacySubmissions";
-import { importCurrentSubmissions } from "@/test/fixtures/ugcSnapshots";
 import { insertUser as seedUser } from "@/test/fixtures/users";
 import type { AppEnv } from "@/types/app";
 
@@ -326,7 +325,7 @@ describe("12-hour resumable karma evaluation", () => {
         });
       }
 
-      importCurrentSubmissions(imported);
+      applyMigrations(imported.sqlite, ["0038_ugc_snapshots.sql"]);
       const calculateScore = vi.spyOn(rules, "calculateKarmaEvaluationScore");
       await evaluateKarmaIfDue(imported.db, redis.redis);
       expect(calculateScore).toHaveBeenCalledExactlyOnceWith(

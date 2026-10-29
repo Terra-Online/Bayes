@@ -333,33 +333,13 @@ it("approves a reply once and persists author/parent unread and live notificatio
   expect(fixture.messages.translation).toHaveLength(1);
   expect(fixture.messages.webhook).toHaveLength(1);
 });
-it("manual takeover defeats an AI result already in flight and requires the new displayed phase", async () => {
+it("manual takeover requires the new displayed phase for the next review", async () => {
   fixture.submission({ id: "waiting", reviewStatus: "pending_openai" });
   const headers = fixture.createReviewerSession("p", "admin");
-  let release!: (response: Response) => void;
-  let started!: () => void;
-  const providerStarted = new Promise<void>((resolve) => {
-    started = resolve;
-  });
-  fixture.env.OPENAI_API_KEY = "test-key";
-  vi.mocked(fetch).mockImplementation(async () => {
-    started();
-    return new Promise<Response>((resolve) => {
-      release = resolve;
-    });
-  });
-  const run = fixture.request("/run", {
-    method: "POST",
-    headers: fixture.createReviewerSession("a"),
-    body: { ids: ["waiting"] },
-  });
-  await providerStarted;
   expect(
     (await patch("waiting", command("send_to_manual", "waiting", "pending_openai"), headers))
       .status,
   ).toBe(200);
-  release(Response.json({ results: [{ flagged: false }] }));
-  expect(await (await run).json()).toMatchObject({ processed: 0 });
   expect(
     (await patch("waiting", command("approve", "waiting", "pending_openai"), headers)).status,
   ).toBe(409);

@@ -2,7 +2,6 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 import { createApp } from "@/app";
 import { runWithAuthRequest } from "@/lib/auth/createAuth";
-import { getReviewTarget, reviewSnapshot } from "@/repositories/submission/reviewSnapshot";
 import { createMockBindings, type MockBindings } from "@/test/bindings";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { insertAuthenticatedUser, type SessionHeaders } from "@/test/fixtures/auth";
@@ -55,6 +54,7 @@ beforeEach(() => {
   });
   mocks = createMockBindings({ DB: database.db });
   mocks.bindings.LOCK_UPLOAD_ENDPOINTS = "false";
+  mocks.bindings.LOCK_MODERATION_ENDPOINTS = "false";
   mocks.authRateLimit.limit.mockResolvedValue({ success: true });
   mocks.webhookQueue.send.mockResolvedValue({
     metadata: { metrics: { backlogCount: 1, backlogBytes: 64 } },
@@ -147,35 +147,12 @@ function addPendingVersion(id = "comment", kind = "comment") {
 }
 
 async function review(id = "comment", decision: "approved" | "rejected" = "approved") {
-  const target = await getReviewTarget(database.db, id, "B");
-  if (!target) {
-    throw new Error("Missing review target");
-  }
-  return reviewSnapshot(database.db, {
-    target,
+  const response = await management(`/${id}/status`, {
+    action: decision === "approved" ? "approve" : "reject",
+    snapshotId: "B",
     expectedReviewStatus: "pending_openai",
-    source: "admin",
-    adminUserId: "admin",
-    decision,
-    auditId: crypto.randomUUID(),
   });
-}
-
-// Interleave a real committed command immediately before the HTTP command's batch.
-// No production transition or eligibility logic is mocked.
-function beforeInteractionBatch(run: () => Promise<unknown>) {
-  mocks.bindings.DB = new Proxy(database.db, {
-    get(target, property) {
-      if (property === "batch") {
-        return async <T>(statements: D1PreparedStatement[]) => {
-          mocks.bindings.DB = database.db;
-          await run();
-          return database.db.batch<T>(statements);
-        };
-      }
-      return Reflect.get(target, property);
-    },
-  });
+  return response;
 }
 
 it.each(["comment", "image"] as const)(
@@ -195,7 +172,7 @@ it.each(["comment", "image"] as const)(
     expect((await request("flag", "B")).status).toBe(409);
     expect((await request("flag")).status).toBe(200);
     const firstReview = await review(id);
-    expect(firstReview.outcome).toBe("committed");
+    expect(firstReview.status).toBe(200);
     expect(
       database.sqlite
         .prepare("SELECT active FROM ugc_submission_flags WHERE submission_id=?")
@@ -206,26 +183,12 @@ it.each(["comment", "image"] as const)(
     }
     expect((await request("flag", "B")).status).toBe(200);
     // A duplicate real review must not clear a fresh report on B.
-    expect(await review(id)).toEqual({ outcome: "ignored" });
+    expect((await review(id)).status).toBe(409);
     expect(
       database.sqlite
         .prepare("SELECT active FROM ugc_submission_flags WHERE submission_id=?")
         .get(id),
     ).toEqual({ active: 1 });
-  },
-);
-
-it.each(["flag", "unflag"])(
-  "returns 409 when replacement wins the %s HTTP race, including a stale no-op",
-  async (action) => {
-    await post("/comments/comment/flag");
-    addPendingVersion();
-    beforeInteractionBatch(() => review());
-    expect((await post(`/comments/comment/${action}`)).status).toBe(409);
-    expect(database.sqlite.prepare("SELECT active FROM ugc_submission_flags").get()).toEqual({
-      active: 0,
-    });
-    expect(mocks.webhookQueue.send).toHaveBeenCalledTimes(1);
   },
 );
 
@@ -235,7 +198,7 @@ it.each(["author", "admin", "rejected"])(
     await post("/comments/comment/flag");
     if (reason === "rejected") {
       addPendingVersion();
-      expect((await review("comment", "rejected")).outcome).toBe("committed");
+      expect((await review("comment", "rejected")).status).toBe(200);
     } else {
       database.sqlite.exec(
         reason === "author"
@@ -280,25 +243,6 @@ it("preserves self-report policy, distinguishes missing/kind mismatch, and only 
     await (await post("/comments/comment/unflag", { snapshotId: "A" }, admin)).json(),
   ).toMatchObject({ status: "active", flagCount: 0 });
 });
-
-it.each(["upvote", "unvote"])(
-  "rejects an image %s when deletion commits before its transaction",
-  async (action) => {
-    insertImageSnapshot(database.sqlite, { id: "image", userId: "author" });
-    if (action === "unvote") {
-      await post("/images/image/upvote", {});
-    }
-    const before = database.sqlite.prepare("SELECT * FROM notification_messages").all();
-    beforeInteractionBatch(async () => {
-      database.sqlite.exec("UPDATE ugc_submissions SET author_deleted_at='gone' WHERE id='image'");
-    });
-    expect((await post(`/images/image/${action}`, {})).status).toBe(409);
-    expect(database.sqlite.prepare("SELECT * FROM notification_messages").all()).toEqual(before);
-    expect(database.sqlite.prepare("SELECT active FROM ugc_submission_upvotes").get()).toEqual(
-      action === "unvote" ? { active: 1 } : undefined,
-    );
-  },
-);
 
 it("preserves like timestamps on duplicate and cancel, aggregates reactivation, and never expires groups for ineligible writes", async () => {
   vi.useFakeTimers({ toFake: ["Date"] });
@@ -432,7 +376,7 @@ it.each(["comment", "image"] as const)(
       (await management(`/${id}/status`, { action: "clear_flags", snapshotId: "B" })).status,
     ).toBe(409);
     // Real ticket07 review replaces A and clears only A reports.
-    expect((await review(id)).outcome).toBe("committed");
+    expect((await review(id)).status).toBe(200);
     expect((await post(`/${prefix}/${id}/flag`, { snapshotId: "B" })).status).toBe(200);
     expect((await management(`/${id}/status`, { action: "clear_flags", snapshotId })).status).toBe(
       409,

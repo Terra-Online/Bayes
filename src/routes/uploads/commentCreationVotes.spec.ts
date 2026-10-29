@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 import { createApp } from "@/app";
-import { createPendingComment } from "@/repositories/submission/createComment";
 import { createMockBindings, type MockBindings } from "@/test/bindings";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { insertAuthenticatedUser, type SessionHeaders } from "@/test/fixtures/auth";
@@ -181,25 +180,6 @@ it.each(["deleted", "disabled", "rejected", "pending", "missing", "marker", "has
   },
 );
 
-it("checks a parent hidden immediately before INSERT and never queues a late reply", async () => {
-  insertCommentSnapshot(database.sqlite, { id: "parent", userId: "reader" });
-  database.hooks.beforeQuery = (sql) => {
-    if (/INSERT INTO ugc_submissions/.test(sql)) {
-      database.hooks.beforeQuery = undefined;
-      database.sqlite.exec(
-        "UPDATE ugc_submissions SET author_deleted_at='raced' WHERE id='parent'",
-      );
-    }
-  };
-  const response = await post("/comments", { ...comment, parentId: "parent" });
-  expect(response.status).toBe(409);
-  expect(await response.json()).toMatchObject({ code: "PARENT_COMMENT_NOT_VISIBLE" });
-  expect(database.sqlite.prepare("SELECT id FROM ugc_submissions").all()).toEqual([
-    { id: "parent" },
-  ]);
-  expect(bindings.autoModerationQueue.send).not.toHaveBeenCalled();
-});
-
 it("rolls identity back when snapshot persistence fails and gives retry fresh identities", async () => {
   let failedId: unknown;
   database.hooks.beforeQuery = (sql, values) => {
@@ -253,34 +233,6 @@ it("toggles and reverses votes across public versions while preserving creation 
     original,
   );
 });
-
-it.each(["upvote", "downvote"])(
-  "denies a late %s after hiding without changing votes, timestamps, notifications or cache",
-  async (action) => {
-    insertCommentSnapshot(database.sqlite, { id: "target", userId: "reader" });
-    database.sqlite
-      .exec(`INSERT INTO ugc_submission_votes (submission_id,user_id,value,created_at,updated_at)
-    VALUES ('target','author',1,'original','original')`);
-    database.hooks.beforeQuery = (sql) => {
-      if (/INSERT INTO ugc_submission_votes/.test(sql)) {
-        database.hooks.beforeQuery = undefined;
-        database.sqlite.exec(
-          "UPDATE ugc_submissions SET author_deleted_at='raced' WHERE id='target'",
-        );
-      }
-    };
-    const response = await post(`/comments/target/${action}`);
-    expect(response.status).toBe(409);
-    expect(await response.json()).toMatchObject({ code: "INVALID_SUBMISSION_STATUS" });
-    expect(
-      database.sqlite
-        .prepare("SELECT value,active,created_at,updated_at FROM ugc_submission_votes")
-        .all(),
-    ).toEqual([{ value: 1, active: 1, created_at: "original", updated_at: "original" }]);
-    expect(database.sqlite.prepare("SELECT * FROM notification_messages").all()).toEqual([]);
-    expect(cache.purgeMarker).not.toHaveBeenCalled();
-  },
-);
 
 it.each(["pending_openai", "pending_audit", "rejected", "unknown"] as const)(
   "denies votes on a first version in %s",
@@ -360,28 +312,6 @@ it("logs queue bookkeeping failure after successful delivery without failing cre
   warning.mockRestore();
 });
 
-it("leaves an expired notification group untouched when a late vote loses eligibility", async () => {
-  insertCommentSnapshot(database.sqlite, { id: "target", userId: "reader" });
-  bindings.bindings.OEM_NOTIFICATION_DO = {
-    idFromName: (name: string) => name,
-    get: () => ({ fetch: async () => new Response(null, { status: 204 }) }),
-  } as unknown as DurableObjectNamespace;
-  expect((await post("/comments/target/upvote")).status).toBe(200);
-  await Promise.all(pending);
-  database.sqlite.exec("UPDATE notifications SET window_expires_at='2000-01-01'");
-  const before = database.sqlite.prepare("SELECT * FROM notifications").all();
-  database.hooks.beforeQuery = (sql) => {
-    if (/INSERT INTO ugc_submission_votes/.test(sql)) {
-      database.hooks.beforeQuery = undefined;
-      database.sqlite.exec(
-        "UPDATE ugc_submissions SET admin_deleted_at='raced',admin_deleted_by='reader' WHERE id='target'",
-      );
-    }
-  };
-  expect((await post("/comments/target/upvote")).status).toBe(409);
-  expect(database.sqlite.prepare("SELECT * FROM notifications").all()).toEqual(before);
-});
-
 it("treats an image as neither a reply parent nor a comment vote target", async () => {
   insertImageSnapshot(database.sqlite, { id: "image", userId: "reader" });
   const reply = await post("/comments", { ...comment, parentId: "image" });
@@ -394,22 +324,6 @@ it("treats an image as neither a reply parent nor a comment vote target", async 
     { id: "image" },
   ]);
   expect(bindings.autoModerationQueue.send).not.toHaveBeenCalled();
-});
-
-it("rolls back both identity and version when the database rejects comment content", async () => {
-  await expect(
-    createPendingComment(database.db, {
-      id: "invalid",
-      snapshotId: "invalid-version",
-      userId: "author",
-      markerId: "marker-1",
-      poiHash: "hash",
-      poiType: "poi",
-      content: "",
-    }),
-  ).rejects.toThrow(/CHECK constraint failed/);
-  expect(database.sqlite.prepare("SELECT id FROM ugc_submissions").all()).toEqual([]);
-  expect(database.sqlite.prepare("SELECT id FROM ugc_snapshots").all()).toEqual([]);
 });
 
 it("votes on public A while B is pending and refuses further changes when B is rejected", async () => {

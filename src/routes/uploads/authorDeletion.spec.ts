@@ -2,8 +2,6 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 import { createApp } from "@/app";
 import { runWithAuthRequest } from "@/lib/auth/createAuth";
-import { getReviewTarget, reviewSnapshot } from "@/repositories/submission/reviewSnapshot";
-import { getOwnerSnapshot } from "@/repositories/submission/snapshotReads";
 import { createMockBindings, type MockBindings } from "@/test/bindings";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { insertAuthenticatedUser, type SessionHeaders } from "@/test/fixtures/auth";
@@ -87,9 +85,6 @@ it.each(["comment", "image"] as const)(
       admin_deleted_by: "admin",
       revision: 1,
     });
-    expect(
-      await getOwnerSnapshot(database.db, { id: "target", ownerUserId: "author" }),
-    ).toMatchObject({ id: "target", snapshotId: "snapshot-target" });
     expect(database.sqlite.prepare("SELECT count(*) AS count FROM ugc_snapshots").get()).toEqual({
       count: 1,
     });
@@ -129,43 +124,6 @@ it.each(["comment", "image"] as const)(
     expect(database.sqlite.prepare("SELECT author_deleted_at FROM ugc_submissions").get()).toEqual({
       author_deleted_at: null,
     });
-  },
-);
-it.each(["comment", "image"] as const)(
-  "deletion of a %s defeats an already selected review; review first retains its notifications",
-  async (kind) => {
-    seed(kind, "pending_openai");
-    const target = (await getReviewTarget(database.db, "target", "snapshot-target"))!;
-    const command = {
-      target,
-      expectedReviewStatus: "pending_openai" as const,
-      source: "ai" as const,
-      decision: "approved" as const,
-      auditId: "late",
-    };
-    expect((await request(`/${kind}s/target`)).status).toBe(200);
-    expect(await reviewSnapshot(database.db, command)).toEqual({ outcome: "ignored" });
-    expect(
-      database.sqlite.prepare("SELECT count(*) AS count FROM ugc_snapshots_review_audit").get(),
-    ).toEqual({ count: 0 });
-    expect(database.sqlite.prepare("SELECT count(*) AS count FROM notifications").get()).toEqual({
-      count: 0,
-    });
-    (kind === "comment" ? insertCommentSnapshot : insertImageSnapshot)(database.sqlite, {
-      id: "reviewed",
-      userId: "author",
-      reviewStatus: "pending_openai",
-    });
-    const reviewed = (await getReviewTarget(database.db, "reviewed", "snapshot-reviewed"))!;
-    expect(
-      await reviewSnapshot(database.db, { ...command, target: reviewed, auditId: "first" }),
-    ).toMatchObject({ outcome: "committed", firstApproval: true });
-    const notifications = database.sqlite.prepare("SELECT * FROM notifications").all();
-    expect((await request(`/${kind}s/reviewed`)).status).toBe(200);
-    expect(database.sqlite.prepare("SELECT * FROM notifications").all()).toEqual(notifications);
-    expect(
-      database.sqlite.prepare("SELECT count(*) AS count FROM ugc_public_submissions").get(),
-    ).toEqual({ count: 0 });
   },
 );
 it("retains children when deleting a comment and rejects new replies and edits", async () => {

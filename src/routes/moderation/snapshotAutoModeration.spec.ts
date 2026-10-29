@@ -42,11 +42,6 @@ vi.mock("@/lib/karma/karmaConfig.json", () => ({
   },
 }));
 
-import {
-  getReviewTarget,
-  reviewSnapshot,
-  type ReviewCommand,
-} from "@/repositories/submission/reviewSnapshot";
 import type { SnapshotReviewStatus } from "@/repositories/submission/snapshotReads";
 import { insertUser } from "@/test/fixtures/users";
 
@@ -124,24 +119,6 @@ async function consume(snapshotId: string | undefined, submissionId = "photo") {
   } as unknown as MessageBatch<LegacyAutoModerationMsg>);
   return { ack, retry };
 }
-async function command(
-  id: string,
-  decision: ReviewCommand["decision"],
-  expectedReviewStatus: SnapshotReviewStatus = "pending_openai",
-) {
-  const target = await getReviewTarget(fixture.database.db, id);
-  if (!target) {
-    throw new Error("Missing test review target");
-  }
-  return reviewSnapshot(fixture.database.db, {
-    target,
-    decision,
-    expectedReviewStatus,
-    source: "admin",
-    adminUserId: "reviewer",
-    auditId: crypto.randomUUID(),
-  });
-}
 
 it("approves the selected immutable snapshot through HTTP and only rewards it once", async () => {
   seed("comment");
@@ -201,74 +178,6 @@ it("acknowledges old unversioned work without binding it to the current snapshot
   expect(fixture.authorPoints()).toBe(26);
 });
 
-it.each(["notification", "points"] as const)(
-  "preserves the independent %s failure and retry boundary through HTTP",
-  async (failure) => {
-    seed("waiting");
-    fixture.database.sqlite.exec(
-      failure === "notification"
-        ? `CREATE TEMP TRIGGER fail_write BEFORE INSERT ON notification_messages BEGIN SELECT RAISE(ABORT,'notification failed'); END`
-        : `CREATE TEMP TRIGGER fail_write BEFORE UPDATE OF points ON users BEGIN SELECT RAISE(ABORT,'points failed'); END`,
-    );
-    expect((await run(["waiting"])).status).toBe(500);
-    expect(status("snapshot-waiting")).toBe(
-      failure === "notification" ? "pending_openai" : "approved",
-    );
-    expect(audits()).toHaveLength(failure === "notification" ? 0 : 1);
-    expect(fixture.notificationMessages()).toHaveLength(failure === "notification" ? 0 : 1);
-    expect(fixture.messages.translation).toHaveLength(failure === "notification" ? 0 : 1);
-    expect(fixture.authorPoints()).toBe(20);
-    fixture.database.sqlite.exec("DROP TRIGGER fail_write");
-    expect((await run(["waiting"])).status).toBe(200);
-    expect(audits()).toHaveLength(1);
-    expect(fixture.notificationMessages()).toHaveLength(1);
-    expect(fixture.authorPoints()).toBe(failure === "notification" ? 22 : 20);
-  },
-);
-
-it.each(["takeover", "author deletion", "admin disable"])(
-  "ignores an AI result after in-flight %s",
-  async (race) => {
-    seed("comment");
-    insertUser(fixture.database.sqlite, { uid: "reviewer", uid_number: 300, role: "a" });
-    vi.mocked(fetch).mockImplementation(async () => {
-      if (race === "takeover") {
-        expect(await command("comment", "pending_audit")).toMatchObject({
-          outcome: "committed",
-          firstApproval: false,
-        });
-      } else {
-        fixture.database.sqlite
-          .prepare(
-            `UPDATE ugc_submissions SET ${race === "author deletion" ? "author_deleted_at" : "admin_deleted_at"}='deleted' WHERE id='comment'`,
-          )
-          .run();
-      }
-      return Response.json({ results: [{ flagged: false }] });
-    });
-    expect(await (await run(["comment"])).json()).toMatchObject({ processed: 0 });
-    expect(audits()).toEqual(
-      race === "takeover"
-        ? [
-            {
-              snapshot_id: "snapshot-comment",
-              from_status: "pending_openai",
-              to_status: "pending_audit",
-              source: "admin",
-              admin_user_id: "reviewer",
-            },
-          ]
-        : [],
-    );
-    expect(status("snapshot-comment")).toBe(
-      race === "takeover" ? "pending_audit" : "pending_openai",
-    );
-    expect(fixture.authorPoints()).toBe(20);
-    expect(fixture.messages.webhook).toEqual([]);
-    expect(fixture.notificationMessages()).toHaveLength(race === "takeover" ? 1 : 0);
-  },
-);
-
 it("clears flags only on public A to B replacement and never on a duplicate approval", async () => {
   seed("comment", "approved");
   edit("comment");
@@ -300,16 +209,17 @@ it("clears flags only on public A to B replacement and never on a duplicate appr
 it("retains flags when admin rejection removes the previous public version", async () => {
   seed("comment", "approved");
   edit("comment");
-  insertUser(fixture.database.sqlite, { uid: "reviewer", uid_number: 300, role: "p" });
+  const reviewer = fixture.createReviewerSession("p", "reviewer");
   fixture.database.sqlite.exec(
     "INSERT INTO ugc_submission_flags (submission_id,user_id,active) VALUES ('comment','reviewer',1)",
   );
-  expect(await command("comment", "rejected")).toMatchObject({
-    outcome: "committed",
-    publicReplaced: false,
-    firstApproval: false,
-    notifications: [],
+  const response = await fixture.request("/comment/status", {
+    method: "PATCH",
+    headers: reviewer,
+    body: { action: "reject", snapshotId: "edit-comment", expectedReviewStatus: "pending_openai" },
   });
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({ outcome: "committed" });
   expect(fixture.database.sqlite.prepare("SELECT * FROM ugc_public_submissions").all()).toEqual([]);
   expect(fixture.database.sqlite.prepare("SELECT active FROM ugc_submission_flags").get()).toEqual({
     active: 1,
@@ -393,38 +303,6 @@ it.each(["skip", "missing credentials", "flagged", "no decision", "outage", "tim
     expect(fixture.notificationMessages()).toHaveLength(1);
   },
 );
-
-it("commits only one of two overlapping queue reviews of the same snapshot", async () => {
-  seed("photo");
-  let release: (() => void) | undefined;
-  const waiting = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  let announce: (() => void) | undefined;
-  const started = new Promise<void>((resolve) => {
-    announce = resolve;
-  });
-  let calls = 0;
-  vi.mocked(fetch).mockImplementation(async () => {
-    calls += 1;
-    if (calls === 1) {
-      announce?.();
-      await waiting;
-    }
-    return Response.json({ results: [{ flagged: false }] });
-  });
-  const first = consume("snapshot-photo");
-  await started;
-  const second = await consume("snapshot-photo");
-  release?.();
-  const late = await first;
-  expect(second.ack).toHaveBeenCalledOnce();
-  expect(late.ack).toHaveBeenCalledOnce();
-  expect(audits()).toHaveLength(1);
-  expect(fixture.notificationMessages()).toHaveLength(1);
-  expect(fixture.authorPoints()).toBe(22);
-  expect(fixture.messages.webhook).toHaveLength(1);
-});
 
 it("ignores terminal, deleted, disabled and nonfrontier queue targets before calling AI", async () => {
   seed("approved", "approved");

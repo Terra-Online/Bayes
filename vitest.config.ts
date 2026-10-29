@@ -1,11 +1,9 @@
 import { fileURLToPath } from "node:url";
 
-import { configDefaults, defineConfig } from "vitest/config";
+import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
-    // Opt-in contract suite requires a separately installed Cor checkout.
-    exclude: [...configDefaults.exclude, "scripts/cor-client-contract.spec.ts"],
     coverage: {
       provider: "v8",
       all: true,

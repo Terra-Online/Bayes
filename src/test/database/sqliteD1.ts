@@ -65,11 +65,7 @@ class SqliteStatement {
 }
 
 export class SqliteD1 {
-  readonly sqlite: DatabaseSync;
-
-  constructor(path = ":memory:") {
-    this.sqlite = new DatabaseSync(path);
-  }
+  readonly sqlite = new DatabaseSync(":memory:");
   readonly queries: RecordedQuery[] = [];
   // Expose only the binding API. Better Auth interprets an object with a `db`
   // property as a Kysely configuration instead of a D1 binding.

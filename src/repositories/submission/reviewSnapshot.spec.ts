@@ -4,144 +4,71 @@ import { createTestDatabase, type TestDatabase } from "@/test/database/createTes
 import { insertCommentSnapshot } from "@/test/fixtures/commentSnapshots";
 import { insertUser } from "@/test/fixtures/users";
 
-import {
-  getReviewTarget,
-  reviewSnapshot,
-  type ReviewCommand,
-  type ReviewTarget,
-} from "./reviewSnapshot";
+import { getReviewTarget, reviewSnapshot, type ReviewCommand } from "./reviewSnapshot";
 
 let database: TestDatabase;
-let target: ReviewTarget;
+let command: ReviewCommand;
 beforeEach(async () => {
   database = createTestDatabase();
-
-  insertUser(database.sqlite, { uid: "author", uid_number: 100 });
-  insertUser(database.sqlite, { uid: "admin", uid_number: 101, role: "p" });
+  insertUser(database.sqlite, { uid: "author" });
+  insertUser(database.sqlite, { uid: "admin", role: "p" });
   insertCommentSnapshot(database.sqlite, {
     id: "comment",
     userId: "author",
     reviewStatus: "pending_openai",
   });
-  const selected = await getReviewTarget(database.db, "comment", "snapshot-comment");
-  if (!selected) {
-    throw new Error("Missing test target");
-  }
-  target = selected;
+  command = {
+    target: (await getReviewTarget(database.db, "comment"))!,
+    expectedReviewStatus: "pending_openai",
+    decision: "approved",
+    source: "ai",
+    auditId: "receipt",
+  };
 });
 afterEach(() => database.close());
 
+// Each mutation represents a commit after selection, before this serialized batch.
+// These are write guards, not another review-policy acceptance matrix.
 it.each([
-  ["pending_openai", "approved", true],
-  ["pending_openai", "rejected", true],
-  ["pending_openai", "pending_audit", true],
-  ["pending_audit", "approved", true],
-  ["pending_audit", "rejected", true],
-  ["pending_audit", "pending_audit", false],
-  ["approved", "rejected", false],
-  ["rejected", "approved", false],
-  ["unknown", "approved", false],
-] as const)(
-  "admin %s to %s has committed=%s with actual attribution",
-  async (from, to, committed) => {
-    database.sqlite.prepare("UPDATE ugc_snapshots SET review_status=?").run(from);
-    const result = await reviewSnapshot(database.db, {
-      target,
-      expectedReviewStatus: from,
-      decision: to,
-      source: "admin",
-      adminUserId: "admin",
-      auditId: "admin-decision",
-    });
-    expect(result.outcome).toBe(committed ? "committed" : "ignored");
-    expect(
-      database.sqlite
-        .prepare(
-          "SELECT source,admin_user_id,from_status,to_status FROM ugc_snapshots_review_audit",
-        )
-        .all(),
-    ).toEqual(
-      committed
-        ? [{ source: "admin", admin_user_id: "admin", from_status: from, to_status: to }]
-        : [],
-    );
-    if (result.outcome === "committed") {
-      expect(result.firstApproval).toBe(to === "approved");
-      expect(result.notifications).toHaveLength(to === "rejected" ? 0 : 1);
-    }
+  ["phase", "UPDATE ugc_snapshots SET review_status='pending_audit'"],
+  ["author deletion", "UPDATE ugc_submissions SET author_deleted_at='gone'"],
+  ["admin disable", "UPDATE ugc_submissions SET admin_deleted_at='gone',admin_deleted_by='admin'"],
+  [
+    "frontier",
+    `UPDATE ugc_snapshots SET review_status='approved';
+    INSERT INTO ugc_snapshots (id,submission_id,kind,revision,content,review_status,creator_user_id)
+    VALUES ('B','comment','comment',2,'New version','pending_openai','author');
+    UPDATE ugc_submissions SET revision=2`,
+  ],
+])(
+  "ignores a selected target after its %s changes, with no audit or notification writes",
+  async (_guard, sql) => {
+    database.sqlite.exec(sql);
+    const before = database.sqlite.prepare("SELECT * FROM ugc_snapshots").all();
+    expect(await reviewSnapshot(database.db, command)).toEqual({ outcome: "ignored" });
+    expect(database.sqlite.prepare("SELECT * FROM ugc_snapshots").all()).toEqual(before);
+    expect(database.sqlite.prepare("SELECT * FROM ugc_snapshots_review_audit").all()).toEqual([]);
+    expect(database.sqlite.prepare("SELECT * FROM notifications").all()).toEqual([]);
   },
 );
 
-it("checks expected phase and reviewer authority inside the transaction", async () => {
-  const base = {
-    target,
-    decision: "approved",
-    source: "admin",
-    adminUserId: "admin",
-    auditId: "receipt",
-  } as const;
-  expect(
-    await reviewSnapshot(database.db, { ...base, expectedReviewStatus: "pending_audit" }),
-  ).toEqual({ outcome: "ignored" });
+it("rechecks reviewer authority at commit", async () => {
   database.sqlite.exec("UPDATE users SET role='n' WHERE uid='admin'");
   expect(
-    await reviewSnapshot(database.db, { ...base, expectedReviewStatus: "pending_openai" }),
+    await reviewSnapshot(database.db, { ...command, source: "admin", adminUserId: "admin" }),
   ).toEqual({ outcome: "ignored" });
   expect(database.sqlite.prepare("SELECT * FROM ugc_snapshots_review_audit").all()).toEqual([]);
-  expect(database.sqlite.prepare("SELECT * FROM notifications").all()).toEqual([]);
 });
 
-it("rejects receipt reuse on both eligible and stale targets without borrowing earlier success", async () => {
-  const command: ReviewCommand = {
-    target,
-    expectedReviewStatus: "pending_openai",
-    decision: "approved",
-    source: "ai",
-    auditId: "receipt",
-  };
-  expect(await reviewSnapshot(database.db, command)).toMatchObject({
-    outcome: "committed",
-    firstApproval: true,
-  });
-  insertCommentSnapshot(database.sqlite, {
-    id: "other",
-    userId: "author",
-    reviewStatus: "pending_openai",
-  });
-  const other = await getReviewTarget(database.db, "other");
-  if (!other) {
-    throw new Error("Missing other target");
-  }
+it("allows one receipt and leaves expired notification groups unchanged for a losing review", async () => {
+  expect(await reviewSnapshot(database.db, command)).toMatchObject({ outcome: "committed" });
+  database.sqlite.exec("UPDATE notifications SET window_expires_at='2000-01-01'");
   const before = database.sqlite.prepare("SELECT * FROM notifications").all();
-  await expect(reviewSnapshot(database.db, { ...command, target: other })).rejects.toThrow(
-    /UNIQUE constraint/,
-  );
-  await expect(reviewSnapshot(database.db, command)).rejects.toThrow(/UNIQUE constraint/);
-  expect(
-    database.sqlite
-      .prepare("SELECT review_status FROM ugc_snapshots WHERE id='snapshot-other'")
-      .get(),
-  ).toEqual({ review_status: "pending_openai" });
-  expect(database.sqlite.prepare("SELECT * FROM notifications").all()).toEqual(before);
-  expect(database.sqlite.prepare("SELECT id FROM ugc_snapshots_review_audit").all()).toEqual([
-    { id: "receipt" },
-  ]);
-});
-
-it("does not expire an aggregation group when a stale receipt attempt is ignored", async () => {
-  const command: ReviewCommand = {
-    target,
-    expectedReviewStatus: "pending_openai",
-    decision: "approved",
-    source: "ai",
-    auditId: "receipt",
-  };
-  await reviewSnapshot(database.db, command);
-  database.sqlite.exec("UPDATE notifications SET window_expires_at='2000-01-01T00:00:00Z'");
-  const before = database.sqlite.prepare("SELECT * FROM notifications").all();
-  expect(await reviewSnapshot(database.db, { ...command, auditId: "duplicate" })).toEqual({
+  expect(await reviewSnapshot(database.db, { ...command, auditId: "loser" })).toEqual({
     outcome: "ignored",
   });
+  // A reused success receipt must fail rather than authorize another batch's writes.
+  await expect(reviewSnapshot(database.db, command)).rejects.toThrow(/UNIQUE constraint/);
   expect(database.sqlite.prepare("SELECT * FROM notifications").all()).toEqual(before);
   expect(database.sqlite.prepare("SELECT id FROM ugc_snapshots_review_audit").all()).toEqual([
     { id: "receipt" },
