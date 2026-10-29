@@ -308,6 +308,7 @@ export function createRoutes() {
           defer: (task) => c.executionCtx.waitUntil(task),
         },
         {
+          actor: c.get("authUser"),
           submissionId,
           nextStatus: parsed.data.status,
           moderationNote: parsed.data.moderationNote,

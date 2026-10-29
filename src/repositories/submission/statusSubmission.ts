@@ -52,6 +52,12 @@ export async function updateSubmissionStatus(
     .run();
 }
 
+// A successful same-status write may update the note, but is not a new review.
+// Notification rows are committed in the same batch as the conditional status write.
+export type SubmissionStatusTransitionResult =
+  | { updated: false; notifications: [] }
+  | { updated: true; statusChanged: boolean; notifications: NotificationRecord[] };
+
 export async function transitionSubmissionStatusWithNotifications(
   db: D1Database,
   payload: {
@@ -62,7 +68,7 @@ export async function transitionSubmissionStatusWithNotifications(
     aiReviewed?: boolean;
     clearFlags?: boolean;
   },
-): Promise<{ updated: boolean; notifications: NotificationRecord[] }> {
+): Promise<SubmissionStatusTransitionResult> {
   const transitionedAt = new Date().toISOString();
   const transition = {
     submission: payload.submission,
@@ -164,11 +170,15 @@ export async function transitionSubmissionStatusWithNotifications(
 
   const results = await db.batch<Record<string, unknown>>(statements);
   const updated = (results[0]?.results ?? []).length > 0;
+  if (!updated) {
+    return { updated: false, notifications: [] };
+  }
   return {
-    updated,
-    notifications: updated
-      ? notificationResultIndexes.flatMap((index) => notificationsFromResult(results[index]))
-      : [],
+    updated: true,
+    statusChanged: payload.submission.status !== payload.status,
+    notifications: notificationResultIndexes.flatMap((index) =>
+      notificationsFromResult(results[index]),
+    ),
   };
 }
 

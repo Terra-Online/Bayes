@@ -13,14 +13,22 @@ import type { SubmissionStatus } from "@/repositories/submission/types";
 import { applyUserPointsDelta } from "@/repositories/users";
 import { getModerationPointsDeltaWithDailyBackoff } from "@/services/karma/moderationPoints";
 import { publishNotificationsCreated } from "@/services/notify/live";
-import type { Bindings } from "@/types/app";
+import type { AuthUser, Bindings } from "@/types/app";
 
 import { notifySubmissionModerationResult } from "./notifications";
 
 export interface ManualModerationInput {
+  actor: Pick<AuthUser, "uid">;
   submissionId: string;
   nextStatus: SubmissionStatus;
   moderationNote?: string;
+}
+
+// Returned only after the status/notification batch and the separate points write
+// succeed. Actor identity is supplied by authentication, never by the request body.
+export interface ManualModerationResult {
+  actorUserId: string;
+  statusChanged: boolean;
 }
 
 export interface ManualModerationDependencies {
@@ -57,11 +65,10 @@ function assertStatusTransition(from: SubmissionStatus, to: SubmissionStatus): v
 }
 
 function shouldApplyModerationPoints(
-  currentStatus: SubmissionStatus,
   nextStatus: SubmissionStatus,
   moderationNote: string | null,
 ): boolean {
-  if (currentStatus === nextStatus || (nextStatus !== "active" && nextStatus !== "stale")) {
+  if (nextStatus !== "active" && nextStatus !== "stale") {
     return false;
   }
 
@@ -77,7 +84,7 @@ function shouldApplyModerationPoints(
 export async function applyManualModeration(
   dependencies: ManualModerationDependencies,
   input: ManualModerationInput,
-): Promise<void> {
+): Promise<ManualModerationResult> {
   const { bindings } = dependencies;
   const current = await getSubmissionById(bindings.DB, input.submissionId);
   if (!current) {
@@ -103,7 +110,7 @@ export async function applyManualModeration(
     dependencies.defer(publishNotificationsCreated(bindings, transition.notifications));
   }
   if (
-    current.status !== input.nextStatus &&
+    transition.statusChanged &&
     (input.nextStatus === "active" || input.nextStatus === "pending_audit")
   ) {
     dependencies.defer(
@@ -115,7 +122,7 @@ export async function applyManualModeration(
       }),
     );
   }
-  if (current.status !== "active" && input.nextStatus === "active" && current.kind === "image") {
+  if (transition.statusChanged && input.nextStatus === "active" && current.kind === "image") {
     const config = getRuntimeConfig(bindings);
     dependencies.defer(prewarmPublicUgcAsset(config.ugcAssetBaseUrl, current.filePath));
   }
@@ -123,7 +130,7 @@ export async function applyManualModeration(
     invalidateUploadCaches({ kv: bindings.OEM_KV, kind: current.kind, markerId: current.markerId }),
   );
   if (current.kind === "comment") {
-    if (current.status !== "active" && input.nextStatus === "active") {
+    if (transition.statusChanged && input.nextStatus === "active") {
       dependencies.defer(
         enqueueApprovedCommentTransPrewarm(bindings, input.submissionId, "manual_moderation"),
       );
@@ -136,8 +143,9 @@ export async function applyManualModeration(
     current.editOriginalStatus !== "pending_openai" &&
     current.editOriginalStatus !== "pending_audit";
   if (
+    transition.statusChanged &&
     !isPreviouslyApprovedEdit &&
-    shouldApplyModerationPoints(current.status, input.nextStatus, effectiveModerationNote)
+    shouldApplyModerationPoints(input.nextStatus, effectiveModerationNote)
   ) {
     const reviewStatus = input.nextStatus === "active" ? "active" : "stale";
     const redis = createRedisClient(bindings);
@@ -155,4 +163,5 @@ export async function applyManualModeration(
       }),
     );
   }
+  return { actorUserId: input.actor.uid, statusChanged: transition.statusChanged };
 }

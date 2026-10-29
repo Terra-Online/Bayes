@@ -240,6 +240,60 @@ describe("automatic moderation", () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
+  it("keeps a manual takeover when an approval for the same snapshot arrives late", async () => {
+    env.OPENAI_API_KEY = "synthetic-ai-key";
+    submission({ id: "taken-over", status: "pending_openai" });
+    const headers = createReviewerSession("a");
+    vi.mocked(fetch).mockImplementation(async () => {
+      const takeover = await request("/taken-over/status", {
+        method: "PATCH",
+        headers,
+        body: { status: "pending_audit", moderationNote: "Needs a human decision" },
+      });
+      expect(takeover.status).toBe(200);
+      return Response.json({ results: [{ flagged: false }] });
+    });
+    const response = await request("/run", {
+      method: "POST",
+      headers,
+      body: { ids: ["taken-over"] },
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ processed: 0, active: 0, pendingAudit: 0 });
+    expect(storedSubmission("taken-over")).toMatchObject({
+      snapshot_id: "snapshot-taken-over",
+      status: "pending_audit",
+      moderation_note: "Needs a human decision",
+    });
+    expect(authorPoints()).toBe(20);
+    expect(reviewEvents()).toEqual([
+      {
+        submission_id: "taken-over",
+        from_status: "pending_openai",
+        to_status: "pending_audit",
+        source: "manual_moderation",
+        ai_reviewed: 0,
+      },
+    ]);
+    expect(notificationMessages()).toEqual([
+      {
+        recipient_user_id: "author",
+        type: "system.submission.needs_review",
+        submission_id: "taken-over",
+      },
+    ]);
+    expect(liveMessages).toHaveLength(1);
+    expect(translationMessages).toEqual([]);
+    expect(webhookMessages).toEqual([
+      expect.objectContaining({
+        event: expect.objectContaining({
+          source: "manual_moderation",
+          nextStatus: "pending_audit",
+        }),
+      }),
+    ]);
+  });
+
   it("leaves a newer author edit pending when an AI decision for the old snapshot arrives", async () => {
     env.OPENAI_API_KEY = "synthetic-ai-key";
     submission({ id: "changing", status: "pending_openai", content: "Original directions" });
@@ -472,6 +526,44 @@ describe("automatic moderation", () => {
 });
 
 describe("automatic moderation recovery and preserved decisions", () => {
+  it.each(["notification", "points"] as const)(
+    "preserves the separate commit boundary when the %s write fails, including a retry",
+    async (failure) => {
+      submission({ id: "waiting", status: "pending_openai" });
+      env.LOCAL_UPLOAD_AUTO_APPROVE = "true";
+      const headers = createReviewerSession("a");
+      // Fail a real database write, leaving the production workflow and transaction real.
+      database.sqlite.exec(
+        failure === "notification"
+          ? `CREATE TEMP TRIGGER fail_review_write BEFORE INSERT ON notification_messages
+           BEGIN SELECT RAISE(ABORT, 'notification write failed'); END`
+          : `CREATE TEMP TRIGGER fail_review_write BEFORE UPDATE OF points ON users
+           BEGIN SELECT RAISE(ABORT, 'points write failed'); END`,
+      );
+      const options = { method: "POST", headers, body: { ids: ["waiting"] } };
+      const failed = await request("/run", options);
+      expect(failed.status).toBe(500);
+      expect(storedSubmission("waiting")).toMatchObject({
+        status: failure === "notification" ? "pending_openai" : "active",
+      });
+      expect(authorPoints()).toBe(20);
+      expect(reviewEvents()).toHaveLength(failure === "notification" ? 0 : 1);
+      expect(notificationMessages()).toHaveLength(failure === "notification" ? 0 : 1);
+      expect(liveMessages).toHaveLength(failure === "notification" ? 0 : 1);
+      expect(translationMessages).toHaveLength(failure === "notification" ? 0 : 1);
+      database.sqlite.exec("DROP TRIGGER fail_review_write");
+      const retry = await request("/run", options);
+      expect(retry.status).toBe(200);
+      expect(storedSubmission("waiting")).toMatchObject({ status: "active" });
+      // A committed review is not replayed to recover a failed independent points write.
+      expect(authorPoints()).toBe(failure === "notification" ? 22 : 20);
+      expect(reviewEvents()).toHaveLength(1);
+      expect(notificationMessages()).toHaveLength(1);
+      expect(liveMessages).toHaveLength(1);
+      expect(translationMessages).toHaveLength(1);
+    },
+  );
+
   it.each([
     { previousStatus: "active", expectedPoints: 20 },
     { previousStatus: "pending_audit", expectedPoints: 22 },

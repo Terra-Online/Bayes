@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { applyManualModeration } from "@/services/moderation/manualModeration";
 import {
   createModerationTestFixture,
   type ModerationTestFixture,
@@ -172,6 +173,81 @@ describe("moderation access", () => {
 });
 
 describe("manual moderation recovery and preserved decisions", () => {
+  it.each(["notification", "points"] as const)(
+    "preserves the separate commit boundary when the %s write fails, including a retry",
+    async (failure) => {
+      submission({ id: "waiting", status: "pending_audit" });
+      const headers = createReviewerSession("p");
+      // Fail a real database write, leaving the production workflow and transaction real.
+      database.sqlite.exec(
+        failure === "notification"
+          ? `CREATE TEMP TRIGGER fail_review_write BEFORE INSERT ON notification_messages
+           BEGIN SELECT RAISE(ABORT, 'notification write failed'); END`
+          : `CREATE TEMP TRIGGER fail_review_write BEFORE UPDATE OF points ON users
+           BEGIN SELECT RAISE(ABORT, 'points write failed'); END`,
+      );
+      const options = { method: "PATCH", headers, body: { status: "active" } };
+      const failed = await request("/waiting/status", options);
+      expect(failed.status).toBe(500);
+      expect(storedSubmission("waiting")).toMatchObject({
+        status: failure === "notification" ? "pending_audit" : "active",
+      });
+      expect(authorPoints()).toBe(20);
+      expect(reviewEvents()).toHaveLength(failure === "notification" ? 0 : 1);
+      expect(notificationMessages()).toHaveLength(failure === "notification" ? 0 : 1);
+      expect(liveMessages).toHaveLength(failure === "notification" ? 0 : 1);
+      expect(translationMessages).toHaveLength(failure === "notification" ? 0 : 1);
+      database.sqlite.exec("DROP TRIGGER fail_review_write");
+      const retry = await request("/waiting/status", options);
+      expect(retry.status).toBe(200);
+      expect(storedSubmission("waiting")).toMatchObject({ status: "active" });
+      // A committed review is not replayed to recover a failed independent points write.
+      expect(authorPoints()).toBe(failure === "notification" ? 22 : 20);
+      expect(reviewEvents()).toHaveLength(1);
+      expect(notificationMessages()).toHaveLength(1);
+      expect(liveMessages).toHaveLength(1);
+      expect(translationMessages).toHaveLength(1);
+    },
+  );
+
+  it("returns the manual actor and distinguishes a committed review from a same-status retry", async () => {
+    submission({ id: "waiting", status: "pending_audit" });
+    createReviewerSession("p", "reviewer");
+    const deferred: Promise<unknown>[] = [];
+    const dependencies = {
+      bindings: env,
+      defer: (task: Promise<unknown>) => {
+        deferred.push(task);
+      },
+    };
+    const input = {
+      actor: { uid: "reviewer" },
+      submissionId: "waiting",
+      nextStatus: "active" as const,
+      moderationNote: "Initial review",
+    };
+    try {
+      expect(await applyManualModeration(dependencies, input)).toEqual({
+        actorUserId: "reviewer",
+        statusChanged: true,
+      });
+      expect(
+        await applyManualModeration(dependencies, { ...input, moderationNote: "Clarified review" }),
+      ).toEqual({
+        actorUserId: "reviewer",
+        statusChanged: false,
+      });
+      expect(storedSubmission("waiting")).toMatchObject({ moderation_note: "Clarified review" });
+      await Promise.all(deferred);
+      expect(authorPoints()).toBe(22);
+      expect(reviewEvents()).toHaveLength(1);
+      expect(notificationMessages()).toHaveLength(1);
+      expect(translationMessages).toHaveLength(1);
+    } finally {
+      await Promise.all(deferred);
+    }
+  });
+
   it("reports malformed review JSON as a validation error without applying a decision", async () => {
     submission({ id: "waiting", status: "pending_audit" });
     const before = storedSubmission("waiting");
