@@ -158,18 +158,3 @@ export async function countSubmissionUpvotes(
 
   return toCount(row?.count);
 }
-
-export async function getSubmissionScore(db: D1Database, submissionId: string): Promise<number> {
-  const row = await db
-    .prepare(
-      `SELECT COALESCE(SUM(value), 0) AS score
-       FROM ugc_submission_votes
-       WHERE submission_id = ?1
-         AND active = 1`,
-    )
-    .bind(submissionId)
-    .first<{ score: number | string }>();
-
-  const score = Number(row?.score ?? 0);
-  return Number.isFinite(score) ? Math.trunc(score) : 0;
-}
