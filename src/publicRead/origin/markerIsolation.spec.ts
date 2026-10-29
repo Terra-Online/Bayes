@@ -3,7 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vite
 import type { PublicReadCacheNamespace, PublicReadMarkerKind } from "@/publicRead/contract/markers";
 import { invalidateUploadCaches } from "@/publicRead/invalidate";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
+import { insertImageSnapshot } from "@/test/fixtures/imageSnapshots";
 import { insertSubmission } from "@/test/fixtures/submissions";
+import { importCurrentSubmissions } from "@/test/fixtures/ugcSnapshots";
 import { insertUser } from "@/test/fixtures/users";
 
 import { listCachedPublicCommentsByMarker } from "./markerComments";
@@ -79,6 +81,12 @@ function interceptReads(before: (values: unknown[]) => Promise<void>): void {
 }
 
 describe.each(["images", "comments"] as const)("%s invocation isolation", (kind) => {
+  beforeEach(() => {
+    if (kind === "images") {
+      importCurrentSubmissions(database);
+    }
+  });
+
   function read(
     db: D1Database,
     markerIds: string[],
@@ -104,11 +112,15 @@ describe.each(["images", "comments"] as const)("%s invocation isolation", (kind)
 
   function seedStoredSubmission(): void {
     insertUser(database.sqlite, { uid: "author" });
-    insertSubmission(database.sqlite, {
-      id: "stored",
-      userId: "author",
-      kind: kind === "images" ? "image" : "comment",
-    });
+    if (kind === "images") {
+      insertImageSnapshot(database.sqlite, {
+        id: "stored",
+        userId: "author",
+        content: "Content stored",
+      });
+    } else {
+      insertSubmission(database.sqlite, { id: "stored", userId: "author" });
+    }
   }
 
   it("repairs malformed cached lists from stored content and reuses positive and empty entries", async () => {
@@ -151,9 +163,11 @@ describe.each(["images", "comments"] as const)("%s invocation isolation", (kind)
       await Promise.all(waitUntil.mock.calls.map(([promise]) => promise));
     }
     expect(kv.values.size).toBe(3);
-    database.sqlite
-      .prepare("UPDATE ugc_submissions SET status = 'stale' WHERE id = 'stored'")
-      .run();
+    database.sqlite.exec(
+      kind === "images"
+        ? "UPDATE ugc_submissions SET author_deleted_at='deleted' WHERE id='stored'"
+        : "UPDATE ugc_submissions SET status='stale' WHERE id='stored'",
+    );
     const archived = database.sqlite.prepare("SELECT * FROM ugc_submissions").all();
     // Workers can report a failed purge or reject the RPC. Both must still allow
     // the separately owned KV entries to be removed and the caller to finish.

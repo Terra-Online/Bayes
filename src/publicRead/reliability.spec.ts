@@ -4,6 +4,7 @@ import { publicReadResponse } from "@/routes/uploads/responses";
 import { createMockBindings } from "@/test/bindings";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { insertSubmission } from "@/test/fixtures/submissions";
+import { importCurrentSubmissions } from "@/test/fixtures/ugcSnapshots";
 import { insertUser } from "@/test/fixtures/users";
 import type { Bindings } from "@/types/app";
 
@@ -209,9 +210,12 @@ describe("bounded public reads", () => {
         userId: "author",
         kind: kind === "images" ? "image" : "comment",
       });
+      if (kind === "images") {
+        importCurrentSubmissions(database);
+      }
       const before = database.sqlite.prepare("SELECT * FROM ugc_submissions").all();
       database.hooks.beforeQuery = (sql) => {
-        if (/ugc_submissions/.test(sql)) {
+        if (/ugc_(submissions|public_submissions)/.test(sql)) {
           throw new Error("D1_ERROR: D1 DB is overloaded.");
         }
       };

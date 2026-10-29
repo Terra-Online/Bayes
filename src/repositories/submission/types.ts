@@ -48,6 +48,7 @@ export type SubmissionVoteValue = 1 | -1;
 export type ViewerVoteValue = SubmissionVoteValue | 0;
 
 export interface PublicSubmissionImage {
+  snapshotId: string;
   id: string;
   markerId: string;
   url: string;

@@ -131,6 +131,7 @@ export function publicImageFromRow(
   return {
     id: submission.id,
     markerId: submission.markerId,
+    snapshotId: submission.snapshotId,
     url: `${assetBaseUrl}/${filePath}`,
     content: submission.content,
     author:

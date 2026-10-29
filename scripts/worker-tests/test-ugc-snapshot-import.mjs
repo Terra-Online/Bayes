@@ -1,11 +1,31 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { test } from "node:test";
 
 import { unstable_splitSqlQuery } from "wrangler";
 
 import { migrateNativeDatabase } from "./native-test-database.mjs";
 import { Miniflare } from "./worker-test-runtime.mjs";
+
+// Use the installed runtime's compiler so this test also runs on Node 22,
+// where loading TypeScript directly is not enabled by default.
+const runtimeRequire = createRequire(
+  createRequire(import.meta.url).resolve("wrangler/package.json"),
+);
+const { transform } = runtimeRequire("esbuild");
+const imageCommandSource = await readFile(
+  new URL("../../src/repositories/submission/createImage.ts", import.meta.url),
+  "utf8",
+);
+const imageCommand = await transform(imageCommandSource, {
+  loader: "ts",
+  format: "esm",
+  target: "es2022",
+});
+const { createPendingImage, markImageModerationQueued } = await import(
+  `data:text/javascript;base64,${Buffer.from(imageCommand.code).toString("base64")}`
+);
 
 const candidate = await readFile(
   new URL("../../migration-candidates/ugc-snapshots/import-current.sql", import.meta.url),
@@ -174,6 +194,61 @@ test("local D1 failed append retains the frontier and next successful append use
     await assert.rejects(
       db.prepare("UPDATE ugc_snapshots SET content='overwrite' WHERE id='second'").run(),
       /immutable/,
+    );
+    assert.deepEqual((await db.prepare("PRAGMA foreign_key_check").all()).results, []);
+  });
+});
+
+test("local D1 image creation rolls back identity on snapshot failure and binds delivery to the exact version", async () => {
+  await withDatabase(async (db) => {
+    await batch(db, candidate);
+    const image = {
+      id: "new-image",
+      snapshotId: "new-image-snapshot",
+      userId: "owner",
+      markerId: "marker",
+      poiHash: "hash",
+      poiType: "poi",
+      filePath: "images/new.webp",
+      mimeType: "image/webp",
+      sizeBytes: 3,
+    };
+    await createPendingImage(db, image);
+    await assert.rejects(
+      createPendingImage(db, { ...image, id: "rolled-back" }),
+      /UNIQUE constraint/,
+    );
+    assert.equal(
+      await db.prepare("SELECT id FROM ugc_submissions WHERE id='rolled-back'").first(),
+      null,
+    );
+    assert.deepEqual(
+      await db.prepare("SELECT revision FROM ugc_submissions WHERE id='new-image'").first(),
+      { revision: 1 },
+    );
+    await markImageModerationQueued(db, {
+      submissionId: "wrong-image",
+      snapshotId: image.snapshotId,
+      queuedAt: "wrong",
+    });
+    assert.deepEqual(
+      await db
+        .prepare("SELECT moderation_queued_at FROM ugc_snapshots WHERE id='new-image-snapshot'")
+        .first(),
+      { moderation_queued_at: null },
+    );
+    await markImageModerationQueued(db, {
+      submissionId: image.id,
+      snapshotId: image.snapshotId,
+      queuedAt: "delivered",
+    });
+    assert.deepEqual(
+      await db
+        .prepare(
+          "SELECT file_path, moderation_queued_at FROM ugc_snapshots WHERE id='new-image-snapshot'",
+        )
+        .first(),
+      { file_path: image.filePath, moderation_queued_at: "delivered" },
     );
     assert.deepEqual((await db.prepare("PRAGMA foreign_key_check").all()).results, []);
   });

@@ -9,6 +9,7 @@ import { createTestDatabase, type TestDatabase } from "@/test/database/createTes
 import { insertAuthUser, insertSession, type SeededSession } from "@/test/fixtures/auth";
 import { seedImageReadScenario } from "@/test/fixtures/imageReadScenario";
 import { insertNotification } from "@/test/fixtures/notifications";
+import { importCurrentSubmissions } from "@/test/fixtures/ugcSnapshots";
 import type { AppEnv } from "@/types/app";
 
 import { createRoutes } from "./createRoutes";
@@ -65,6 +66,7 @@ async function requestPath(path: string, uid?: string, headers?: HeadersInit) {
 }
 
 it("serves an owner's image bytes with private cache headers", async () => {
+  importCurrentSubmissions(database);
   const response = await requestPreview("photo", "author");
   expect(response.status).toBe(200);
   expect(response.headers.get("Content-Type")).toBe("image/webp");
@@ -99,6 +101,7 @@ it.each([
   });
   // Warm the list cache first: preview metadata must retain the legacy MIME fallback.
   expect((await requestPath("/contributions", "author")).status).toBe(200);
+  importCurrentSubmissions(database);
   const preview = await requestPreview("photo", "author");
   expect(preview.status).toBe(200);
   expect(preview.headers.get("content-type")).toBe(expected);
@@ -109,6 +112,7 @@ it.each([
 
 it("keeps historical previews available to their owner only", async () => {
   database.sqlite.exec("UPDATE ugc_submissions SET status = 'stale' WHERE id = 'photo'");
+  importCurrentSubmissions(database);
   expect((await requestPreview("photo", "author")).status).toBe(200);
   mocks.ugcBucket.get.mockClear();
   expect((await requestPreview("photo", "other")).status).toBe(404);
@@ -116,6 +120,7 @@ it("keeps historical previews available to their owner only", async () => {
 });
 
 it("rejects unauthenticated requests and missing image objects", async () => {
+  importCurrentSubmissions(database);
   expect((await requestPreview("photo")).status).toBe(401);
   expect(mocks.ugcBucket.get).not.toHaveBeenCalled();
   mocks.ugcBucket.get.mockResolvedValue(null);
@@ -123,6 +128,7 @@ it("rejects unauthenticated requests and missing image objects", async () => {
 });
 
 it("revalidates an owner's cached preview without sending image bytes", async () => {
+  importCurrentSubmissions(database);
   // Vitest models only R2.get's last overload; conditional reads can return
   // metadata without a body. Keep the actual R2Object shape for the 304 path.
   vi.mocked(mocks.ugcBucket.get, { partial: true }).mockResolvedValueOnce(previewMetadata());

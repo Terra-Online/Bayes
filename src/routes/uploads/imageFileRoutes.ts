@@ -23,6 +23,14 @@ export function createRoutes() {
       headers.set("Cache-Control", UGC_PUBLIC_IMAGE_CACHE_CONTROL);
       headers.set("Content-Type", contentType);
 
+      const validator = c.req.header("If-None-Match");
+      if (
+        validator
+          ?.split(",")
+          .some((tag) => tag.trim() === "*" || tag.trim().replace(/^W\//, "") === object.httpEtag)
+      ) {
+        return new Response(null, { status: 304, headers });
+      }
       return new Response(object.body, {
         status: 200,
         headers,
@@ -42,6 +50,14 @@ export function createRoutes() {
       headers.set("Cache-Control", "private, max-age=60");
       headers.set("Content-Type", contentType);
 
+      const validator = c.req.header("If-None-Match");
+      if (
+        validator
+          ?.split(",")
+          .some((tag) => tag.trim() === "*" || tag.trim().replace(/^W\//, "") === object.httpEtag)
+      ) {
+        return new Response(null, { status: 304, headers });
+      }
       return new Response(object.body, {
         status: 200,
         headers,

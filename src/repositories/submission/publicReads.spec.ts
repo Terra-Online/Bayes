@@ -9,6 +9,7 @@ import {
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { insertNotification } from "@/test/fixtures/notifications";
 import { insertSubmission } from "@/test/fixtures/submissions";
+import { importCurrentSubmissions } from "@/test/fixtures/ugcSnapshots";
 import { insertUser } from "@/test/fixtures/users";
 
 import { listVisibleImageCountsByMarker } from "./imageCoverage";
@@ -83,6 +84,7 @@ describe("public read SQL under D1 limits", () => {
         .prepare("INSERT INTO ugc_submission_flags (submission_id, user_id) VALUES (?, 'viewer')")
         .run(id);
     }
+    importCurrentSubmissions(connection);
     const base = {
       markerId: "marker-1",
       assetBaseUrl: "https://assets.example",

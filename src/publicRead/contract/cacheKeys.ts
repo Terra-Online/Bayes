@@ -3,7 +3,7 @@ import { sha256Hex } from "@/lib/crypto";
 import type { PublicReadMarkerKind } from "./markers";
 
 export function buildPublicReadCacheKey(path: string, searchParams: URLSearchParams): string {
-  const version = "v2";
+  const version = path === "/images" ? "v3" : "v2";
   const search = searchParams.toString();
   const versionedPath = `/${version}${path}`;
   return search ? `${versionedPath}?${search}` : versionedPath;

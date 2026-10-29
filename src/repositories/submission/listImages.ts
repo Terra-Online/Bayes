@@ -1,3 +1,4 @@
+import { publicImageSelection, ownerImageSelection } from "./imageSelection";
 import { mapSubmission, publicImageFromRow, toCount } from "./mapper";
 import type { PublicSubmissionImage, UserSubmissionImage } from "./types";
 
@@ -48,11 +49,7 @@ export async function listActiveImagesByMarker(
   }
 
   const limit = Math.min(Math.max(payload.limit ?? 6, 1), 24);
-  const filters: string[] = [
-    "poi_id IN (SELECT value FROM json_each(?1))",
-    "kind = 'image'",
-    "status IN ('active', 'flagged', 'remove_request')",
-  ];
+  const filters: string[] = ["poi_id IN (SELECT value FROM json_each(?1))", "kind = 'image'"];
   const scope = buildImageScopeFilters(payload, 1);
   filters.push(...scope.clauses);
   const limitBindingOffset = 1 + scope.bindings.length;
@@ -74,7 +71,7 @@ export async function listActiveImagesByMarker(
          SELECT
            *,
            ROW_NUMBER() OVER (PARTITION BY poi_id ORDER BY created_at DESC, id DESC) AS poi_rank
-         FROM ugc_submissions INDEXED BY idx_ugc_kind_status_poi_created
+         FROM ${publicImageSelection}
          WHERE ${filters.join(" AND ")}
        ),
        selected_images AS (
@@ -149,7 +146,6 @@ export async function listUserImagesByMarker(
     "user_id = ?1",
     "poi_id IN (SELECT value FROM json_each(?2))",
     "kind = 'image'",
-    "status IN ('pending_openai', 'pending_audit', 'active', 'flagged', 'remove_request')",
   ];
   const scope = buildImageScopeFilters(payload, 2);
   filters.push(...scope.clauses);
@@ -162,7 +158,7 @@ export async function listUserImagesByMarker(
          SELECT
            *,
            ROW_NUMBER() OVER (PARTITION BY poi_id ORDER BY created_at DESC, id DESC) AS poi_rank
-         FROM ugc_submissions INDEXED BY idx_ugc_user_kind_poi_created
+         FROM ${ownerImageSelection}
          WHERE ${filters.join(" AND ")}
        ),
        selected_images AS (
@@ -207,7 +203,7 @@ export async function listUserImagesByMarker(
     const submission = mapSubmission(row);
     const filePath = submission.filePath ?? "";
     const assetBaseUrl =
-      submission.status === "pending_openai" || submission.status === "pending_audit"
+      row.snapshot_id !== row.public_snapshot_id
         ? payload.privateAssetBaseUrl
         : payload.assetBaseUrl;
     return {
@@ -262,7 +258,6 @@ export async function listImageViewerReactionsByMarker(
     "s.id IN (SELECT value FROM json_each(?3))",
     "s.poi_id IN (SELECT value FROM json_each(?2))",
     "s.kind = 'image'",
-    "s.status IN ('active', 'flagged', 'remove_request')",
     ...scope.clauses.map((clause) => `s.${clause}`),
   ];
   const result = await db
@@ -271,7 +266,7 @@ export async function listImageViewerReactionsByMarker(
        s.id,
        CASE WHEN u.user_id IS NULL THEN 0 ELSE 1 END AS viewer_upvoted,
        CASE WHEN f.user_id IS NULL THEN 0 ELSE 1 END AS viewer_flagged
-     FROM ugc_submissions s INDEXED BY sqlite_autoindex_ugc_submissions_1
+     FROM ${publicImageSelection} s
      LEFT JOIN ugc_submission_upvotes u ON u.submission_id = s.id AND u.user_id = ?1 AND u.active = 1
      LEFT JOIN ugc_submission_flags f ON f.submission_id = s.id AND f.user_id = ?1 AND f.active = 1
      WHERE ${filters.join(" AND ")}

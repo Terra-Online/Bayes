@@ -4,6 +4,10 @@ import { getRuntimeConfig } from "@/lib/config";
 import { ApiError } from "@/lib/errors";
 import { enqueueAutoModeration } from "@/queues/client/autoModeration";
 import { getDuplicateImageMarkerSummary } from "@/repositories/submission-duplicates";
+import {
+  createPendingImage,
+  markImageModerationQueued,
+} from "@/repositories/submission/createImage";
 import { createPendingSubmission } from "@/repositories/submission/createSubmission";
 import { getSubmissionById } from "@/repositories/submission/statusSubmission";
 import { UGC_PUBLIC_IMAGE_CACHE_CONTROL } from "@/services/ugc/contract/imageDelivery";
@@ -177,7 +181,7 @@ export async function submitImage(bindings: Bindings, input: SubmitImageInput) {
     },
   });
 
-  await createPendingSubmission(bindings.DB, {
+  await createPendingImage(bindings.DB, {
     id: submissionId,
     markerId: input.markerId,
     poiHash,
@@ -185,13 +189,26 @@ export async function submitImage(bindings: Bindings, input: SubmitImageInput) {
     snapshotId,
     userId: input.actor.uid,
     content: input.content,
-    kind: "image",
     filePath: objectKey,
     mimeType: preparedImage.mimeType,
     sizeBytes: preparedImage.sizeBytes,
-    status: "pending_openai",
   });
-  await enqueueAutoModeration(bindings, submissionId, snapshotId);
+  const queuedAt = new Date().toISOString();
+  await bindings.OEM_MODERATION_Q.send({
+    type: "moderation",
+    submissionId,
+    snapshotId,
+    source: "upload",
+    queuedAt,
+  });
+  await markImageModerationQueued(bindings.DB, { submissionId, snapshotId, queuedAt }).catch(
+    (error) => {
+      console.warn("moderation queued marker update failed", {
+        submissionId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    },
+  );
   const duplicatePoi = await getDuplicateImageMarkerSummary(bindings.DB, {
     markerId: input.markerId,
     pathPrefix: input.scope.pathPrefix,

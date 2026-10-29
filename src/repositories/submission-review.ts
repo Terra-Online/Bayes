@@ -142,7 +142,7 @@ export async function listAllImageFilePaths(db: D1Database): Promise<string[]> {
     const result = await db
       .prepare(
         `SELECT DISTINCT file_path
-         FROM ugc_submissions
+         FROM ugc_snapshots
          WHERE kind = 'image'
            AND file_path IS NOT NULL
            AND file_path > ?1

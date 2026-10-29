@@ -1,3 +1,4 @@
+import { publicImageSelection, ownerImageSelection } from "./imageSelection";
 import { mapSubmission } from "./mapper";
 import type { SubmissionRecord } from "./types";
 
@@ -8,10 +9,9 @@ export async function getPublicSubmissionByFilePath(
   const row = await db
     .prepare(
       `SELECT *
-       FROM ugc_submissions
+       FROM ${publicImageSelection}
        WHERE file_path = ?1
          AND kind = 'image'
-         AND status IN ('active', 'flagged', 'remove_request')
        LIMIT 1`,
     )
     .bind(filePath)
@@ -30,10 +30,10 @@ export async function getImageSubmissionByFilePath(
   const row = await db
     .prepare(
       `SELECT *
-       FROM ugc_submissions
+       FROM ${ownerImageSelection}
        WHERE file_path = ?1
          AND kind = 'image'
-         AND (?2 = 1 OR (user_id = ?3 AND status <> 'stale'))
+         AND (?2 = 1 OR user_id = ?3)
        LIMIT 1`,
     )
     .bind(filePath, viewer.includeAllOwners ? 1 : 0, viewer.userId)

@@ -7,7 +7,8 @@ import {
   createImageLifecycleFixture,
   type ImageLifecycleFixture,
 } from "@/test/fixtures/imageLifecycle";
-import { insertSubmission } from "@/test/fixtures/submissions";
+import { insertImageSnapshot } from "@/test/fixtures/imageSnapshots";
+import { importCurrentSubmissions } from "@/test/fixtures/ugcSnapshots";
 
 let database: ImageLifecycleFixture["database"];
 let env: ImageLifecycleFixture["env"];
@@ -25,6 +26,20 @@ const transform = vi.fn();
 beforeEach(() => {
   ({ database, env, sessions, moderation, webhooks, request, submission, persistedState } =
     createImageLifecycleFixture());
+  importCurrentSubmissions(database);
+  submission = (id) =>
+    database.sqlite
+      .prepare(`SELECT s.*, r.id AS snapshot_id, r.content, r.file_path, r.mime_type, r.size_bytes, r.review_status AS status
+    FROM ugc_submissions s JOIN ugc_snapshots r ON r.submission_id=s.id AND r.revision=s.revision WHERE s.id=?`)
+      .get(id)!;
+  persistedState = () => ({
+    submissions: database.sqlite.prepare("SELECT * FROM ugc_submissions").all(),
+    votes: database.sqlite.prepare("SELECT * FROM ugc_submission_upvotes").all(),
+    flags: database.sqlite.prepare("SELECT * FROM ugc_submission_flags").all(),
+    notifications: database.sqlite.prepare("SELECT * FROM notifications").all(),
+    messages: database.sqlite.prepare("SELECT * FROM notification_messages").all(),
+    reviews: database.sqlite.prepare("SELECT * FROM ugc_snapshots_review_audit").all(),
+  });
   storage = new Map();
   transform.mockReset().mockImplementation(
     async () =>
@@ -83,7 +98,7 @@ describe("stored image delivery", () => {
     "serves legacy file metadata safely through mounted public and private paths: $contentType",
     async ({ mimeType, contentType }) => {
       const filePath = "images/old photo.jpg";
-      insertSubmission(database.sqlite, {
+      insertImageSnapshot(database.sqlite, {
         id: "legacy-image",
         userId: "author",
         kind: "image",
@@ -128,25 +143,25 @@ describe("stored image delivery", () => {
   it("checks every matching file owner and preserves reviewers' access to stale images", async () => {
     const sharedPath = "images/shared.webp";
     const stalePath = "images/stale.webp";
-    insertSubmission(database.sqlite, {
+    insertImageSnapshot(database.sqlite, {
       id: "shared-author",
       userId: "author",
       kind: "image",
       filePath: sharedPath,
-      status: "pending_audit",
+      reviewStatus: "pending_audit",
     });
-    insertSubmission(database.sqlite, {
+    insertImageSnapshot(database.sqlite, {
       id: "shared-reader",
       userId: "reader",
       kind: "image",
       filePath: sharedPath,
     });
-    insertSubmission(database.sqlite, {
+    insertImageSnapshot(database.sqlite, {
       id: "stale",
       userId: "author",
       kind: "image",
       filePath: stalePath,
-      status: "stale",
+      reviewStatus: "unknown",
     });
     for (const path of [sharedPath, stalePath]) {
       storage.set(path, { bytes: transformedImage, options: {} });
@@ -157,7 +172,7 @@ describe("stored image delivery", () => {
       expect(new Uint8Array(await response.arrayBuffer())).toEqual(transformedImage);
     }
     expect((await request(`/file/${sharedPath}`, "other-reader")).status).toBe(404);
-    expect((await request(`/file/${stalePath}`, "author")).status).toBe(404);
+    expect((await request(`/file/${stalePath}`, "author")).status).toBe(200);
     expect((await request(`/public-file/${stalePath}`, null)).status).toBe(404);
     for (const reviewer of ["admin", "reviewer", "root"]) {
       const response = await request(`/file/${stalePath}`, reviewer);
@@ -212,9 +227,11 @@ describe("image submission", () => {
     const payload = (await retry.json()) as { submission: { id: string; filePath: string } };
     expect(storage.size).toBe(1);
     expect(storage.has(payload.submission.filePath)).toBe(true);
-    expect(database.sqlite.prepare("SELECT id, status FROM ugc_submissions").all()).toEqual([
-      { id: payload.submission.id, status: "pending_openai" },
-    ]);
+    expect(
+      database.sqlite
+        .prepare("SELECT submission_id AS id, review_status AS status FROM ugc_snapshots")
+        .all(),
+    ).toEqual([{ id: payload.submission.id, status: "pending_openai" }]);
     expect(moderation).toEqual([expect.objectContaining({ submissionId: payload.submission.id })]);
   });
 
@@ -262,7 +279,7 @@ describe("image submission", () => {
   it.each(["image/webp", "image/avif"])(
     "preserves an already compressed %s upload and warns about another image at the same marker",
     async (mime) => {
-      insertSubmission(database.sqlite, { id: "existing", userId: "reader", kind: "image" });
+      insertImageSnapshot(database.sqlite, { id: "existing", userId: "reader", kind: "image" });
       const bytes = new Uint8Array([1, 2, 3]);
       const response = await request(
         "/images",

@@ -5,6 +5,7 @@ import type {
   ReviewEvent,
 } from "@/services/me/contract/contributions";
 
+import { ownerImageSelection } from "./submission/imageSelection";
 import type { SubmissionKind, SubmissionStatus } from "./submission/types";
 
 type ContributionRow = {
@@ -120,40 +121,6 @@ export async function getContributionCounts(db: D1Database, uid: string) {
 }
 
 type Preview = { file_path: string; mime_type: string | null };
-const previewCaches = new WeakMap<
-  D1Database,
-  Map<string, { expiresAt: number; value: Preview | null }>
->();
-function previewCache(db: D1Database) {
-  let cache = previewCaches.get(db);
-  if (!cache) {
-    cache = new Map();
-    previewCaches.set(db, cache);
-  }
-  return cache;
-}
-function rememberPreview(
-  db: D1Database,
-  key: string,
-  value: Preview | null,
-  expiresAt = Date.now() + 60_000,
-) {
-  const cache = previewCache(db);
-  if ((cache.get(key)?.expiresAt ?? 0) >= expiresAt) {
-    return value;
-  }
-  cache.delete(key);
-  if (cache.size >= 512) {
-    const oldest = cache.keys().next().value;
-    if (oldest !== undefined) {
-      cache.delete(oldest);
-    }
-  }
-  const entry = { expiresAt, value };
-  cache.set(key, entry);
-  return value;
-}
-
 export async function listContributionRecords(
   db: D1Database,
   payload: ContributionQuery,
@@ -227,17 +194,7 @@ export async function listContributionRecords(
   const rows = result.results ?? [];
   const hasMore = rows.length > payload.limit;
   const visibleRows = rows.slice(0, payload.limit);
-  // The list already verified ownership and read each file path. Reuse that
-  // result for image requests instead of one extra D1 lookup per thumbnail.
-  const records = visibleRows.map((row) => {
-    if (row.kind === "image" && row.file_path) {
-      rememberPreview(db, JSON.stringify([payload.uid, row.id]), {
-        file_path: row.file_path,
-        mime_type: row.mime_type ?? null,
-      });
-    }
-    return mapContributionRecord(row);
-  });
+  const records = visibleRows.map(mapContributionRecord);
   const last = visibleRows.at(-1);
   return {
     records,
@@ -249,19 +206,12 @@ export async function listContributionRecords(
 }
 
 export async function getContributionImage(db: D1Database, uid: string, id: string) {
-  const key = JSON.stringify([uid, id]);
-  const cached = previewCache(db).get(key);
-  if (cached && cached.expiresAt > Date.now()) {
-    return cached.value;
-  }
-  const expiresAt = Date.now() + 60_000;
-  const value = await db
+  return db
     .prepare(
-      `SELECT file_path, mime_type FROM ugc_submissions
+      `SELECT file_path, mime_type FROM ${ownerImageSelection}
      WHERE id = ?1 AND user_id = ?2 AND kind = 'image' AND file_path IS NOT NULL
      LIMIT 1`,
     )
     .bind(id, uid)
     .first<Preview>();
-  return rememberPreview(db, key, value, expiresAt);
 }
