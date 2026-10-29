@@ -1,99 +1,80 @@
 import { nanoid } from "nanoid";
 
 import { ApiError } from "@/lib/errors";
-import {
-  COMMENT_ADMIN_EDIT_MODERATION_NOTE_PREFIX,
-  COMMENT_EDIT_MODERATION_NOTE_PREFIX,
-} from "@/lib/moderation";
 import { invalidateUploadCaches } from "@/publicRead/client/invalidate";
 import { enqueueAutoModeration } from "@/queues/client/autoModeration";
-import { clearSubmissionFlags } from "@/repositories/submission/flagSubmission";
-import {
-  revertCommentEdit,
-  updateCommentContentForModeration,
-} from "@/repositories/submission/statusSubmission";
+import { appendCommentVersion } from "@/repositories/submission/appendCommentVersion";
+import { markCommentModerationQueued } from "@/repositories/submission/createComment";
+import { revertCommentEdit } from "@/repositories/submission/statusSubmission";
 import type { SubmissionRecord } from "@/repositories/submission/types";
 import type { UgcActionDependencies, UgcActionInput } from "@/services/ugc/contract/actions";
-import { requireSubmission } from "@/services/ugc/read/submissions";
+import { commentContentSchema } from "@/services/ugc/contract/commentContent";
 
 interface EditCommentInput extends UgcActionInput {
   content: string;
-}
-
-function commentSummary(comment: SubmissionRecord) {
-  return {
-    id: comment.id,
-    markerId: comment.markerId,
-    parentId: comment.parentId,
-    depth: comment.commentDepth,
-    status: comment.status,
-    snapshotId: comment.snapshotId,
-  };
+  parentSnapshotId: string;
 }
 
 export async function editComment(dependencies: UgcActionDependencies, input: EditCommentInput) {
   const { bindings } = dependencies;
-  const comment = await requireSubmission(bindings.DB, {
+  const normalized = commentContentSchema.safeParse(input.content);
+  if (!normalized.success) {
+    throw new ApiError(422, "VALIDATION_ERROR", "Invalid comment content.");
+  }
+  const result = await appendCommentVersion(bindings.DB, {
     submissionId: input.submissionId,
-    kind: "comment",
+    parentSnapshotId: input.parentSnapshotId,
+    actorId: input.actor.uid,
+    snapshotId: nanoid(12),
+    content: normalized.data,
   });
-  const isAuthor = comment.userId === input.actor.uid;
-  const isAdmin = input.actor.role === "a" || input.actor.role === "r";
-  if (!isAuthor && !isAdmin) {
+  if (result.outcome === "not_found") {
+    throw new ApiError(404, "SUBMISSION_NOT_FOUND", "Comment not found.");
+  }
+  if (result.outcome === "unauthorized") {
     throw new ApiError(
       403,
       "COMMENT_EDIT_OWNER_ONLY",
       "Only the author or an admin can edit a comment.",
     );
   }
-  if (
-    !["pending_openai", "pending_audit", "active", "flagged", "remove_request"].includes(
-      comment.status,
-    )
-  ) {
-    throw new ApiError(
-      409,
-      "INVALID_SUBMISSION_STATUS",
-      "Comment cannot be edited in its current status.",
-      { status: comment.status },
-    );
-  }
-
-  if (comment.content === input.content) {
-    return { submission: commentSummary(comment) };
-  }
-
-  const snapshotId = nanoid(12);
-  const updated = await updateCommentContentForModeration(bindings.DB, {
-    id: input.submissionId,
-    content: input.content,
-    expectedSnapshotId: comment.snapshotId,
-    snapshotId,
-    moderationNote: `${
-      isAuthor ? COMMENT_EDIT_MODERATION_NOTE_PREFIX : COMMENT_ADMIN_EDIT_MODERATION_NOTE_PREFIX
-    } awaiting moderation.`,
-  });
-  if (!updated) {
+  if (result.outcome === "conflict") {
     throw new ApiError(
       409,
       "COMMENT_EDIT_CONFLICT",
-      "Comment changed while the edit was being submitted.",
+      "Comment changed or cannot be edited in its current status.",
     );
   }
-  await clearSubmissionFlags(bindings.DB, input.submissionId);
-  // Schedule invalidation before awaiting the queue, including when sending fails.
-  dependencies.defer(
-    invalidateUploadCaches({ kv: bindings.OEM_KV, kind: "comment", markerId: comment.markerId }),
-  );
-  await enqueueAutoModeration(bindings, input.submissionId, snapshotId);
-
-  return {
-    submission: {
-      ...commentSummary(comment),
-      status: "pending_openai" as const,
-      snapshotId,
-    },
-  };
+  const { submission } = result;
+  if (result.outcome === "appended") {
+    // Preserve invalidation on queue failure; the committed version remains pending for backfill.
+    dependencies.defer(
+      invalidateUploadCaches({
+        kv: bindings.OEM_KV,
+        kind: "comment",
+        markerId: submission.markerId,
+      }),
+    );
+    const queuedAt = new Date().toISOString();
+    await bindings.OEM_MODERATION_Q.send({
+      type: "moderation",
+      submissionId: submission.id,
+      snapshotId: submission.snapshotId,
+      source: "upload",
+      queuedAt,
+    });
+    await markCommentModerationQueued(bindings.DB, {
+      submissionId: submission.id,
+      snapshotId: submission.snapshotId,
+      queuedAt,
+    }).catch((error) =>
+      console.warn("moderation queued marker update failed", {
+        submissionId: submission.id,
+        error,
+      }),
+    );
+  }
+  return { submission };
 }
 
 export async function undoCommentEdit(

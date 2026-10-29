@@ -111,7 +111,7 @@ export function createRoutes() {
 
         const result = await editComment(
           { bindings: c.env, defer: (task) => c.executionCtx.waitUntil(task) },
-          { actor: user, submissionId, content: parsed.data.content },
+          { actor: user, submissionId, ...parsed.data },
         );
         return c.json({ ok: true, ...result });
       },

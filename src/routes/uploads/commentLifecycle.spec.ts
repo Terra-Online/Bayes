@@ -5,7 +5,9 @@ import type { AutoModerationMsg, WebhookMsg } from "@/queues/types/messages";
 import type { UserSubmissionComment } from "@/repositories/submission/types";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { insertAuthUser, insertSession, testAuthConfig } from "@/test/fixtures/auth";
+import { insertCommentSnapshot } from "@/test/fixtures/commentSnapshots";
 import { insertSubmission } from "@/test/fixtures/submissions";
+import { importCurrentSubmissions } from "@/test/fixtures/ugcSnapshots";
 import { insertUser } from "@/test/fixtures/users";
 import type { AppEnv } from "@/types/app";
 
@@ -255,59 +257,67 @@ describe("comment flags", () => {
 });
 
 describe("comment edits", () => {
-  it("replaces a flagged comment with a pending revision, clears old flags and preserves an undo version", async () => {
-    insertSubmission(database.sqlite, {
+  beforeEach(() => importCurrentSubmissions(database));
+
+  it("appends pending content while keeping flagged public content and its reports", async () => {
+    insertCommentSnapshot(database.sqlite, {
       id: "target",
       userId: "author",
       content: "Use the west entrance.",
     });
-    await post("/comments/target/flag", "reader");
-    await post("/comments/target/flag", "other-reader");
-    const response = await post("/comments/target/edit", "author", { content: comment.content });
+    database.sqlite.exec(
+      "INSERT INTO ugc_submission_flags(submission_id,user_id,active) VALUES ('target','reader',1),('target','other-reader',1)",
+    );
+    const response = await post("/comments/target/edit", "author", {
+      content: comment.content,
+      parentSnapshotId: "snapshot-target",
+    });
     expect(response.status).toBe(200);
     const { submission: edited } = (await response.json()) as {
-      submission: { id: string; snapshotId: string; status: string };
+      submission: { snapshotId: string };
     };
-    expect(edited).toMatchObject({ id: "target", status: "pending_openai" });
-    expect(edited.snapshotId).not.toBe("snapshot-target");
-    expect(submission("target")).toMatchObject({
-      user_id: "author",
-      content: comment.content,
-      status: "pending_openai",
-      snapshot_id: edited.snapshotId,
-      edit_original_content: "Use the west entrance.",
-      edit_original_status: "flagged",
-      edit_original_snapshot_id: "snapshot-target",
-    });
-    expect(activeFlaggers("target")).toEqual([]);
+    expect(submission("target")).toMatchObject({ user_id: "author", revision: 2 });
+    expect(activeFlaggers("target")).toEqual(["other-reader", "reader"]);
     expect(await mine()).toEqual([
       expect.objectContaining({
         id: "target",
+        snapshotId: edited.snapshotId,
         content: comment.content,
         status: "pending_openai",
-        flagCount: 0,
+        flagCount: 2,
+        editUndoAvailable: false,
       }),
     ]);
     const publicRead = await request("/comments/target?markerId=marker-1", null);
-    expect(publicRead.status).toBe(404);
+    expect(publicRead.status).toBe(200);
+    expect(await publicRead.json()).toMatchObject({
+      item: {
+        path: [
+          { snapshotId: "snapshot-target", content: "Use the west entrance.", status: "flagged" },
+        ],
+      },
+    });
     expect(moderation).toEqual([
       expect.objectContaining({ submissionId: "target", snapshotId: edited.snapshotId }),
     ]);
-    expect(webhooks).toHaveLength(2);
+    expect(webhooks).toEqual([]);
   });
 
   it.each(["admin", "root"])(
-    "allows %s to correct another author's comment without changing its ownership",
+    "allows %s to correct a comment with stable ownership and actual creator",
     async (user) => {
-      insertSubmission(database.sqlite, { id: "target", userId: "author" });
-      const response = await post("/comments/target/edit", user, { content: comment.content });
-      expect(response.status).toBe(200);
-      expect(submission("target")).toMatchObject({
-        user_id: "author",
+      insertCommentSnapshot(database.sqlite, { id: "target", userId: "author" });
+      const response = await post("/comments/target/edit", user, {
         content: comment.content,
-        status: "pending_openai",
-        edit_original_content: "Content target",
+        parentSnapshotId: "snapshot-target",
       });
+      expect(response.status).toBe(200);
+      expect(submission("target")).toMatchObject({ user_id: "author", revision: 2 });
+      expect(
+        database.sqlite
+          .prepare("SELECT content,creator_user_id FROM ugc_snapshots WHERE revision=2")
+          .get(),
+      ).toEqual({ content: comment.content, creator_user_id: user });
       expect(await mine(user)).toEqual([]);
       expect((await mine())[0]).toMatchObject({ id: "target", content: comment.content });
       expect(moderation).toEqual([expect.objectContaining({ submissionId: "target" })]);
@@ -315,45 +325,53 @@ describe("comment edits", () => {
   );
 
   it.each(["reader", "reviewer"])(
-    "rejects an edit by %s and preserves the original comment",
+    "rejects an edit by %s without allocating a version",
     async (user) => {
-      insertSubmission(database.sqlite, { id: "target", userId: "author" });
-      const before = persistedState();
-      const response = await post("/comments/target/edit", user, { content: comment.content });
+      insertCommentSnapshot(database.sqlite, { id: "target", userId: "author" });
+      const response = await post("/comments/target/edit", user, {
+        content: comment.content,
+        parentSnapshotId: "snapshot-target",
+      });
       expect(response.status).toBe(403);
       expect(await response.json()).toMatchObject({ code: "COMMENT_EDIT_OWNER_ONLY" });
-      expect(persistedState()).toEqual(before);
+      expect(submission("target").revision).toBe(1);
       expect(moderation).toEqual([]);
     },
   );
 
-  it("keeps an unchanged comment's version, flags and visibility without another moderation job", async () => {
-    insertSubmission(database.sqlite, { id: "target", userId: "author", content: comment.content });
-    await post("/comments/target/flag", "reader");
-    const before = persistedState();
+  it("keeps unchanged flagged content and visibility without another moderation job", async () => {
+    insertCommentSnapshot(database.sqlite, {
+      id: "target",
+      userId: "author",
+      content: comment.content,
+    });
+    database.sqlite.exec(
+      "INSERT INTO ugc_submission_flags(submission_id,user_id,active) VALUES ('target','reader',1)",
+    );
     const response = await post("/comments/target/edit", "author", {
       content: `  ${comment.content}  `,
+      parentSnapshotId: "snapshot-target",
     });
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({
-      submission: {
-        id: "target",
-        status: "flagged",
-        snapshotId: "snapshot-target",
-      },
+      submission: { id: "target", status: "flagged", snapshotId: "snapshot-target" },
     });
-    expect(persistedState()).toEqual(before);
+    expect(submission("target").revision).toBe(1);
+    expect(activeFlaggers("target")).toEqual(["reader"]);
     expect(moderation).toEqual([]);
-    expect(webhooks).toHaveLength(1);
+    expect(webhooks).toEqual([]);
   });
 
-  it("rejects editing a withdrawn comment without changing it", async () => {
-    insertSubmission(database.sqlite, { id: "target", userId: "author", status: "stale" });
-    const before = persistedState();
-    const response = await post("/comments/target/edit", "author", { content: comment.content });
+  it("rejects editing a deleted comment without changing it", async () => {
+    insertCommentSnapshot(database.sqlite, { id: "target", userId: "author" });
+    database.sqlite.exec("UPDATE ugc_submissions SET author_deleted_at='gone' WHERE id='target'");
+    const response = await post("/comments/target/edit", "author", {
+      content: comment.content,
+      parentSnapshotId: "snapshot-target",
+    });
     expect(response.status).toBe(409);
-    expect(await response.json()).toMatchObject({ code: "INVALID_SUBMISSION_STATUS" });
-    expect(persistedState()).toEqual(before);
+    expect(await response.json()).toMatchObject({ code: "COMMENT_EDIT_CONFLICT" });
+    expect(submission("target").revision).toBe(1);
     expect(moderation).toEqual([]);
   });
 });
@@ -574,7 +592,8 @@ describe("comment write permissions", () => {
     expect(liveNotifications).toEqual([]);
   });
 
-  it.each(["edit", "flag", "unflag", "recall", "remove-request"])(
+  // Snapshot edit target validation lives in commentVersionEdits.spec.ts.
+  it.each(["flag", "unflag", "recall", "remove-request"])(
     "does not apply comment %s to a missing submission or an image",
     async (action) => {
       insertSubmission(database.sqlite, { id: "image", kind: "image", userId: "author" });
