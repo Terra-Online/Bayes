@@ -12,7 +12,6 @@ import { insertAuthUser, insertSession, type SeededSession } from "@/test/fixtur
 import { insertCommentSnapshot } from "@/test/fixtures/commentSnapshots";
 import { seedImageReadScenario } from "@/test/fixtures/imageReadScenario";
 import { insertImageSnapshot } from "@/test/fixtures/imageSnapshots";
-import { importCurrentSubmissions } from "@/test/fixtures/ugcSnapshots";
 import { insertUser } from "@/test/fixtures/users";
 import type { AppEnv } from "@/types/app";
 
@@ -31,12 +30,6 @@ beforeEach(() => {
     sessions.set(uid, insertSession(database.sqlite, { userId: user.id }));
   }
 
-  // Historical notes/events cannot become new audit evidence after import.
-  database.sqlite
-    .exec(`UPDATE ugc_submissions SET moderation_note='OpenAI moderation passed: clean' WHERE id='photo';
-    INSERT INTO ugc_review_events (submission_id,snapshot_id,from_status,to_status,source,created_at)
-      VALUES ('photo','current','pending_audit','active','manual_moderation','2026-09-04');`);
-  importCurrentSubmissions(database);
   mocks = createMockBindings({ DB: database.db });
   mocks.ugcBucket.get.mockImplementation(async () => {
     const response = new Response(new Uint8Array([82, 73, 70, 70]));
@@ -276,7 +269,7 @@ async function listOwnerContributions(): Promise<{ items: ContributionItem[] }> 
   return response.json();
 }
 
-it("retains complete owner content and truthful imported history without parsing old notes", async () => {
+it("retains complete owner content and leaves imported approval history unknown", async () => {
   const content = "**a long comment** ".repeat(30);
   insertCommentSnapshot(database.sqlite, {
     id: "long",

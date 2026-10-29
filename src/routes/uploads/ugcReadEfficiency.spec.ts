@@ -12,7 +12,6 @@ import {
   type CommentSnapshotFixture,
 } from "@/test/fixtures/commentSnapshots";
 import { insertImageSnapshot, type ImageSnapshotFixture } from "@/test/fixtures/imageSnapshots";
-import { importCurrentSubmissions } from "@/test/fixtures/ugcSnapshots";
 import { insertUser } from "@/test/fixtures/users";
 import type { Bindings } from "@/types/app";
 
@@ -40,7 +39,7 @@ let lifetimes: Promise<unknown>[][];
 beforeEach(() => {
   workersCache.fetch.mockReset();
   database = createTestDatabase();
-  importCurrentSubmissions(database);
+
   viewerHeaders = insertAuthenticatedUser(database.sqlite, { uid: "viewer" }).headers;
   insertUser(database.sqlite, { uid: "other" });
   bindings = createMockBindings({ DB: database.db });

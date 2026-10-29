@@ -2,7 +2,6 @@ import { afterEach, beforeEach, expect, it } from "vitest";
 
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { insertCommentSnapshot } from "@/test/fixtures/commentSnapshots";
-import { importCurrentSubmissions } from "@/test/fixtures/ugcSnapshots";
 import { insertUser } from "@/test/fixtures/users";
 
 import {
@@ -16,7 +15,7 @@ let database: TestDatabase;
 let target: ReviewTarget;
 beforeEach(async () => {
   database = createTestDatabase();
-  importCurrentSubmissions(database);
+
   insertUser(database.sqlite, { uid: "author", uid_number: 100 });
   insertUser(database.sqlite, { uid: "admin", uid_number: 101, role: "p" });
   insertCommentSnapshot(database.sqlite, {

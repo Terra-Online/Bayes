@@ -7,7 +7,6 @@ import { createTestDatabase, type TestDatabase } from "@/test/database/createTes
 import { insertAuthUser, insertSession, testAuthConfig } from "@/test/fixtures/auth";
 import { insertCommentSnapshot } from "@/test/fixtures/commentSnapshots";
 import { insertImageSnapshot } from "@/test/fixtures/imageSnapshots";
-import { importCurrentSubmissions } from "@/test/fixtures/ugcSnapshots";
 import { insertUser } from "@/test/fixtures/users";
 import type { AppEnv } from "@/types/app";
 
@@ -27,7 +26,7 @@ beforeEach(() => {
     insertAuthUser(database.sqlite, { id: uid });
     sessions.set(uid, insertSession(database.sqlite, { userId: uid }));
   }
-  importCurrentSubmissions(database);
+
   for (const [id, kind, reviewStatus, createdAt] of [
     ["photo", "image", "approved", "2026-09-02T10:00:00.000Z"],
     ["pending-photo", "image", "pending_openai", "2026-09-03T10:00:00.000Z"],

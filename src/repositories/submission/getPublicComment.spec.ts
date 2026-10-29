@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { insertSubmission } from "@/test/fixtures/submissions";
-import { importCurrentSubmissions } from "@/test/fixtures/ugcSnapshots";
 import { insertUser } from "@/test/fixtures/users";
 
 import { getPublicCommentContextById } from "./getPublicComment";
@@ -25,7 +24,6 @@ describe("public comment context query plan", () => {
       depth: 1,
     });
 
-    importCurrentSubmissions(database);
     await getPublicCommentContextById(database.db, { id: "target", markerId: "marker-1" });
 
     // This is a SQL access-path guarantee; result ordering is covered through HTTP.

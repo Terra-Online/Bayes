@@ -121,11 +121,10 @@ export async function getUgcLikeReport(db: D1Database): Promise<UgcLikeReport> {
            submissions.created_at,
            COUNT(*) AS like_count
          FROM ugc_submission_upvotes AS upvotes
-         INNER JOIN ugc_submissions AS submissions
+         INNER JOIN ugc_public_submissions AS submissions
            ON submissions.id = upvotes.submission_id
          WHERE upvotes.active = 1
            AND submissions.kind = 'image'
-           AND submissions.status = 'active'
            AND submissions.file_path IS NOT NULL
          GROUP BY submissions.id
          ORDER BY like_count DESC, submissions.created_at DESC, submissions.id DESC

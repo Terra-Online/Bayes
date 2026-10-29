@@ -7,7 +7,6 @@ import { createMockBindings, type MockBindings } from "@/test/bindings";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { insertAuthenticatedUser, type SessionHeaders } from "@/test/fixtures/auth";
 import { insertSubmission } from "@/test/fixtures/submissions";
-import { importCurrentSubmissions } from "@/test/fixtures/ugcSnapshots";
 import { insertUser } from "@/test/fixtures/users";
 import type { Bindings } from "@/types/app";
 
@@ -86,7 +85,7 @@ it("keeps public A cached while its author reads pending B with replies and reac
   database.sqlite.exec(
     "INSERT INTO ugc_submission_votes (submission_id,user_id,value) VALUES ('root','viewer',1)",
   );
-  importCurrentSubmissions(database);
+
   database.sqlite
     .exec(`INSERT INTO ugc_snapshots (id,submission_id,kind,revision,content,review_status,creator_user_id)
     VALUES ('B','root','comment',2,'Private B','pending_audit','viewer');
@@ -133,7 +132,7 @@ it("blocks default traversal at hidden middle nodes but retains deep-link contex
   ] as const) {
     insertSubmission(database.sqlite, { id, parentId, depth, status, userId: "other" });
   }
-  importCurrentSubmissions(database);
+
   const list = await request("/comments?markerId=marker-1");
   expect(await list.json()).toMatchObject({ items: [{ id: "root", replyCount: 0, replies: [] }] });
   expect((await request("/comments/hidden?markerId=marker-1", viewerHeaders)).status).toBe(404);
@@ -159,7 +158,7 @@ it("identifies the publicly selected translation body while an author has a newe
     content: "Public A",
     snapshotId: "A",
   });
-  importCurrentSubmissions(database);
+
   database.sqlite
     .exec(`INSERT INTO ugc_snapshots (id,submission_id,kind,revision,content,review_status,creator_user_id)
     VALUES ('B','root','comment',2,'Private B','pending_audit','viewer');
@@ -207,7 +206,7 @@ it("preserves per-marker vote ranking, reply order and limits without promoting 
       )
       .run(`${markerId}-high`);
   }
-  importCurrentSubmissions(database);
+
   const response = await request("/comments?markerIds=marker-1,marker-2&limit=1&replyLimit=2");
   const { items } = (await response.json()) as {
     items: Array<{
@@ -242,7 +241,7 @@ it("keeps unavailable owner archives private and does not attach them as pending
   for (const id of ["rejected", "deleted", "disabled", "unknown"]) {
     insertSubmission(database.sqlite, { id, userId: "viewer" });
   }
-  importCurrentSubmissions(database);
+
   database.sqlite
     .exec(`UPDATE ugc_snapshots SET review_status='rejected' WHERE submission_id='rejected';
     UPDATE ugc_snapshots SET review_status='unknown' WHERE submission_id='unknown';

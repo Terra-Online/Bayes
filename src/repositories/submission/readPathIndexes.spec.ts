@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
-import { migrations as migrationFiles } from "@/test/database/migrations";
+import { applyMigrations, migrations as migrationFiles } from "@/test/database/migrations";
 
 import { getImageSubmissionByFilePath, getPublicSubmissionByFilePath } from "./imageAssets";
 import { countSubmissionUpvotes } from "./voteSubmission";
@@ -50,6 +50,13 @@ describe("read path index migration on the repository schema", () => {
   });
   afterEach(() => database.close());
 
+  function cutover() {
+    applyMigrations(
+      database.sqlite,
+      migrationFiles.filter((file) => file >= "0036"),
+    );
+  }
+
   async function lookup() {
     return Promise.all([
       getImageSubmissionByFilePath(database.db, "files/shared.webp", {
@@ -72,31 +79,38 @@ describe("read path index migration on the repository schema", () => {
   }
 
   it("preserves duplicate paths, ownership, moderation visibility and active vote counts", async () => {
+    cutover();
     const before = await lookup();
     expect(before[0]).toMatchObject({ id: "pending", userId: "owner", status: "pending_audit" });
     expect(before[1]).toMatchObject({ id: "public", userId: "other", status: "active" });
     expect(before.slice(2)).toEqual([null, null, null, 1, 0]);
-    database.sqlite.exec(migration);
-    database.sqlite.exec(migration); // Safe both on repaired and already-current installations.
     expect(await lookup()).toEqual(before);
+    const fileQueries = database.queries.filter((query) => query.sql.includes("file_path = ?1"));
+    expect(
+      fileQueries.every((query) => database.explain(query).includes("idx_ugc_snapshots_file")),
+    ).toBe(true);
     expect(
       database.sqlite
-        .prepare("SELECT COUNT(*) AS n FROM ugc_submissions WHERE file_path = 'files/shared.webp'")
+        .prepare("SELECT COUNT(*) AS n FROM ugc_snapshots WHERE file_path = 'files/shared.webp'")
         .get()!.n,
     ).toBe(2);
   });
 
   it("turns broad kind/active scans into exact searches without requiring business SQL rewrites", async () => {
-    await lookup();
-    const queries = database.queries.slice(0, 7);
+    // Historical 0036 SQL is independent of today's snapshot repositories.
+    await database.db
+      .prepare("SELECT id FROM ugc_submissions WHERE file_path=?1 AND kind='image'")
+      .bind("files/shared.webp")
+      .all();
+    await countSubmissionUpvotes(database.db, "public");
+    const queries = database.queries.slice(0, 2);
     const before = queries.map((query) => database.explain(query));
     expect(before[0]).not.toContain("file_path=?");
-    expect(before[5]).not.toContain("submission_id=?");
+    expect(before[1]).not.toContain("submission_id=?");
     database.sqlite.exec(migration);
     const after = queries.map((query) => database.explain(query));
     expect(after[0]).toContain("idx_ugc_submissions_file_path_kind (file_path=? AND kind=?)");
-    expect(after[1]).toContain("idx_ugc_submissions_file_path_kind (file_path=? AND kind=?)");
-    expect(after[5]).toContain(
+    expect(after[1]).toContain(
       "COVERING INDEX idx_ugc_submission_upvotes_active_submission (active=? AND submission_id=?)",
     );
   });
@@ -114,10 +128,8 @@ describe("read path index migration on the repository schema", () => {
   });
 
   it("filters ownership before LIMIT for duplicate paths and preserves privileged/stale access", async () => {
-    for (const apply of [false, true]) {
-      if (apply) {
-        database.sqlite.exec(migration);
-      }
+    cutover();
+    {
       expect(
         await getImageSubmissionByFilePath(database.db, "files/shared.webp", {
           userId: "other",
@@ -135,7 +147,7 @@ describe("read path index migration on the repository schema", () => {
           userId: "owner",
           includeAllOwners: false,
         }),
-      ).toBeNull();
+      ).toMatchObject({ id: "removed", status: "stale" });
       expect(
         await getImageSubmissionByFilePath(database.db, "files/removed.webp", {
           userId: "stranger",

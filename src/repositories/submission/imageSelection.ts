@@ -6,7 +6,7 @@ export const publicImageSelection = `(SELECT p.*,
   FROM ugc_public_submissions p)`;
 
 export const ownerImageSelection = `(SELECT s.*, r.id AS snapshot_id, r.content,
-  r.file_path, r.mime_type, r.size_bytes, r.moderation_queued_at,
+  r.file_path, r.mime_type, r.size_bytes,
   v.public_snapshot_id,
   CASE WHEN s.author_deleted_at IS NOT NULL OR s.admin_deleted_at IS NOT NULL
     OR r.review_status IN ('rejected','unknown') THEN 'stale'

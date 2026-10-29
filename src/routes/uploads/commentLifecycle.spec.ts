@@ -6,7 +6,6 @@ import type { UserSubmissionComment } from "@/repositories/submission/types";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { insertAuthUser, insertSession, testAuthConfig } from "@/test/fixtures/auth";
 import { insertCommentSnapshot } from "@/test/fixtures/commentSnapshots";
-import { importCurrentSubmissions } from "@/test/fixtures/ugcSnapshots";
 import { insertUser } from "@/test/fixtures/users";
 import type { AppEnv } from "@/types/app";
 
@@ -137,8 +136,6 @@ function activeFlaggers(id: string) {
 // Version-bound reports are covered in reportAndImageVoteLifecycle.spec.ts.
 
 describe("comment edits", () => {
-  beforeEach(() => importCurrentSubmissions(database));
-
   it("appends pending content while keeping flagged public content and its reports", async () => {
     insertCommentSnapshot(database.sqlite, {
       id: "target",

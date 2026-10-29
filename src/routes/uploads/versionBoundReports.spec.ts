@@ -8,7 +8,6 @@ import { createTestDatabase, type TestDatabase } from "@/test/database/createTes
 import { insertAuthenticatedUser, type SessionHeaders } from "@/test/fixtures/auth";
 import { insertCommentSnapshot } from "@/test/fixtures/commentSnapshots";
 import { insertImageSnapshot } from "@/test/fixtures/imageSnapshots";
-import { importCurrentSubmissions } from "@/test/fixtures/ugcSnapshots";
 
 const { cache, redis } = vi.hoisted(() => ({
   cache: { purgeMarker: vi.fn() },
@@ -47,7 +46,7 @@ beforeEach(() => {
   author = insertAuthenticatedUser(database.sqlite, { uid: "author" }).headers;
   admin = insertAuthenticatedUser(database.sqlite, { uid: "admin", role: "a" }).headers;
   reviewer = insertAuthenticatedUser(database.sqlite, { uid: "reviewer", role: "p" }).headers;
-  importCurrentSubmissions(database);
+
   insertCommentSnapshot(database.sqlite, {
     id: "comment",
     userId: "author",

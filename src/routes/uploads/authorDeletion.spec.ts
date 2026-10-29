@@ -9,7 +9,6 @@ import { createTestDatabase, type TestDatabase } from "@/test/database/createTes
 import { insertAuthenticatedUser, type SessionHeaders } from "@/test/fixtures/auth";
 import { insertCommentSnapshot } from "@/test/fixtures/commentSnapshots";
 import { insertImageSnapshot } from "@/test/fixtures/imageSnapshots";
-import { importCurrentSubmissions } from "@/test/fixtures/ugcSnapshots";
 const { cache } = vi.hoisted(() => ({ cache: { purgeMarker: vi.fn() } }));
 vi.mock("cloudflare:workers", () => ({
   DurableObject: class {},
@@ -34,7 +33,7 @@ beforeEach(() => {
   database = createTestDatabase();
   author = insertAuthenticatedUser(database.sqlite, { uid: "author" }).headers;
   admin = insertAuthenticatedUser(database.sqlite, { uid: "admin", role: "a" }).headers;
-  importCurrentSubmissions(database);
+
   mocks = createMockBindings({ DB: database.db });
   mocks.bindings.LOCK_UPLOAD_ENDPOINTS = "false";
   mocks.bindings.UGC_UPLOAD_TEST_PREFIX = "";

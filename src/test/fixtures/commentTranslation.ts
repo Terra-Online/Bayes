@@ -6,7 +6,6 @@ import { createApp } from "@/app";
 import type { SnapshotReviewStatus } from "@/repositories/submission/snapshotReads";
 import { createMockBindings } from "@/test/bindings";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
-import { importCurrentSubmissions } from "@/test/fixtures/ugcSnapshots";
 import type { AppEnv } from "@/types/app";
 
 import { insertAuthUser, insertSession } from "./auth";
@@ -63,7 +62,7 @@ export function createCommentTranslationFixture({
   translatedText,
 }: CommentTranslationFixtureInput): CommentTranslationFixture {
   const database = createTestDatabase();
-  importCurrentSubmissions(database);
+
   const sessions: Record<string, { authorization: string }> = {};
   for (const [uid, role] of [
     ["author", "n"],

@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  notificationTypeForTransition,
   prepareCommentVoteNotificationWrite,
   prepareImageUpvoteNotificationWrite,
   serializeNotificationItem,
@@ -53,19 +52,6 @@ const notification = (
 });
 
 describe("notification types", () => {
-  it("keeps the five user-facing transition types and suppresses management rejection", () => {
-    expect(notificationTypeForTransition("pending_openai", "active")).toBe(
-      "system.submission.approved",
-    );
-    expect(notificationTypeForTransition("pending_openai", "pending_audit")).toBe(
-      "system.submission.needs_review",
-    );
-    expect(notificationTypeForTransition("remove_request", "stale")).toBeNull();
-    expect(notificationTypeForTransition("remove_request", "active")).toBeNull();
-    expect(notificationTypeForTransition("pending_audit", "stale")).toBeNull();
-    expect(notificationTypeForTransition("active", "stale", "user_action")).toBeNull();
-  });
-
   it("does not prepare a notification write for a downvote", () => {
     const statements = prepareCommentVoteNotificationWrite({} as D1Database, {
       submissionId: "submission-1",

@@ -1,4 +1,4 @@
--- Design draft only. Not a repository migration or an execution script.
+-- Frozen schema input for the reproducible migration 0038 builder.
 -- Uses the current users(uid) internal key. No legacy payload or audit import.
 -- Local SQLite and Miniflare D1 prototype. Deployed D1 remains unverified.
 -- Agreed import: one snapshot per submission, revision=1, creator=user_id,

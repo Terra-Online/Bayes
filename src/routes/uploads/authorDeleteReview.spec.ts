@@ -45,13 +45,12 @@ vi.mock("@/lib/karma/karmaConfig.json", () => ({
   },
 }));
 
-import { importCurrentSubmissions } from "@/test/fixtures/ugcSnapshots";
 let fixture: ReturnType<typeof createModerationTestFixture>;
 let headers: { authorization: string };
 beforeEach(() => {
   redisCounts.clear();
   fixture = createModerationTestFixture();
-  importCurrentSubmissions(fixture.database);
+
   insertAuthUser(fixture.database.sqlite, { id: "author" });
   headers = insertSession(fixture.database.sqlite, { userId: "author" }).headers;
   fixture.env.LOCK_UPLOAD_ENDPOINTS = "false";

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { createTestDatabase } from "@/test/database/createTestDatabase";
+import { migrations } from "@/test/database/migrations";
 import {
   importCurrentSubmissions,
   legacySnapshotSeedSql,
@@ -12,7 +13,7 @@ import { getOwnerSnapshot, getPublicSnapshot } from "./snapshotReads";
 
 let database: ReturnType<typeof createTestDatabase>;
 beforeEach(() => {
-  database = createTestDatabase();
+  database = createTestDatabase(migrations.filter((file) => file < "0038"));
   database.sqlite.exec("PRAGMA foreign_keys=ON");
   database.sqlite.exec(legacySnapshotSeedSql);
 });
@@ -34,7 +35,7 @@ function legacyState() {
   };
 }
 
-describe("isolated current-content import candidate", () => {
+describe("registered current-content migration 0038", () => {
   it("commits one retained snapshot per submission without replaying notification counters", async () => {
     const before = retainedRows();
     importCurrentSubmissions(database);
@@ -119,6 +120,15 @@ describe("isolated current-content import candidate", () => {
     }
     expect(legacyState()).toEqual(before);
     expect(database.sqlite.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+  });
+
+  it("aborts unexpected legacy statuses instead of silently importing them as unknown", () => {
+    database.sqlite.exec(
+      "PRAGMA ignore_check_constraints=ON; UPDATE ugc_submissions SET status='unexpected' WHERE id='image-active'; PRAGMA ignore_check_constraints=OFF",
+    );
+    const before = legacyState();
+    expect(() => importCurrentSubmissions(database)).toThrow(/CHECK constraint/);
+    expect(legacyState()).toEqual(before);
   });
 
   it("rejects historical identity/content violations without silently repairing them", () => {

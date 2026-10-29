@@ -16,7 +16,6 @@ export type SubmissionFixture = {
   createdAt?: string;
   updatedAt?: string;
   mimeType?: string | null;
-  moderationNote?: string | null;
 };
 
 export interface SeededSubmission {
@@ -35,7 +34,6 @@ export interface SeededSubmission {
   createdAt: string;
   updatedAt: string;
   mimeType: string | null;
-  moderationNote: string | null;
 }
 
 export function insertSubmission(sqlite: DatabaseSync, input: SubmissionFixture): SeededSubmission {
@@ -53,14 +51,12 @@ export function insertSubmission(sqlite: DatabaseSync, input: SubmissionFixture)
     createdAt: "2026-09-10T00:00:00.000Z",
     updatedAt: input.createdAt ?? "2026-09-10T00:00:00.000Z",
     mimeType: input.kind === "image" ? "image/webp" : null,
-    moderationNote: null,
     ...input,
   };
   sqlite
     .prepare(`INSERT INTO ugc_submissions
-    (id, user_id, kind, poi_id, poi_hash, poi_type, snapshot_id, status, content,
-     file_path, parent_id, comment_depth, created_at, updated_at, mime_type, moderation_note)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    (id,user_id,kind,poi_id,poi_hash,poi_type,parent_id,comment_depth,created_at,updated_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?)`)
     .run(
       item.id,
       item.userId,
@@ -68,16 +64,34 @@ export function insertSubmission(sqlite: DatabaseSync, input: SubmissionFixture)
       item.markerId,
       item.poiHash,
       item.poiType,
-      item.snapshotId,
-      item.status,
-      item.content,
-      item.filePath,
       item.parentId,
       item.depth,
       item.createdAt,
       item.updatedAt,
+    );
+  // Compatibility DTO vocabulary in existing scenarios maps to explicit facts.
+  // This fixture never synthesizes audit or deletion history.
+  const reviewStatuses: Record<string, string> = {
+    stale: "unknown",
+    active: "approved",
+    flagged: "approved",
+    remove_request: "approved",
+  };
+  const reviewStatus = reviewStatuses[item.status] ?? item.status;
+  sqlite
+    .prepare(`INSERT INTO ugc_snapshots
+    (id,submission_id,kind,revision,content,file_path,mime_type,review_status,creator_user_id,created_at)
+    VALUES (?,?,?,1,?,?,?,?,?,?)`)
+    .run(
+      item.snapshotId,
+      item.id,
+      item.kind,
+      item.content,
+      item.filePath,
       item.mimeType,
-      item.moderationNote,
+      reviewStatus,
+      item.userId,
+      item.createdAt,
     );
   return item;
 }

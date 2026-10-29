@@ -5,7 +5,6 @@ import { invalidateUploadCaches } from "@/publicRead/invalidate";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { insertCommentSnapshot } from "@/test/fixtures/commentSnapshots";
 import { insertImageSnapshot } from "@/test/fixtures/imageSnapshots";
-import { importCurrentSubmissions } from "@/test/fixtures/ugcSnapshots";
 import { insertUser } from "@/test/fixtures/users";
 
 import { listCachedPublicCommentsByMarker } from "./markerComments";
@@ -81,9 +80,7 @@ function interceptReads(before: (values: unknown[]) => Promise<void>): void {
 }
 
 describe.each(["images", "comments"] as const)("%s invocation isolation", (kind) => {
-  beforeEach(() => {
-    importCurrentSubmissions(database);
-  });
+  beforeEach(() => {});
 
   function read(
     db: D1Database,

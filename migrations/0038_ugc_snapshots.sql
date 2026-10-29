@@ -1,4 +1,4 @@
--- DESIGN DRAFT ONLY. Requires a paused, drained UGC write/review pipeline.
+-- Requires a paused, drained UGC write/review pipeline. See ticket 14 cutover rehearsal.
 
 -- Execute the entire migration in one transaction; this file omits BEGIN/COMMIT.
 
@@ -12,9 +12,11 @@ INSERT INTO _ugc_check SELECT 'no_pending_comments', NOT EXISTS (SELECT 1 FROM u
 
 INSERT INTO _ugc_check SELECT 'non_null_ids', NOT EXISTS (SELECT 1 FROM ugc_submissions WHERE id IS NULL OR snapshot_id IS NULL);
 
+INSERT INTO _ugc_check SELECT 'known_legacy_status', NOT EXISTS (SELECT 1 FROM ugc_submissions WHERE status NOT IN ('active','flagged','remove_request','stale','pending_openai','pending_audit'));
+
 CREATE TABLE _ugc_source AS SELECT * FROM ugc_submissions;
 
--- Design draft only. Not a repository migration or an execution script.
+-- Frozen schema input for the reproducible migration 0038 builder.
 -- Uses the current users(uid) internal key. No legacy payload or audit import.
 -- Local SQLite and Miniflare D1 prototype. Deployed D1 remains unverified.
 -- Agreed import: one snapshot per submission, revision=1, creator=user_id,

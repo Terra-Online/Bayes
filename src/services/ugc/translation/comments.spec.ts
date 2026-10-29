@@ -5,7 +5,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createMockBindings } from "@/test/bindings";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { insertSubmission } from "@/test/fixtures/submissions";
-import { importCurrentSubmissions } from "@/test/fixtures/ugcSnapshots";
 import { insertUser } from "@/test/fixtures/users";
 import type { Bindings } from "@/types/app";
 
@@ -29,7 +28,7 @@ beforeEach(() => {
     userId: "author",
     content: "  测试\n 评论  ",
   });
-  importCurrentSubmissions(database);
+
   kv = new Map();
   env = {
     ...createMockBindings({ DB: database.db }).bindings,

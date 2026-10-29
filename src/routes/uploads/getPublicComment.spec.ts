@@ -8,7 +8,6 @@ import { createMockBindings, type MockBindings } from "@/test/bindings";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { insertAuthUser, insertSession } from "@/test/fixtures/auth";
 import type { SubmissionFixture } from "@/test/fixtures/submissions";
-import { importCurrentSubmissions } from "@/test/fixtures/ugcSnapshots";
 import { insertUser } from "@/test/fixtures/users";
 
 vi.mock("cloudflare:workers", () => ({ DurableObject: class {}, exports: {} }));
@@ -20,7 +19,7 @@ let app: ReturnType<typeof createApp>;
 
 beforeEach(() => {
   database = createTestDatabase();
-  importCurrentSubmissions(database);
+
   mocks = createMockBindings({ DB: database.db });
   app = createApp();
   insertUser(database.sqlite, {

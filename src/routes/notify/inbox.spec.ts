@@ -7,7 +7,6 @@ import { createTestDatabase, type TestDatabase } from "@/test/database/createTes
 import { insertAuthUser, insertSession, testAuthConfig } from "@/test/fixtures/auth";
 import { insertNotification } from "@/test/fixtures/notifications";
 import { insertSubmission } from "@/test/fixtures/submissions";
-import { importCurrentSubmissions } from "@/test/fixtures/ugcSnapshots";
 import { insertUser } from "@/test/fixtures/users";
 import type { AppEnv } from "@/types/app";
 
@@ -381,7 +380,7 @@ it("preserves saved resolution messages, destinations and unread counts through 
   const original = retained.map((table) =>
     database.sqlite.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all(),
   );
-  importCurrentSubmissions(database);
+
   expect(
     retained.map((table) => database.sqlite.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all()),
   ).toEqual(original);

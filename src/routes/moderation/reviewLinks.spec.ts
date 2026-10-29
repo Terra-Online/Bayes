@@ -8,7 +8,6 @@ import { createTestDatabase, type TestDatabase } from "@/test/database/createTes
 import { insertAuthenticatedUser } from "@/test/fixtures/auth";
 import { insertCommentSnapshot } from "@/test/fixtures/commentSnapshots";
 import { insertImageSnapshot } from "@/test/fixtures/imageSnapshots";
-import { importCurrentSubmissions } from "@/test/fixtures/ugcSnapshots";
 import { insertUser } from "@/test/fixtures/users";
 import type { AppEnv } from "@/types/app";
 
@@ -21,7 +20,7 @@ describe("direct moderation review links", () => {
 
   beforeEach(() => {
     database = createTestDatabase();
-    importCurrentSubmissions(database);
+
     insertUser(database.sqlite, { uid: "owner" });
   });
   afterEach(() => {

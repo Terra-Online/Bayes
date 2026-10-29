@@ -12,7 +12,6 @@ import {
   type SessionHeaders,
 } from "@/test/fixtures/auth";
 import { seedImageReadScenario } from "@/test/fixtures/imageReadScenario";
-import { importCurrentSubmissions } from "@/test/fixtures/ugcSnapshots";
 
 vi.mock("cloudflare:workers", () => ({ DurableObject: class {}, exports: {} }));
 vi.mock("@cloudflare/containers", () => ({ getRandom: vi.fn() }));
@@ -26,7 +25,7 @@ let otherViewerHeaders: SessionHeaders;
 beforeEach(() => {
   database = createTestDatabase();
   seedImageReadScenario(database.sqlite);
-  importCurrentSubmissions(database);
+
   insertAuthUser(database.sqlite, { id: "viewer" });
   viewerHeaders = insertSession(database.sqlite, { userId: "viewer" }).headers;
   otherViewerHeaders = insertAuthenticatedUser(database.sqlite, { uid: "other-viewer" }).headers;

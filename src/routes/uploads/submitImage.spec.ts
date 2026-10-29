@@ -7,7 +7,6 @@ import { createMockBindings, createMockR2Object, type MockBindings } from "@/tes
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { insertAuthenticatedUser, type SessionHeaders } from "@/test/fixtures/auth";
 import { insertImageSnapshot } from "@/test/fixtures/imageSnapshots";
-import { importCurrentSubmissions } from "@/test/fixtures/ugcSnapshots";
 import type { Bindings } from "@/types/app";
 
 vi.mock("@cloudflare/containers", () => ({ getRandom: vi.fn() }));
@@ -48,7 +47,7 @@ describe("image submission through HTTP", () => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     database = createTestDatabase();
-    importCurrentSubmissions(database);
+
     mocks = createMockBindings({ DB: database.db });
     vi.mocked(getRandom).mockResolvedValue(mocks.imageTranscoder);
     const uploader = insertAuthenticatedUser(database.sqlite, { uid: "u", role: "n" });

@@ -7,7 +7,6 @@ import { getReviewTarget, reviewSnapshot } from "@/repositories/submission/revie
 import { insertCommentSnapshot } from "@/test/fixtures/commentSnapshots";
 import { insertImageSnapshot } from "@/test/fixtures/imageSnapshots";
 import { createModerationTestFixture } from "@/test/fixtures/moderation";
-import { importCurrentSubmissions } from "@/test/fixtures/ugcSnapshots";
 
 const redisCounts = vi.hoisted(() => new Map<string, number>());
 vi.mock("@upstash/redis", () => ({
@@ -64,7 +63,7 @@ beforeAll(async () => {
 });
 beforeEach(() => {
   fixture = createModerationTestFixture();
-  importCurrentSubmissions(fixture.database);
+
   cookie = fixture.createReviewerSession("a", "admin");
   redisCounts.clear();
   vi.stubGlobal("fetch", async (input: string, init?: RequestInit) => {

@@ -2,7 +2,6 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { seedImageReadScenario } from "@/test/fixtures/imageReadScenario";
-import { importCurrentSubmissions } from "@/test/fixtures/ugcSnapshots";
 
 import { getContributionImage, listContributionRecords } from "./me";
 
@@ -10,7 +9,6 @@ let database: TestDatabase;
 beforeEach(() => {
   database = createTestDatabase();
   seedImageReadScenario(database.sqlite);
-  importCurrentSubmissions(database);
 });
 afterEach(() => {
   vi.restoreAllMocks();

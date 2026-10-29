@@ -12,7 +12,6 @@ import { listActiveImagesByMarker } from "@/repositories/submission/listImages";
 import { createImageLifecycleFixture } from "@/test/fixtures/imageLifecycle";
 import { insertImageSnapshot } from "@/test/fixtures/imageSnapshots";
 import { insertSubmission } from "@/test/fixtures/submissions";
-import { importCurrentSubmissions } from "@/test/fixtures/ugcSnapshots";
 
 const fixtures: ReturnType<typeof createImageLifecycleFixture>[] = [];
 afterEach(() => {
@@ -32,7 +31,7 @@ function setup() {
     filePath: "images/A.webp",
     snapshotId: "A",
   });
-  importCurrentSubmissions(fixture.database);
+
   return fixture;
 }
 

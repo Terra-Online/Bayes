@@ -8,9 +8,10 @@ import { onAppError } from "@/middleware/error-handler";
 import { createRoutes } from "@/routes/moderation/createRoutes";
 import { createMockBindings, type MockBindings } from "@/test/bindings";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
+import { migrations } from "@/test/database/migrations";
 import { insertAuthenticatedUser, type SessionHeaders } from "@/test/fixtures/auth";
 import { insertImageSnapshot } from "@/test/fixtures/imageSnapshots";
-import { insertSubmission } from "@/test/fixtures/submissions";
+import { insertSubmission as insertLegacySubmission } from "@/test/fixtures/legacySubmissions";
 import { importCurrentSubmissions } from "@/test/fixtures/ugcSnapshots";
 import { insertUser as seedUser } from "@/test/fixtures/users";
 import type { AppEnv } from "@/types/app";
@@ -112,7 +113,7 @@ describe("12-hour resumable karma evaluation", () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(START);
     database = createTestDatabase();
-    importCurrentSubmissions(database);
+
     redis = new MemoryRedis();
     vi.mocked(Redis).mockImplementation(function () {
       return redis.redis;
@@ -308,7 +309,7 @@ describe("12-hour resumable karma evaluation", () => {
   });
 
   it("does not punish imported stale records or reconstruct rejection from old notes", async () => {
-    const imported = createTestDatabase();
+    const imported = createTestDatabase(migrations.filter((file) => file < "0038"));
     try {
       seedUser(imported.sqlite, { uid: "legacy", points: 150 });
       for (const [id, note] of [
@@ -316,7 +317,7 @@ describe("12-hour resumable karma evaluation", () => {
         ["old-ai", "OpenAI moderation flagged: unsafe"],
         ["old-recall", "Recalled by uploader."],
       ]) {
-        insertSubmission(imported.sqlite, {
+        insertLegacySubmission(imported.sqlite, {
           id: id!,
           userId: "legacy",
           kind: "image",
@@ -324,6 +325,7 @@ describe("12-hour resumable karma evaluation", () => {
           moderationNote: note,
         });
       }
+
       importCurrentSubmissions(imported);
       const calculateScore = vi.spyOn(rules, "calculateKarmaEvaluationScore");
       await evaluateKarmaIfDue(imported.db, redis.redis);

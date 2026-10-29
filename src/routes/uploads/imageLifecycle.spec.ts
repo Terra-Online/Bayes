@@ -6,7 +6,6 @@ import {
   type ImageLifecycleFixture,
 } from "@/test/fixtures/imageLifecycle";
 import { insertImageSnapshot } from "@/test/fixtures/imageSnapshots";
-import { importCurrentSubmissions } from "@/test/fixtures/ugcSnapshots";
 
 vi.mock("cloudflare:workers", () => ({
   DurableObject: class {},
@@ -24,7 +23,7 @@ let liveNotifications: ImageLifecycleFixture["liveNotifications"];
 beforeEach(() => {
   ({ database, env, moderation, webhooks, liveNotifications, request } =
     createImageLifecycleFixture());
-  importCurrentSubmissions(database);
+
   vi.stubGlobal(
     "fetch",
     vi.fn(async () => new Response(null, { status: 204 })),

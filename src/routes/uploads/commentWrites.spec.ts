@@ -5,7 +5,6 @@ import { createApp } from "@/app";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { insertAuthUser, insertSession, testAuthConfig } from "@/test/fixtures/auth";
 import { insertCommentSnapshot } from "@/test/fixtures/commentSnapshots";
-import { importCurrentSubmissions } from "@/test/fixtures/ugcSnapshots";
 import { insertUser } from "@/test/fixtures/users";
 import type { Bindings } from "@/types/app";
 
@@ -48,7 +47,7 @@ describe.each(["new comments", "comment edits"] as const)("%s content boundaries
     redis.expire.mockResolvedValue(1);
     publicReadCache.purgeMarker.mockResolvedValue({ success: true });
     database = createTestDatabase();
-    importCurrentSubmissions(database);
+
     insertUser(database.sqlite, { uid: "author" });
     insertAuthUser(database.sqlite, { id: "author" });
     sessionHeaders = insertSession(database.sqlite, { userId: "author" }).headers;

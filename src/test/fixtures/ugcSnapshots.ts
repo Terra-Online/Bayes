@@ -1,22 +1,16 @@
 import { readFileSync } from "node:fs";
 
 import type { TestDatabase } from "@/test/database/createTestDatabase";
+import { applyMigrations } from "@/test/database/migrations";
 
 export const snapshotImportSql = readFileSync(
-  new URL("../../../migration-candidates/ugc-snapshots/import-current.sql", import.meta.url),
+  new URL("../../../migrations/0038_ugc_snapshots.sql", import.meta.url),
   "utf8",
 );
 
-/** Only isolated fixtures opt into this destructive, unregistered candidate. */
+/** Historical fixtures apply the registered cutover exactly once. */
 export function importCurrentSubmissions(database: TestDatabase): void {
-  database.sqlite.exec("BEGIN");
-  try {
-    database.sqlite.exec(snapshotImportSql);
-    database.sqlite.exec("COMMIT");
-  } catch (error) {
-    database.sqlite.exec("ROLLBACK");
-    throw error;
-  }
+  applyMigrations(database.sqlite, ["0038_ugc_snapshots.sql"]);
 }
 
 export const legacySnapshotSeedSql = readFileSync(

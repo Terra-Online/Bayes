@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { createTestDatabase } from "@/test/database/createTestDatabase";
-import { insertSubmission } from "@/test/fixtures/submissions";
+import { migrations } from "@/test/database/migrations";
+import { insertSubmission } from "@/test/fixtures/legacySubmissions";
 import { importCurrentSubmissions, legacySnapshotSeedSql } from "@/test/fixtures/ugcSnapshots";
 import { insertUser } from "@/test/fixtures/users";
 
@@ -9,7 +10,7 @@ import { getPublicSnapshot, getOwnerSnapshot } from "./snapshotReads";
 
 let database: ReturnType<typeof createTestDatabase>;
 beforeEach(() => {
-  database = createTestDatabase();
+  database = createTestDatabase(migrations.filter((file) => file < "0038"));
 });
 afterEach(() => database.close());
 

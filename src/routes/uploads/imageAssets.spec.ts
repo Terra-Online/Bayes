@@ -8,7 +8,6 @@ import {
   type ImageLifecycleFixture,
 } from "@/test/fixtures/imageLifecycle";
 import { insertImageSnapshot } from "@/test/fixtures/imageSnapshots";
-import { importCurrentSubmissions } from "@/test/fixtures/ugcSnapshots";
 
 let database: ImageLifecycleFixture["database"];
 let env: ImageLifecycleFixture["env"];
@@ -26,7 +25,7 @@ const transform = vi.fn();
 beforeEach(() => {
   ({ database, env, sessions, moderation, webhooks, request, submission, persistedState } =
     createImageLifecycleFixture());
-  importCurrentSubmissions(database);
+
   submission = (id) =>
     database.sqlite
       .prepare(`SELECT s.*, r.id AS snapshot_id, r.content, r.file_path, r.mime_type, r.size_bytes, r.review_status AS status

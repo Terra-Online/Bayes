@@ -7,7 +7,6 @@ import { createTestDatabase, type TestDatabase } from "@/test/database/createTes
 import { insertAuthenticatedUser, type SessionHeaders } from "@/test/fixtures/auth";
 import { insertCommentSnapshot } from "@/test/fixtures/commentSnapshots";
 import { insertImageSnapshot } from "@/test/fixtures/imageSnapshots";
-import { importCurrentSubmissions } from "@/test/fixtures/ugcSnapshots";
 
 const { cache, redis } = vi.hoisted(() => ({
   cache: { purgeMarker: vi.fn() },
@@ -43,7 +42,7 @@ beforeEach(() => {
   database = createTestDatabase();
   headers = insertAuthenticatedUser(database.sqlite, { uid: "author" }).headers;
   readerHeaders = insertAuthenticatedUser(database.sqlite, { uid: "reader" }).headers;
-  importCurrentSubmissions(database);
+
   bindings = createMockBindings({ DB: database.db });
   bindings.bindings.LOCK_UPLOAD_ENDPOINTS = "false";
   bindings.autoModerationQueue.send.mockResolvedValue({

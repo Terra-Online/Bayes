@@ -1,12 +1,11 @@
 import { readFileSync } from "node:fs";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { migrations } from "@/test/database/migrations";
 import { insertImageSnapshot } from "@/test/fixtures/imageSnapshots";
 import { insertSubmission as seedSubmission } from "@/test/fixtures/submissions";
-import { importCurrentSubmissions } from "@/test/fixtures/ugcSnapshots";
 import { insertUser } from "@/test/fixtures/users";
 
 import {
@@ -15,14 +14,12 @@ import {
   listNotifications,
   markNotificationRead,
   markNotificationsRead,
-  prepareApprovedReplyNotificationWrite,
   prepareCommentVoteNotificationWrite,
-  prepareSubmissionStatusNotificationWrite,
   serializeNotificationItem,
-  type TransitionNotificationPayload,
 } from "./notifications";
 import { archiveTestImageSubmissions } from "./submission-review";
-import { transitionSubmissionStatusWithNotifications } from "./submission/statusSubmission";
+import { deleteByAuthor } from "./submission/deleteByAuthor";
+import { getReviewTarget, reviewSnapshot } from "./submission/reviewSnapshot";
 import type { SubmissionRecord, SubmissionStatus } from "./submission/types";
 import { setImageUpvote } from "./submission/voteSubmission";
 
@@ -35,14 +32,9 @@ const submission = (id: string, updatedAt: string): SubmissionRecord => ({
   snapshotId: `snapshot-${id}`,
   userId: "user-1",
   content: null,
-  editOriginalContent: null,
-  editOriginalStatus: null,
-  editOriginalSnapshotId: null,
   filePath: `${id}.webp`,
   status: "pending_openai",
   flagCount: 0,
-  moderationNote: null,
-  moderationQueuedAt: null,
   mimeType: "image/webp",
   sizeBytes: 1,
   parentId: null,
@@ -52,18 +44,22 @@ const submission = (id: string, updatedAt: string): SubmissionRecord => ({
   updatedAt,
 });
 
-const transition = (
+async function reviewDecision(
+  database: TestDatabase,
   item: SubmissionRecord,
-  transitionedAt: string,
-  nextStatus: SubmissionStatus = "active",
-  previousStatus: SubmissionStatus = "pending_openai",
-): TransitionNotificationPayload => ({
-  submission: item,
-  previousStatus,
-  nextStatus,
-  source: "auto_moderation",
-  transitionedAt,
-});
+  at: string,
+  decision: "approved" | "pending_audit" = "approved",
+) {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date(at));
+  return reviewSnapshot(database.db, {
+    target: (await getReviewTarget(database.db, item.id))!,
+    expectedReviewStatus: "pending_openai",
+    source: "ai",
+    decision,
+    auditId: crypto.randomUUID(),
+  });
+}
 
 const comment = (
   id: string,
@@ -119,6 +115,7 @@ describe("notification aggregation SQL", () => {
   let database: TestDatabase | null = null;
 
   afterEach(() => {
+    vi.useRealTimers();
     database?.close();
     database = null;
   });
@@ -130,17 +127,20 @@ describe("notification aggregation SQL", () => {
 
     const write = async (id: string, createdAt: string) => {
       const item = submission(id, createdAt);
-      persistSubmission(database!, item, "active");
-      await db.batch(prepareSubmissionStatusNotificationWrite(db, transition(item, createdAt)));
+      persistSubmission(database!, item, "pending_openai");
+      await reviewDecision(database!, item, createdAt);
     };
 
     await write("1", "2026-08-02T10:00:00.000Z");
-    await db.batch(
-      prepareSubmissionStatusNotificationWrite(
-        db,
-        transition(submission("1", "2026-08-02T10:00:00.000Z"), "2026-08-02T10:00:00.000Z"),
-      ),
-    );
+    expect(
+      (
+        await reviewDecision(
+          database,
+          submission("1", "2026-08-02T10:00:00.000Z"),
+          "2026-08-02T10:00:00.000Z",
+        )
+      ).outcome,
+    ).toBe("ignored");
     await write("2", "2026-08-02T10:00:30.000Z");
 
     let listed = await listNotifications(db, { userId: "user-1", category: "system", limit: 20 });
@@ -216,42 +216,11 @@ describe("notification aggregation SQL", () => {
     insertUser(database.sqlite, { uid: "user-3" });
 
     const review = submission("review", "2026-08-02T11:00:00.000Z");
-    const removed = submission("removed", "2026-08-02T11:00:01.000Z");
-    const reopenedInitially = submission("reopened", "2026-08-02T11:00:02.000Z");
-    persistSubmission(database, review, "pending_audit");
-    persistSubmission(database, removed, "stale");
-    persistSubmission(database, reopenedInitially, "active");
-    await db.batch(
-      prepareSubmissionStatusNotificationWrite(
-        db,
-        transition(review, review.updatedAt, "pending_audit"),
-      ),
-    );
-    await db.batch(
-      prepareSubmissionStatusNotificationWrite(
-        db,
-        transition(removed, removed.updatedAt, "stale", "remove_request"),
-      ),
-    );
-    await db.batch(
-      prepareSubmissionStatusNotificationWrite(
-        db,
-        transition(reopenedInitially, reopenedInitially.updatedAt),
-      ),
-    );
-    const reopenedResolved = {
-      ...reopenedInitially,
-      updatedAt: "2026-08-02T11:00:20.000Z",
-    };
-    database.sqlite
-      .prepare("UPDATE ugc_submissions SET updated_at = ? WHERE id = ?")
-      .run(reopenedResolved.updatedAt, reopenedResolved.id);
-    await db.batch(
-      prepareSubmissionStatusNotificationWrite(
-        db,
-        transition(reopenedResolved, reopenedResolved.updatedAt, "active", "remove_request"),
-      ),
-    );
+    persistSubmission(database, review, "pending_openai");
+    await reviewDecision(database, review, review.updatedAt, "pending_audit");
+    const approved = submission("approved", "2026-08-02T11:00:02.000Z");
+    persistSubmission(database, approved, "pending_openai");
+    await reviewDecision(database, approved, approved.updatedAt);
 
     const parent1 = comment("parent-1", "user-1", null, "2026-08-02T11:01:00.000Z", "Owner");
     const parent2 = comment("parent-2", "user-1", null, "2026-08-02T11:01:00.000Z", "Owner");
@@ -259,15 +228,15 @@ describe("notification aggregation SQL", () => {
     const reply2 = comment("reply-2", "user-3", parent1.id, "2026-08-02T11:01:20.000Z", "Bob");
     const reply3 = comment("reply-3", "user-2", parent2.id, "2026-08-02T11:01:21.000Z", "Alice");
     for (const item of [parent1, parent2, reply1, reply2, reply3]) {
-      persistSubmission(database, item, "active");
+      persistSubmission(database, item, item.parentId ? "pending_openai" : "active");
     }
     for (const item of [reply1, reply2, reply3]) {
-      await db.batch(prepareApprovedReplyNotificationWrite(db, transition(item, item.updatedAt)));
+      await reviewDecision(database, item, item.updatedAt);
     }
 
     const voteTarget = comment("vote-target", "user-1", null, "2026-08-02T11:02:00.000Z", "Owner");
     persistSubmission(database, voteTarget, "active");
-    importCurrentSubmissions(database);
+
     const actors = [
       {
         uid: "user-2",
@@ -394,12 +363,11 @@ describe("notification aggregation SQL", () => {
     const reply1 = comment("reply-1m", "actor-1", parent.id, "2026-08-02T10:00:00.000Z", "Actor 1");
     const reply2 = comment("reply-2m", "actor-2", parent.id, "2026-08-02T10:01:00.000Z", "Actor 2");
     persistSubmission(database, parent, "active");
-    persistSubmission(database, reply1, "active");
-    persistSubmission(database, reply2, "active");
-    await db.batch(prepareApprovedReplyNotificationWrite(db, transition(reply1, reply1.updatedAt)));
-    await db.batch(prepareApprovedReplyNotificationWrite(db, transition(reply2, reply2.updatedAt)));
+    persistSubmission(database, reply1, "pending_openai");
+    persistSubmission(database, reply2, "pending_openai");
+    await reviewDecision(database, reply1, reply1.updatedAt);
+    await reviewDecision(database, reply2, reply2.updatedAt);
 
-    importCurrentSubmissions(database);
     await addVote(voteTarget1.id, "actor-1", "2026-08-02T00:00:00.000Z");
     await addVote(voteTarget1.id, "actor-2", "2026-08-02T05:59:59.999Z");
     await addVote(voteTarget1.id, "actor-3", "2026-08-02T06:00:00.000Z");
@@ -422,67 +390,12 @@ describe("notification aggregation SQL", () => {
     database = createTestDatabase();
     const db = database.db;
     insertUser(database.sqlite, { uid: "owner" });
-    database.sqlite.exec(`
-      INSERT INTO ugc_submissions (file_path,
-        id, user_id, poi_id, poi_hash, poi_type, snapshot_id,
-        status, updated_at, kind, moderation_note
-      ) VALUES ('fixture.webp', 'remove-1', 'owner', 'marker-1', 'hash-1', 'type-1', 'snapshot-1',
-        'active', '2026-08-02T12:00:00.000Z', 'image', NULL
-      );
-    `);
-
-    const current = {
-      ...submission("remove-1", "2026-08-02T12:00:00.000Z"),
-      userId: "owner",
-      snapshotId: "snapshot-1",
-      status: "active" as const,
-      moderationNote: null,
-    };
-    const result = await transitionSubmissionStatusWithNotifications(db, {
-      submission: current,
-      status: "stale",
-      moderationNote: "Recalled by uploader.",
-      source: "user_action",
-    });
-
+    seedSubmission(database.sqlite, { id: "remove-1", userId: "owner", kind: "image" });
     expect(
-      database.sqlite.prepare("SELECT from_status, to_status, source FROM ugc_review_events").all(),
-    ).toEqual([{ from_status: "active", to_status: "stale", source: "user_action" }]);
-    const conflict = await transitionSubmissionStatusWithNotifications(db, {
-      submission: current,
-      status: "stale",
-      source: "manual_moderation",
-    });
-    expect(conflict.updated).toBe(false);
-    expect(
-      database.sqlite.prepare("SELECT COUNT(*) AS count FROM ugc_review_events").get(),
-    ).toEqual({ count: 1 });
-    database.sqlite.exec(
-      "UPDATE ugc_submissions SET status = 'pending_openai' WHERE id = 'remove-1'",
-    );
-    const manualArchive = await transitionSubmissionStatusWithNotifications(db, {
-      submission: { ...current, status: "pending_openai" },
-      status: "stale",
-      source: "manual_moderation",
-    });
-    expect(manualArchive.updated).toBe(true);
-    expect(manualArchive.notifications).toEqual([]);
-    expect(
-      database.sqlite
-        .prepare(
-          "SELECT from_status, to_status, source FROM ugc_review_events ORDER BY id DESC LIMIT 1",
-        )
-        .get(),
-    ).toEqual({
-      from_status: "pending_openai",
-      to_status: "stale",
-      source: "manual_moderation",
-    });
-    expect(result.updated).toBe(true);
-    expect(result.notifications).toEqual([]);
-    expect(database.sqlite.prepare("SELECT count(*) AS count FROM notifications").get()).toEqual({
-      count: 0,
-    });
+      await deleteByAuthor(db, { submissionId: "remove-1", kind: "image", authorId: "owner" }),
+    ).toMatchObject({ outcome: "deleted" });
+    expect(database.sqlite.prepare("SELECT * FROM ugc_snapshots_review_audit").all()).toEqual([]);
+    expect(database.sqlite.prepare("SELECT * FROM notifications").all()).toEqual([]);
     // Pre-cutover messages remain readable; retirement only stops new generation.
     database.sqlite.exec(`INSERT INTO notifications
       (id,recipient_user_id,category,type,payload_json,dedupe_key,created_at)
@@ -516,7 +429,7 @@ describe("notification aggregation SQL", () => {
       markerId: "point2",
     });
     insertUser(database.sqlite, { uid: "admin", role: "a" });
-    importCurrentSubmissions(database);
+
     expect(
       await archiveTestImageSubmissions(db, { prefix: "test_a", adminUserId: "admin" }),
     ).toEqual({ changedRows: 1, markerIds: ["point1"] });
@@ -541,7 +454,7 @@ describe("notification aggregation SQL", () => {
     const db = database.db;
     insertUser(database.sqlite, { uid: "owner" });
     insertUser(database.sqlite, { uid: "actor" });
-    importCurrentSubmissions(database);
+
     insertImageSnapshot(database.sqlite, { id: "image-1", userId: "owner" });
     insertImageSnapshot(database.sqlite, { id: "image-self", userId: "actor" });
 

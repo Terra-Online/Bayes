@@ -2,7 +2,6 @@ import { afterEach, beforeEach, expect, it } from "vitest";
 
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { insertSubmission } from "@/test/fixtures/submissions";
-import { importCurrentSubmissions } from "@/test/fixtures/ugcSnapshots";
 import { insertUser } from "@/test/fixtures/users";
 
 import { listAllImageFilePaths } from "./submission-review";
@@ -40,7 +39,7 @@ it("keeps every referenced image path across pages, including archived images, w
     userId: "author",
     filePath: "comment-only.webp",
   });
-  importCurrentSubmissions(database);
+
   const before = database.sqlite.prepare("SELECT COUNT(*) AS count FROM ugc_submissions").get();
   const paths = await listAllImageFilePaths(database.db);
   expect(paths).toHaveLength(1001);

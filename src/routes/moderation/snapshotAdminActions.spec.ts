@@ -40,13 +40,12 @@ vi.mock("@/lib/karma/karmaConfig.json", () => ({
 
 import { appendCommentVersion } from "@/repositories/submission/appendCommentVersion";
 import type { SnapshotReviewStatus } from "@/repositories/submission/snapshotReads";
-import { importCurrentSubmissions } from "@/test/fixtures/ugcSnapshots";
 
 let fixture: ReturnType<typeof createModerationTestFixture>;
 beforeEach(() => {
   redisCounts.clear();
   fixture = createModerationTestFixture();
-  importCurrentSubmissions(fixture.database);
+
   fixture.env.OPENAI_API_KEY = "test-key";
   vi.spyOn(console, "warn").mockImplementation(() => {});
   vi.spyOn(console, "error").mockImplementation(() => {});

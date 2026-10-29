@@ -6,11 +6,14 @@ export async function getPublicSubmissionByFilePath(
   db: D1Database,
   filePath: string,
 ): Promise<SubmissionRecord | null> {
+  // Narrow candidates with the snapshot file index, then verify the selected
+  // public/frontier file. A retained historical reference alone grants no access.
   const row = await db
     .prepare(
       `SELECT *
        FROM ${publicImageSelection}
        WHERE file_path = ?1
+         AND id IN (SELECT submission_id FROM ugc_snapshots WHERE file_path = ?1)
          AND kind = 'image'
        LIMIT 1`,
     )
@@ -32,6 +35,7 @@ export async function getImageSubmissionByFilePath(
       `SELECT *
        FROM ${ownerImageSelection}
        WHERE file_path = ?1
+         AND id IN (SELECT submission_id FROM ugc_snapshots WHERE file_path = ?1)
          AND kind = 'image'
          AND (?2 = 1 OR user_id = ?3)
        LIMIT 1`,

@@ -7,7 +7,6 @@ import { expect, it } from "vitest";
 import { applyMigrations, migrations } from "@/test/database/migrations";
 import { SqliteD1 } from "@/test/database/sqliteD1";
 import { insertCommentSnapshot } from "@/test/fixtures/commentSnapshots";
-import { importCurrentSubmissions } from "@/test/fixtures/ugcSnapshots";
 import { insertUser } from "@/test/fixtures/users";
 
 import { appendCommentVersion } from "./appendCommentVersion";
@@ -19,7 +18,7 @@ it("serializes competing connections, rolls back failed appends and never consum
   try {
     applyMigrations(first.sqlite, migrations);
     insertUser(first.sqlite, { uid: "author" });
-    importCurrentSubmissions(first);
+
     insertCommentSnapshot(first.sqlite, { id: "comment", userId: "author", snapshotId: "A" });
     const input = {
       submissionId: "comment",

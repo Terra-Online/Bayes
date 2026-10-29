@@ -1,4 +1,4 @@
-"""Build a local SQL design draft from current repository schema and new DDL."""
+"""Reproduce canonical migration 0038 from the frozen 0001..0037 baseline."""
 from pathlib import Path
 import os
 import sqlite3
@@ -45,7 +45,7 @@ def build():
     detach = reactions + ['notification_messages', 'notifications']
     restore = reactions + ['notifications', 'notification_messages']
     chunks = [
-        '-- DESIGN DRAFT ONLY. Requires a paused, drained UGC write/review pipeline.',
+        '-- Requires a paused, drained UGC write/review pipeline. See ticket 14 cutover rehearsal.',
         '-- Execute the entire migration in one transaction; this file omits BEGIN/COMMIT.',
         '-- Generated from repository migrations 0001..0037, not a deployment data export.',
         'PRAGMA defer_foreign_keys=ON;',
@@ -55,6 +55,9 @@ def build():
         "AND status IN ('pending_openai','pending_audit'));",
         "INSERT INTO _ugc_check SELECT 'non_null_ids', NOT EXISTS ("
         "SELECT 1 FROM ugc_submissions WHERE id IS NULL OR snapshot_id IS NULL);",
+        "INSERT INTO _ugc_check SELECT 'known_legacy_status', NOT EXISTS ("
+        "SELECT 1 FROM ugc_submissions WHERE status NOT IN "
+        "('active','flagged','remove_request','stale','pending_openai','pending_audit'));",
         'CREATE TABLE _ugc_source AS SELECT * FROM ugc_submissions;',
     ]
     for sql in table_sql:
@@ -131,10 +134,10 @@ FROM _ugc_source;''',
         'DROP TABLE _ugc_check;',
         '-- Keep deferral enabled until commit; foreign keys must then be valid.',
     ]
-    (HERE / 'import-current.sql').write_text('\n\n'.join(chunks) + '\n')
+    (ROOT / 'migrations/0038_ugc_snapshots.sql').write_text('\n\n'.join(chunks) + '\n')
     db.close()
 
 
 if __name__ == '__main__':
     build()
-    print('Generated import-current.sql from the current 37-migration baseline.')
+    print('Generated migrations/0038_ugc_snapshots.sql from the frozen 37-migration baseline.')

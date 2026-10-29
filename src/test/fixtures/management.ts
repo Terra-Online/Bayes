@@ -3,7 +3,6 @@ import type { SnapshotReviewStatus } from "@/repositories/submission/snapshotRea
 import { insertCommentSnapshot } from "./commentSnapshots";
 import { insertImageSnapshot } from "./imageSnapshots";
 import { createModerationTestFixture } from "./moderation";
-import { importCurrentSubmissions } from "./ugcSnapshots";
 
 export interface ManagementSubmissionFixture {
   id: string;
@@ -23,7 +22,7 @@ export interface ManagementSubmissionFixture {
 /** Explicit snapshot schema for management consumers, without switching defaults. */
 export function createSnapshotModerationFixture() {
   const fixture = createModerationTestFixture();
-  importCurrentSubmissions(fixture.database);
+
   const sqlite = fixture.database.sqlite;
   function submission(input: ManagementSubmissionFixture): void {
     const seed = { ...input, userId: input.userId ?? "author" };

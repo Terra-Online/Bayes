@@ -4,7 +4,6 @@ import { publicReadResponse } from "@/routes/uploads/responses";
 import { createMockBindings } from "@/test/bindings";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { insertSubmission } from "@/test/fixtures/submissions";
-import { importCurrentSubmissions } from "@/test/fixtures/ugcSnapshots";
 import { insertUser } from "@/test/fixtures/users";
 import type { Bindings } from "@/types/app";
 
@@ -210,7 +209,7 @@ describe("bounded public reads", () => {
         userId: "author",
         kind: kind === "images" ? "image" : "comment",
       });
-      importCurrentSubmissions(database);
+
       const before = database.sqlite.prepare("SELECT * FROM ugc_submissions").all();
       database.hooks.beforeQuery = (sql) => {
         if (/ugc_(submissions|public_submissions)/.test(sql)) {
@@ -241,7 +240,7 @@ describe("bounded public reads", () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     insertUser(database.sqlite, { uid: "author" });
     insertSubmission(database.sqlite, { id: "stored", userId: "author" });
-    importCurrentSubmissions(database);
+
     const before = database.sqlite.prepare("SELECT * FROM ugc_submissions").all();
     database.hooks.beforeQuery = () => {
       throw new Error("D1_ERROR: private database detail");

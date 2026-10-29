@@ -61,26 +61,9 @@ export function mapSubmission(row: Record<string, unknown>): SubmissionRecord {
     snapshotId: String(row.snapshot_id),
     userId: String(row.user_id),
     content: row.content === null ? null : String(row.content ?? ""),
-    editOriginalContent:
-      row.edit_original_content === null || row.edit_original_content === undefined
-        ? null
-        : String(row.edit_original_content),
-    editOriginalStatus:
-      row.edit_original_status === null || row.edit_original_status === undefined
-        ? null
-        : mapStatus(row.edit_original_status),
-    editOriginalSnapshotId:
-      row.edit_original_snapshot_id === null || row.edit_original_snapshot_id === undefined
-        ? null
-        : String(row.edit_original_snapshot_id),
     filePath: row.file_path === null || row.file_path === undefined ? null : String(row.file_path),
     status: mapStatus(row.status),
     flagCount: toCount(row.flag_count),
-    moderationNote: row.moderation_note === null ? null : String(row.moderation_note ?? ""),
-    moderationQueuedAt:
-      row.moderation_queued_at === null || row.moderation_queued_at === undefined
-        ? null
-        : String(row.moderation_queued_at),
     mimeType: row.mime_type === null || row.mime_type === undefined ? null : String(row.mime_type),
     sizeBytes:
       row.size_bytes === null || row.size_bytes === undefined ? null : Number(row.size_bytes),

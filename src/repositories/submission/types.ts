@@ -7,14 +7,9 @@ export interface SubmissionRecord {
   snapshotId: string;
   userId: string;
   content: string | null;
-  editOriginalContent: string | null;
-  editOriginalStatus: SubmissionStatus | null;
-  editOriginalSnapshotId: string | null;
   filePath: string | null;
   status: SubmissionStatus;
   flagCount: number;
-  moderationNote: string | null;
-  moderationQueuedAt: string | null;
   mimeType: string | null;
   sizeBytes: number | null;
   parentId: string | null;

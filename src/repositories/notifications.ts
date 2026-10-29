@@ -2,13 +2,7 @@ import { nanoid } from "nanoid";
 
 import type { AuthUser } from "@/types/app";
 
-import type {
-  SubmissionKind,
-  SubmissionRecord,
-  SubmissionStatus,
-  SubmissionVoteValue,
-  ViewerVoteValue,
-} from "./submission/types";
+import type { SubmissionKind, SubmissionVoteValue, ViewerVoteValue } from "./submission/types";
 
 export type NotificationCategory = "system" | "community";
 
@@ -66,15 +60,6 @@ export interface SerializedNotificationItem {
 export interface NotificationCursor {
   createdAt: string;
   id: string;
-}
-
-export interface TransitionNotificationPayload {
-  submission: SubmissionRecord;
-  previousStatus: SubmissionStatus;
-  nextStatus: SubmissionStatus;
-  moderationNote?: string | null;
-  source: "auto_moderation" | "manual_moderation" | "user_action";
-  transitionedAt: string;
 }
 
 export interface CommentVoteNotificationPayload {
@@ -221,40 +206,12 @@ export function notificationsFromResult(
   return (result?.results ?? []).map((row) => mapNotification(row));
 }
 
-export function notificationTypeForTransition(
-  previousStatus: SubmissionStatus,
-  nextStatus: SubmissionStatus,
-  source?: TransitionNotificationPayload["source"],
-): NotificationType | null {
-  if (previousStatus === nextStatus) {
-    return null;
-  }
-  // Removal resolution is historical-only; no transition creates a new message.
-  if (previousStatus === "remove_request" && (nextStatus === "active" || nextStatus === "stale")) {
-    return null;
-  }
-  if (source === "user_action" && nextStatus === "stale") {
-    return null;
-  }
-  if (nextStatus === "active") {
-    return "system.submission.approved";
-  }
-  if (nextStatus === "pending_audit") {
-    return "system.submission.needs_review";
-  }
-  return null;
-}
-
 function serializePayload(payload: Record<string, unknown>): string {
   return JSON.stringify(payload);
 }
 
 function expiresAt(createdAt: string, windowMs = DEFAULT_AGGREGATION_WINDOW_MS): string {
   return new Date(Date.parse(createdAt) + windowMs).toISOString();
-}
-
-function systemPayload(kind: SubmissionKind): Record<string, unknown> {
-  return { kind };
 }
 
 function communityPayload(kind: SubmissionKind): Record<string, unknown> {
@@ -280,213 +237,6 @@ function appendParentUpdateStatement(db: D1Database, messageId: string): D1Prepa
        RETURNING ${NOTIFICATION_SELECT_COLUMNS}`,
     )
     .bind(messageId);
-}
-
-export function prepareSubmissionStatusNotificationWrite(
-  db: D1Database,
-  payload: TransitionNotificationPayload,
-): D1PreparedStatement[] {
-  const type = notificationTypeForTransition(
-    payload.previousStatus,
-    payload.nextStatus,
-    payload.source,
-  );
-  if (!type) {
-    return [];
-  }
-
-  const notificationId = nanoid(18);
-  const messageId = nanoid(18);
-  const createdAt = payload.transitionedAt;
-  const openKey = JSON.stringify([
-    "system",
-    payload.submission.userId,
-    type,
-    payload.submission.kind,
-  ]);
-  const eventDedupeKey = [
-    "system",
-    payload.submission.id,
-    payload.submission.snapshotId,
-    payload.previousStatus,
-    payload.nextStatus,
-  ].join(":");
-  const payloadJson = serializePayload(systemPayload(payload.submission.kind));
-
-  return [
-    db
-      .prepare(
-        `UPDATE notifications
-       SET open_aggregation_key = NULL
-       WHERE open_aggregation_key = ?1
-         AND window_expires_at <= ?2`,
-      )
-      .bind(openKey, createdAt),
-    db
-      .prepare(
-        `INSERT INTO notifications (
-         id, recipient_user_id, category, type, actor_user_id,
-         submission_id, parent_submission_id, marker_id, poi_hash, poi_type,
-         payload_json, dedupe_key, read_at, created_at,
-         open_aggregation_key, window_started_at, window_expires_at,
-         last_event_at, message_count
-       )
-       SELECT
-         ?1, s.user_id, 'system', ?2, NULL,
-         s.id, s.parent_id, s.poi_id, s.poi_hash, s.poi_type,
-         ?3, ?4, NULL, ?5,
-         ?6, ?5, ?7, ?5, 0
-       FROM ugc_submissions s
-       WHERE s.id = ?8
-         AND s.snapshot_id = ?9
-         AND s.status = ?10
-         AND s.updated_at = ?5
-         AND NOT EXISTS (
-           SELECT 1 FROM notification_messages WHERE dedupe_key = ?11
-         )
-       ON CONFLICT(open_aggregation_key) DO NOTHING`,
-      )
-      .bind(
-        notificationId,
-        type,
-        payloadJson,
-        `group:${notificationId}`,
-        createdAt,
-        openKey,
-        expiresAt(createdAt),
-        payload.submission.id,
-        payload.submission.snapshotId,
-        payload.nextStatus,
-        eventDedupeKey,
-      ),
-    db
-      .prepare(
-        `INSERT INTO notification_messages (
-         id, notification_id, actor_user_id, submission_id, parent_submission_id,
-         marker_id, poi_hash, poi_type, payload_json, dedupe_key, created_at
-       )
-       SELECT
-         ?1, n.id, NULL, s.id, s.parent_id,
-         s.poi_id, s.poi_hash, s.poi_type, ?2, ?3, ?4
-       FROM ugc_submissions s
-       INNER JOIN notifications n ON n.open_aggregation_key = ?5
-       WHERE s.id = ?6
-         AND s.snapshot_id = ?7
-         AND s.status = ?8
-         AND s.updated_at = ?4
-         AND ?4 < n.window_expires_at
-       ON CONFLICT(dedupe_key) DO NOTHING`,
-      )
-      .bind(
-        messageId,
-        payloadJson,
-        eventDedupeKey,
-        createdAt,
-        openKey,
-        payload.submission.id,
-        payload.submission.snapshotId,
-        payload.nextStatus,
-      ),
-    appendParentUpdateStatement(db, messageId),
-  ];
-}
-
-export function prepareApprovedReplyNotificationWrite(
-  db: D1Database,
-  payload: TransitionNotificationPayload,
-): D1PreparedStatement[] {
-  if (!payload.submission.parentId) {
-    return [];
-  }
-
-  const notificationId = nanoid(18);
-  const messageId = nanoid(18);
-  const createdAt = payload.transitionedAt;
-  const openKey = JSON.stringify(["community", "reply", payload.submission.parentId]);
-  const eventDedupeKey = `reply:${payload.submission.id}`;
-  const payloadJson = serializePayload(communityPayload("comment"));
-
-  return [
-    db
-      .prepare(
-        `UPDATE notifications
-       SET open_aggregation_key = NULL
-       WHERE open_aggregation_key = ?1
-         AND window_expires_at <= ?2`,
-      )
-      .bind(openKey, createdAt),
-    db
-      .prepare(
-        `INSERT INTO notifications (
-         id, recipient_user_id, category, type, actor_user_id,
-         submission_id, parent_submission_id, marker_id, poi_hash, poi_type,
-         payload_json, dedupe_key, read_at, created_at,
-         open_aggregation_key, window_started_at, window_expires_at,
-         last_event_at, message_count
-       )
-       SELECT
-         ?1, parent.user_id, 'community', 'community.comment.reply', child.user_id,
-         child.id, parent.id, child.poi_id, child.poi_hash, child.poi_type,
-         ?2, ?3, NULL, ?4,
-         ?5, ?4, ?6, ?4, 0
-       FROM ugc_submissions child
-       INNER JOIN ugc_submissions parent ON parent.id = child.parent_id
-       WHERE child.id = ?7
-         AND child.snapshot_id = ?8
-         AND child.status = 'active'
-         AND child.updated_at = ?4
-         AND child.kind = 'comment'
-         AND parent.kind = 'comment'
-         AND parent.user_id <> child.user_id
-         AND NOT EXISTS (
-           SELECT 1 FROM notification_messages WHERE dedupe_key = ?9
-         )
-       ON CONFLICT(open_aggregation_key) DO NOTHING`,
-      )
-      .bind(
-        notificationId,
-        payloadJson,
-        `group:${notificationId}`,
-        createdAt,
-        openKey,
-        expiresAt(createdAt),
-        payload.submission.id,
-        payload.submission.snapshotId,
-        eventDedupeKey,
-      ),
-    db
-      .prepare(
-        `INSERT INTO notification_messages (
-         id, notification_id, actor_user_id, submission_id, parent_submission_id,
-         marker_id, poi_hash, poi_type, payload_json, dedupe_key, created_at
-       )
-       SELECT
-         ?1, n.id, child.user_id, child.id, parent.id,
-         child.poi_id, child.poi_hash, child.poi_type, ?2, ?3, ?4
-       FROM ugc_submissions child
-       INNER JOIN ugc_submissions parent ON parent.id = child.parent_id
-       INNER JOIN notifications n ON n.open_aggregation_key = ?5
-       WHERE child.id = ?6
-         AND child.snapshot_id = ?7
-         AND child.status = 'active'
-         AND child.updated_at = ?4
-         AND child.kind = 'comment'
-         AND parent.kind = 'comment'
-         AND parent.user_id <> child.user_id
-         AND ?4 < n.window_expires_at
-       ON CONFLICT(dedupe_key) DO NOTHING`,
-      )
-      .bind(
-        messageId,
-        payloadJson,
-        eventDedupeKey,
-        createdAt,
-        openKey,
-        payload.submission.id,
-        payload.submission.snapshotId,
-      ),
-    appendParentUpdateStatement(db, messageId),
-  ];
 }
 
 export function prepareCommentVoteNotificationWrite(

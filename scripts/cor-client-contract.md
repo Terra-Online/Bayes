@@ -9,7 +9,7 @@ COR_REPO_ROOT=/path/to/Cor node node_modules/vitest/vitest.mjs run --config scri
 
 Bayes dependencies and owner-provided ignored data must be set up as for the
 normal test suite. The suite uses the existing migration-backed SQLite D1 test
-adapter, imports the explicit new UGC model, seeds real authentication sessions,
+adapter with the latest registered schema, seeds real authentication sessions,
 and forwards Cor fetch requests to the production Hono moderation routes through
 `app.request`. Cookie credentials and actor authorization run normally. External
 Redis, Workers cache invalidation and queue/live delivery use the existing test

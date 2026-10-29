@@ -10,9 +10,9 @@ import { createTestDatabase, type TestDatabase } from "@/test/database/createTes
 import { insertCommentSnapshot } from "@/test/fixtures/commentSnapshots";
 import { insertImageSnapshot } from "@/test/fixtures/imageSnapshots";
 import { insertNotification } from "@/test/fixtures/notifications";
-import { importCurrentSubmissions } from "@/test/fixtures/ugcSnapshots";
 import { insertUser } from "@/test/fixtures/users";
 
+import { getVisibleCommentsByIds } from "./commentTranslation";
 import { listVisibleImageCountsByMarker } from "./imageCoverage";
 import {
   listActiveCommentsByMarker,
@@ -25,7 +25,6 @@ import {
   listUserImagesByMarker,
 } from "./listImages";
 import type { SnapshotReviewStatus } from "./snapshotReads";
-import { getVisibleCommentsByIds } from "./statusSubmission";
 
 interface SubmissionScenarioOptions {
   parentId?: string;
@@ -41,7 +40,7 @@ describe("public read SQL under D1 limits", () => {
 
   beforeEach(() => {
     connection = createTestDatabase();
-    importCurrentSubmissions(connection);
+
     insertUser(connection.sqlite, {
       uid: "viewer",
       uid_number: 1,
