@@ -75,6 +75,9 @@ def rehearse(directory):
     legacy = connect(directory / "legacy.sqlite")
     try:
         before = state(legacy)
+        legacy_status_counts = dict(legacy.execute("SELECT status,count(*) FROM ugc_submissions GROUP BY status"))
+        active_counts = {table: legacy.execute(f"SELECT count(*) FROM {table} WHERE active=1").fetchone()[0]
+                         for table in DEPENDENCIES[:3]}
         copy_database(legacy, directory / "backup.sqlite")
         copy_database(legacy, directory / "working.sqlite")
     finally:
@@ -100,6 +103,7 @@ def rehearse(directory):
 
         working.executescript("BEGIN;\n" + migration + "\nCOMMIT;")
         committed = state(working)
+        review_status_counts = dict(working.execute("SELECT review_status,count(*) FROM ugc_snapshots GROUP BY review_status"))
         for table in DEPENDENCIES:
             assert committed["rows"][table] == before["rows"][table], table
         assert len(committed["rows"]["ugc_submissions"]) == len(committed["rows"]["ugc_snapshots"]) == 10
@@ -142,6 +146,12 @@ def rehearse(directory):
         "scope": "synthetic offline SQLite; target backup, maintenance and deployment unperformed",
         "migration_sha256": hashlib.sha256(migration_path.read_bytes()).hexdigest(),
         "preflight": preflight,
+        "submission_count": len(committed["rows"]["ugc_submissions"]),
+        "snapshot_count": len(committed["rows"]["ugc_snapshots"]),
+        "legacy_status_counts": legacy_status_counts,
+        "review_status_counts": review_status_counts,
+        "retained_row_counts": {table: len(committed["rows"][table]) for table in DEPENDENCIES},
+        "retained_active_counts": active_counts,
         "passed": ["backup reopen and full restore before commit", "failure after five dependencies detached rolls back",
                    "canonical 0038 committed and reopened", "five dependencies and counters identical",
                    "all identities/content/files/state/times preserved by agreed mapping", "FK clean and temporary tables removed",

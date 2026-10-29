@@ -27,7 +27,7 @@ def inspect(path):
             return [dict(row) for row in db.execute(sql)]
 
         issues = {
-            "pending_comments": rows("""SELECT id,status FROM ugc_submissions
+            "pending_comments": rows("""SELECT id,snapshot_id,status,created_at FROM ugc_submissions
                 WHERE kind='comment' AND status IN ('pending_openai','pending_audit') ORDER BY id"""),
             "unknown_statuses": rows("""SELECT id,status FROM ugc_submissions WHERE status IS NULL
                 OR status NOT IN ('active','flagged','remove_request','stale','pending_openai','pending_audit')
