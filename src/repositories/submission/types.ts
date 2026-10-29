@@ -67,6 +67,7 @@ export interface PublicSubmissionImage {
 
 export interface PublicSubmissionComment {
   id: string;
+  snapshotId: string;
   markerId: string;
   poiHash: string;
   poiType: string;

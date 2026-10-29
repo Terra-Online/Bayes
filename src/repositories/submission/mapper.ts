@@ -150,6 +150,21 @@ export function publicImageFromRow(
   };
 }
 
+function commentStatusFromRow(row: Record<string, unknown>): SubmissionStatus {
+  if (
+    row.author_deleted_at != null ||
+    row.admin_deleted_at != null ||
+    row.review_status === "unknown" ||
+    row.review_status === "rejected"
+  ) {
+    return "stale";
+  }
+  if (row.review_status === "approved") {
+    return toCount(row.flag_count) > 0 ? "flagged" : "active";
+  }
+  return mapStatus(row.review_status);
+}
+
 export function publicCommentFromRow(
   row: Record<string, unknown>,
   viewerUserId?: string,
@@ -157,13 +172,14 @@ export function publicCommentFromRow(
   const submission = mapSubmission(row);
   return {
     id: submission.id,
+    snapshotId: submission.snapshotId,
     markerId: submission.markerId,
     poiHash: submission.poiHash,
     poiType: submission.poiType,
     parentId: submission.parentId,
     depth: submission.commentDepth,
     content: submission.content ?? "",
-    editUndoAvailable: submission.editOriginalContent !== null,
+    editUndoAvailable: false,
     author:
       submission.submitter?.publicUid && submission.submitter.nickname
         ? {
@@ -177,7 +193,7 @@ export function publicCommentFromRow(
               : {}),
           }
         : null,
-    status: submission.status,
+    status: commentStatusFromRow(row),
     score: Number(row.score ?? 0) || 0,
     viewerVote: viewerUserId ? mapVoteValue(row.viewer_vote) : undefined,
     flagged: viewerUserId ? Boolean(row.viewer_flagged) : undefined,

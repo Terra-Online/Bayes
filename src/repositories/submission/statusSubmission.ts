@@ -275,7 +275,7 @@ export async function markSubmissionAutoModerationQueued(
 export async function getVisibleCommentsByIds(
   db: D1Database,
   ids: string[],
-): Promise<Array<Pick<SubmissionRecord, "id" | "content">>> {
+): Promise<Array<Pick<SubmissionRecord, "id" | "snapshotId" | "content">>> {
   const uniqueIds = [...new Set(ids.map((id) => id.trim()).filter(Boolean))].slice(0, 100);
   if (uniqueIds.length === 0) {
     return [];
@@ -284,14 +284,13 @@ export async function getVisibleCommentsByIds(
   const placeholders = uniqueIds.map((_, index) => `?${index + 1}`).join(", ");
   const result = await db
     .prepare(
-      `SELECT s.id, s.content
-       FROM ugc_submissions s INDEXED BY sqlite_autoindex_ugc_submissions_1
+      `SELECT s.id, s.snapshot_id AS snapshotId, s.content
+       FROM ugc_public_submissions s
        WHERE s.id IN (${placeholders})
-         AND s.kind = 'comment'
-         AND s.status IN ('active', 'flagged', 'remove_request')`,
+         AND s.kind = 'comment'`,
     )
     .bind(...uniqueIds)
-    .all<Pick<SubmissionRecord, "id" | "content">>();
+    .all<Pick<SubmissionRecord, "id" | "snapshotId" | "content">>();
 
   return result.results ?? [];
 }

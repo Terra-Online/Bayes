@@ -3,11 +3,11 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import type { CommentTranslationItem } from "@/services/ugc/translation/comments";
 import {
   createCommentTranslationFixture,
+  insertTranslationSubmission,
   createTranslationSigningKey,
   type CommentTranslationFixture,
   type TranslationProvider,
 } from "@/test/fixtures/commentTranslation";
-import { insertSubmission } from "@/test/fixtures/submissions";
 
 let database: CommentTranslationFixture["database"];
 let env: CommentTranslationFixture["env"];
@@ -61,8 +61,12 @@ async function translations(body: object, user: string | null = "reader") {
 
 describe("comment translation cache", () => {
   it("keeps translations separate for different comment text and target languages", async () => {
-    insertSubmission(database.sqlite, { id: "comment", userId: "author", content: originalText });
-    insertSubmission(database.sqlite, {
+    insertTranslationSubmission(database.sqlite, {
+      id: "comment",
+      userId: "author",
+      content: originalText,
+    });
+    insertTranslationSubmission(database.sqlite, {
       id: "other-comment",
       userId: "author",
       content: "出口在西边。",
@@ -102,7 +106,11 @@ describe("comment translation cache", () => {
   });
 
   it("isolates explicit source languages in KV and SQLite when the provider omits language detection", async () => {
-    insertSubmission(database.sqlite, { id: "comment", userId: "author", content: originalText });
+    insertTranslationSubmission(database.sqlite, {
+      id: "comment",
+      userId: "author",
+      content: originalText,
+    });
     provider.translationResponse = (payload) =>
       Response.json({
         translations: [
@@ -177,7 +185,11 @@ describe("comment translation cache", () => {
   ])(
     "recovers from %s using persisted translations without contacting Google again",
     async (failure) => {
-      insertSubmission(database.sqlite, { id: "comment", userId: "author", content: originalText });
+      insertTranslationSubmission(database.sqlite, {
+        id: "comment",
+        userId: "author",
+        content: originalText,
+      });
       await translations({});
       const before = storedTranslations();
       const unavailableRead =
@@ -216,24 +228,29 @@ describe("comment translation cache", () => {
       ]);
       expect(translationRequests).toHaveLength(1);
       expect(storedTranslations()).toEqual(before);
-      expect(database.sqlite.prepare("SELECT content, status FROM ugc_submissions").all()).toEqual([
-        { content: originalText, status: "active" },
-      ]);
+      expect(
+        database.sqlite.prepare("SELECT content, review_status FROM ugc_snapshots").all(),
+      ).toEqual([{ content: originalText, review_status: "approved" }]);
     },
   );
 
   it("reuses one translation for equal visible text while keeping pending, withdrawn, missing and image items untranslated", async () => {
-    for (const [id, status] of [
-      ["comment", "active"],
-      ["flagged", "flagged"],
-      ["removal", "remove_request"],
+    for (const [id, reviewStatus] of [
+      ["comment", "approved"],
+      ["flagged", "approved"],
+      ["removal", "approved"],
       ["pending", "pending_openai"],
       ["audit", "pending_audit"],
-      ["withdrawn", "stale"],
-    ]) {
-      insertSubmission(database.sqlite, { id, userId: "author", content: originalText, status });
+      ["withdrawn", "unknown"],
+    ] as const) {
+      insertTranslationSubmission(database.sqlite, {
+        id,
+        userId: "author",
+        content: originalText,
+        reviewStatus,
+      });
     }
-    insertSubmission(database.sqlite, {
+    insertTranslationSubmission(database.sqlite, {
       id: "image",
       userId: "author",
       kind: "image",
@@ -289,7 +306,11 @@ describe("comment translation cache", () => {
   });
 
   it("reports an anonymous cache miss without contacting a translation provider or changing the comment", async () => {
-    insertSubmission(database.sqlite, { id: "comment", userId: "author", content: originalText });
+    insertTranslationSubmission(database.sqlite, {
+      id: "comment",
+      userId: "author",
+      content: originalText,
+    });
     expect(await translations({ cachedOnly: true }, null)).toEqual([
       expect.objectContaining({
         commentId: "comment",
@@ -300,16 +321,21 @@ describe("comment translation cache", () => {
     expect(providerFetch).not.toHaveBeenCalled();
     expect(storedTranslations()).toEqual([]);
     expect(kv.size).toBe(0);
-    expect(database.sqlite.prepare("SELECT content, status FROM ugc_submissions").all()).toEqual([
-      { content: originalText, status: "active" },
-    ]);
+    expect(
+      database.sqlite.prepare("SELECT content, review_status FROM ugc_snapshots").all(),
+    ).toEqual([{ content: originalText, review_status: "approved" }]);
   });
 
   it("translates a visible comment for a signed-in reader and serves the saved result anonymously even after KV eviction", async () => {
-    insertSubmission(database.sqlite, { id: "comment", userId: "author", content: originalText });
+    insertTranslationSubmission(database.sqlite, {
+      id: "comment",
+      userId: "author",
+      content: originalText,
+    });
     expect(await translations({})).toEqual([
       {
         commentId: "comment",
+        snapshotId: "snapshot-comment",
         sourceLanguage: "zh-CN",
         targetLanguage: "en-US",
         provider: "google_cloud_translation_v3",
@@ -333,6 +359,7 @@ describe("comment translation cache", () => {
     expect(await translations({ cachedOnly: true }, null)).toEqual([
       expect.objectContaining({
         commentId: "comment",
+        snapshotId: "snapshot-comment",
         translatedContent: translatedText,
         cached: true,
       }),
@@ -341,6 +368,7 @@ describe("comment translation cache", () => {
     expect(await translations({ cachedOnly: true }, null)).toEqual([
       expect.objectContaining({
         commentId: "comment",
+        snapshotId: "snapshot-comment",
         translatedContent: translatedText,
         cached: true,
       }),
@@ -349,9 +377,9 @@ describe("comment translation cache", () => {
     expect(kv.size).toBeGreaterThan(0);
     expect(
       database.sqlite
-        .prepare("SELECT content, status FROM ugc_submissions WHERE id = 'comment'")
+        .prepare("SELECT content, review_status FROM ugc_snapshots WHERE submission_id = 'comment'")
         .get(),
-    ).toEqual({ content: originalText, status: "active" });
+    ).toEqual({ content: originalText, review_status: "approved" });
   });
 });
 
@@ -362,7 +390,11 @@ describe("translation access", () => {
   ])(
     "rejects live translation for $user while allowing them to read existing translations",
     async ({ user, status, code }) => {
-      insertSubmission(database.sqlite, { id: "comment", userId: "author", content: originalText });
+      insertTranslationSubmission(database.sqlite, {
+        id: "comment",
+        userId: "author",
+        content: originalText,
+      });
       await translations({});
       const before = storedTranslations();
       const response = await request({ commentIds: ["comment"], targetLanguage: "en-US" }, user);
@@ -383,7 +415,11 @@ describe("translation access", () => {
 
 describe("translation glossary", () => {
   it("preserves earlier glossary translations across releases and applies the new release to new text", async () => {
-    insertSubmission(database.sqlite, { id: "comment", userId: "author", content: originalText });
+    insertTranslationSubmission(database.sqlite, {
+      id: "comment",
+      userId: "author",
+      content: originalText,
+    });
     env.GOOGLE_TRANSLATE_GLOSSARY = "projects/test-project/locations/global/glossaries/endfield";
     env.GOOGLE_TRANSLATE_GLOSSARY_VERSION = "2026 release 1";
     let providerWording = "First glossary wording";
@@ -405,7 +441,7 @@ describe("translation glossary", () => {
         cached: true,
       }),
     ]);
-    insertSubmission(database.sqlite, {
+    insertTranslationSubmission(database.sqlite, {
       id: "new-comment",
       userId: "author",
       content: "新入口在北边。",
@@ -447,7 +483,11 @@ describe("translation glossary", () => {
   it.each([undefined, "zh-CN"])(
     "falls back to a usable base translation when the glossary is unavailable (source: %s)",
     async (sourceLanguage) => {
-      insertSubmission(database.sqlite, { id: "comment", userId: "author", content: originalText });
+      insertTranslationSubmission(database.sqlite, {
+        id: "comment",
+        userId: "author",
+        content: originalText,
+      });
       env.GOOGLE_TRANSLATE_GLOSSARY = "projects/test-project/locations/global/glossaries/endfield";
       vi.spyOn(console, "warn").mockImplementation(() => {});
       provider.translationResponse = (payload) =>
@@ -478,8 +518,12 @@ describe("translation glossary", () => {
   );
 
   it("keeps base translations when detection cannot select a glossary source language", async () => {
-    insertSubmission(database.sqlite, { id: "comment", userId: "author", content: originalText });
-    insertSubmission(database.sqlite, {
+    insertTranslationSubmission(database.sqlite, {
+      id: "comment",
+      userId: "author",
+      content: originalText,
+    });
+    insertTranslationSubmission(database.sqlite, {
       id: "polish",
       userId: "author",
       content: "Wejście na wschodzie.",
@@ -528,7 +572,11 @@ describe("translation glossary", () => {
   });
 
   it("uses the detected source language to save the glossary translation for later anonymous readers", async () => {
-    insertSubmission(database.sqlite, { id: "comment", userId: "author", content: "源石在入口。" });
+    insertTranslationSubmission(database.sqlite, {
+      id: "comment",
+      userId: "author",
+      content: "源石在入口。",
+    });
     const glossary = "projects/test-project/locations/global/glossaries/endfield";
     env.GOOGLE_TRANSLATE_GLOSSARY = glossary;
     provider.translationResponse = (payload) =>

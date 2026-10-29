@@ -210,9 +210,7 @@ describe("bounded public reads", () => {
         userId: "author",
         kind: kind === "images" ? "image" : "comment",
       });
-      if (kind === "images") {
-        importCurrentSubmissions(database);
-      }
+      importCurrentSubmissions(database);
       const before = database.sqlite.prepare("SELECT * FROM ugc_submissions").all();
       database.hooks.beforeQuery = (sql) => {
         if (/ugc_(submissions|public_submissions)/.test(sql)) {
@@ -243,6 +241,7 @@ describe("bounded public reads", () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     insertUser(database.sqlite, { uid: "author" });
     insertSubmission(database.sqlite, { id: "stored", userId: "author" });
+    importCurrentSubmissions(database);
     const before = database.sqlite.prepare("SELECT * FROM ugc_submissions").all();
     database.hooks.beforeQuery = () => {
       throw new Error("D1_ERROR: private database detail");

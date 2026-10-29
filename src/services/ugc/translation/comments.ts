@@ -33,6 +33,7 @@ const MAX_TRANSLATION_BATCH_SIZE = 100;
 const SAME_LANGUAGE_ERROR = "Target language cannot be equal to source language.";
 export type CommentTranslationItem = {
   commentId: string;
+  snapshotId?: string;
   translatedContent?: string;
   sourceLanguage?: string;
   targetLanguage: string;
@@ -42,7 +43,7 @@ export type CommentTranslationItem = {
   error?: string;
 };
 
-type TranslationOutcome = Omit<CommentTranslationItem, "commentId">;
+type TranslationOutcome = Omit<CommentTranslationItem, "commentId" | "snapshotId">;
 
 type TextTranslationCacheRecord = {
   translatedText: string;
@@ -712,6 +713,7 @@ export async function translateVisibleComments(
       // Every visible group has either a cache outcome or a translation outcome.
       ...(group ? outcomeByGroup.get(group)! : { ...defaults, error: "COMMENT_NOT_TRANSLATABLE" }),
       commentId,
+      ...(commentById.has(commentId) ? { snapshotId: commentById.get(commentId)!.snapshotId } : {}),
     })),
   };
 }

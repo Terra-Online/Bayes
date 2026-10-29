@@ -21,7 +21,7 @@ async function getPublicMarkerCommentCacheKey(
   namespace: PublicCommentCacheNamespace,
   markerId: string,
 ): Promise<string> {
-  const version = "v2";
+  const version = "v3";
   return `ugc:marker-comments:${version}:${namespace}:${await sha256Hex(markerId)}`;
 }
 

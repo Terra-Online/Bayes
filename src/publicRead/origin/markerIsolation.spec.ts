@@ -3,8 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vite
 import type { PublicReadCacheNamespace, PublicReadMarkerKind } from "@/publicRead/contract/markers";
 import { invalidateUploadCaches } from "@/publicRead/invalidate";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
+import { insertCommentSnapshot } from "@/test/fixtures/commentSnapshots";
 import { insertImageSnapshot } from "@/test/fixtures/imageSnapshots";
-import { insertSubmission } from "@/test/fixtures/submissions";
 import { importCurrentSubmissions } from "@/test/fixtures/ugcSnapshots";
 import { insertUser } from "@/test/fixtures/users";
 
@@ -82,9 +82,7 @@ function interceptReads(before: (values: unknown[]) => Promise<void>): void {
 
 describe.each(["images", "comments"] as const)("%s invocation isolation", (kind) => {
   beforeEach(() => {
-    if (kind === "images") {
-      importCurrentSubmissions(database);
-    }
+    importCurrentSubmissions(database);
   });
 
   function read(
@@ -119,7 +117,7 @@ describe.each(["images", "comments"] as const)("%s invocation isolation", (kind)
         content: "Content stored",
       });
     } else {
-      insertSubmission(database.sqlite, { id: "stored", userId: "author" });
+      insertCommentSnapshot(database.sqlite, { id: "stored", userId: "author" });
     }
   }
 
@@ -164,9 +162,7 @@ describe.each(["images", "comments"] as const)("%s invocation isolation", (kind)
     }
     expect(kv.values.size).toBe(3);
     database.sqlite.exec(
-      kind === "images"
-        ? "UPDATE ugc_submissions SET author_deleted_at='deleted' WHERE id='stored'"
-        : "UPDATE ugc_submissions SET status='stale' WHERE id='stored'",
+      "UPDATE ugc_submissions SET author_deleted_at='deleted' WHERE id='stored'",
     );
     const archived = database.sqlite.prepare("SELECT * FROM ugc_submissions").all();
     // Workers can report a failed purge or reject the RPC. Both must still allow

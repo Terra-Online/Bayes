@@ -10,6 +10,7 @@ import {
   type SeededSession,
 } from "@/test/fixtures/auth";
 import { seedImageReadScenario } from "@/test/fixtures/imageReadScenario";
+import { importCurrentSubmissions } from "@/test/fixtures/ugcSnapshots";
 
 vi.mock("cloudflare:workers", () => ({ DurableObject: class {}, exports: {} }));
 vi.mock("@cloudflare/containers", () => ({ getRandom: vi.fn() }));
@@ -24,6 +25,7 @@ beforeEach(() => {
   vi.spyOn(console, "error").mockImplementation(() => undefined);
   database = createTestDatabase();
   seedImageReadScenario(database.sqlite);
+  importCurrentSubmissions(database);
   insertAuthUser(database.sqlite, { id: "author" });
   activeSession = insertSession(database.sqlite, { userId: "author" });
   suspendedSession = insertAuthenticatedUser(database.sqlite, { uid: "suspended-user", role: "s" });
