@@ -6,6 +6,12 @@ import {
 } from "@/test/fixtures/imageLifecycle";
 import { insertSubmission } from "@/test/fixtures/submissions";
 
+vi.mock("cloudflare:workers", () => ({
+  DurableObject: class {},
+  exports: { PublicReadCache: { purgeMarker: async () => ({ success: true }) } },
+}));
+vi.mock("@cloudflare/containers", () => ({ getRandom: vi.fn() }));
+
 let database: ImageLifecycleFixture["database"];
 let env: ImageLifecycleFixture["env"];
 let moderation: ImageLifecycleFixture["moderation"];
@@ -61,7 +67,7 @@ function activeUsers(table: "ugc_submission_upvotes" | "ugc_submission_flags", i
 
 describe("image write permissions", () => {
   it.each(["pending_openai", "pending_audit", "stale"])(
-    "preserves a %s image when readers try to vote or flag it or the owner requests removal",
+    "preserves a %s image when readers try to vote or flag it",
     async (status) => {
       insertSubmission(database.sqlite, { id: "photo", kind: "image", userId: "author", status });
       const before = persistedState();
@@ -70,35 +76,13 @@ describe("image write permissions", () => {
         expect(response.status).toBe(409);
         expect(await response.json()).toMatchObject({ code: "INVALID_SUBMISSION_STATUS" });
       }
-      for (const action of ["remove-request", "unrecall"]) {
-        const response = await post("photo", action, "author");
-        expect(response.status).toBe(409);
-        expect(await response.json()).toMatchObject({ code: "INVALID_STATUS_TRANSITION" });
-      }
       expect(persistedState()).toEqual(before);
       expect(webhooks).toEqual([]);
       expect(liveNotifications).toEqual([]);
     },
   );
 
-  it("keeps existing flags during removal review and cannot cancel an image with no removal request", async () => {
-    insertSubmission(database.sqlite, { id: "photo", kind: "image", userId: "author" });
-    const notRequested = await post("photo", "unrecall", "author");
-    expect(notRequested.status).toBe(409);
-    expect(submission("photo").status).toBe("active");
-    await post("photo", "flag");
-    await post("photo", "remove-request", "author");
-    const before = persistedState();
-    for (const action of ["flag", "unflag"]) {
-      const response = await post("photo", action);
-      expect(response.status).toBe(409);
-      expect(await response.json()).toMatchObject({ code: "INVALID_SUBMISSION_STATUS" });
-    }
-    expect(persistedState()).toEqual(before);
-    expect(webhooks).toHaveLength(2);
-  });
-
-  it.each(["upvote", "unvote", "flag", "unflag", "recall", "unrecall", "remove-request"])(
+  it.each(["upvote", "unvote", "flag", "unflag"])(
     "does not apply image %s to a missing item or a comment",
     async (action) => {
       insertSubmission(database.sqlite, { id: "comment", userId: "author" });
@@ -146,15 +130,7 @@ describe("image write permissions", () => {
       vi.spyOn(console, "error").mockImplementation(() => {});
     }
     const before = persistedState();
-    for (const action of [
-      "upvote",
-      "unvote",
-      "flag",
-      "unflag",
-      "recall",
-      "unrecall",
-      "remove-request",
-    ]) {
+    for (const action of ["upvote", "unvote", "flag", "unflag"]) {
       const response = await request(`/images/photo/${action}`, user, {});
       expect(response.status).toBe(status);
       expect(await response.json()).toMatchObject({ code });
@@ -173,17 +149,9 @@ describe("image write permissions", () => {
   it.each([
     ["flag", "author", "CANNOT_FLAG_OWN_SUBMISSION"],
     ["unflag", "author", "CANNOT_UNFLAG_OWN_SUBMISSION"],
-    ["recall", "reader", "RECALL_OWNER_ONLY"],
-    ["recall", "admin", "RECALL_OWNER_ONLY"],
-    ["unrecall", "reader", "RECALL_OWNER_ONLY"],
-    ["remove-request", "reader", "REMOVE_REQUEST_OWNER_ONLY"],
-    ["remove-request", "admin", "REMOVE_REQUEST_OWNER_ONLY"],
   ])("rejects %s by %s without changing the image or its reactions", async (action, user, code) => {
     insertSubmission(database.sqlite, { id: "photo", kind: "image", userId: "author" });
     await post("photo", "flag");
-    if (action === "unrecall") {
-      await post("photo", "remove-request", "author");
-    }
     const before = persistedState();
     const notices = webhooks.length;
     const response = await post("photo", action, user);
@@ -340,150 +308,4 @@ describe("image flags", () => {
   });
 });
 
-describe("image removal requests", () => {
-  it.each([false, true])(
-    "keeps an image visible during removal review and restores its remaining flags on cancellation (flagged: %s)",
-    async (flagged) => {
-      insertSubmission(database.sqlite, { id: "photo", kind: "image", userId: "author" });
-      if (flagged) {
-        await post("photo", "flag");
-      }
-      const response = await post("photo", "remove-request", "author");
-      expect(response.status).toBe(200);
-      expect(await response.json()).toEqual({ ok: true, status: "remove_request" });
-      expect(submission("photo").status).toBe("remove_request");
-      expect(await publicImage()).toMatchObject({
-        status: "remove_request",
-        flagCount: flagged ? 1 : 0,
-      });
-      expect(webhooks.at(-1)).toMatchObject({
-        event: {
-          type: "remove_request_created",
-          actor: { uid: "author" },
-          submission: { id: "photo" },
-          previousStatus: flagged ? "flagged" : "active",
-          nextStatus: "remove_request",
-        },
-      });
-      // Removal review does not hide the image or disable ordinary voting.
-      const voteDuringReview = await post("photo", "upvote");
-      expect(await voteDuringReview.json()).toMatchObject({
-        created: true,
-        upvoteCount: 1,
-      });
-      const withdrawnVote = await post("photo", "unvote");
-      expect(await withdrawnVote.json()).toMatchObject({
-        deleted: true,
-        upvoteCount: 0,
-      });
-      const beforeRetry = submission("photo");
-      const events = webhooks.length;
-      const retry = await post("photo", "remove-request", "author");
-      expect(retry.status).toBe(409);
-      expect(submission("photo")).toEqual(beforeRetry);
-      expect(webhooks).toHaveLength(events);
-      const cancelled = await post("photo", "unrecall", "author");
-      const restored = flagged ? "flagged" : "active";
-      expect(cancelled.status).toBe(200);
-      expect(await cancelled.json()).toEqual({
-        ok: true,
-        status: restored,
-        flagCount: flagged ? 1 : 0,
-      });
-      expect(submission("photo").status).toBe(restored);
-      expect(activeUsers("ugc_submission_flags")).toEqual(flagged ? ["reader"] : []);
-      expect(await publicImage()).toMatchObject({ status: restored });
-      expect(webhooks.at(-1)).toMatchObject({
-        event: {
-          type: "remove_request_cancelled",
-          actor: { uid: "author" },
-          previousStatus: "remove_request",
-          nextStatus: restored,
-          flagCount: flagged ? 1 : 0,
-        },
-      });
-      expect(moderation).toEqual([]);
-    },
-  );
-});
-
-describe("image recall", () => {
-  it.each(["pending_openai", "pending_audit", "active", "flagged", "remove_request"])(
-    "withdraws a %s image from public and author lists and records one resolution even when retried",
-    async (status) => {
-      insertSubmission(database.sqlite, { id: "photo", kind: "image", userId: "author", status });
-      const response = await post("photo", "recall", "author");
-      expect(response.status).toBe(200);
-      expect(await response.json()).toEqual({ ok: true, status: "stale" });
-      expect(submission("photo")).toMatchObject({
-        status: "stale",
-        file_path: "images/photo.webp",
-        snapshot_id: "snapshot-photo",
-      });
-      expect((await request("/images/photo?markerId=marker-1", null)).status).toBe(404);
-      const authorList = await request("/images/mine?markerId=marker-1");
-      expect(await authorList.json()).toEqual({ items: [] });
-      expect(
-        database.sqlite
-          .prepare(
-            "SELECT from_status, to_status, source FROM ugc_review_events WHERE submission_id = 'photo'",
-          )
-          .all(),
-      ).toEqual([{ from_status: status, to_status: "stale", source: "user_action" }]);
-      expect(
-        database.sqlite
-          .prepare(
-            "SELECT recipient_user_id, type, submission_id, message_count FROM notifications",
-          )
-          .all(),
-      ).toEqual([
-        {
-          recipient_user_id: "author",
-          type: "system.remove_request.resolved",
-          submission_id: "photo",
-          message_count: 1,
-        },
-      ]);
-      expect(liveNotifications).toEqual([
-        expect.objectContaining({
-          recipient: "author",
-          body: expect.objectContaining({
-            event: "notification.upserted",
-            notification: expect.objectContaining({
-              target: expect.objectContaining({ submissionId: "photo", markerId: "marker-1" }),
-            }),
-          }),
-        }),
-      ]);
-      const recalled = submission("photo");
-      const retry = await post("photo", "recall", "author");
-      expect(await retry.json()).toEqual({ ok: true, status: "stale" });
-      expect(submission("photo")).toEqual(recalled);
-      expect(
-        database.sqlite.prepare("SELECT COUNT(*) AS count FROM ugc_review_events").get(),
-      ).toEqual({ count: 1 });
-      expect(
-        database.sqlite.prepare("SELECT COUNT(*) AS count FROM notification_messages").get(),
-      ).toEqual({ count: 1 });
-      expect(liveNotifications).toHaveLength(1);
-      expect(moderation).toEqual([]);
-      expect(webhooks).toEqual([]);
-    },
-  );
-});
-
-vi.mock("cloudflare:workers", () => ({
-  DurableObject: class {},
-  exports: { PublicReadCache: { purgeMarker: async () => ({ success: true }) } },
-}));
-vi.mock("@cloudflare/containers", () => ({ getRandom: vi.fn() }));
-vi.mock("@upstash/redis", () => ({
-  Redis: class {
-    async zremrangebyscore() {}
-    async zcard() {
-      return 0;
-    }
-    async zadd() {}
-    async expire() {}
-  },
-}));
+// Replaced recall/removal expectations: authorDeletion.spec.ts exercises logical DELETE and retired POST 404.

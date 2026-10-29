@@ -229,11 +229,12 @@ export function notificationTypeForTransition(
   if (previousStatus === nextStatus) {
     return null;
   }
+  // Removal resolution is historical-only; no transition creates a new message.
   if (previousStatus === "remove_request" && (nextStatus === "active" || nextStatus === "stale")) {
-    return "system.remove_request.resolved";
+    return null;
   }
   if (source === "user_action" && nextStatus === "stale") {
-    return "system.remove_request.resolved";
+    return null;
   }
   if (nextStatus === "active") {
     return "system.submission.approved";

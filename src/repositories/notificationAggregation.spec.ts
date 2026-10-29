@@ -309,13 +309,10 @@ describe("notification aggregation SQL", () => {
 
     const system = await listNotifications(db, { userId: "user-1", category: "system", limit: 20 });
     expect(system.items.map((item) => item.type).sort()).toEqual([
-      "system.remove_request.resolved",
       "system.submission.approved",
       "system.submission.needs_review",
     ]);
-    expect(
-      system.items.find((item) => item.type === "system.remove_request.resolved")?.messages,
-    ).toHaveLength(2);
+    expect(system.items.some((item) => item.type === "system.remove_request.resolved")).toBe(false);
 
     const community = await listNotifications(db, {
       userId: "user-1",
@@ -332,9 +329,9 @@ describe("notification aggregation SQL", () => {
       messageCount: 2,
     });
     expect(await getNotificationUnreadCounts(db, "user-1")).toEqual({
-      system: 3,
+      system: 2,
       community: 3,
-      total: 6,
+      total: 5,
     });
   });
 
@@ -418,7 +415,7 @@ describe("notification aggregation SQL", () => {
     expect(replyGroups.map((item) => item.messages.length)).toEqual([1, 1]);
   });
 
-  it("returns a notification for a persisted user recall", async () => {
+  it("retires new removal notifications while keeping historical resolution messages readable", async () => {
     database = createTestDatabase();
     const db = database.db;
     insertUser(database.sqlite, { uid: "owner" });
@@ -479,8 +476,14 @@ describe("notification aggregation SQL", () => {
       source: "manual_moderation",
     });
     expect(result.updated).toBe(true);
-    expect(result.notifications).toHaveLength(1);
-    expect(result.notifications[0]?.type).toBe("system.remove_request.resolved");
+    expect(result.notifications).toEqual([]);
+    expect(database.sqlite.prepare("SELECT count(*) AS count FROM notifications").get()).toEqual({
+      count: 0,
+    });
+    // Pre-cutover messages remain readable; retirement only stops new generation.
+    database.sqlite.exec(`INSERT INTO notifications
+      (id,recipient_user_id,category,type,payload_json,dedupe_key,created_at)
+      VALUES ('historical','owner','system','system.remove_request.resolved','{"kind":"image"}','historical','2026-08-02T12:00:00.000Z')`);
     const listed = await listNotifications(db, { userId: "owner", category: "system", limit: 20 });
     expect(listed.items).toHaveLength(1);
     expect(listed.items[0]?.type).toBe("system.remove_request.resolved");

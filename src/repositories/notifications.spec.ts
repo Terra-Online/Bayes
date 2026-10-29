@@ -60,16 +60,10 @@ describe("notification types", () => {
     expect(notificationTypeForTransition("pending_openai", "pending_audit")).toBe(
       "system.submission.needs_review",
     );
-    expect(notificationTypeForTransition("remove_request", "stale")).toBe(
-      "system.remove_request.resolved",
-    );
-    expect(notificationTypeForTransition("remove_request", "active")).toBe(
-      "system.remove_request.resolved",
-    );
+    expect(notificationTypeForTransition("remove_request", "stale")).toBeNull();
+    expect(notificationTypeForTransition("remove_request", "active")).toBeNull();
     expect(notificationTypeForTransition("pending_audit", "stale")).toBeNull();
-    expect(notificationTypeForTransition("active", "stale", "user_action")).toBe(
-      "system.remove_request.resolved",
-    );
+    expect(notificationTypeForTransition("active", "stale", "user_action")).toBeNull();
   });
 
   it("does not prepare a notification write for a downvote", () => {

@@ -2,11 +2,8 @@ import { nanoid } from "nanoid";
 
 import { ApiError } from "@/lib/errors";
 import { invalidateUploadCaches } from "@/publicRead/client/invalidate";
-import { enqueueAutoModeration } from "@/queues/client/autoModeration";
 import { appendCommentVersion } from "@/repositories/submission/appendCommentVersion";
 import { markCommentModerationQueued } from "@/repositories/submission/createComment";
-import { revertCommentEdit } from "@/repositories/submission/statusSubmission";
-import type { SubmissionRecord } from "@/repositories/submission/types";
 import type { UgcActionDependencies, UgcActionInput } from "@/services/ugc/contract/actions";
 import { commentContentSchema } from "@/services/ugc/contract/commentContent";
 
@@ -75,37 +72,4 @@ export async function editComment(dependencies: UgcActionDependencies, input: Ed
     );
   }
   return { submission };
-}
-
-export async function undoCommentEdit(
-  dependencies: UgcActionDependencies,
-  comment: SubmissionRecord,
-) {
-  const { bindings } = dependencies;
-  // Preserve the existing restore rule: old flags/removal requests are not revived.
-  const originalStatus = comment.editOriginalStatus;
-  const status =
-    originalStatus === "pending_openai" || originalStatus === "pending_audit"
-      ? originalStatus
-      : "active";
-  const reverted = await revertCommentEdit(bindings.DB, {
-    id: comment.id,
-    expectedSnapshotId: comment.snapshotId,
-    status,
-    moderationNote: "Comment edit reverted by author.",
-  });
-  if (!reverted) {
-    throw new ApiError(
-      409,
-      "COMMENT_EDIT_CONFLICT",
-      "Comment changed while the edit was being reverted.",
-    );
-  }
-  dependencies.defer(
-    invalidateUploadCaches({ kv: bindings.OEM_KV, kind: "comment", markerId: comment.markerId }),
-  );
-  if (status === "pending_openai" && comment.editOriginalSnapshotId) {
-    await enqueueAutoModeration(bindings, comment.id, comment.editOriginalSnapshotId);
-  }
-  return { status, editReverted: true as const, content: comment.editOriginalContent };
 }

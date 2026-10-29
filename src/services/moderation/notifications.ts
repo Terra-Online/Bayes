@@ -88,45 +88,6 @@ export async function notifyFlagRemoved(
   });
 }
 
-export async function notifyRemoveRequestCreated(
-  env: Bindings,
-  payload: {
-    submission: SubmissionRecord;
-    actor: AuthUser;
-    nextStatus: SubmissionStatus;
-    source: "remove_request" | "recall";
-  },
-): Promise<void> {
-  await enqueueModerationNotification(env, {
-    type: "remove_request_created",
-    submission: payload.submission,
-    actor: payload.actor,
-    previousStatus: payload.submission.status,
-    nextStatus: payload.nextStatus,
-    source: payload.source,
-  });
-}
-
-export async function notifyRemoveRequestCancelled(
-  env: Bindings,
-  payload: {
-    submission: SubmissionRecord;
-    actor: AuthUser;
-    nextStatus: SubmissionStatus;
-    flagCount: number;
-  },
-): Promise<void> {
-  await enqueueModerationNotification(env, {
-    type: "remove_request_cancelled",
-    submission: payload.submission,
-    actor: payload.actor,
-    previousStatus: payload.submission.status,
-    nextStatus: payload.nextStatus,
-    flagCount: payload.flagCount,
-    source: "remove_request",
-  });
-}
-
 export async function sendModerationNotificationNow(
   env: Bindings,
   event: ModerationNotificationEvent,
