@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { seedImageReadScenario } from "@/test/fixtures/imageReadScenario";
+import { importCurrentSubmissions } from "@/test/fixtures/ugcSnapshots";
 
 import { getContributionImage, listContributionRecords } from "./me";
 
@@ -9,6 +10,7 @@ let database: TestDatabase;
 beforeEach(() => {
   database = createTestDatabase();
   seedImageReadScenario(database.sqlite);
+  importCurrentSubmissions(database);
 });
 afterEach(() => {
   vi.restoreAllMocks();
@@ -20,21 +22,15 @@ const list = () =>
     uid: "author",
     limit: 20,
   });
-it("loads a page in one query and reuses preview metadata without bypassing owner checks", async () => {
+it("loads a bounded page in one query and freshly selects previews with owner checks", async () => {
   const queryCount = database.queries.length;
   await list();
   // Review evidence must be fetched with the page rather than once per contribution.
   expect(database.queries).toHaveLength(queryCount + 1);
-  const prepare = vi.spyOn(database.db, "prepare");
   expect(await getContributionImage(database.db, "author", "photo")).toMatchObject({
     file_path: "images/photo.webp",
   });
-  expect(prepare).not.toHaveBeenCalled();
   expect(await getContributionImage(database.db, "other", "photo")).toBeNull();
-  expect(prepare).toHaveBeenCalledOnce();
-  vi.spyOn(Date, "now").mockReturnValue(Date.now() + 60_001);
-  await getContributionImage(database.db, "author", "photo");
-  expect(prepare).toHaveBeenCalledTimes(2);
 });
 
 it("does not share an unfinished preview lookup with another invocation", async () => {

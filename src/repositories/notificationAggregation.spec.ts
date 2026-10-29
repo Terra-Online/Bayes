@@ -267,6 +267,7 @@ describe("notification aggregation SQL", () => {
 
     const voteTarget = comment("vote-target", "user-1", null, "2026-08-02T11:02:00.000Z", "Owner");
     persistSubmission(database, voteTarget, "active");
+    importCurrentSubmissions(database);
     const actors = [
       {
         uid: "user-2",
@@ -389,11 +390,6 @@ describe("notification aggregation SQL", () => {
     );
     persistSubmission(database, voteTarget1, "active");
     persistSubmission(database, voteTarget2, "active");
-    await addVote(voteTarget1.id, "actor-1", "2026-08-02T00:00:00.000Z");
-    await addVote(voteTarget1.id, "actor-2", "2026-08-02T05:59:59.999Z");
-    await addVote(voteTarget1.id, "actor-3", "2026-08-02T06:00:00.000Z");
-    await addVote(voteTarget2.id, "actor-4", "2026-08-02T01:00:00.000Z");
-
     const parent = comment("reply-parent", "owner", null, "2026-08-02T10:00:00.000Z", "Owner");
     const reply1 = comment("reply-1m", "actor-1", parent.id, "2026-08-02T10:00:00.000Z", "Actor 1");
     const reply2 = comment("reply-2m", "actor-2", parent.id, "2026-08-02T10:01:00.000Z", "Actor 2");
@@ -402,6 +398,12 @@ describe("notification aggregation SQL", () => {
     persistSubmission(database, reply2, "active");
     await db.batch(prepareApprovedReplyNotificationWrite(db, transition(reply1, reply1.updatedAt)));
     await db.batch(prepareApprovedReplyNotificationWrite(db, transition(reply2, reply2.updatedAt)));
+
+    importCurrentSubmissions(database);
+    await addVote(voteTarget1.id, "actor-1", "2026-08-02T00:00:00.000Z");
+    await addVote(voteTarget1.id, "actor-2", "2026-08-02T05:59:59.999Z");
+    await addVote(voteTarget1.id, "actor-3", "2026-08-02T06:00:00.000Z");
+    await addVote(voteTarget2.id, "actor-4", "2026-08-02T01:00:00.000Z");
 
     const listed = await listNotifications(db, {
       userId: "owner",

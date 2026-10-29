@@ -9,6 +9,9 @@ import { createRoutes } from "@/routes/moderation/createRoutes";
 import { createMockBindings, type MockBindings } from "@/test/bindings";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { insertAuthenticatedUser, type SessionHeaders } from "@/test/fixtures/auth";
+import { insertImageSnapshot } from "@/test/fixtures/imageSnapshots";
+import { insertSubmission } from "@/test/fixtures/submissions";
+import { importCurrentSubmissions } from "@/test/fixtures/ugcSnapshots";
 import { insertUser as seedUser } from "@/test/fixtures/users";
 import type { AppEnv } from "@/types/app";
 
@@ -109,6 +112,7 @@ describe("12-hour resumable karma evaluation", () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(START);
     database = createTestDatabase();
+    importCurrentSubmissions(database);
     redis = new MemoryRedis();
     vi.mocked(Redis).mockImplementation(function () {
       return redis.redis;
@@ -245,10 +249,14 @@ describe("12-hour resumable karma evaluation", () => {
       WITH RECURSIVE sequence(number) AS (
         SELECT 1 UNION ALL SELECT number + 1 FROM sequence WHERE number < 10000
       )
-      INSERT INTO ugc_submissions (id, user_id, kind, status, poi_id, poi_hash, poi_type, snapshot_id, file_path)
-        SELECT 'outside-' || number, 'outside-user', 'image', 'active', 'outside', 'hash', 'poi', 'snapshot-' || number, 'outside.webp' FROM sequence;
-      INSERT INTO ugc_submissions (id, user_id, kind, status, poi_id, poi_hash, poi_type, snapshot_id, file_path)
-        VALUES ('selected-image', 'selected-000', 'image', 'active', 'selected', 'hash', 'poi', 'selected-snapshot', 'selected.webp');
+      INSERT INTO ugc_submissions (id, user_id, kind, poi_id, poi_hash, poi_type)
+        SELECT 'outside-' || number, 'outside-user', 'image', 'outside', 'hash', 'poi' FROM sequence;
+      INSERT INTO ugc_snapshots (id,submission_id,kind,revision,file_path,review_status,creator_user_id)
+        SELECT 'snapshot-' || id, id, 'image', 1, 'outside.webp', 'approved', user_id FROM ugc_submissions;
+      INSERT INTO ugc_submissions (id,user_id,kind,poi_id,poi_hash,poi_type)
+        VALUES ('selected-image','selected-000','image','selected','hash','poi');
+      INSERT INTO ugc_snapshots (id,submission_id,kind,revision,file_path,review_status,creator_user_id)
+        VALUES ('selected-snapshot','selected-image','image',1,'selected.webp','approved','selected-000');
     `);
     // One approved image is below the scoring threshold. Keep this specialist
     // observation: final karma alone cannot prove the selected image was counted.
@@ -266,6 +274,66 @@ describe("12-hour resumable karma evaluation", () => {
     );
     expect(plan).not.toContain("idx_ugc_comment_threads");
     expect(plan).not.toMatch(/SCAN s USING INDEX|SCAN ugc_submissions\b/);
+  });
+
+  it("counts genuine rejections while excluding unknown imports, deletion, disable and previously approved edits", async () => {
+    insertKarmaUser("owner");
+    seedUser(database.sqlite, { uid: "admin", role: "a", karma: 5 });
+    for (const [id, reviewStatus] of [
+      ["rejected", "rejected"],
+      ["unknown", "unknown"],
+      ["deleted", "rejected"],
+      ["disabled", "rejected"],
+      ["edit", "approved"],
+      ["public", "approved"],
+      ["pending", "pending_audit"],
+    ] as const) {
+      insertImageSnapshot(database.sqlite, { id, userId: "owner", reviewStatus });
+    }
+    database.sqlite
+      .exec(`UPDATE ugc_submissions SET author_deleted_at='2026-09-05' WHERE id='deleted';
+      UPDATE ugc_submissions SET admin_deleted_at='2026-09-05', admin_deleted_by='admin' WHERE id='disabled';
+      INSERT INTO ugc_snapshots (id,submission_id,kind,revision,file_path,review_status,creator_user_id)
+        VALUES ('rejected-edit','edit','image',2,'edit.webp','rejected','owner');
+      UPDATE ugc_submissions SET revision=2 WHERE id='edit';`);
+    const calculateScore = vi.spyOn(rules, "calculateKarmaEvaluationScore");
+    await evaluateKarmaIfDue(database.db, redis.redis);
+    expect(calculateScore).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        approvedImages: 1,
+        rejectedImages: 1,
+      }),
+      expect.any(Date),
+    );
+  });
+
+  it("does not punish imported stale records or reconstruct rejection from old notes", async () => {
+    const imported = createTestDatabase();
+    try {
+      seedUser(imported.sqlite, { uid: "legacy", points: 150 });
+      for (const [id, note] of [
+        ["old-manual", "Rejected by moderator"],
+        ["old-ai", "OpenAI moderation flagged: unsafe"],
+        ["old-recall", "Recalled by uploader."],
+      ]) {
+        insertSubmission(imported.sqlite, {
+          id: id!,
+          userId: "legacy",
+          kind: "image",
+          status: "stale",
+          moderationNote: note,
+        });
+      }
+      importCurrentSubmissions(imported);
+      const calculateScore = vi.spyOn(rules, "calculateKarmaEvaluationScore");
+      await evaluateKarmaIfDue(imported.db, redis.redis);
+      expect(calculateScore).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ approvedImages: 0, rejectedImages: 0 }),
+        expect.any(Date),
+      );
+    } finally {
+      imported.close();
+    }
   });
 
   it("does not advance the cursor or sleep for 12 hours after a failed write", async () => {

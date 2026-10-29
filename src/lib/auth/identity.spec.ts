@@ -4,6 +4,7 @@ import * as authFactory from "@/lib/auth/createAuth";
 import { createMockBindings } from "@/test/bindings";
 import { insertAuthenticatedUser, type AuthenticatedUserFixture } from "@/test/fixtures/auth";
 import { createAuthCacheFixture, type AuthCacheFixture } from "@/test/fixtures/authCache";
+import { importCurrentSubmissions } from "@/test/fixtures/ugcSnapshots";
 
 import { invalidateAuthUserCache, resolveAuthIdentity, resolveAuthUser } from "./identity";
 
@@ -78,6 +79,7 @@ describe("request-owned auth lookups", () => {
   });
 
   it("does not join another request's pending profile lookup", async () => {
+    importCurrentSubmissions(fixture.database);
     const gate = fixture.pauseRead("users");
     const first = fixture.request(overview, owner.headers);
     await gate.entered;
@@ -158,6 +160,7 @@ describe("request-owned auth lookups", () => {
   });
 
   it("never substitutes a warm cached account for a freshly verified different user", async () => {
+    importCurrentSubmissions(fixture.database);
     expect((await fixture.request(overview, owner.headers)).status).toBe(200);
     const second = insertAuthenticatedUser(fixture.database.sqlite, {
       uid: "second",
