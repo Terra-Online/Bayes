@@ -1,3 +1,10 @@
+export type SnapshotReviewStatus =
+  | "pending_openai"
+  | "pending_audit"
+  | "approved"
+  | "rejected"
+  | "unknown";
+
 export interface SubmissionRecord {
   id: string;
   kind: SubmissionKind;

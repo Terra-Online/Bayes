@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "@/app";
 import { runWithAuthRequest } from "@/lib/auth/createAuth";
 import type { PublicCommentContext } from "@/repositories/submission/getPublicComment";
-import type { SnapshotReviewStatus } from "@/repositories/submission/snapshotReads";
+import type { SnapshotReviewStatus } from "@/repositories/submission/types";
 import { createMockBindings, type MockBindings } from "@/test/bindings";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { insertAuthUser, insertSession } from "@/test/fixtures/auth";

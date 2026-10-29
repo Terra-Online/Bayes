@@ -3,7 +3,7 @@ import type { DatabaseSync, SQLOutputValue } from "node:sqlite";
 import { vi } from "vitest";
 
 import { createApp } from "@/app";
-import type { SnapshotReviewStatus } from "@/repositories/submission/snapshotReads";
+import type { SnapshotReviewStatus } from "@/repositories/submission/types";
 import { createMockBindings } from "@/test/bindings";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import type { AppEnv } from "@/types/app";

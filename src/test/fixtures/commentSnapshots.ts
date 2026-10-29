@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 
-import type { SnapshotReviewStatus } from "@/repositories/submission/snapshotReads";
+import type { SnapshotReviewStatus } from "@/repositories/submission/types";
 
 export interface CommentSnapshotFixture {
   id: string;

@@ -1,4 +1,4 @@
-import type { SnapshotReviewStatus } from "@/repositories/submission/snapshotReads";
+import type { SnapshotReviewStatus } from "@/repositories/submission/types";
 
 import { insertCommentSnapshot } from "./commentSnapshots";
 import { insertImageSnapshot } from "./imageSnapshots";

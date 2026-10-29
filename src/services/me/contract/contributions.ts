@@ -1,4 +1,4 @@
-import type { SnapshotReviewStatus } from "@/repositories/submission/snapshotReads";
+import type { SnapshotReviewStatus } from "@/repositories/submission/types";
 import type { SubmissionKind, SubmissionStatus } from "@/repositories/submission/types";
 
 export type ReviewKey = "uploaded" | "ai" | "manual" | "public" | "archived";

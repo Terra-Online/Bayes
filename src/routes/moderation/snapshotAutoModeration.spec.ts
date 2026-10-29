@@ -42,7 +42,7 @@ vi.mock("@/lib/karma/karmaConfig.json", () => ({
   },
 }));
 
-import type { SnapshotReviewStatus } from "@/repositories/submission/snapshotReads";
+import type { SnapshotReviewStatus } from "@/repositories/submission/types";
 import { insertUser } from "@/test/fixtures/users";
 
 let fixture: ReturnType<typeof createModerationTestFixture>;

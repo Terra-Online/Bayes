@@ -1,4 +1,4 @@
-import type { SnapshotReviewStatus } from "./snapshotReads";
+import type { SnapshotReviewStatus } from "./types";
 import type { SubmissionKind, SubmissionStatus, SubmissionSubmitter } from "./types";
 
 export interface ManagementSnapshot {

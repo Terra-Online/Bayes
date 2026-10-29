@@ -2,7 +2,7 @@ import type { NotificationRecord } from "@/repositories/notifications";
 import { formatPublicUid } from "@/repositories/users";
 
 import { commitReviewBatch } from "./reviewNotifications";
-import type { SnapshotReviewStatus } from "./snapshotReads";
+import type { SnapshotReviewStatus } from "./types";
 import type { SubmissionRecord } from "./types";
 
 /** A real immutable version, without legacy edit backups or inferred review notes. */

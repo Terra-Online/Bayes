@@ -24,7 +24,7 @@ import {
   listImageViewerReactionsByMarker,
   listUserImagesByMarker,
 } from "./listImages";
-import type { SnapshotReviewStatus } from "./snapshotReads";
+import type { SnapshotReviewStatus } from "./types";
 
 interface SubmissionScenarioOptions {
   parentId?: string;
