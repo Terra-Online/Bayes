@@ -2,6 +2,11 @@ import type { SubmissionRecord, SubmissionStatus } from "@/repositories/submissi
 import type { CommentTranslationPrewarmTarget } from "@/services/ugc/translation/types";
 import type { AuthUser } from "@/types/app";
 
+export type ModerationSubmission = Pick<
+  SubmissionRecord,
+  "id" | "kind" | "markerId" | "poiHash" | "poiType" | "snapshotId" | "userId" | "submitter"
+>;
+
 export type SubmissionModerationSource = "auto_moderation" | "manual_moderation";
 
 export type ModerationNotificationEvent =
@@ -16,7 +21,7 @@ export type ModerationNotificationEvent =
     }
   | {
       type: "flag_created" | "flag_removed";
-      submission: SubmissionRecord;
+      submission: ModerationSubmission;
       actor: AuthUser;
       changed: boolean;
       flagCount: number;
@@ -25,14 +30,14 @@ export type ModerationNotificationEvent =
     }
   | {
       type: "submission_moderation_result";
-      submission: SubmissionRecord;
+      submission: ModerationSubmission;
       previousStatus: SubmissionStatus;
       nextStatus: "active" | "pending_audit";
       source: SubmissionModerationSource;
     }
   | {
       type: "remove_request_created" | "remove_request_cancelled";
-      submission: SubmissionRecord;
+      submission: ModerationSubmission;
       actor: AuthUser;
       previousStatus: SubmissionStatus;
       nextStatus: SubmissionStatus;
@@ -41,7 +46,7 @@ export type ModerationNotificationEvent =
     }
   | {
       type: "comment_translation_prewarm_completed";
-      submission: SubmissionRecord;
+      submission: ModerationSubmission;
       source: SubmissionModerationSource;
       targets: CommentTranslationPrewarmTarget[];
     };

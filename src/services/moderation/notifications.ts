@@ -4,7 +4,11 @@ import type { SubmissionRecord, SubmissionStatus } from "@/repositories/submissi
 import type { CommentTranslationPrewarmTarget } from "@/services/ugc/translation/types";
 import type { AuthUser, Bindings } from "@/types/app";
 
-import type { ModerationNotificationEvent, SubmissionModerationSource } from "./messages";
+import type {
+  ModerationNotificationEvent,
+  ModerationSubmission,
+  SubmissionModerationSource,
+} from "./messages";
 
 const DISCORD_WEBHOOK_TIMEOUT_MS = 5_000;
 
@@ -32,7 +36,7 @@ export async function notifyFlagCreated(
 export async function notifySubmissionModerationResult(
   env: Bindings,
   payload: {
-    submission: SubmissionRecord;
+    submission: ModerationSubmission;
     previousStatus: SubmissionStatus;
     nextStatus: "active" | "pending_audit";
     source: SubmissionModerationSource;
@@ -262,7 +266,7 @@ function formatDiscordWebhookPayload(
 }
 
 function submissionFields(
-  submission: SubmissionRecord,
+  submission: ModerationSubmission,
 ): Array<{ name: string; value: string; inline: boolean }> {
   return [
     { name: "submission", value: submission.id, inline: true },
@@ -295,7 +299,7 @@ function actorFields(actor: AuthUser): Array<{ name: string; value: string; inli
   ];
 }
 
-function formatSubmitter(submission: SubmissionRecord): string {
+function formatSubmitter(submission: ModerationSubmission): string {
   if (submission.submitter?.nickname && submission.submitter.publicUid) {
     return `${submission.submitter.nickname} (${submission.submitter.publicUid})`;
   }

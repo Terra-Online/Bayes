@@ -1,5 +1,7 @@
-import { getPendingAutoModerationSubmissions } from "@/repositories/submission/createSubmission";
-import { markSubmissionAutoModerationQueued } from "@/repositories/submission/statusSubmission";
+import {
+  getPendingAutomaticReviews,
+  markAutomaticReviewQueued,
+} from "@/repositories/submission/automaticReviewQueue";
 import type { Bindings } from "@/types/app";
 
 const AUTO_MODERATION_BACKFILL_STALE_MS = 5 * 60 * 1000;
@@ -17,7 +19,7 @@ export async function enqueueAutoModeration(
     source: "upload",
     queuedAt,
   });
-  await markSubmissionAutoModerationQueued(env.DB, {
+  await markAutomaticReviewQueued(env.DB, {
     id: submissionId,
     snapshotId,
     queuedAt,
@@ -34,7 +36,7 @@ export async function ensureAutoModerationBackfill(
   targetQueueSize = 20,
 ): Promise<number> {
   const queuedBefore = new Date(Date.now() - AUTO_MODERATION_BACKFILL_STALE_MS).toISOString();
-  const pending = await getPendingAutoModerationSubmissions(env.DB, targetQueueSize, queuedBefore);
+  const pending = await getPendingAutomaticReviews(env.DB, targetQueueSize, queuedBefore);
   let enqueued = 0;
 
   for (const item of pending) {
@@ -46,7 +48,7 @@ export async function ensureAutoModerationBackfill(
       source: "scheduled_backfill",
       queuedAt,
     });
-    await markSubmissionAutoModerationQueued(env.DB, {
+    await markAutomaticReviewQueued(env.DB, {
       id: item.id,
       snapshotId: item.snapshotId,
       queuedAt,
