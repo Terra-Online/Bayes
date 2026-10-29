@@ -13,6 +13,7 @@ Start with the task you want to do:
 | Understand the testing direction | [Testing for refactoring](testing.md) |
 | Call or change an endpoint | [API guide](api.md) |
 | Operate or deploy your own installation | [Operations](operations.md) |
+| Rehearse the UGC snapshot cutover and assess release gates | [UGC cutover](ugc-cutover.md) |
 | Set up local data files | [Data templates](../templates/README.md) |
 | Work on HTTP modules | [Route conventions](../src/routes/README.md) |
 | Work on cached public reads | [Public read conventions](../src/publicRead/README.md) |
