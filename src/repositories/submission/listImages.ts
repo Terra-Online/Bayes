@@ -258,15 +258,20 @@ export async function listImageViewerReactionsByMarker(
     "s.id IN (SELECT value FROM json_each(?3))",
     "s.poi_id IN (SELECT value FROM json_each(?2))",
     "s.kind = 'image'",
-    ...scope.clauses.map((clause) => `s.${clause}`),
+    ...scope.clauses.map((clause) => `selected.${clause}`),
   ];
+  // Start from the returned IDs, then authorize their selected files. Flattening
+  // the public view here lets SQLite scan all images at the requested markers.
   const result = await db
     .prepare(
       `SELECT
        s.id,
        CASE WHEN u.user_id IS NULL THEN 0 ELSE 1 END AS viewer_upvoted,
        CASE WHEN f.user_id IS NULL THEN 0 ELSE 1 END AS viewer_flagged
-     FROM ${publicImageSelection} s
+     FROM ugc_submissions s INDEXED BY sqlite_autoindex_ugc_submissions_1
+     JOIN ugc_snapshots selected ON selected.id = (
+       SELECT public_snapshot_id FROM ugc_submission_visibility WHERE submission_id = s.id
+     )
      LEFT JOIN ugc_submission_upvotes u ON u.submission_id = s.id AND u.user_id = ?1 AND u.active = 1
      LEFT JOIN ugc_submission_flags f ON f.submission_id = s.id AND f.user_id = ?1 AND f.active = 1
      WHERE ${filters.join(" AND ")}
