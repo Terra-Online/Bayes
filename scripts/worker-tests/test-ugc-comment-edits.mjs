@@ -3,8 +3,6 @@ import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { test } from "node:test";
 
-import { unstable_splitSqlQuery } from "wrangler";
-
 import { migrateNativeDatabase } from "./native-test-database.mjs";
 import { Miniflare } from "./worker-test-runtime.mjs";
 
@@ -35,16 +33,12 @@ test("native D1 competing edits have one winner and failed appends consume no re
     const first = await worker.getD1Database("DB");
     const second = await worker.getD1Database("DB");
     await migrateNativeDatabase(first);
-    const candidate = await readFile(
-      new URL("../../migration-candidates/ugc-snapshots/import-current.sql", import.meta.url),
-      "utf8",
-    );
     await first
       .prepare(
         "INSERT INTO users(uid,email,password_hash,nickname,role) VALUES ('author','author@example.test','','Author','n')",
       )
       .run();
-    await first.batch(unstable_splitSqlQuery(candidate).map((sql) => first.prepare(sql)));
+
     await first.batch([
       first.prepare(
         "INSERT INTO ugc_submissions(id,kind,poi_id,poi_hash,poi_type,user_id) VALUES ('comment','comment','marker','hash','poi','author')",

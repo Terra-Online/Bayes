@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { test } from "node:test";
 
@@ -25,10 +24,6 @@ const compiled = await build({
 const { disableSubmission, clearSubmissionFlags } = await import(
   `data:text/javascript;base64,${Buffer.from(compiled.outputFiles[0].text).toString("base64")}`
 );
-const candidate = await readFile(
-  new URL("../../migration-candidates/ugc-snapshots/import-current.sql", import.meta.url),
-  "utf8",
-);
 const batchSql = (db, sql) =>
   db.batch(unstable_splitSqlQuery(sql).map((statement) => db.prepare(statement)));
 
@@ -45,7 +40,7 @@ async function withDatabase(run) {
   try {
     const db = await worker.getD1Database("DB");
     await migrateNativeDatabase(db);
-    await batchSql(db, candidate);
+
     await batchSql(
       db,
       `

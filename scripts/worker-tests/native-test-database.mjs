@@ -14,9 +14,17 @@ export async function executeNativeSql(database, source) {
 }
 
 /** Fresh native business fixtures use the real migration chain before scenario seeds. */
-export async function migrateNativeDatabase(database) {
+export async function migrateNativeDatabase(database, { before } = {}) {
   const files = (await readdir(directory)).filter((file) => file.endsWith(".sql")).sort();
   for (const file of files) {
-    await executeNativeSql(database, await readFile(new URL(file, directory), "utf8"));
+    if (before && file >= before) {
+      continue;
+    }
+    const source = await readFile(new URL(file, directory), "utf8");
+    if (file === "0038_ugc_snapshots.sql") {
+      await database.batch(unstable_splitSqlQuery(source).map((sql) => database.prepare(sql)));
+    } else {
+      await executeNativeSql(database, source);
+    }
   }
 }

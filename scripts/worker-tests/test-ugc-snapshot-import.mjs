@@ -28,7 +28,7 @@ const { createPendingImage, markImageModerationQueued } = await import(
 );
 
 const candidate = await readFile(
-  new URL("../../migration-candidates/ugc-snapshots/import-current.sql", import.meta.url),
+  new URL("../../migrations/0038_ugc_snapshots.sql", import.meta.url),
   "utf8",
 );
 const seed = await readFile(
@@ -80,7 +80,7 @@ async function withDatabase(run) {
   });
   try {
     const db = await worker.getD1Database("DB");
-    await migrateNativeDatabase(db);
+    await migrateNativeDatabase(db, { before: "0038" });
     await batch(db, seed);
     await run(db);
   } finally {

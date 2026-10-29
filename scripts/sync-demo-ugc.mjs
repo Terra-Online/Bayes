@@ -4,6 +4,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 
+import { buildDemoImageSql } from "./demo-ugc-database.mjs";
+
 const execFileAsync = promisify(execFile);
 const ROOT = process.cwd();
 const MARKER_DATA_DIR =
@@ -194,19 +196,14 @@ async function importR2(images, state) {
 async function importDatabase(images) {
   const userStatement = `INSERT INTO users (uid, email, password_hash, email_verified, role, avt, nickname, uid_number, uid_suffix, nickname_customized) VALUES (${sql(DEMO_USER_ID)}, 'demo-r2-sync@local.invalid', '!', 'true', 'n', 0, 'R2 Demo', 999999, 'DEMO', 1) ON CONFLICT(uid) DO NOTHING;`;
   for (let cursor = 0; cursor < images.length; cursor += 200) {
-    const statements = ["PRAGMA foreign_keys = ON;", "BEGIN TRANSACTION;"];
+    // Wrangler executes the complete SQL file in one local D1 batch.
+    const statements = [];
     if (cursor === 0) {
       statements.push(userStatement);
     }
     for (const image of images.slice(cursor, cursor + 200)) {
-      const id = `demo_r2_${image.id}`;
-      const objectKey = getObjectKey(image.url);
-      const createdAt = image.createdAt || new Date().toISOString();
-      statements.push(
-        `INSERT INTO ugc_submissions (id, kind, poi_id, poi_hash, poi_type, snapshot_id, user_id, content, file_path, status, mime_type, size_bytes, created_at, updated_at) VALUES (${sql(id)}, 'image', ${sql(image.markerId)}, ${sql(image.markerId)}, 'demo', ${sql(id)}, ${sql(DEMO_USER_ID)}, ${image.content == null ? "NULL" : sql(image.content)}, ${sql(objectKey)}, 'active', 'image/webp', ${Number(image.localSize ?? 0)}, ${sql(createdAt)}, ${sql(createdAt)}) ON CONFLICT(id) DO UPDATE SET poi_id=excluded.poi_id, content=excluded.content, file_path=excluded.file_path, status='active', mime_type=excluded.mime_type, size_bytes=excluded.size_bytes, updated_at=excluded.updated_at;`,
-      );
+      statements.push(buildDemoImageSql(image, DEMO_USER_ID));
     }
-    statements.push("COMMIT;");
     await fs.writeFile(SQL_FILE, `${statements.join("\n")}\n`);
     await execFileAsync(
       "pnpm",
@@ -222,7 +219,7 @@ async function importDatabase(images) {
 async function clearLocalKv(images) {
   const keys = images.flatMap((image) =>
     ["default", "test", "prod"].map(
-      (namespace) => `ugc:marker-images:v2:${namespace}:${sha256(image.markerId)}`,
+      (namespace) => `ugc:marker-images:v3:${namespace}:${sha256(image.markerId)}`,
     ),
   );
   await fs.writeFile(KV_DELETE_FILE, `${JSON.stringify(keys)}\n`);
