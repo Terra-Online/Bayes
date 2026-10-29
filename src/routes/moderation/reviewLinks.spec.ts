@@ -6,7 +6,9 @@ import { onAppError } from "@/middleware/error-handler";
 import { createMockBindings } from "@/test/bindings";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { insertAuthenticatedUser } from "@/test/fixtures/auth";
-import { insertSubmission } from "@/test/fixtures/submissions";
+import { insertCommentSnapshot } from "@/test/fixtures/commentSnapshots";
+import { insertImageSnapshot } from "@/test/fixtures/imageSnapshots";
+import { importCurrentSubmissions } from "@/test/fixtures/ugcSnapshots";
 import { insertUser } from "@/test/fixtures/users";
 import type { AppEnv } from "@/types/app";
 
@@ -19,6 +21,7 @@ describe("direct moderation review links", () => {
 
   beforeEach(() => {
     database = createTestDatabase();
+    importCurrentSubmissions(database);
     insertUser(database.sqlite, { uid: "owner" });
   });
   afterEach(() => {
@@ -48,37 +51,43 @@ describe("direct moderation review links", () => {
   }
 
   it.each([
-    ["image", "flagged"],
-    ["image", "stale"],
-    ["comment", "pending_audit"],
+    ["image", "approved", "flagged"],
+    ["image", "unknown", "stale"],
+    ["comment", "pending_audit", "pending_audit"],
   ] as const)(
     "selects an old %s with current status %s beyond the queue limit",
-    async (kind, status) => {
-      insertSubmission(database.sqlite, {
+    async (kind, reviewStatus, status) => {
+      insertCommentSnapshot(database.sqlite, {
         id: "earlier",
         userId: "owner",
-        status: "pending_audit",
+        reviewStatus: "pending_audit",
         createdAt: "2020-01-01 00:00:00",
       });
-      insertSubmission(database.sqlite, {
+      (kind === "image" ? insertImageSnapshot : insertCommentSnapshot)(database.sqlite, {
         id: "target",
         userId: "owner",
-        kind,
-        status,
+        reviewStatus,
         createdAt: "2020-02-01 00:00:00",
       });
+      if (status === "flagged") {
+        insertUser(database.sqlite, { uid: "reporter" });
+        database.sqlite.exec(
+          "INSERT INTO ugc_submission_flags(submission_id,user_id) VALUES ('target','reporter')",
+        );
+      }
       const response = await request("target");
+      const expectedStatus = status;
       expect(response.status).toBe(200);
       expect(await response.json()).toMatchObject({
-        items: [{ id: "target", kind, status }],
-        stats: { total: 1, byStatus: [{ status, count: 1 }] },
+        items: [{ id: "target", kind, status: expectedStatus }],
+        stats: { total: 1, byStatus: [{ status: expectedStatus, count: 1 }] },
         limit: 1,
       });
     },
   );
 
   it("returns an empty result when the linked submission is missing", async () => {
-    insertSubmission(database.sqlite, { id: "other", userId: "owner" });
+    insertCommentSnapshot(database.sqlite, { id: "other", userId: "owner" });
     const response = await request("missing");
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ items: [], stats: { total: 0 } });

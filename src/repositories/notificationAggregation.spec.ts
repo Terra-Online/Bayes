@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { migrations } from "@/test/database/migrations";
 import { insertSubmission as seedSubmission } from "@/test/fixtures/submissions";
+import { importCurrentSubmissions } from "@/test/fixtures/ugcSnapshots";
 import { insertUser } from "@/test/fixtures/users";
 
 import {
@@ -19,7 +20,7 @@ import {
   serializeNotificationItem,
   type TransitionNotificationPayload,
 } from "./notifications";
-import { markImageSubmissionsStaleByFilePathPrefix } from "./submission-review";
+import { archiveTestImageSubmissions } from "./submission-review";
 import { transitionSubmissionStatusWithNotifications } from "./submission/statusSubmission";
 import type { SubmissionRecord, SubmissionStatus } from "./submission/types";
 import { createSubmissionUpvote } from "./submission/voteSubmission";
@@ -508,24 +509,25 @@ describe("notification aggregation SQL", () => {
       updatedAt: "old",
       markerId: "point2",
     });
-    expect(await markImageSubmissionsStaleByFilePathPrefix(db, "test_a", "Manual cleanup")).toEqual(
-      { changedRows: 1, markerIds: ["point1"] },
-    );
+    insertUser(database.sqlite, { uid: "admin", role: "a" });
+    importCurrentSubmissions(database);
+    expect(
+      await archiveTestImageSubmissions(db, { prefix: "test_a", adminUserId: "admin" }),
+    ).toEqual({ changedRows: 1, markerIds: ["point1"] });
+    expect(
+      database.sqlite.prepare("SELECT admin_deleted_by FROM ugc_submissions WHERE id='mine'").get(),
+    ).toEqual({ admin_deleted_by: "admin" });
     expect(
       database.sqlite
-        .prepare("SELECT submission_id, from_status, to_status, source FROM ugc_review_events")
-        .all(),
-    ).toEqual([
-      {
-        submission_id: "mine",
-        from_status: "pending_openai",
-        to_status: "stale",
-        source: "manual_moderation",
-      },
-    ]);
+        .prepare("SELECT review_status FROM ugc_snapshots WHERE submission_id='mine'")
+        .get(),
+    ).toEqual({ review_status: "pending_openai" });
     expect(
-      database.sqlite.prepare("SELECT status FROM ugc_submissions WHERE id = 'other'").get(),
-    ).toEqual({ status: "active" });
+      database.sqlite
+        .prepare("SELECT admin_deleted_at FROM ugc_submissions WHERE id='other'")
+        .get(),
+    ).toEqual({ admin_deleted_at: null });
+    expect(database.sqlite.prepare("SELECT * FROM ugc_snapshots_review_audit").all()).toEqual([]);
   });
 
   it("notifies image owners for a new upvote, ignores duplicates, and suppresses self-upvotes", async () => {

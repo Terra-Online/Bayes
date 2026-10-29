@@ -24,7 +24,7 @@ export type ReviewTarget = Pick<
   | "createdAt"
   | "updatedAt"
   | "submitter"
-> & { reviewStatus: SnapshotReviewStatus };
+> & { reviewStatus: SnapshotReviewStatus; hasEarlierApproval: boolean };
 
 export type ReviewCommand = {
   target: ReviewTarget;
@@ -60,6 +60,8 @@ export async function getReviewTarget(
     s.created_at AS createdAt, s.updated_at AS updatedAt,
     f.id AS snapshotId, f.content, f.file_path AS filePath, f.mime_type AS mimeType,
     f.size_bytes AS sizeBytes, f.review_status AS reviewStatus,
+    EXISTS (SELECT 1 FROM ugc_snapshots earlier WHERE earlier.submission_id=s.id
+      AND earlier.revision<f.revision AND earlier.review_status='approved') AS hasEarlierApproval,
     u.uid, u.uid_number AS uidNumber, u.uid_suffix AS uidSuffix,
     u.role, u.karma, u.nickname, u.avt AS avatar
     FROM ugc_submissions s JOIN ugc_snapshots f
@@ -85,6 +87,7 @@ export async function getReviewTarget(
   const { uid, uidNumber, uidSuffix, role, karma, nickname, avatar, ...target } = row;
   return {
     ...target,
+    hasEarlierApproval: Boolean(target.hasEarlierApproval),
     submitter: uid
       ? {
           uid,
