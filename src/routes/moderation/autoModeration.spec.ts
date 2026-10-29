@@ -271,6 +271,9 @@ describe("automatic moderation", () => {
       id: "snapshot-taken-over",
       review_status: "pending_audit",
     });
+    expect(database.sqlite.prepare("SELECT note FROM ugc_snapshots_review_audit").get()).toEqual({
+      note: "Needs a human decision",
+    });
     expect(authorPoints()).toBe(20);
     expect(reviewAudits()).toEqual([
       {
@@ -353,6 +356,7 @@ describe("automatic moderation", () => {
   it.each([
     {
       name: "AI disabled even with local approval enabled",
+      reason: "AI moderation skipped; waiting for manual audit.",
       settings: {
         SKIP_AI_MODERATION: "true",
         OPENAI_API_KEY: "synthetic-ai-key",
@@ -361,49 +365,63 @@ describe("automatic moderation", () => {
       status: "pending_audit",
       points: 20,
     },
-    { name: "no AI credentials", settings: {}, status: "pending_audit", points: 20 },
+    {
+      name: "no AI credentials",
+      settings: {},
+      status: "pending_audit",
+      points: 20,
+      reason: "OpenAI moderation skipped in local mode; waiting for manual audit.",
+    },
     {
       name: "explicit local approval without credentials",
+      reason: "Local upload debug auto-approved (OPENAI_API_KEY missing).",
       settings: { LOCAL_UPLOAD_AUTO_APPROVE: "true" },
       status: "active",
       points: 22,
     },
-  ])("records $name as a decision made without AI", async ({ settings, status, points }) => {
-    Object.assign(env, settings);
-    submission({ id: "local", status: "pending_openai" });
-    const response = await request("/run", {
-      method: "POST",
-      headers: createReviewerSession("a"),
-      body: { ids: ["local"] },
-    });
-    expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({
-      processed: 1,
-      active: status === "active" ? 1 : 0,
-      pendingAudit: status === "pending_audit" ? 1 : 0,
-    });
-    expect(storedSnapshot("local")).toMatchObject({
-      review_status: status === "active" ? "approved" : status,
-    });
-    expect(authorPoints()).toBe(points);
-    expect(reviewAudits()).toEqual([
-      {
-        submission_id: "local",
-        from_status: "pending_openai",
-        to_status: status === "active" ? "approved" : status,
-        source: "ai",
-      },
-    ]);
-    expect(notificationMessages()).toEqual([
-      {
-        recipient_user_id: "author",
-        type: status === "active" ? "system.submission.approved" : "system.submission.needs_review",
-        submission_id: "local",
-      },
-    ]);
-    expect(liveMessages).toHaveLength(1);
-    expect(fetch).not.toHaveBeenCalled();
-  });
+  ])(
+    "records $name as a decision made without AI",
+    async ({ settings, status, points, reason }) => {
+      Object.assign(env, settings);
+      submission({ id: "local", status: "pending_openai" });
+      const response = await request("/run", {
+        method: "POST",
+        headers: createReviewerSession("a"),
+        body: { ids: ["local"] },
+      });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        processed: 1,
+        active: status === "active" ? 1 : 0,
+        pendingAudit: status === "pending_audit" ? 1 : 0,
+      });
+      expect(storedSnapshot("local")).toMatchObject({
+        review_status: status === "active" ? "approved" : status,
+      });
+      expect(database.sqlite.prepare("SELECT note FROM ugc_snapshots_review_audit").get()).toEqual({
+        note: reason,
+      });
+      expect(authorPoints()).toBe(points);
+      expect(reviewAudits()).toEqual([
+        {
+          submission_id: "local",
+          from_status: "pending_openai",
+          to_status: status === "active" ? "approved" : status,
+          source: "ai",
+        },
+      ]);
+      expect(notificationMessages()).toEqual([
+        {
+          recipient_user_id: "author",
+          type:
+            status === "active" ? "system.submission.approved" : "system.submission.needs_review",
+          submission_id: "local",
+        },
+      ]);
+      expect(liveMessages).toHaveLength(1);
+      expect(fetch).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([
     {

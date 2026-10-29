@@ -405,6 +405,29 @@ describe("notification aggregation SQL", () => {
     expect(listed.items[0]?.type).toBe("system.remove_request.resolved");
   });
 
+  it("sends an author approval without a community notification for a self-reply", async () => {
+    database = createTestDatabase();
+    insertUser(database.sqlite, { uid: "user-1" });
+    const parent = comment("parent", "user-1", null, "2026-08-02T10:00:00.000Z", "Owner");
+    const reply = comment("self-reply", "user-1", "parent", "2026-08-02T10:00:01.000Z", "Owner");
+    persistSubmission(database, parent, "active");
+    persistSubmission(database, reply, "pending_openai");
+    expect((await reviewDecision(database, reply, reply.updatedAt)).outcome).toBe("committed");
+    expect(
+      (await listNotifications(database.db, { userId: "user-1", category: "community", limit: 20 }))
+        .items,
+    ).toEqual([]);
+    expect(
+      (await listNotifications(database.db, { userId: "user-1", category: "system", limit: 20 }))
+        .items,
+    ).toEqual([expect.objectContaining({ type: "system.submission.approved" })]);
+    expect(await getNotificationUnreadCounts(database.db, "user-1")).toEqual({
+      system: 1,
+      community: 0,
+      total: 1,
+    });
+  });
+
   it("records bulk manual archives atomically and respects escaped prefixes", async () => {
     database = createTestDatabase();
     const db = database.db;

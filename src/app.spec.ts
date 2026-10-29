@@ -203,7 +203,11 @@ it("keeps progress delivery and moderation backfill independent through job lock
   } as unknown as ExecutionContext);
   await Promise.allSettled(waits);
   expect(mocks.autoModerationQueue.send).toHaveBeenCalledWith(
-    expect.objectContaining({ submissionId: "awaiting-review", source: "scheduled_backfill" }),
+    expect.objectContaining({
+      submissionId: "awaiting-review",
+      snapshotId: "snapshot-awaiting-review",
+      source: "scheduled_backfill",
+    }),
   );
   database.hooks.beforeQuery = undefined;
   waits.length = 0;
