@@ -11,8 +11,6 @@ import {
 } from "@/services/auth/loginMethods";
 import type { AppEnv } from "@/types/app";
 
-import { authResponse } from "./honoAdapter";
-
 export function createRoutes() {
   return new Hono<AppEnv<{ requestId: string }>>()
     .get("/list-accounts", requireAuth, rateLimit("auth"), async (c) => {
@@ -30,14 +28,11 @@ export function createRoutes() {
         "Invalid account link payload.",
       );
 
-      return authResponse(
-        c,
-        await beginLinkLoginMethod(c.env, {
-          ...input,
-          raw_request: c.req.raw,
-          requestId: c.get("requestId"),
-        }),
-      );
+      return beginLinkLoginMethod(c.env, {
+        ...input,
+        raw_request: c.req.raw,
+        requestId: c.get("requestId"),
+      });
     })
     .post("/unlink-account", requireAuth, rateLimit("auth"), async (c) => {
       const input = parseInput(
@@ -47,14 +42,11 @@ export function createRoutes() {
       );
 
       const user = c.get("authUser");
-      return authResponse(
-        c,
-        await unlinkLoginMethod(c.env, {
-          ...input,
-          currentUserId: user.uid,
-          raw_request: c.req.raw,
-          requestId: c.get("requestId"),
-        }),
-      );
+      return unlinkLoginMethod(c.env, {
+        ...input,
+        currentUserId: user.uid,
+        raw_request: c.req.raw,
+        requestId: c.get("requestId"),
+      });
     });
 }

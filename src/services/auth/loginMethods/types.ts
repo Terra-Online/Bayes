@@ -1,5 +1,5 @@
 type LoginMethodContext = {
-  // The route parses JSON first. The adapter reads only this request's URL and headers.
+  // The route parses JSON first. This module reads only this request's URL and headers.
   raw_request: Request;
   requestId: string;
 };

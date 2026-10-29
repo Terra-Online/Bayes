@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as authModule from "@/services/auth/betterAuth";
 import { createAuth, runWithAuthRequest } from "@/services/auth/betterAuth";
-import { resolveAuthIdentity } from "@/services/auth/identity";
+import { resolveAuthIdentity } from "@/services/auth/session";
 import type { TestDatabase } from "@/test/database/createTestDatabase";
 import {
   createSessionAuthFixture,

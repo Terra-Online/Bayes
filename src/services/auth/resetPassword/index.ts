@@ -1,8 +1,8 @@
 import { ApiError } from "@/lib/errors";
+import { invokeBetterAuthHandler } from "@/services/auth/betterAuth";
 import { normalizeEmail } from "@/services/auth/contract/email";
 import type { Bindings } from "@/types/app";
 
-import { followResetLink, requestResetEmail, submitNewPassword } from "./betterAuthAdapter";
 import { findResetUserEmail, findResetVerification } from "./previewRepository";
 import type {
   PasswordResetContext,
@@ -20,12 +20,18 @@ export type {
 
 export function requestPasswordReset(
   env: Bindings,
-  input: RequestPasswordResetInput,
+  owned_input: RequestPasswordResetInput,
 ): Promise<Response> {
-  return requestResetEmail(env, {
-    ...input,
-    email: normalizeEmail(input.email),
-    locale: input.locale?.trim(),
+  // The caller transfers this input object. Keep raw_request and its headers unchanged.
+  owned_input.email = normalizeEmail(owned_input.email);
+  owned_input.locale = owned_input.locale?.trim();
+  // The public /forget-password route calls Better Auth's /request-password-reset endpoint.
+  return invokeBetterAuthHandler(env, owned_input.raw_request, {
+    requestId: owned_input.requestId,
+    authPath: "/request-password-reset",
+    jsonBody: { email: owned_input.email, redirectTo: owned_input.redirectTo },
+    // The payload locale overrides the incoming email-locale header.
+    headerOverrides: owned_input.locale ? { "x-oem-locale": owned_input.locale } : undefined,
   });
 }
 
@@ -36,7 +42,11 @@ export function resetPassword(env: Bindings, input: ResetPasswordInput): Promise
   }
   // Better Auth consumes the token before writing the password.
   // If the write fails, the token remains consumed.
-  return submitNewPassword(env, input);
+  return invokeBetterAuthHandler(env, input.raw_request, {
+    requestId: input.requestId,
+    authPath: "/reset-password",
+    jsonBody: { token: input.token, newPassword: input.newPassword },
+  });
 }
 
 export async function previewPasswordReset(
@@ -61,6 +71,7 @@ export function followPasswordResetLink(
   env: Bindings,
   input: PasswordResetContext,
 ): Promise<Response> {
-  // Link validation and preview only read the token. Submission consumes it.
-  return followResetLink(env, input);
+  // The email link already contains Better Auth's path, token and callbackURL.
+  // Keep the original URL, method and query parameters, including HEAD requests.
+  return invokeBetterAuthHandler(env, input.raw_request, { requestId: input.requestId });
 }

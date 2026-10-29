@@ -2,8 +2,8 @@ import type { Context } from "hono";
 import { createMiddleware } from "hono/factory";
 
 import { ApiError } from "@/lib/errors";
-import { resolveAuthUser } from "@/services/auth/identity";
 import { getRequestAuthCredentials } from "@/services/auth/requestCredentials";
+import { resolveAuthUser } from "@/services/auth/session";
 import type { AppEnv, AuthUser, Role } from "@/types/app";
 
 export const requireAuth = createMiddleware<AppEnv<{ authUser: AuthUser }>>(async (c, next) => {

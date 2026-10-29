@@ -13,8 +13,6 @@ import { exchangeSession } from "@/services/auth/sessionExchange";
 import { signOut } from "@/services/auth/signOut";
 import type { AppEnv, AuthUser } from "@/types/app";
 
-import { authResponse } from "./honoAdapter";
-
 export function createRoutes() {
   return new Hono<AppEnv<{ requestId: string }>>()
     .get(
@@ -63,12 +61,9 @@ export function createRoutes() {
       return c.json({ user: toUserResponse(result.user) });
     })
     .post("/sign-out", rateLimit("public"), async (c) => {
-      return authResponse(
-        c,
-        await signOut(c.env, {
-          raw_request: c.req.raw,
-          requestId: c.get("requestId"),
-        }),
-      );
+      return signOut(c.env, {
+        raw_request: c.req.raw,
+        requestId: c.get("requestId"),
+      });
     });
 }

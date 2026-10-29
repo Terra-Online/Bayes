@@ -7,44 +7,33 @@ import { loginViaPassword } from "@/services/auth/loginViaPassword";
 import { registerViaOTP, requestRegistrationOtp } from "@/services/auth/registerViaOTP";
 import type { AppEnv } from "@/types/app";
 
-import { authResponse } from "./honoAdapter";
-
 export function createRoutes() {
   return new Hono<AppEnv<{ requestId: string }>>()
     .post("/register", rateLimit("public"), async (c) => {
       const input = parseInput(registerWithOtpSchema, await readJsonBody(c.req));
 
-      return authResponse(
-        c,
-        await registerViaOTP(c.env, {
-          ...input,
-          raw_request: c.req.raw,
-          requestId: c.get("requestId"),
-        }),
-      );
+      return registerViaOTP(c.env, {
+        ...input,
+        raw_request: c.req.raw,
+        requestId: c.get("requestId"),
+      });
     })
     .post("/email-otp/send-verification-otp", rateLimit("otp-send"), async (c) => {
       const input = parseInput(sendTemplateOtpSchema, await readJsonBody(c.req));
 
-      return authResponse(
-        c,
-        await requestRegistrationOtp(c.env, {
-          email: input.email,
-          locale: input.locale,
-          raw_request: c.req.raw,
-          requestId: c.get("requestId"),
-        }),
-      );
+      return requestRegistrationOtp(c.env, {
+        email: input.email,
+        locale: input.locale,
+        raw_request: c.req.raw,
+        requestId: c.get("requestId"),
+      });
     })
     .post("/sign-in/email", rateLimit("public"), async (c) => {
       const payload = await readJsonObject(c.req);
-      return authResponse(
-        c,
-        await loginViaPassword(c.env, {
-          payload,
-          raw_request: c.req.raw,
-          requestId: c.get("requestId"),
-        }),
-      );
+      return loginViaPassword(c.env, {
+        payload,
+        raw_request: c.req.raw,
+        requestId: c.get("requestId"),
+      });
     });
 }

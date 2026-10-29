@@ -5,6 +5,8 @@ export type PasswordResetContext = {
   requestId: string;
 };
 
+// The caller transfers this object. Email and locale are normalized in place.
+// The raw_request field remains borrowed and is not modified.
 export type RequestPasswordResetInput = PasswordResetContext & {
   email: string;
   redirectTo: string;

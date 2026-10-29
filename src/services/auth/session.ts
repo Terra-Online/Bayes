@@ -1,12 +1,21 @@
+// To avoid confusion between Hono's request and Better Auth's inputs and outputs,
+// we use explicit data for this module's interface. HTTP objects stay inside this module.
+
 import { ApiError } from "@/lib/errors";
 import { ensureUserProfile, formatPublicUid } from "@/repositories/users";
 import {
+  buildSessionCredentialHeaders,
+  createAuth,
   hasSessionCredentials,
-  readSessionIdentity,
   sameAuthCacheEnvironment,
 } from "@/services/auth/betterAuth";
+import {
+  getLegacyCookieExpirations,
+  resolveBrowserSessionHeaders,
+  serializeBrowserSessionCookie,
+} from "@/services/auth/browserSession";
 import { resolveAuthorization, type AuthCredentials } from "@/services/auth/contract/credentials";
-import type { AppEnv, AuthUser } from "@/types/app";
+import type { AuthUser, Bindings } from "@/types/app";
 
 export type AuthIdentity = {
   uid: string;
@@ -23,14 +32,14 @@ type Cached<T> = {
 };
 
 type AuthCache = {
-  env: AppEnv["Bindings"];
+  env: Bindings;
   revision: number;
   users: Map<string, Cached<AuthUser>>;
   identities: Map<string, Cached<AuthIdentity>>;
 };
 type AuthLookup = {
   // Auth bindings remain unchanged while this lookup is in progress.
-  env: AppEnv["Bindings"];
+  env: Bindings;
   cache: AuthCache;
   key: string | null;
   revision: number;
@@ -39,8 +48,9 @@ type AuthLookup = {
 
 const authCaches = new WeakMap<D1Database, AuthCache>();
 
+// Ordinary authentication may use cached values and never renews the session.
 export async function resolveAuthIdentity(
-  env: AppEnv["Bindings"],
+  env: Bindings,
   credentials: AuthCredentials,
 ): Promise<AuthIdentity> {
   const lookup = beginAuthLookup(env, credentials);
@@ -51,24 +61,22 @@ export async function resolveAuthIdentity(
   return resolveIdentity(credentials, lookup);
 }
 
+// Resolve credentials and return the authenticated business user.
 export async function resolveAuthUser(
-  env: AppEnv["Bindings"],
+  env: Bindings,
   credentials: AuthCredentials,
-  verifiedIdentity?: AuthIdentity,
 ): Promise<AuthUser> {
   const lookup = beginAuthLookup(env, credentials);
   const user = readCached(lookup, lookup.cache.users);
-  if (user && (!verifiedIdentity || user.uid === verifiedIdentity.uid)) {
+  if (user) {
     return user;
   }
-  const identity = verifiedIdentity ?? (await resolveIdentity(credentials, lookup));
+  const identity = await resolveIdentity(credentials, lookup);
   return loadAuthUser(identity, lookup);
 }
 
-export function invalidateAuthUserCache(
-  env: AppEnv["Bindings"],
-  credentials: AuthCredentials,
-): void {
+// Clear both cached projections for these credentials.
+export function invalidateSessionCache(env: Bindings, credentials: AuthCredentials): void {
   const cacheKey = getAuthCacheKey(credentials);
   if (cacheKey) {
     const cache = getAuthCache(env);
@@ -78,7 +86,72 @@ export function invalidateAuthUserCache(
   }
 }
 
-function beginAuthLookup(env: AppEnv["Bindings"], credentials: AuthCredentials): AuthLookup {
+export type ReadSessionResult = { cookies: string[] } & (
+  | { ok: true; user: AuthUser; requiresCookieConfirmation: boolean }
+  // A failed read can carry cookies produced before the failure.
+  // The caller emits them and rethrows the original error for normal error handling.
+  | { ok: false; error: unknown }
+);
+
+// Verify the session directly before reusing user data. Better Auth may renew it.
+export async function readSession(
+  env: Bindings,
+  credentials: AuthCredentials,
+): Promise<ReadSessionResult> {
+  const cookies: string[] = [];
+  try {
+    if (!hasSessionCredentials(env, credentials)) {
+      throw new ApiError(401, "SESSION_REQUIRED", "Session is required.");
+    }
+    const auth = createAuth(env);
+    const authHeaders = buildSessionCredentialHeaders(credentials);
+    const browserSession = resolveBrowserSessionHeaders(auth, authHeaders);
+    // This direct API call allows renewal. Ordinary authentication uses disableRefresh.
+    const { response: session, headers } = await auth.api.getSession({
+      headers: browserSession.headers,
+      returnHeaders: true,
+    });
+    cookies.push(...headers.getSetCookie());
+    if (!session) {
+      invalidateSessionCache(env, credentials);
+      if (resolveAuthorization(credentials)?.trim().toLowerCase().startsWith("bearer ")) {
+        throw new ApiError(401, "TOKEN_EXPIRED", "Token is expired, missing, or invalid.");
+      }
+      throw new ApiError(401, "SESSION_REQUIRED", "Session is required.");
+    }
+
+    // Use the freshly verified identity so a warm cache cannot authenticate a revoked session.
+    const lookup = beginAuthLookup(env, credentials);
+    const cachedUser = readCached(lookup, lookup.cache.users);
+    const user =
+      cachedUser && cachedUser.uid === session.user.id
+        ? cachedUser
+        : await loadAuthUser(
+            {
+              uid: session.user.id,
+              email: session.user.email,
+              displayName: session.user.name,
+            },
+            lookup,
+          );
+    if (browserSession.migrating) {
+      cookies.push(await serializeBrowserSessionCookie(auth, session.session));
+    } else if (authHeaders.get("cookie")?.includes("better-auth.")) {
+      // Expire legacy cookies when this request does not need legacy-cookie aliasing.
+      cookies.push(...getLegacyCookieExpirations(auth));
+    }
+    return {
+      ok: true,
+      user,
+      cookies,
+      requiresCookieConfirmation: browserSession.migrating,
+    };
+  } catch (error) {
+    return { ok: false, error, cookies };
+  }
+}
+
+function beginAuthLookup(env: Bindings, credentials: AuthCredentials): AuthLookup {
   const now = Date.now();
   const key = getAuthCacheKey(credentials);
   const cache = getAuthCache(env);
@@ -100,7 +173,7 @@ function storeCompleted<T>(lookup: AuthLookup, values: Map<string, Cached<T>>, v
   }
 }
 
-function getAuthCache(env: AppEnv["Bindings"]): AuthCache {
+function getAuthCache(env: Bindings): AuthCache {
   let cache = authCaches.get(env.DB);
   if (!cache || !sameAuthCacheEnvironment(cache.env, env)) {
     cache = { env: { ...env }, revision: 0, users: new Map(), identities: new Map() };
@@ -153,8 +226,15 @@ async function resolveIdentity(
   if (!hasSessionCredentials(env, credentials)) {
     throw new ApiError(401, "SESSION_REQUIRED", "Session is required.");
   }
-  const identity = await readSessionIdentity(env, credentials);
-  if (!identity) {
+  const auth = createAuth(env);
+  const headers = buildSessionCredentialHeaders(credentials);
+  const browserSession = resolveBrowserSessionHeaders(auth, headers);
+  // Ordinary authentication reads identity without extending the session lifetime.
+  const session = await auth.api.getSession({
+    headers: browserSession.headers,
+    query: { disableRefresh: true },
+  });
+  if (!session) {
     const authorization = resolveAuthorization(credentials)?.trim() ?? "";
     const hasBearerToken = authorization.toLowerCase().startsWith("bearer ");
     if (hasBearerToken) {
@@ -163,6 +243,11 @@ async function resolveIdentity(
     throw new ApiError(401, "SESSION_REQUIRED", "Session is required.");
   }
 
+  const identity: AuthIdentity = {
+    uid: session.user.id,
+    email: session.user.email,
+    displayName: session.user.name,
+  };
   storeCompleted(lookup, lookup.cache.identities, identity);
   return identity;
 }

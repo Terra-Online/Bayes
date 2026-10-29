@@ -1,13 +1,18 @@
 // To avoid confusion between Hono's request and Better Auth's inputs and outputs,
-// we use explicit data for this module's interface. HTTP objects stay inside the adapter.
+// we use explicit data for this module's interface. HTTP objects stay inside this module.
 
 import { z } from "zod";
 
 import { ApiError } from "@/lib/errors";
 import { ensureUserProfile, formatPublicUid } from "@/repositories/users";
+import { createAuth } from "@/services/auth/betterAuth";
+import {
+  expireOAuthExchangeProof,
+  inspectOAuthExchangeProof,
+  serializeBrowserSessionCookie,
+} from "@/services/auth/browserSession";
 import type { Bindings } from "@/types/app";
 
-import { createBetterAuthExchangeAdapter } from "./betterAuthAdapter";
 import { consumeExchange, findExchange, storeExchange } from "./exchangeRepository";
 import type {
   CreateSessionExchangeCodeInput,
@@ -100,8 +105,13 @@ export async function exchangeSession(
     throw new ApiError(400, "INVALID_AUTH_CODE", "Auth code is invalid or expired.");
   }
 
-  const adapter = createBetterAuthExchangeAdapter(env);
-  const proofResult = await adapter.inspectProof(input.cookie, exchange.data.challenge);
+  const auth = createAuth(env);
+  // Better Auth's cookie helpers read the browser proof from a Cookie header.
+  const proof_headers = new Headers();
+  if (input.cookie !== undefined) {
+    proof_headers.set("cookie", input.cookie);
+  }
+  const proofResult = await inspectOAuthExchangeProof(auth, proof_headers, exchange.data.challenge);
   if (proofResult !== "valid") {
     logExchangeFailure(input, proofResult === "missing" ? "proof_missing" : "proof_mismatch");
     throw new ApiError(
@@ -111,7 +121,11 @@ export async function exchangeSession(
     );
   }
 
-  const session = await adapter.findSession(exchange.data.token);
+  // Use the OAuth callback's session token. Incoming credentials are not used here.
+  const session = await auth.api.getSession({
+    query: { disableRefresh: true },
+    headers: new Headers({ authorization: `Bearer ${exchange.data.token}` }),
+  });
   if (!session) {
     logExchangeFailure(input, "session_lookup");
     throw new ApiError(401, "SESSION_REQUIRED", "Session is required.");
@@ -129,7 +143,10 @@ export async function exchangeSession(
     email: session.user.email,
     displayName: session.user.name,
   });
-  const cookies = await adapter.createCookies(session.session);
+  const cookies = [
+    await serializeBrowserSessionCookie(auth, session.session),
+    expireOAuthExchangeProof(auth),
+  ];
   return {
     user: {
       uid: profile.uid,

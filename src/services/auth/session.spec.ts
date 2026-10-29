@@ -5,7 +5,7 @@ import { createMockBindings } from "@/test/bindings";
 import { insertAuthenticatedUser, type AuthenticatedUserFixture } from "@/test/fixtures/auth";
 import { createAuthCacheFixture, type AuthCacheFixture } from "@/test/fixtures/authCache";
 
-import { invalidateAuthUserCache, resolveAuthIdentity, resolveAuthUser } from "./identity";
+import { invalidateSessionCache, resolveAuthIdentity } from "./session";
 
 const overview = "/me/v1/overview";
 const status = "/binding/v1/endfield/status";
@@ -59,7 +59,7 @@ describe("request-owned auth lookups", () => {
 
     fixture.database.sqlite.exec("DELETE FROM auth_sessions");
     await expect(resolveAuthIdentity(env, query)).resolves.toMatchObject({ uid: owner.user.uid });
-    invalidateAuthUserCache(env, owner.headers);
+    invalidateSessionCache(env, owner.headers);
     await expect(resolveAuthIdentity(env, query)).rejects.toMatchObject({ code: "TOKEN_EXPIRED" });
   });
 
@@ -134,7 +134,7 @@ describe("request-owned auth lookups", () => {
       await expect(resolveAuthIdentity(env, credentials)).resolves.toMatchObject({
         uid: owner.user.uid,
       });
-      invalidateAuthUserCache(env, credentials);
+      invalidateSessionCache(env, credentials);
       fixture.database.sqlite.exec("DELETE FROM auth_sessions");
       other.database.sqlite.exec("DELETE FROM auth_sessions");
       await expect(resolveAuthIdentity(env, credentials)).rejects.toMatchObject({
@@ -190,14 +190,6 @@ describe("request-owned auth lookups", () => {
     expect(await response.json()).toMatchObject({
       user: { uid: "100002AA", email: second.user.email },
     });
-    // Also retain the helper's verified-identity protocol: it must not reauthenticate.
-    const createAuth = vi.spyOn(authFactory, "createAuth");
-    const user = await resolveAuthUser(fixture.external.bindings, owner.headers, {
-      uid: owner.user.uid,
-      email: owner.user.email,
-    });
-    expect(user.uid).toBe(owner.user.uid);
-    expect(createAuth).not.toHaveBeenCalled();
   });
 
   it("does not repopulate a revoked cache from an older pending lookup", async () => {

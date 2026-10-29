@@ -131,7 +131,7 @@ proof and establishes the browser session. A code alone is not sufficient.
 When changing this flow, inspect the frontend caller together with
 [`browserSession.ts`](../src/services/auth/browserSession.ts),
 [`socialRoutes.ts`](../src/routes/auth/socialRoutes.ts),
-[`oauthCallback/index.ts`](../src/services/auth/oauthCallback/index.ts), and
+[`oauthCallback.ts`](../src/services/auth/oauthCallback.ts), and
 [`sessionRoutes.ts`](../src/routes/auth/sessionRoutes.ts).
 Do not replace the proof flow with a URL containing a session token.
 

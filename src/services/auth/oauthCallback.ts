@@ -6,9 +6,56 @@ import {
   isTrustedCallbackUrlForResponse,
   toSafeTrustedUrlLog,
 } from "@/services/auth/rules/frontendOrigins";
+import { createSessionExchangeCode } from "@/services/auth/sessionExchange";
 import type { Bindings } from "@/types/app";
 
-import type { OAuthCallbackInput } from "./types";
+export type OAuthCallbackInput = {
+  // The HTTP entrypoint must leave this body unread. Better Auth consumes its stream.
+  raw_request: Request;
+  requestId: string;
+};
+
+export async function completeOAuthCallback(
+  env: Bindings,
+  input: OAuthCallbackInput,
+): Promise<Response> {
+  const url = new URL(input.raw_request.url);
+  const provider = getProviderFromCallbackPath(url.pathname);
+  console.warn("[auth][oauth-callback] incoming", {
+    provider,
+    method: input.raw_request.method,
+    hasState: Boolean(url.searchParams.get("state")),
+    hasCode: Boolean(url.searchParams.get("code")),
+    hasError: Boolean(url.searchParams.get("error")),
+  });
+  const response = await invokeBetterAuthHandler(env, input.raw_request, {
+    requestId: input.requestId,
+  });
+  const location = response.headers.get("location");
+  console.warn("[auth][oauth-callback] response", {
+    provider,
+    status: response.status,
+    hasLocation: Boolean(location),
+    location: toSafeTrustedUrlLog(env, location),
+    hasSetCookie: Boolean(response.headers.get("set-cookie")),
+    hasSetAuthToken: Boolean(response.headers.get("set-auth-token")),
+  });
+  // Better Auth validates state and completes login or binding before returning this response.
+  const handoff = inspectSessionHandoff(env, url.pathname, response);
+  if (!handoff) {
+    return response;
+  }
+  const code = await createSessionExchangeCode(env.DB, {
+    sessionToken: handoff.sessionToken,
+    origin: handoff.frontendUrl.origin,
+    challenge: handoff.challenge,
+  });
+  return attachSessionExchangeCode(env, url.pathname, response, handoff.frontendUrl, code);
+}
+
+export function handleOAuthError(env: Bindings, input: OAuthCallbackInput): Promise<Response> {
+  return invokeBetterAuthHandler(env, input.raw_request, { requestId: input.requestId });
+}
 
 type SessionHandoff = {
   sessionToken: string;
@@ -16,11 +63,7 @@ type SessionHandoff = {
   challenge: string;
 };
 
-export function invokeOAuthRequest(env: Bindings, input: OAuthCallbackInput): Promise<Response> {
-  return invokeBetterAuthHandler(env, input.raw_request, { requestId: input.requestId });
-}
-
-export function getProviderFromCallbackPath(path: string): string {
+function getProviderFromCallbackPath(path: string): string {
   return path.split("/").pop() || "unknown";
 }
 
@@ -114,13 +157,7 @@ function readSessionTokenFromResponse(
   return readSessionTokenFromSetCookie(better_auth_response.headers.get("set-cookie"), cookieName);
 }
 
-function appendQueryParam(rawUrl: string, name: string, value: string): string {
-  const url = new URL(rawUrl);
-  url.searchParams.set(name, value);
-  return url.toString();
-}
-
-export function inspectSessionHandoff(
+function inspectSessionHandoff(
   env: Bindings,
   publicPath: string,
   better_auth_response: Response,
@@ -164,16 +201,18 @@ export function inspectSessionHandoff(
   return { sessionToken, frontendUrl, challenge };
 }
 
-export function attachSessionExchangeCode(
+function attachSessionExchangeCode(
   env: Bindings,
   publicPath: string,
   better_auth_response: Response,
-  frontendUrl: URL,
+  owned_frontend_url: URL,
   code: string,
 ): Response {
   const location = better_auth_response.headers.get("location");
   const headers = new Headers(better_auth_response.headers);
-  headers.set("location", appendQueryParam(frontendUrl.toString(), "auth_code", code));
+  // The handoff transfers this URL. Patch it in place without serializing and reparsing it.
+  owned_frontend_url.searchParams.set("auth_code", code);
+  headers.set("location", owned_frontend_url.toString());
   headers.set("Cache-Control", "private, no-store");
   headers.set("Referrer-Policy", "no-referrer");
   console.warn("[auth][oauth-callback] attached session exchange code", {

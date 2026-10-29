@@ -2,8 +2,8 @@ import { toSerializableError } from "@/lib/errors";
 import { ApiError } from "@/lib/errors";
 import { hmacServiceIdentifier } from "@/lib/serviceIdentity";
 import { toApiError } from "@/middleware/error-handler";
-import { resolveAuthUser } from "@/services/auth/identity";
 import { getRequestAuthCredentials } from "@/services/auth/requestCredentials";
+import { resolveAuthUser } from "@/services/auth/session";
 import type { Bindings } from "@/types/app";
 
 const NOTIFICATION_LIVE_PATH = "/notify/v1/live";

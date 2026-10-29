@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { createMiddleware } from "hono/factory";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { onAppError } from "@/middleware/error-handler";
+import { createApp } from "@/app";
 import { createAuth, runWithAuthRequest } from "@/services/auth/betterAuth";
 import emailTemplates from "@/services/email/templateLocales.json";
 import { createMockBindings, type MockBindings } from "@/test/bindings";
@@ -10,8 +10,27 @@ import { createTestDatabase, type TestDatabase } from "@/test/database/createTes
 import { insertUser } from "@/test/fixtures/users";
 import type { AppEnv, Bindings } from "@/types/app";
 
-import { createRoutes as createEmailRoutes } from "./emailRoutes";
-import { createRoutes as createPasswordResetRoutes } from "./passwordResetRoutes";
+// This Node suite exercises HTTP/CORS/auth. Unused native service bindings fail loudly.
+vi.mock("cloudflare:workers", () => ({
+  WorkerEntrypoint: class {
+    constructor() {
+      throw new Error("Unexpected native entrypoint construction");
+    }
+  },
+  DurableObject: class {
+    constructor() {
+      throw new Error("Unexpected native object construction");
+    }
+  },
+  exports: new Proxy(
+    {},
+    {
+      get: (_target, key) => {
+        throw new Error(`Unexpected native binding: ${String(key)}`);
+      },
+    },
+  ),
+}));
 
 vi.mock("@/services/auth/rules/disposableEmailDomains.json", () => ({
   default: ["disposable.example.test"],
@@ -99,9 +118,7 @@ describe("email authentication HTTP behavior", () => {
         "*",
         createMiddleware<AppEnv>((_c, next) => runWithAuthRequest(next)),
       )
-      .onError(onAppError);
-    app.route("/auth/v1", createEmailRoutes());
-    app.route("/auth/v1", createPasswordResetRoutes());
+      .route("/", createApp());
   });
 
   afterEach(() => {
@@ -402,9 +419,14 @@ describe("email authentication HTTP behavior", () => {
     const registered = await request("/register", body, {
       cookie: "analytics=present",
       "user-agent": "Registration Browser/1.0",
+      "x-request-id": "browser-registration",
     });
     expect(registered.status).toBe(200);
     expect(registered.headers.get("content-type")).toContain("application/json");
+    expect(registered.headers.get("x-request-id")).toBe("browser-registration");
+    expect(registered.headers.get("access-control-allow-origin")).toBe("https://opendfieldmap.org");
+    expect(registered.headers.get("access-control-allow-credentials")).toBe("true");
+    expect(registered.headers.get("x-ratelimit-backend")).toBe("cf-rate-limit");
     const identity = (await registered.json()) as RegisteredEmailIdentity;
     const cookies = registered.headers.getSetCookie();
     const sessionCookie = cookies.find((cookie) =>
