@@ -15,7 +15,6 @@ INSERT INTO _ugc_check SELECT 'known_legacy_status', NOT EXISTS (SELECT 1 FROM u
 CREATE TABLE _ugc_source AS SELECT * FROM ugc_submissions;
 
 -- Uses the current users(uid) internal key. No legacy payload or audit import.
--- Target data and deployed D1 execution remain unverified.
 -- Agreed import: one snapshot per submission, revision=1, creator=user_id,
 -- created_at=old created_at. Discard edit backups, old events and old notes.
 -- All old stale rows become unknown, with no inferred deletion facts.
