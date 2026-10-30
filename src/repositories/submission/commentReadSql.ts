@@ -6,7 +6,7 @@ export const publicCommentRows = `comment_rows AS NOT MATERIALIZED (
     r.review_status, r.created_at AS snapshot_created_at
   FROM ugc_submissions s
   LEFT JOIN ugc_snapshots r ON r.id = (
-    SELECT public_snapshot_id FROM ugc_submission_visibility WHERE submission_id = s.id
+    SELECT public_snapshot_id FROM v_ugc_submission_visibility WHERE submission_id = s.id
   )
 )`;
 
@@ -14,7 +14,7 @@ export const ownerCommentRows = `comment_rows AS NOT MATERIALIZED (
   SELECT s.*, r.id AS snapshot_id, r.content,
     r.review_status, r.created_at AS snapshot_created_at
   FROM ugc_submissions s
-  JOIN ugc_submission_visibility v ON v.submission_id = s.id
+  JOIN v_ugc_submission_visibility v ON v.submission_id = s.id
   JOIN ugc_snapshots r ON r.id = v.frontier_snapshot_id
 )`;
 

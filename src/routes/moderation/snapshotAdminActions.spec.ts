@@ -160,7 +160,7 @@ it("clears hidden retained reports explicitly without restoring or reviewing", a
   ).toMatchObject({ outcome: "no_op" });
   expect(
     fixture.database.sqlite
-      .prepare("SELECT * FROM ugc_public_submissions WHERE id='comment'")
+      .prepare("SELECT * FROM v_ugc_public_submissions WHERE id='comment'")
       .all(),
   ).toEqual([]);
   expect(fixture.database.sqlite.prepare("SELECT * FROM ugc_snapshots_review_audit").all()).toEqual(
@@ -312,7 +312,7 @@ it("keeps public A and frontier B distinct and protects new B reports from an ol
       .status,
   ).toBe(200);
   expect(
-    fixture.database.sqlite.prepare("SELECT snapshot_id FROM ugc_public_submissions").get(),
+    fixture.database.sqlite.prepare("SELECT snapshot_id FROM v_ugc_public_submissions").get(),
   ).toEqual({ snapshot_id: "snapshot-comment" });
   expect(
     (

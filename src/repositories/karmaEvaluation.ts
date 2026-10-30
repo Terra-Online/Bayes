@@ -33,7 +33,7 @@ export async function listKarmaEvaluationUsers(
     CROSS JOIN ugc_submissions s INDEXED BY idx_ugc_user_kind_poi_created
       ON selected.uid=s.user_id
     JOIN ugc_snapshots r ON r.submission_id=s.id AND r.revision=s.revision
-    JOIN ugc_submission_visibility v ON v.submission_id=s.id
+    JOIN v_ugc_submission_visibility v ON v.submission_id=s.id
     WHERE s.kind='image'
     GROUP BY s.user_id
   )

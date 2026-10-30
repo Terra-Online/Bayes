@@ -108,7 +108,7 @@ const selection = `WITH management AS (SELECT
     'toStatus',a.to_status,'source',a.source,'adminUserId',a.admin_user_id,'note',a.note,'createdAt',a.created_at)
     FROM ugc_snapshots_review_audit a WHERE a.snapshot_id=f.id ORDER BY a.rowid DESC LIMIT 1) AS latestReviewAudit
   FROM ugc_submissions s
-  JOIN ugc_submission_visibility v ON v.submission_id=s.id
+  JOIN v_ugc_submission_visibility v ON v.submission_id=s.id
   JOIN ugc_snapshots f ON f.id=v.frontier_snapshot_id AND f.submission_id=s.id
   LEFT JOIN ugc_snapshots p ON p.id=v.public_snapshot_id AND p.submission_id=s.id
   LEFT JOIN users u ON u.uid=s.user_id)`;

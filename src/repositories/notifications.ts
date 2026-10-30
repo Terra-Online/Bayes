@@ -284,7 +284,7 @@ function prepareCommunityVoteNotificationWrite(
   // Eligibility cannot change between these statements: notifications never mutate
   // visibility or votes. This gates every aggregation mutation, including expiry,
   // without treating a matching millisecond timestamp as proof of a new vote.
-  const visibilityCondition = `EXISTS (SELECT 1 FROM ugc_submission_visibility visibility
+  const visibilityCondition = `EXISTS (SELECT 1 FROM v_ugc_submission_visibility visibility
     WHERE visibility.submission_id=s.id AND visibility.public_snapshot_id IS NOT NULL)${
       payload.kind === "image"
         ? ` AND NOT EXISTS (SELECT 1 FROM ugc_submission_upvotes existing
@@ -319,12 +319,12 @@ function prepareCommunityVoteNotificationWrite(
            payload.kind === "comment"
              ? `AND EXISTS (
            SELECT 1 FROM ugc_submission_votes vote
-           JOIN ugc_submission_visibility visibility ON visibility.submission_id=vote.submission_id
+           JOIN v_ugc_submission_visibility visibility ON visibility.submission_id=vote.submission_id
            WHERE vote.submission_id=?3 AND vote.user_id=?4 AND vote.active=1 AND vote.value=1
              AND vote.updated_at=?2 AND visibility.public_snapshot_id IS NOT NULL
          )`
              : `AND EXISTS (SELECT 1 FROM ugc_submissions s
-               JOIN ugc_submission_visibility visibility ON visibility.submission_id=s.id
+               JOIN v_ugc_submission_visibility visibility ON visibility.submission_id=s.id
                WHERE s.id=?3 AND s.kind='image' AND s.user_id<>?4
                  AND visibility.public_snapshot_id IS NOT NULL
                  AND NOT EXISTS (SELECT 1 FROM ugc_submission_upvotes vote

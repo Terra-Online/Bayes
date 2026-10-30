@@ -397,7 +397,7 @@ WHEN NEW.id IS NOT OLD.id
 BEGIN SELECT RAISE(ABORT, 'snapshot content is immutable; append a new version'); END;
 
 -- One row per valid submission; this view does not grant actor permissions.
-CREATE VIEW ugc_submission_visibility AS
+CREATE VIEW v_ugc_submission_visibility AS
 SELECT
   s.id AS submission_id,
   s.kind, s.poi_id, s.poi_hash, s.poi_type, s.user_id,
@@ -419,12 +419,12 @@ JOIN ugc_snapshots f
 LEFT JOIN ugc_snapshots p
   ON p.submission_id = s.id AND p.revision = f.revision - 1;
 
-CREATE VIEW ugc_public_submissions AS
+CREATE VIEW v_ugc_public_submissions AS
 SELECT
   v.submission_id AS id, v.kind, v.poi_id, v.poi_hash, v.poi_type, v.user_id,
   v.parent_id, v.comment_depth, v.created_at,
   r.id AS snapshot_id, r.content, r.file_path, r.mime_type, r.size_bytes
-FROM ugc_submission_visibility v
+FROM v_ugc_submission_visibility v
 JOIN ugc_snapshots r
   ON r.submission_id = v.submission_id AND r.id = v.public_snapshot_id;
 

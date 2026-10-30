@@ -270,7 +270,7 @@ export async function listImageViewerReactionsByMarker(
        CASE WHEN f.user_id IS NULL THEN 0 ELSE 1 END AS viewer_flagged
      FROM ugc_submissions s INDEXED BY sqlite_autoindex_ugc_submissions_1
      JOIN ugc_snapshots selected ON selected.id = (
-       SELECT public_snapshot_id FROM ugc_submission_visibility WHERE submission_id = s.id
+       SELECT public_snapshot_id FROM v_ugc_submission_visibility WHERE submission_id = s.id
      )
      LEFT JOIN ugc_submission_upvotes u ON u.submission_id = s.id AND u.user_id = ?1 AND u.active = 1
      LEFT JOIN ugc_submission_flags f ON f.submission_id = s.id AND f.user_id = ?1 AND f.active = 1

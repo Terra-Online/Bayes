@@ -30,7 +30,7 @@ describe("public comment context query plan", () => {
     const descendants = database.queries.find((query) => query.sql.includes("reply_context AS"));
     expect(descendants).toBeDefined();
     expect(database.explain(descendants!)).not.toMatch(
-      /MATERIALIZE ugc_public_submissions|SCAN f\b/,
+      /MATERIALIZE v_ugc_public_submissions|SCAN f\b/,
     );
     expect(database.explain(descendants!)).toMatch(
       /idx_ugc_(comment_parent|kind_poi_parent_created)/,

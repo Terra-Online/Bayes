@@ -39,7 +39,7 @@ export async function setImageUpvote(
     payload.active
       ? db
           .prepare(`INSERT INTO ugc_submission_upvotes (submission_id,user_id,active,created_at)
-          SELECT submission_id,?2,1,?3 FROM ugc_submission_visibility
+          SELECT submission_id,?2,1,?3 FROM v_ugc_submission_visibility
           WHERE submission_id=?1 AND kind='image' AND public_snapshot_id IS NOT NULL
           ON CONFLICT(submission_id,user_id) DO UPDATE SET active=1,created_at=excluded.created_at
           WHERE ugc_submission_upvotes.active=0 RETURNING submission_id`)
@@ -47,14 +47,14 @@ export async function setImageUpvote(
       : db
           .prepare(`UPDATE ugc_submission_upvotes SET active=0
           WHERE submission_id=?1 AND user_id=?2 AND active=1
-            AND EXISTS (SELECT 1 FROM ugc_submission_visibility
+            AND EXISTS (SELECT 1 FROM v_ugc_submission_visibility
               WHERE submission_id=?1 AND kind='image' AND public_snapshot_id IS NOT NULL)
           RETURNING submission_id`)
           .bind(payload.submissionId, payload.actor.uid),
     db
       .prepare(`SELECT s.poi_id,v.public_snapshot_id,
       (SELECT COUNT(*) FROM ugc_submission_upvotes WHERE submission_id=s.id AND active=1) AS count
-      FROM ugc_submissions s JOIN ugc_submission_visibility v ON v.submission_id=s.id
+      FROM ugc_submissions s JOIN v_ugc_submission_visibility v ON v.submission_id=s.id
       WHERE s.id=?1 AND s.kind='image'`)
       .bind(payload.submissionId),
   ]);
@@ -105,7 +105,7 @@ export async function setSubmissionVote(
     db
       .prepare(`INSERT INTO ugc_submission_votes
       (submission_id,user_id,value,active,created_at,updated_at)
-      SELECT submission_id,?2,?3,1,?4,?4 FROM ugc_submission_visibility
+      SELECT submission_id,?2,?3,1,?4,?4 FROM v_ugc_submission_visibility
       WHERE submission_id=?1 AND kind='comment' AND public_snapshot_id IS NOT NULL
       ON CONFLICT(submission_id,user_id) DO UPDATE SET
         value=excluded.value,
@@ -118,7 +118,7 @@ export async function setSubmissionVote(
       .prepare(`SELECT s.poi_id,v.public_snapshot_id,
         COALESCE((SELECT value FROM ugc_submission_votes WHERE submission_id=s.id AND user_id=?2 AND active=1),0) AS vote,
         (SELECT COALESCE(SUM(value),0) FROM ugc_submission_votes WHERE submission_id=s.id AND active=1) AS score
-      FROM ugc_submissions s JOIN ugc_submission_visibility v ON v.submission_id=s.id
+      FROM ugc_submissions s JOIN v_ugc_submission_visibility v ON v.submission_id=s.id
       WHERE s.id=?1 AND s.kind='comment'`)
       .bind(payload.submissionId, payload.actor.uid),
   ]);

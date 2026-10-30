@@ -25,7 +25,7 @@ export async function createPendingComment(
       (id,kind,poi_id,poi_hash,poi_type,user_id,parent_id,comment_depth,revision,created_at,updated_at)
       SELECT ?1,'comment',?2,?3,?4,?5,p.id,p.comment_depth+1,1,?6,?6
       FROM ugc_submissions p
-      JOIN ugc_submission_visibility v ON v.submission_id=p.id
+      JOIN v_ugc_submission_visibility v ON v.submission_id=p.id
       WHERE p.id=?7 AND p.kind='comment' AND p.poi_id=?2 AND p.poi_hash=?3 AND p.poi_type=?4
         AND v.public_snapshot_id IS NOT NULL
       RETURNING parent_id,comment_depth`)

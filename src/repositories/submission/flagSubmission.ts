@@ -35,7 +35,7 @@ export async function setSubmissionReport(
   },
 ): Promise<SetSubmissionReportResult> {
   const eligible = `SELECT s.id FROM ugc_submissions s
-    JOIN ugc_submission_visibility v ON v.submission_id=s.id
+    JOIN v_ugc_submission_visibility v ON v.submission_id=s.id
     WHERE s.id=?1 AND s.kind=?2 AND s.user_id<>?3 AND v.public_snapshot_id=?4`;
   const results = await db.batch<Record<string, unknown>>([
     db
@@ -45,7 +45,7 @@ export async function setSubmissionReport(
       u.uid AS authorUid,u.uid_number AS uidNumber,u.uid_suffix AS uidSuffix,
       u.nickname,u.role,u.karma,u.avt AS avatar,
       (SELECT COUNT(*) FROM ugc_submission_flags WHERE submission_id=s.id AND active=1) AS flagCount
-      FROM ugc_submissions s JOIN ugc_submission_visibility v ON v.submission_id=s.id
+      FROM ugc_submissions s JOIN v_ugc_submission_visibility v ON v.submission_id=s.id
       LEFT JOIN ugc_snapshots r ON r.id=v.public_snapshot_id
       LEFT JOIN users u ON u.uid=s.user_id
       WHERE s.id=?1 AND s.kind=?2`)

@@ -1,9 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
-import {
-  runAutoModerationQueueBatch,
-  type LegacyAutoModerationMsg,
-} from "@/queues/runtime/autoModeration";
+import { runAutoModerationQueueBatch } from "@/queues/runtime/autoModeration";
+import type { AutoModerationMsg } from "@/queues/types/messages";
 import { insertCommentSnapshot } from "@/test/fixtures/commentSnapshots";
 import { insertImageSnapshot } from "@/test/fixtures/imageSnapshots";
 import { createModerationTestFixture } from "@/test/fixtures/moderation";
@@ -105,7 +103,7 @@ async function run(ids: string[]): Promise<Response> {
     body: { ids },
   });
 }
-async function consume(snapshotId: string | undefined, submissionId = "photo") {
+async function consume(snapshotId: string, submissionId = "photo") {
   const ack = vi.fn();
   const retry = vi.fn();
   await runAutoModerationQueueBatch(fixture.env, {
@@ -116,7 +114,7 @@ async function consume(snapshotId: string | undefined, submissionId = "photo") {
         retry,
       },
     ],
-  } as unknown as MessageBatch<LegacyAutoModerationMsg>);
+  } as unknown as MessageBatch<AutoModerationMsg>);
   return { ack, retry };
 }
 
@@ -143,18 +141,8 @@ it("approves the selected immutable snapshot through HTTP and only rewards it on
   expect(fetch).toHaveBeenCalledOnce();
 });
 
-it("acknowledges old unversioned work without binding it to the current snapshot, then backfills the retained exact ID", async () => {
+it("backfills and consumes the retained exact snapshot without repeating review effects", async () => {
   seed("photo", "pending_openai", { kind: "image" });
-  const { ack, retry } = await consume(undefined);
-  expect(ack).toHaveBeenCalledOnce();
-  expect(retry).not.toHaveBeenCalled();
-  expect(console.warn).toHaveBeenCalledWith(
-    "skipping unversioned moderation message",
-    expect.objectContaining({ submissionId: "photo" }),
-  );
-  expect(status("snapshot-photo")).toBe("pending_openai");
-  expect(audits()).toEqual([]);
-  expect(fetch).not.toHaveBeenCalled();
   const response = await fixture.request("/run-once", {
     method: "POST",
     headers: fixture.createReviewerSession("a"),
@@ -186,14 +174,14 @@ it("clears flags only on public A to B replacement and never on a duplicate appr
     "INSERT INTO ugc_submission_flags (submission_id,user_id,active) VALUES ('comment','flagger',1)",
   );
   expect(
-    fixture.database.sqlite.prepare("SELECT snapshot_id FROM ugc_public_submissions").get(),
+    fixture.database.sqlite.prepare("SELECT snapshot_id FROM v_ugc_public_submissions").get(),
   ).toEqual({ snapshot_id: "snapshot-comment" });
   expect((await run(["comment"])).status).toBe(200);
   expect(fixture.database.sqlite.prepare("SELECT active FROM ugc_submission_flags").get()).toEqual({
     active: 0,
   });
   expect(
-    fixture.database.sqlite.prepare("SELECT snapshot_id FROM ugc_public_submissions").get(),
+    fixture.database.sqlite.prepare("SELECT snapshot_id FROM v_ugc_public_submissions").get(),
   ).toEqual({ snapshot_id: "edit-comment" });
   expect(fixture.authorPoints()).toBe(20);
   expect(redisCounts.size).toBe(0);
@@ -220,7 +208,9 @@ it("retains flags when admin rejection removes the previous public version", asy
   });
   expect(response.status).toBe(200);
   expect(await response.json()).toMatchObject({ outcome: "committed" });
-  expect(fixture.database.sqlite.prepare("SELECT * FROM ugc_public_submissions").all()).toEqual([]);
+  expect(fixture.database.sqlite.prepare("SELECT * FROM v_ugc_public_submissions").all()).toEqual(
+    [],
+  );
   expect(fixture.database.sqlite.prepare("SELECT active FROM ugc_submission_flags").get()).toEqual({
     active: 1,
   });
@@ -467,7 +457,9 @@ it("keeps committed review effects when author deletion happens afterwards", asy
     "UPDATE ugc_submissions SET author_deleted_at='deleted' WHERE id='comment'",
   );
   await consume("snapshot-comment", "comment");
-  expect(fixture.database.sqlite.prepare("SELECT * FROM ugc_public_submissions").all()).toEqual([]);
+  expect(fixture.database.sqlite.prepare("SELECT * FROM v_ugc_public_submissions").all()).toEqual(
+    [],
+  );
   expect(audits()).toHaveLength(1);
   expect(fixture.notificationMessages()).toHaveLength(1);
   expect(fixture.authorPoints()).toBe(22);

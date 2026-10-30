@@ -316,7 +316,7 @@ export async function listCommentViewerStateByMarker(
      WHERE s.poi_id IN (SELECT value FROM json_each(?2))
        AND s.id IN (SELECT value FROM json_each(?3))
        AND s.kind = 'comment'
-       AND EXISTS (SELECT 1 FROM ugc_submission_visibility visibility
+       AND EXISTS (SELECT 1 FROM v_ugc_submission_visibility visibility
          WHERE visibility.submission_id = s.id AND visibility.public_snapshot_id IS NOT NULL)
        AND (v.user_id IS NOT NULL OR f.user_id IS NOT NULL)`,
           )
