@@ -36,15 +36,6 @@ export type ModerationNotificationEvent =
       source: SubmissionModerationSource;
     }
   | {
-      type: "remove_request_created" | "remove_request_cancelled";
-      submission: ModerationSubmission;
-      actor: AuthUser;
-      previousStatus: SubmissionStatus;
-      nextStatus: SubmissionStatus;
-      flagCount?: number;
-      source: "remove_request" | "recall";
-    }
-  | {
       type: "comment_translation_prewarm_completed";
       submission: ModerationSubmission;
       source: SubmissionModerationSource;

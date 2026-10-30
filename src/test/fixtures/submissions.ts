@@ -75,7 +75,6 @@ export function insertSubmission(sqlite: DatabaseSync, input: SubmissionFixture)
     stale: "unknown",
     active: "approved",
     flagged: "approved",
-    remove_request: "approved",
   };
   const reviewStatus = reviewStatuses[item.status] ?? item.status;
   sqlite

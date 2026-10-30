@@ -1,5 +1,5 @@
 // Internal image read projections. Each row selects a version and its file together;
-// compatibility status is derived here, never persisted on the identity.
+// display/filter status is derived here, never persisted on the identity.
 export const publicImageSelection = `(SELECT p.*,
   CASE WHEN EXISTS (SELECT 1 FROM ugc_submission_flags f
     WHERE f.submission_id=p.id AND f.active=1) THEN 'flagged' ELSE 'active' END AS status

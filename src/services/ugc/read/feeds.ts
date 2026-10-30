@@ -103,7 +103,6 @@ function mergeViewerPendingComments(
         content: comment.content,
         snapshotId: comment.snapshotId,
         status: comment.status,
-        editUndoAvailable: comment.editUndoAvailable,
       });
       return;
     }
@@ -163,7 +162,6 @@ export async function readCommentContext(
           content: pending.content,
           snapshotId: pending.snapshotId,
           status: pending.status,
-          editUndoAvailable: pending.editUndoAvailable,
         }
       : comment;
   };

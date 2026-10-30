@@ -22,21 +22,14 @@ export interface ManagementSubmission {
   commentDepth: number;
   createdAt: string;
   updatedAt: string;
-  snapshotId: string;
-  reviewStatus: SnapshotReviewStatus;
-  content: string | null;
-  filePath: string | null;
-  mimeType: string | null;
-  sizeBytes: number | null;
   frontier: ManagementSnapshot;
-  publicSnapshotId: string | null;
   publicSnapshot: ManagementSnapshot | null;
   reportSnapshotId: string;
   flagCount: number;
   authorDeletedAt: string | null;
   adminDeletedAt: string | null;
   adminDeletedBy: string | null;
-  /** Derived archive/filter vocabulary; reviewStatus is the actual review fact. */
+  /** Derived archive/filter vocabulary; frontier.reviewStatus is the actual review fact. */
   status: SubmissionStatus;
   submitter: SubmissionSubmitter | null;
   latestReviewAudit: {
@@ -89,10 +82,9 @@ const selection = `WITH management AS (SELECT
   s.id,s.kind,s.poi_id AS markerId,s.poi_hash AS poiHash,s.poi_type AS poiType,
   s.user_id AS userId,s.parent_id AS parentId,s.comment_depth AS commentDepth,
   s.created_at AS createdAt,s.updated_at AS updatedAt,
-  f.id AS snapshotId,f.review_status AS reviewStatus,f.content,f.file_path AS filePath,
-  f.mime_type AS mimeType,f.size_bytes AS sizeBytes,
+  f.review_status AS reviewStatus,
   ${snapshot("f")} AS frontier,
-  p.id AS publicSnapshotId,CASE WHEN p.id IS NULL THEN NULL ELSE ${snapshot("p")} END AS publicSnapshot,
+  CASE WHEN p.id IS NULL THEN NULL ELSE ${snapshot("p")} END AS publicSnapshot,
   COALESCE(p.id,f.id) AS reportSnapshotId,
   (SELECT COUNT(*) FROM ugc_submission_flags g WHERE g.submission_id=s.id AND g.active=1) AS flagCount,
   s.author_deleted_at AS authorDeletedAt,s.admin_deleted_at AS adminDeletedAt,s.admin_deleted_by AS adminDeletedBy,
@@ -168,7 +160,9 @@ export async function listManagementSubmissions(
       WHEN 'flagged' THEN 1 WHEN 'active' THEN 3 ELSE 1 END,createdAt ASC,id ASC`;
   const result = await db.batch([
     db
-      .prepare(`${selection} SELECT * FROM management WHERE ${where}
+      .prepare(`${selection} SELECT id,kind,markerId,poiHash,poiType,userId,parentId,commentDepth,createdAt,updatedAt,
+      frontier,publicSnapshot,reportSnapshotId,flagCount,authorDeletedAt,adminDeletedAt,adminDeletedBy,
+      status,submitter,latestReviewAudit FROM management WHERE ${where}
       ORDER BY ${order} LIMIT ?${bindings.length + 1} OFFSET ?${bindings.length + 2}`)
       .bind(...bindings, limit, offset),
     db

@@ -364,8 +364,8 @@ it.each(["comment", "image"] as const)(
       items: [
         {
           id,
-          snapshotId: "B",
-          publicSnapshotId: snapshotId,
+          frontier: { snapshotId: "B" },
+          publicSnapshot: { snapshotId },
           reportSnapshotId: snapshotId,
           flagCount: 1,
         },
@@ -393,7 +393,7 @@ it.each(["comment", "image"] as const)(
       items: [
         {
           id,
-          publicSnapshotId: null,
+          publicSnapshot: null,
           reportSnapshotId: "B",
           flagCount: 1,
           authorDeletedAt: "gone",

@@ -20,7 +20,7 @@ export function createRoutes() {
       const user = c.get("authUser");
 
       const form = await c.req.parseBody();
-      const file = pickFile(form.file) ?? pickFile(form.image);
+      const file = pickFile(form.file);
       if (!file) {
         throw new ApiError(422, "UPLOAD_FILE_MISSING", "Image file is required.");
       }

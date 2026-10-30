@@ -188,8 +188,6 @@ function formatDiscordWebhookPayload(
   const actionTitle = {
     flag_created: "Flag created",
     flag_removed: "Flag removed",
-    remove_request_created: "Remove request created",
-    remove_request_cancelled: "Remove request cancelled",
   }[event.type];
 
   const fields = [
@@ -198,27 +196,17 @@ function formatDiscordWebhookPayload(
     { name: "status", value: `${event.previousStatus} -> ${event.nextStatus}`, inline: true },
   ];
 
-  if (isFlagNotificationEvent(event)) {
-    fields.push(
-      { name: "flag_changed", value: String(event.changed), inline: true },
-      { name: "flag_count", value: String(event.flagCount), inline: true },
-    );
-  } else {
-    fields.push({ name: "source", value: event.source, inline: true });
-    if (typeof event.flagCount === "number") {
-      fields.push({ name: "flag_count", value: String(event.flagCount), inline: true });
-    }
-  }
+  fields.push(
+    { name: "flag_changed", value: String(event.changed), inline: true },
+    { name: "flag_count", value: String(event.flagCount), inline: true },
+  );
 
   return {
     username: "OEM Moderation",
     embeds: [
       {
         title: actionTitle,
-        color:
-          event.type === "flag_removed" || event.type === "remove_request_cancelled"
-            ? 0x3182ce
-            : 0xdd6b20,
+        color: event.type === "flag_removed" ? 0x3182ce : 0xdd6b20,
         fields,
         timestamp: new Date().toISOString(),
       },
@@ -245,12 +233,6 @@ function submissionFields(
     },
     { name: "uploader", value: formatSubmitter(submission), inline: true },
   ];
-}
-
-function isFlagNotificationEvent(
-  event: ModerationNotificationEvent,
-): event is Extract<ModerationNotificationEvent, { type: "flag_created" | "flag_removed" }> {
-  return event.type === "flag_created" || event.type === "flag_removed";
 }
 
 function actorFields(actor: AuthUser): Array<{ name: string; value: string; inline: boolean }> {

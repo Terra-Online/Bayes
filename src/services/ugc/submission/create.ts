@@ -22,7 +22,7 @@ import {
 } from "./imagePreparation";
 import { normalizeUploadMime } from "./mime";
 
-// Submission compatibility rule for poiType/poiHash. The normalized values are
+// Submission input normalization for poiType/poiHash. The normalized values are
 // stored in D1, matched against reply parents, and used in image object keys.
 function normalizePoiField(value: string): string {
   return (

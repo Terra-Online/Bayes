@@ -36,13 +36,7 @@ export interface SubmissionSubmitter {
   avatar: number | null;
 }
 
-export type SubmissionStatus =
-  | "pending_openai"
-  | "pending_audit"
-  | "active"
-  | "flagged"
-  | "remove_request"
-  | "stale";
+export type SubmissionStatus = "pending_openai" | "pending_audit" | "active" | "flagged" | "stale";
 
 export type SubmissionKind = "image" | "comment";
 
@@ -76,7 +70,6 @@ export interface PublicSubmissionComment {
   parentId: string | null;
   depth: number;
   content: string;
-  editUndoAvailable: boolean;
   author: {
     nickname: string;
     publicUid: string;
@@ -132,6 +125,5 @@ export const ALL_STATUSES: SubmissionStatus[] = [
   "pending_audit",
   "active",
   "flagged",
-  "remove_request",
   "stale",
 ];

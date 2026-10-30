@@ -188,9 +188,7 @@ it("browses retained hidden reports across bounded pages and ignores queue/date 
     items: [
       {
         id: "old",
-        snapshotId: "snapshot-old",
-        reviewStatus: "rejected",
-        publicSnapshotId: null,
+        frontier: { snapshotId: "snapshot-old", reviewStatus: "rejected" },
         publicSnapshot: null,
         reportSnapshotId: "snapshot-old",
         flagCount: 1,
@@ -248,7 +246,7 @@ it.each(["comment", "image"] as const)(
           id: "hidden",
           kind,
           reportSnapshotId: "snapshot-hidden",
-          publicSnapshotId: null,
+          publicSnapshot: null,
           flagCount: 1,
           adminDeletedAt: "disabled",
           adminDeletedBy: "admin",
@@ -277,14 +275,26 @@ it("keeps public A and frontier B distinct and protects new B reports from an ol
     "INSERT INTO ugc_submission_flags(submission_id,user_id) VALUES ('comment','admin')",
   );
   const before = await fixture.request("/pending?submissionId=comment", { headers });
-  expect(await before.json()).toMatchObject({
+  const beforePayload = (await before.json()) as { items: Record<string, unknown>[] };
+  for (const field of [
+    "snapshotId",
+    "reviewStatus",
+    "content",
+    "filePath",
+    "mimeType",
+    "sizeBytes",
+    "publicSnapshotId",
+  ]) {
+    expect(beforePayload.items[0]).not.toHaveProperty(field);
+  }
+  expect(beforePayload).toMatchObject({
     items: [
       {
-        snapshotId: "B",
-        reviewStatus: "pending_openai",
-        content: "Corrected directions",
-        frontier: { snapshotId: "B", content: "Corrected directions" },
-        publicSnapshotId: "snapshot-comment",
+        frontier: {
+          snapshotId: "B",
+          reviewStatus: "pending_openai",
+          content: "Corrected directions",
+        },
         publicSnapshot: { snapshotId: "snapshot-comment", content: "Content comment" },
         reportSnapshotId: "snapshot-comment",
         latestReviewAudit: null,
@@ -335,8 +345,8 @@ it("keeps public A and frontier B distinct and protects new B reports from an ol
   expect(await after.json()).toMatchObject({
     items: [
       {
-        snapshotId: "B",
-        publicSnapshotId: "B",
+        frontier: { snapshotId: "B" },
+        publicSnapshot: { snapshotId: "B" },
         reportSnapshotId: "B",
         flagCount: 1,
         latestReviewAudit: {

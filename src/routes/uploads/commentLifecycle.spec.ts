@@ -155,14 +155,17 @@ describe("comment edits", () => {
     };
     expect(submission("target")).toMatchObject({ user_id: "author", revision: 2 });
     expect(activeFlaggers("target")).toEqual(["other-reader", "reader"]);
-    expect(await mine()).toEqual([
+    const mineItems = await mine();
+    for (const item of mineItems) {
+      expect(item).not.toHaveProperty("editUndoAvailable");
+    }
+    expect(mineItems).toEqual([
       expect.objectContaining({
         id: "target",
         snapshotId: edited.snapshotId,
         content: comment.content,
         status: "pending_openai",
         flagCount: 2,
-        editUndoAvailable: false,
       }),
     ]);
     const publicRead = await request("/comments/target?markerId=marker-1", null);

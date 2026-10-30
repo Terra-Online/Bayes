@@ -29,7 +29,6 @@ export function mapStatus(value: unknown): SubmissionStatus {
     value === "pending_audit" ||
     value === "active" ||
     value === "flagged" ||
-    value === "remove_request" ||
     value === "stale"
   ) {
     return value;
@@ -162,7 +161,6 @@ export function publicCommentFromRow(
     parentId: submission.parentId,
     depth: submission.commentDepth,
     content: submission.content ?? "",
-    editUndoAvailable: false,
     author:
       submission.submitter?.publicUid && submission.submitter.nickname
         ? {

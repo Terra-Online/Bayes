@@ -5,7 +5,7 @@ import { commitReviewBatch } from "./reviewNotifications";
 import type { SnapshotReviewStatus } from "./types";
 import type { SubmissionRecord } from "./types";
 
-/** A real immutable version, without legacy edit backups or inferred review notes. */
+/** An immutable content version with its recorded review status. */
 export type ReviewTarget = Pick<
   SubmissionRecord,
   | "id"

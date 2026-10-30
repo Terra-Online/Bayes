@@ -2,7 +2,7 @@ Cloudflare Queues separate publishing work from consuming it in a later Worker i
 
 Paths below are relative to this directory (`src/queues/`), except paths starting with `src/`, which are relative to the repository root.
 
-`src/index.ts` registers `runtime/entrypoint.ts` as its `queue` handler. Queue names and message discriminators remain compatible with already published messages.
+`src/index.ts` registers `runtime/entrypoint.ts` as its `queue` handler. Queue messages use the current contract in `types/messages.ts`; producers and consumers change together.
 
 - `client/`: Producer operations. Routes, scheduled jobs, and services enqueue work through these entrypoints.
 - `types/`: Public queue message types and their tagged union.
