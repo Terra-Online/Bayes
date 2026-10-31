@@ -2,12 +2,15 @@ import { Hono } from "hono";
 
 import { ApiError } from "@/lib/errors";
 import { rateLimit } from "@/middleware/rate-limit";
-import { commentEditSchema, commentSubmissionSchema } from "@/routes/schema/uploads";
+import {
+  commentEditSchema,
+  commentSubmissionSchema,
+  submissionReportSchema,
+} from "@/routes/schema/uploads";
 import { flagSubmission, unflagSubmission } from "@/services/ugc/interact/flags";
 import { voteComment } from "@/services/ugc/interact/votes";
+import { deleteSubmissionByAuthor } from "@/services/ugc/owner/deletion";
 import { editComment } from "@/services/ugc/owner/edits";
-import { requestSubmissionRemoval } from "@/services/ugc/owner/removalRequests";
-import { recallSubmission } from "@/services/ugc/owner/withdrawals";
 import { submitComment } from "@/services/ugc/submission/create";
 import type { AppEnv } from "@/types/app";
 
@@ -69,9 +72,18 @@ export function createRoutes() {
       async (c) => {
         const user = c.get("authUser");
         const submissionId = c.req.param("id");
+        const parsed = submissionReportSchema.safeParse(await c.req.json().catch(() => null));
+        if (!parsed.success) {
+          throw new ApiError(
+            422,
+            "VALIDATION_ERROR",
+            "Invalid report payload.",
+            parsed.error.flatten(),
+          );
+        }
         const result = await flagSubmission(
           { bindings: c.env, defer: (task) => c.executionCtx.waitUntil(task) },
-          { actor: user, submissionId, kind: "comment" },
+          { actor: user, submissionId, kind: "comment", ...parsed.data },
         );
         return c.json({ ok: true, ...result });
       },
@@ -84,9 +96,18 @@ export function createRoutes() {
       async (c) => {
         const user = c.get("authUser");
         const submissionId = c.req.param("id");
+        const parsed = submissionReportSchema.safeParse(await c.req.json().catch(() => null));
+        if (!parsed.success) {
+          throw new ApiError(
+            422,
+            "VALIDATION_ERROR",
+            "Invalid report payload.",
+            parsed.error.flatten(),
+          );
+        }
         const result = await unflagSubmission(
           { bindings: c.env, defer: (task) => c.executionCtx.waitUntil(task) },
-          { actor: user, submissionId, kind: "comment" },
+          { actor: user, submissionId, kind: "comment", ...parsed.data },
         );
         return c.json({ ok: true, ...result });
       },
@@ -111,37 +132,20 @@ export function createRoutes() {
 
         const result = await editComment(
           { bindings: c.env, defer: (task) => c.executionCtx.waitUntil(task) },
-          { actor: user, submissionId, content: parsed.data.content },
+          { actor: user, submissionId, ...parsed.data },
         );
         return c.json({ ok: true, ...result });
       },
     )
-    .post(
-      "/comments/:id/remove-request",
+    .delete(
+      "/comments/:id",
       requireActiveUser,
       requireUploadsEnabled,
       rateLimit("auth"),
       async (c) => {
-        const user = c.get("authUser");
-        const submissionId = c.req.param("id");
-        const result = await requestSubmissionRemoval(
+        const result = await deleteSubmissionByAuthor(
           { bindings: c.env, defer: (task) => c.executionCtx.waitUntil(task) },
-          { actor: user, submissionId, kind: "comment" },
-        );
-        return c.json({ ok: true, ...result });
-      },
-    )
-    .post(
-      "/comments/:id/recall",
-      requireActiveUser,
-      requireUploadsEnabled,
-      rateLimit("auth"),
-      async (c) => {
-        const user = c.get("authUser");
-        const submissionId = c.req.param("id");
-        const result = await recallSubmission(
-          { bindings: c.env, defer: (task) => c.executionCtx.waitUntil(task) },
-          { actor: user, submissionId, kind: "comment" },
+          { actor: c.get("authUser"), submissionId: c.req.param("id"), kind: "comment" },
         );
         return c.json({ ok: true, ...result });
       },

@@ -1,8 +1,9 @@
-import type { SQLOutputValue } from "node:sqlite";
+import type { DatabaseSync, SQLOutputValue } from "node:sqlite";
 
 import { vi } from "vitest";
 
 import { createApp } from "@/app";
+import type { SnapshotReviewStatus } from "@/repositories/submission/types";
 import { createMockBindings } from "@/test/bindings";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import type { AppEnv } from "@/types/app";
@@ -61,6 +62,7 @@ export function createCommentTranslationFixture({
   translatedText,
 }: CommentTranslationFixtureInput): CommentTranslationFixture {
   const database = createTestDatabase();
+
   const sessions: Record<string, { authorization: string }> = {};
   for (const [uid, role] of [
     ["author", "n"],
@@ -156,4 +158,36 @@ export function createCommentTranslationFixture({
     request,
     storedTranslations,
   };
+}
+
+interface TranslationSubmissionFixture {
+  id: string;
+  userId: string;
+  content: string;
+  kind?: "comment" | "image";
+  reviewStatus?: SnapshotReviewStatus;
+}
+
+export function insertTranslationSubmission(
+  sqlite: DatabaseSync,
+  input: TranslationSubmissionFixture,
+): void {
+  const kind = input.kind ?? "comment";
+  sqlite
+    .prepare(`INSERT INTO ugc_submissions
+    (id,kind,poi_id,poi_hash,poi_type,user_id) VALUES (?,?,'marker-1','hash','poi',?)`)
+    .run(input.id, kind, input.userId);
+  sqlite
+    .prepare(`INSERT INTO ugc_snapshots
+    (id,submission_id,kind,revision,content,file_path,review_status,creator_user_id)
+    VALUES (?,?,?,1,?,?,?,?)`)
+    .run(
+      `snapshot-${input.id}`,
+      input.id,
+      kind,
+      input.content,
+      kind === "image" ? "prod/image.webp" : null,
+      input.reviewStatus ?? "approved",
+      input.userId,
+    );
 }

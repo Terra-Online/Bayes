@@ -38,11 +38,15 @@ function encodePointIdToken(pointId: string): string | null {
   return encodeBase62(obfuscated).padStart(POINT_ID_TOKEN_LENGTH, "0");
 }
 
-export function buildPointShareUrl(submission: SubmissionRecord): string {
+export function buildPointShareUrl(
+  submission: Pick<SubmissionRecord, "markerId" | "poiType">,
+): string {
   return buildPointShareUrlForMarker(submission.markerId, submission.poiType);
 }
 
-export function buildSubmissionShareUrl(submission: SubmissionRecord): string {
+export function buildSubmissionShareUrl(
+  submission: Pick<SubmissionRecord, "id" | "kind" | "markerId" | "poiType">,
+): string {
   const url = new URL(buildPointShareUrl(submission));
   url.searchParams.set(submission.kind === "image" ? "imageId" : "commentId", submission.id);
   return url.toString();

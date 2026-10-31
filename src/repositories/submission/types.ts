@@ -1,3 +1,10 @@
+export type SnapshotReviewStatus =
+  | "pending_openai"
+  | "pending_audit"
+  | "approved"
+  | "rejected"
+  | "unknown";
+
 export interface SubmissionRecord {
   id: string;
   kind: SubmissionKind;
@@ -7,14 +14,9 @@ export interface SubmissionRecord {
   snapshotId: string;
   userId: string;
   content: string | null;
-  editOriginalContent: string | null;
-  editOriginalStatus: SubmissionStatus | null;
-  editOriginalSnapshotId: string | null;
   filePath: string | null;
   status: SubmissionStatus;
   flagCount: number;
-  moderationNote: string | null;
-  moderationQueuedAt: string | null;
   mimeType: string | null;
   sizeBytes: number | null;
   parentId: string | null;
@@ -34,13 +36,7 @@ export interface SubmissionSubmitter {
   avatar: number | null;
 }
 
-export type SubmissionStatus =
-  | "pending_openai"
-  | "pending_audit"
-  | "active"
-  | "flagged"
-  | "remove_request"
-  | "stale";
+export type SubmissionStatus = "pending_openai" | "pending_audit" | "active" | "flagged" | "stale";
 
 export type SubmissionKind = "image" | "comment";
 
@@ -48,6 +44,7 @@ export type SubmissionVoteValue = 1 | -1;
 export type ViewerVoteValue = SubmissionVoteValue | 0;
 
 export interface PublicSubmissionImage {
+  snapshotId: string;
   id: string;
   markerId: string;
   url: string;
@@ -66,13 +63,13 @@ export interface PublicSubmissionImage {
 
 export interface PublicSubmissionComment {
   id: string;
+  snapshotId: string;
   markerId: string;
   poiHash: string;
   poiType: string;
   parentId: string | null;
   depth: number;
   content: string;
-  editUndoAvailable: boolean;
   author: {
     nickname: string;
     publicUid: string;
@@ -128,6 +125,5 @@ export const ALL_STATUSES: SubmissionStatus[] = [
   "pending_audit",
   "active",
   "flagged",
-  "remove_request",
   "stale",
 ];

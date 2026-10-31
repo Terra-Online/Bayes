@@ -9,7 +9,7 @@ export type AutoModerationQueueSource = "upload" | "manual" | "scheduled_backfil
 export type AutoModerationMsg = {
   type: "moderation";
   submissionId: string;
-  snapshotId?: string;
+  snapshotId: string;
   source: AutoModerationQueueSource;
   queuedAt: string;
 };

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { appendCommentVersion } from "@/repositories/submission/appendCommentVersion";
 import {
   createModerationTestFixture,
   type ModerationTestFixture,
@@ -44,9 +45,9 @@ let env: ModerationTestFixture["env"];
 let createReviewerSession: ModerationTestFixture["createReviewerSession"];
 let submission: ModerationTestFixture["submission"];
 let request: ModerationTestFixture["request"];
-let storedSubmission: ModerationTestFixture["storedSubmission"];
+let storedSnapshot: ModerationTestFixture["storedSnapshot"];
 let authorPoints: ModerationTestFixture["authorPoints"];
-let reviewEvents: ModerationTestFixture["reviewEvents"];
+let reviewAudits: ModerationTestFixture["reviewAudits"];
 let notificationMessages: ModerationTestFixture["notificationMessages"];
 let moderationMessages: ModerationTestFixture["messages"]["moderation"];
 let translationMessages: ModerationTestFixture["messages"]["translation"];
@@ -62,9 +63,9 @@ beforeEach(() => {
     createReviewerSession,
     submission,
     request,
-    storedSubmission,
+    storedSnapshot,
     authorPoints,
-    reviewEvents,
+    reviewAudits,
     notificationMessages,
   } = fixture);
   moderationMessages = fixture.messages.moderation;
@@ -134,7 +135,7 @@ describe("automatic moderation", () => {
         ],
       ]);
       expect(warmedAssets).toEqual(["https://assets.example.test/images/photo.webp"]);
-      expect(storedSubmission("photo")).toMatchObject({ status: "active" });
+      expect(storedSnapshot("photo")).toMatchObject({ review_status: "approved" });
       expect(authorPoints()).toBe(26);
       expect(translationMessages).toEqual([]);
       expect(notificationMessages()).toEqual([
@@ -152,8 +153,8 @@ describe("automatic moderation", () => {
     };
     const failed = await request("/run", { method: "POST", headers, body: { limit: 1 } });
     expect(failed.status).toBe(500);
-    expect(storedSubmission("retry")).toMatchObject({
-      status: "pending_openai",
+    expect(storedSnapshot("retry")).toMatchObject({
+      review_status: "pending_openai",
       moderation_queued_at: null,
     });
     expect(moderationMessages).toEqual([]);
@@ -164,11 +165,11 @@ describe("automatic moderation", () => {
     expect(moderationMessages).toEqual([
       expect.objectContaining({ submissionId: "retry", snapshotId: "snapshot-retry" }),
     ]);
-    expect(storedSubmission("retry")).toMatchObject({
-      status: "pending_openai",
+    expect(storedSnapshot("retry")).toMatchObject({
+      review_status: "pending_openai",
       moderation_queued_at: expect.any(String),
     });
-    expect(reviewEvents()).toEqual([]);
+    expect(reviewAudits()).toEqual([]);
     expect(authorPoints()).toBe(20);
   });
 
@@ -181,10 +182,10 @@ describe("automatic moderation", () => {
     submission({ id: "human-review", status: "pending_audit" });
     submission({ id: "approved", status: "active" });
     database.sqlite
-      .prepare("UPDATE ugc_submissions SET moderation_queued_at = ? WHERE id = 'expired'")
+      .prepare("UPDATE ugc_snapshots SET moderation_queued_at = ? WHERE submission_id = 'expired'")
       .run(oldReservation);
     database.sqlite
-      .prepare("UPDATE ugc_submissions SET moderation_queued_at = ? WHERE id = 'fresh'")
+      .prepare("UPDATE ugc_snapshots SET moderation_queued_at = ? WHERE submission_id = 'fresh'")
       .run(freshReservation);
     const headers = createReviewerSession("a");
     const first = await request("/run", { method: "POST", headers, body: { limit: 1 } });
@@ -221,59 +222,29 @@ describe("automatic moderation", () => {
         source: "scheduled_backfill",
       }),
     ]);
-    expect(storedSubmission("oldest")).toMatchObject({
-      status: "pending_openai",
+    expect(storedSnapshot("oldest")).toMatchObject({
+      review_status: "pending_openai",
       moderation_queued_at: expect.any(String),
     });
-    expect(storedSubmission("expired")).toMatchObject({
-      status: "pending_openai",
+    expect(storedSnapshot("expired")).toMatchObject({
+      review_status: "pending_openai",
       moderation_queued_at: expect.any(String),
     });
-    expect(storedSubmission("expired")!.moderation_queued_at).not.toBe(oldReservation);
-    expect(storedSubmission("fresh")!.moderation_queued_at).toBe(freshReservation);
+    expect(storedSnapshot("expired")!.moderation_queued_at).not.toBe(oldReservation);
+    expect(storedSnapshot("fresh")!.moderation_queued_at).toBe(freshReservation);
     const repeat = await request("/run-once", { method: "POST", headers });
     expect(await repeat.json()).toMatchObject({ enqueued: 0 });
     expect(moderationMessages).toHaveLength(2);
     expect(authorPoints()).toBe(20);
-    expect(reviewEvents()).toEqual([]);
+    expect(reviewAudits()).toEqual([]);
     expect(notificationMessages()).toEqual([]);
     expect(fetch).not.toHaveBeenCalled();
-  });
-
-  it("leaves a newer author edit pending when an AI decision for the old snapshot arrives", async () => {
-    env.OPENAI_API_KEY = "synthetic-ai-key";
-    submission({ id: "changing", status: "pending_openai", content: "Original directions" });
-    vi.mocked(fetch).mockImplementation(async () => {
-      database.sqlite
-        .prepare(
-          "UPDATE ugc_submissions SET snapshot_id = 'new-snapshot', content = 'Corrected directions' WHERE id = 'changing'",
-        )
-        .run();
-      return Response.json({ results: [{ flagged: false }] });
-    });
-    const response = await request("/run", {
-      method: "POST",
-      headers: createReviewerSession("a"),
-      body: { ids: ["changing"] },
-    });
-    expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({ processed: 0, active: 0, pendingAudit: 0 });
-    expect(storedSubmission("changing")).toMatchObject({
-      snapshot_id: "new-snapshot",
-      content: "Corrected directions",
-      status: "pending_openai",
-    });
-    expect(authorPoints()).toBe(20);
-    expect(reviewEvents()).toEqual([]);
-    expect(notificationMessages()).toEqual([]);
-    expect(liveMessages).toEqual([]);
-    expect(translationMessages).toEqual([]);
-    expect(webhookMessages).toEqual([]);
   });
 
   it.each([
     {
       name: "AI disabled even with local approval enabled",
+      reason: "AI moderation skipped; waiting for manual audit.",
       settings: {
         SKIP_AI_MODERATION: "true",
         OPENAI_API_KEY: "synthetic-ai-key",
@@ -282,48 +253,63 @@ describe("automatic moderation", () => {
       status: "pending_audit",
       points: 20,
     },
-    { name: "no AI credentials", settings: {}, status: "pending_audit", points: 20 },
+    {
+      name: "no AI credentials",
+      settings: {},
+      status: "pending_audit",
+      points: 20,
+      reason: "OpenAI moderation skipped in local mode; waiting for manual audit.",
+    },
     {
       name: "explicit local approval without credentials",
+      reason: "Local upload debug auto-approved (OPENAI_API_KEY missing).",
       settings: { LOCAL_UPLOAD_AUTO_APPROVE: "true" },
       status: "active",
       points: 22,
     },
-  ])("records $name as a decision made without AI", async ({ settings, status, points }) => {
-    Object.assign(env, settings);
-    submission({ id: "local", status: "pending_openai" });
-    const response = await request("/run", {
-      method: "POST",
-      headers: createReviewerSession("a"),
-      body: { ids: ["local"] },
-    });
-    expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({
-      processed: 1,
-      active: status === "active" ? 1 : 0,
-      pendingAudit: status === "pending_audit" ? 1 : 0,
-    });
-    expect(storedSubmission("local")).toMatchObject({ status });
-    expect(authorPoints()).toBe(points);
-    expect(reviewEvents()).toEqual([
-      {
-        submission_id: "local",
-        from_status: "pending_openai",
-        to_status: status,
-        source: "auto_moderation",
-        ai_reviewed: 0,
-      },
-    ]);
-    expect(notificationMessages()).toEqual([
-      {
-        recipient_user_id: "author",
-        type: status === "active" ? "system.submission.approved" : "system.submission.needs_review",
-        submission_id: "local",
-      },
-    ]);
-    expect(liveMessages).toHaveLength(1);
-    expect(fetch).not.toHaveBeenCalled();
-  });
+  ])(
+    "records $name as a decision made without AI",
+    async ({ settings, status, points, reason }) => {
+      Object.assign(env, settings);
+      submission({ id: "local", status: "pending_openai" });
+      const response = await request("/run", {
+        method: "POST",
+        headers: createReviewerSession("a"),
+        body: { ids: ["local"] },
+      });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        processed: 1,
+        active: status === "active" ? 1 : 0,
+        pendingAudit: status === "pending_audit" ? 1 : 0,
+      });
+      expect(storedSnapshot("local")).toMatchObject({
+        review_status: status === "active" ? "approved" : status,
+      });
+      expect(database.sqlite.prepare("SELECT note FROM ugc_snapshots_review_audit").get()).toEqual({
+        note: reason,
+      });
+      expect(authorPoints()).toBe(points);
+      expect(reviewAudits()).toEqual([
+        {
+          submission_id: "local",
+          from_status: "pending_openai",
+          to_status: status === "active" ? "approved" : status,
+          source: "ai",
+        },
+      ]);
+      expect(notificationMessages()).toEqual([
+        {
+          recipient_user_id: "author",
+          type:
+            status === "active" ? "system.submission.approved" : "system.submission.needs_review",
+          submission_id: "local",
+        },
+      ]);
+      expect(liveMessages).toHaveLength(1);
+      expect(fetch).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([
     {
@@ -364,18 +350,19 @@ describe("automatic moderation", () => {
       pendingAudit: 1,
       stale: 0,
     });
-    expect(storedSubmission("uncertain")).toMatchObject({
-      status: "pending_audit",
-      moderation_note: expect.stringContaining(reason),
+    expect(storedSnapshot("uncertain")).toMatchObject({
+      review_status: "pending_audit",
+    });
+    expect(database.sqlite.prepare("SELECT note FROM ugc_snapshots_review_audit").get()).toEqual({
+      note: expect.stringContaining(reason),
     });
     expect(authorPoints()).toBe(20);
-    expect(reviewEvents()).toEqual([
+    expect(reviewAudits()).toEqual([
       {
         submission_id: "uncertain",
         from_status: "pending_openai",
         to_status: "pending_audit",
-        source: "auto_moderation",
-        ai_reviewed: 1,
+        source: "ai",
       },
     ]);
     expect(notificationMessages()).toEqual([
@@ -422,17 +409,16 @@ describe("automatic moderation", () => {
         input: [{ type: "text", text: "Turn left at the bridge" }],
       }),
     ]);
-    expect(storedSubmission("clean")).toMatchObject({
-      status: "active",
+    expect(storedSnapshot("clean")).toMatchObject({
+      review_status: "approved",
     });
     expect(authorPoints()).toBe(22);
-    expect(reviewEvents()).toEqual([
+    expect(reviewAudits()).toEqual([
       {
         submission_id: "clean",
         from_status: "pending_openai",
-        to_status: "active",
-        source: "auto_moderation",
-        ai_reviewed: 1,
+        to_status: "approved",
+        source: "ai",
       },
     ]);
     expect(notificationMessages()).toEqual([
@@ -462,7 +448,7 @@ describe("automatic moderation", () => {
     const repeat = await request("/run", { method: "POST", headers, body: { ids: ["clean"] } });
     expect(await repeat.json()).toMatchObject({ processed: 0, active: 0 });
     expect(authorPoints()).toBe(22);
-    expect(reviewEvents()).toHaveLength(1);
+    expect(reviewAudits()).toHaveLength(1);
     expect(aiInputs).toHaveLength(1);
     expect(notificationMessages()).toHaveLength(1);
     expect(liveMessages).toHaveLength(1);
@@ -472,40 +458,112 @@ describe("automatic moderation", () => {
 });
 
 describe("automatic moderation recovery and preserved decisions", () => {
+  it.each(["notification", "points"] as const)(
+    "preserves the separate commit boundary when the %s write fails, including a retry",
+    async (failure) => {
+      submission({ id: "waiting", status: "pending_openai" });
+      env.LOCAL_UPLOAD_AUTO_APPROVE = "true";
+      const headers = createReviewerSession("a");
+      // Fail a real database write, leaving the production workflow and transaction real.
+      database.sqlite.exec(
+        failure === "notification"
+          ? `CREATE TEMP TRIGGER fail_review_write BEFORE INSERT ON notification_messages
+           BEGIN SELECT RAISE(ABORT, 'notification write failed'); END`
+          : `CREATE TEMP TRIGGER fail_review_write BEFORE UPDATE OF points ON users
+           BEGIN SELECT RAISE(ABORT, 'points write failed'); END`,
+      );
+      const options = { method: "POST", headers, body: { ids: ["waiting"] } };
+      const failed = await request("/run", options);
+      expect(failed.status).toBe(500);
+      expect(storedSnapshot("waiting")).toMatchObject({
+        review_status: failure === "notification" ? "pending_openai" : "approved",
+      });
+      expect(authorPoints()).toBe(20);
+      expect(reviewAudits()).toHaveLength(failure === "notification" ? 0 : 1);
+      expect(notificationMessages()).toHaveLength(failure === "notification" ? 0 : 1);
+      expect(liveMessages).toHaveLength(failure === "notification" ? 0 : 1);
+      expect(translationMessages).toHaveLength(failure === "notification" ? 0 : 1);
+      database.sqlite.exec("DROP TRIGGER fail_review_write");
+      const retry = await request("/run", options);
+      expect(retry.status).toBe(200);
+      expect(storedSnapshot("waiting")).toMatchObject({ review_status: "approved" });
+      // A committed review is not replayed to recover a failed independent points write.
+      expect(authorPoints()).toBe(failure === "notification" ? 22 : 20);
+      expect(reviewAudits()).toHaveLength(1);
+      expect(notificationMessages()).toHaveLength(1);
+      expect(liveMessages).toHaveLength(1);
+      expect(translationMessages).toHaveLength(1);
+    },
+  );
+
   it.each([
-    { previousStatus: "active", expectedPoints: 20 },
-    { previousStatus: "pending_audit", expectedPoints: 22 },
+    { history: "an earlier approved version", expectedPoints: 20 },
+    { history: "a first version deferred to manual review", expectedPoints: 22 },
   ])(
-    "approves an edit formerly $previousStatus with $expectedPoints author points and prewarm disabled",
-    async ({ previousStatus, expectedPoints }) => {
+    "rewards approval after $history with $expectedPoints points and prewarm disabled",
+    async ({ history, expectedPoints }) => {
       env.OPENAI_API_KEY = "synthetic-ai-key";
       env.ENABLE_COMMENT_TRANSLATION_PREWARM = "false";
       submission({
         id: "edited",
         status: "pending_openai",
-        moderationNote: "Edited by author: correction",
       });
-      database.sqlite
-        .prepare(
-          `UPDATE ugc_submissions SET edit_original_content='Original directions', edit_original_status=?, edit_original_snapshot_id='previous' WHERE id='edited'`,
-        )
-        .run(previousStatus);
-      vi.mocked(fetch).mockResolvedValue(Response.json({ results: [{ flagged: false }] }));
-      const response = await request("/run", {
-        method: "POST",
-        headers: createReviewerSession("a"),
-        body: { ids: ["edited"] },
-      });
-      expect(response.status).toBe(200);
-      expect(await response.json()).toMatchObject({ processed: 1, active: 1 });
-      expect(storedSubmission("edited")).toMatchObject({
-        status: "active",
-        edit_original_status: null,
+      if (history === "an earlier approved version") {
+        database.sqlite.exec(
+          `UPDATE ugc_snapshots SET review_status='approved' WHERE submission_id='edited'`,
+        );
+        expect(
+          await appendCommentVersion(database.db, {
+            submissionId: "edited",
+            parentSnapshotId: "snapshot-edited",
+            snapshotId: "edited-B",
+            actorId: "author",
+            content: "Corrected directions",
+          }),
+        ).toMatchObject({ outcome: "appended" });
+      }
+      const headers = createReviewerSession("a");
+      if (history === "an earlier approved version") {
+        vi.mocked(fetch).mockResolvedValue(Response.json({ results: [{ flagged: false }] }));
+        const response = await request("/run", {
+          method: "POST",
+          headers,
+          body: { ids: ["edited"] },
+        });
+        expect(response.status).toBe(200);
+        expect(await response.json()).toMatchObject({ processed: 1, active: 1 });
+      } else {
+        env.SKIP_AI_MODERATION = "true";
+        const deferred = await request("/run", {
+          method: "POST",
+          headers,
+          body: { ids: ["edited"] },
+        });
+        expect(deferred.status).toBe(200);
+        expect(await deferred.json()).toMatchObject({ pendingAudit: 1, active: 0 });
+        expect(authorPoints()).toBe(20);
+        const response = await request("/edited/status", {
+          method: "PATCH",
+          headers,
+          body: {
+            action: "approve",
+            snapshotId: "snapshot-edited",
+            expectedReviewStatus: "pending_audit",
+          },
+        });
+        expect(response.status).toBe(200);
+        expect(await response.json()).toMatchObject({ outcome: "committed" });
+        expect(fetch).not.toHaveBeenCalled();
+      }
+      expect(storedSnapshot("edited")).toMatchObject({
+        review_status: "approved",
       });
       // Only the first approval earns points; editing approved content cannot earn them again.
       expect(authorPoints()).toBe(expectedPoints);
       expect(translationMessages).toEqual([]);
-      expect(notificationMessages()).toHaveLength(1);
+      expect(notificationMessages()).toHaveLength(
+        history === "an earlier approved version" ? 1 : 2,
+      );
     },
   );
 });

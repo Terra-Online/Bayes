@@ -1,6 +1,7 @@
+import { publicImageSelection, ownerImageSelection } from "./submission/imageSelection";
 import { buildImageScopeFilters } from "./submission/listImages";
-import { imageStatusListSql, publicImageFromRow, toCount } from "./submission/mapper";
-import type { PublicSubmissionImage, SubmissionStatus } from "./submission/types";
+import { publicImageFromRow, toCount } from "./submission/mapper";
+import type { PublicSubmissionImage } from "./submission/types";
 
 export interface DuplicateImageMarker {
   markerId: string;
@@ -21,17 +22,6 @@ export interface DuplicateMarkerImages {
   total: number;
 }
 
-const PUBLIC_IMAGE_STATUSES: SubmissionStatus[] = ["active", "flagged", "remove_request"];
-const REVIEWABLE_IMAGE_STATUSES: SubmissionStatus[] = [
-  "pending_openai",
-  "pending_audit",
-  "active",
-  "flagged",
-  "remove_request",
-];
-const PUBLIC_IMAGE_STATUS_SQL = imageStatusListSql(PUBLIC_IMAGE_STATUSES);
-const REVIEWABLE_IMAGE_STATUS_SQL = imageStatusListSql(REVIEWABLE_IMAGE_STATUSES);
-
 export async function getDuplicateImageMarkerSummary(
   db: D1Database,
   payload: {
@@ -45,14 +35,14 @@ export async function getDuplicateImageMarkerSummary(
     return null;
   }
 
-  const filters = ["poi_id = ?1", "kind = 'image'", `status IN (${REVIEWABLE_IMAGE_STATUS_SQL})`];
+  const filters = ["poi_id = ?1", "kind = 'image'", "status <> 'stale'"];
   const scope = buildImageScopeFilters(payload, 1);
   filters.push(...scope.clauses);
 
   const row = await db
     .prepare(
       `SELECT poi_id, COUNT(*) AS image_count
-       FROM ugc_submissions
+       FROM ${ownerImageSelection}
        WHERE ${filters.join(" AND ")}
        GROUP BY poi_id
        HAVING COUNT(*) > 1
@@ -81,7 +71,7 @@ export async function listDuplicateImageMarkers(
 ): Promise<DuplicateImageMarkerList> {
   const limit = Math.min(Math.max(payload.limit ?? 50, 1), 100);
   const offset = Math.max(payload.offset ?? 0, 0);
-  const baseFilters = ["kind = 'image'", `status IN (${PUBLIC_IMAGE_STATUS_SQL})`];
+  const baseFilters = ["kind = 'image'"];
   const scope = buildImageScopeFilters(payload);
   baseFilters.push(...scope.clauses);
   const baseWhere = baseFilters.join(" AND ");
@@ -96,7 +86,7 @@ export async function listDuplicateImageMarkers(
              poi_id,
              COUNT(*) AS image_count,
              MAX(created_at) AS latest_created_at
-           FROM ugc_submissions
+           FROM ${publicImageSelection}
            WHERE ${baseWhere}
            GROUP BY poi_id
            HAVING COUNT(*) > 1
@@ -110,7 +100,7 @@ export async function listDuplicateImageMarkers(
                PARTITION BY s.poi_id
                ORDER BY s.created_at DESC, s.id DESC
              ) AS row_number
-           FROM ugc_submissions s
+           FROM ${publicImageSelection} s
            INNER JOIN duplicate_markers dm ON dm.poi_id = s.poi_id
            WHERE s.${baseWhere}
          ),
@@ -160,7 +150,7 @@ export async function listDuplicateImageMarkers(
         `SELECT COUNT(*) AS count
          FROM (
            SELECT poi_id
-           FROM ugc_submissions
+           FROM ${publicImageSelection}
            WHERE ${baseWhere}
            GROUP BY poi_id
            HAVING COUNT(*) > 1
@@ -208,7 +198,7 @@ export async function listDuplicateMarkerImages(
 
   const limit = Math.min(Math.max(payload.limit ?? 100, 1), 200);
   const offset = Math.max(payload.offset ?? 0, 0);
-  const filters = ["s.poi_id = ?1", "s.kind = 'image'", `s.status IN (${PUBLIC_IMAGE_STATUS_SQL})`];
+  const filters = ["s.poi_id = ?1", "s.kind = 'image'"];
   const scope = buildImageScopeFilters(payload, 1);
   const scopedClauses = scope.clauses.map((clause) => `s.${clause}`);
   filters.push(...scopedClauses);
@@ -232,7 +222,7 @@ export async function listDuplicateMarkerImages(
       .prepare(
         `WITH selected_images AS (
            SELECT *
-           FROM ugc_submissions s
+           FROM ${publicImageSelection} s
            WHERE ${filters.join(" AND ")}
            ORDER BY s.created_at DESC, s.id DESC
            LIMIT ?${limitBinding} OFFSET ?${offsetBinding}
@@ -274,7 +264,7 @@ export async function listDuplicateMarkerImages(
     db
       .prepare(
         `SELECT COUNT(*) AS count
-         FROM ugc_submissions s
+         FROM ${publicImageSelection} s
          WHERE ${filters.join(" AND ")}`,
       )
       .bind(markerId, ...scope.bindings)

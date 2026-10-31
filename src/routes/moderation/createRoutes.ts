@@ -11,11 +11,8 @@ import {
   listDuplicateImageMarkers,
   listDuplicateMarkerImages,
 } from "@/repositories/submission-duplicates";
-import {
-  getReviewSubmissionStats,
-  getReviewSubmissions,
-  markImageSubmissionsStaleByFilePathPrefix,
-} from "@/repositories/submission-review";
+import { archiveTestImageSubmissions } from "@/repositories/submission-review";
+import { listManagementSubmissions } from "@/repositories/submission/managementReads";
 import { ALL_STATUSES, type SubmissionStatus } from "@/repositories/submission/types";
 import {
   updateSchema,
@@ -50,10 +47,6 @@ function parseStatuses(raw: string | undefined): SubmissionStatus[] | undefined 
     .filter((item): item is SubmissionStatus => ALL_STATUSES.includes(item as SubmissionStatus));
 
   return statuses.length > 0 ? [...new Set(statuses)] : undefined;
-}
-
-function toSqlTimestamp(date: Date): string {
-  return date.toISOString().slice(0, 19).replace("T", " ");
 }
 
 function isLocalHostname(hostname: string): boolean {
@@ -129,6 +122,8 @@ export function createRoutes() {
       const parsed = listSchema.safeParse({
         submissionId: c.req.query("submissionId"),
         status: c.req.query("status"),
+        mode: c.req.query("mode"),
+        offset: c.req.query("offset"),
         from: c.req.query("from"),
         to: c.req.query("to"),
         limit: c.req.query("limit"),
@@ -143,7 +138,13 @@ export function createRoutes() {
       }
       const fromDate = parsed.data.from ? new Date(parsed.data.from) : null;
       const toDate = parsed.data.to ? new Date(parsed.data.to) : null;
-      if (fromDate && toDate && fromDate.getTime() > toDate.getTime()) {
+      if (
+        !parsed.data.submissionId &&
+        parsed.data.mode !== "reports" &&
+        fromDate &&
+        toDate &&
+        fromDate.getTime() > toDate.getTime()
+      ) {
         throw new ApiError(422, "VALIDATION_ERROR", "Invalid moderation query date range.", {
           from: parsed.data.from,
           to: parsed.data.to,
@@ -153,22 +154,17 @@ export function createRoutes() {
       const filters = {
         submissionId: parsed.data.submissionId,
         statuses: parseStatuses(parsed.data.status),
-        createdFrom: fromDate ? toSqlTimestamp(fromDate) : undefined,
-        createdTo: toDate ? toSqlTimestamp(toDate) : undefined,
+        createdFrom: fromDate?.toISOString(),
+        createdTo: toDate?.toISOString(),
       };
-      const limit = parsed.data.limit ?? 1000;
-      const [rows, stats] = await Promise.all([
-        getReviewSubmissions(c.env.DB, {
+      return c.json(
+        await listManagementSubmissions(c.env.DB, {
           ...filters,
-          limit,
+          mode: parsed.data.mode,
+          offset: parsed.data.offset,
+          limit: parsed.data.limit,
         }),
-        getReviewSubmissionStats(c.env.DB, filters),
-      ]);
-      return c.json({
-        items: rows,
-        stats,
-        limit,
-      });
+      );
     })
     .get("/images/coverage", requireAuth, requireRole(["a"]), rateLimit("auth"), async (c) => {
       const parsed = imageCoverageQuerySchema.safeParse({
@@ -302,19 +298,19 @@ export function createRoutes() {
         );
       }
 
-      await applyManualModeration(
+      const result = await applyManualModeration(
         {
           bindings: c.env,
           defer: (task) => c.executionCtx.waitUntil(task),
         },
         {
+          actor: c.get("authUser"),
           submissionId,
-          nextStatus: parsed.data.status,
-          moderationNote: parsed.data.moderationNote,
+          command: parsed.data,
         },
       );
 
-      return c.json({ ok: true });
+      return c.json({ ok: true, ...result });
     })
     .post("/run", requireAuth, requireRole(["a"]), rateLimit("auth"), async (c) => {
       const parsed = runSchema.safeParse(await c.req.json().catch(() => ({})));
@@ -365,11 +361,10 @@ export function createRoutes() {
         );
       }
 
-      const archived = await markImageSubmissionsStaleByFilePathPrefix(
-        c.env.DB,
+      const archived = await archiveTestImageSubmissions(c.env.DB, {
         prefix,
-        "Archived from the test namespace; object retained by append-only policy.",
-      );
+        adminUserId: c.get("authUser").uid,
+      });
       c.executionCtx.waitUntil(
         Promise.all(
           archived.markerIds.map((markerId) =>

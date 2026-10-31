@@ -24,6 +24,7 @@ beforeEach(() => {
   vi.spyOn(console, "error").mockImplementation(() => undefined);
   database = createTestDatabase();
   seedImageReadScenario(database.sqlite);
+
   insertAuthUser(database.sqlite, { id: "author" });
   activeSession = insertSession(database.sqlite, { userId: "author" });
   suspendedSession = insertAuthenticatedUser(database.sqlite, { uid: "suspended-user", role: "s" });
@@ -66,15 +67,12 @@ describe("upload route policies", () => {
     ["POST", "/comments/comment/flag"],
     ["POST", "/comments/comment/unflag"],
     ["POST", "/comments/comment/edit"],
-    ["POST", "/comments/comment/remove-request"],
-    ["POST", "/comments/comment/recall"],
+    ["DELETE", "/comments/comment"],
     ["POST", "/images/photo/upvote"],
     ["POST", "/images/photo/unvote"],
     ["POST", "/images/photo/flag"],
     ["POST", "/images/photo/unflag"],
-    ["POST", "/images/photo/remove-request"],
-    ["POST", "/images/photo/unrecall"],
-    ["POST", "/images/photo/recall"],
+    ["DELETE", "/images/photo"],
     ["GET", "/images/photo/extra"],
   ])("applies explicit middleware to %s %s", async (method, path) => {
     const before = database.sqlite.prepare("SELECT * FROM ugc_submissions ORDER BY id").all();

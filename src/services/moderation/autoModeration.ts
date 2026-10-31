@@ -4,7 +4,6 @@ import { getRuntimeConfig, type RuntimeConfig } from "@/lib/config";
 import {
   AI_ACTIVE_MODERATION_NOTE_PREFIX,
   AI_PENDING_AUDIT_MODERATION_NOTE_PREFIX,
-  isCommentEditModerationNote,
 } from "@/lib/moderation";
 import { prewarmPublicUgcAsset } from "@/lib/publicUgcAssets";
 import { createRedisClient } from "@/lib/redis";
@@ -12,10 +11,10 @@ import { invalidateUploadCaches } from "@/publicRead/client/invalidate";
 import { ensureAutoModerationBackfill } from "@/queues/client/autoModeration";
 import { enqueueApprovedCommentTransPrewarm } from "@/queues/client/commentTranslation";
 import {
-  getSubmissionById,
-  transitionSubmissionStatusWithNotifications,
-} from "@/repositories/submission/statusSubmission";
-import type { SubmissionRecord } from "@/repositories/submission/types";
+  getAutomaticReviewTarget,
+  reviewSnapshot,
+  type ReviewTarget,
+} from "@/repositories/submission/reviewSnapshot";
 import { applyUserPointsDelta } from "@/repositories/users";
 import { getModerationPointsDeltaWithDailyBackoff } from "@/services/karma/moderationPoints";
 import { publishNotificationsCreated } from "@/services/notify/live";
@@ -52,7 +51,6 @@ interface AutoModerationRuntime {
 interface AutoModerationDecision {
   nextStatus: "active" | "pending_audit";
   moderationNote: string;
-  aiReviewed: boolean;
 }
 
 function createAutoModerationRuntime(bindings: Bindings): AutoModerationRuntime {
@@ -91,7 +89,8 @@ export async function runAutoModerationRequest(
       if (Date.now() - startedAt >= SELECTED_MODERATION_MAX_RUNTIME_MS) {
         break;
       }
-      const status = await review({ submissionId });
+      const target = await getAutomaticReviewTarget(bindings.DB, submissionId);
+      const status = target ? await review({ submissionId, snapshotId: target.snapshotId }) : null;
       if (status) {
         recordAutoModerationStatus(stats, status);
       }
@@ -109,32 +108,27 @@ export function createAutoModerationReviewer(
   bindings: Bindings,
 ): (input: {
   submissionId: string;
-  snapshotId?: string;
+  snapshotId: string;
 }) => Promise<"active" | "pending_audit" | null> {
   const runtime = createAutoModerationRuntime(bindings);
-  return (input: { submissionId: string; snapshotId?: string }) =>
+  return (input: { submissionId: string; snapshotId: string }) =>
     moderateSubmission(runtime, input.submissionId, input.snapshotId);
 }
 
 async function moderateSubmission(
   runtime: AutoModerationRuntime,
   submissionId: string,
-  expectedSnapshotId?: string,
+  expectedSnapshotId: string,
 ): Promise<"active" | "pending_audit" | null> {
   const { bindings, config } = runtime;
-  const submission = await getSubmissionById(bindings.DB, submissionId);
-  if (
-    !submission ||
-    submission.status !== "pending_openai" ||
-    (expectedSnapshotId && submission.snapshotId !== expectedSnapshotId)
-  ) {
+  const submission = await getAutomaticReviewTarget(bindings.DB, submissionId, expectedSnapshotId);
+  if (!submission) {
     return null;
   }
 
   if (config.skipAiModeration) {
     return applyAutoModerationDecision(runtime, submission, {
       nextStatus: "pending_audit",
-      aiReviewed: false,
       moderationNote: "AI moderation skipped; waiting for manual audit.",
     });
   }
@@ -142,7 +136,6 @@ async function moderateSubmission(
   if (!bindings.OPENAI_API_KEY) {
     return applyAutoModerationDecision(runtime, submission, {
       nextStatus: config.localUploadAutoApprove ? "active" : "pending_audit",
-      aiReviewed: false,
       moderationNote: config.localUploadAutoApprove
         ? "Local upload debug auto-approved (OPENAI_API_KEY missing)."
         : "OpenAI moderation skipped in local mode; waiting for manual audit.",
@@ -174,7 +167,6 @@ async function moderateSubmission(
 
   return applyAutoModerationDecision(runtime, submission, {
     nextStatus: approved ? "active" : "pending_audit",
-    aiReviewed: true,
     moderationNote: approved
       ? `${AI_ACTIVE_MODERATION_NOTE_PREFIX} ${categorySummary}`
       : `${AI_PENDING_AUDIT_MODERATION_NOTE_PREFIX} ${categorySummary}`,
@@ -196,19 +188,20 @@ function describeModerationResult(result: OpenAiModerationResult): string {
 
 async function applyAutoModerationDecision(
   runtime: AutoModerationRuntime,
-  submission: SubmissionRecord,
+  submission: ReviewTarget,
   decision: AutoModerationDecision,
 ): Promise<"active" | "pending_audit" | null> {
   const { bindings, config, redis } = runtime;
   const { nextStatus } = decision;
-  const transition = await transitionSubmissionStatusWithNotifications(bindings.DB, {
-    submission,
-    status: nextStatus,
-    moderationNote: decision.moderationNote,
-    source: "auto_moderation",
-    aiReviewed: decision.aiReviewed,
+  const transition = await reviewSnapshot(bindings.DB, {
+    target: submission,
+    expectedReviewStatus: "pending_openai",
+    decision: nextStatus === "active" ? "approved" : "pending_audit",
+    note: decision.moderationNote,
+    source: "ai",
+    auditId: crypto.randomUUID(),
   });
-  if (!transition.updated) {
+  if (transition.outcome === "ignored") {
     return null;
   }
   if (transition.notifications.length > 0) {
@@ -222,7 +215,7 @@ async function applyAutoModerationDecision(
 
   await notifySubmissionModerationResult(bindings, {
     submission,
-    previousStatus: submission.status,
+    previousStatus: "pending_openai",
     nextStatus,
     source: "auto_moderation",
   }).catch((error) => {
@@ -253,11 +246,7 @@ async function applyAutoModerationDecision(
     await enqueueApprovedCommentTransPrewarm(bindings, submission.id, "auto_moderation");
   }
 
-  const isPreviouslyApprovedEdit =
-    isCommentEditModerationNote(submission.moderationNote) &&
-    submission.editOriginalStatus !== "pending_openai" &&
-    submission.editOriginalStatus !== "pending_audit";
-  const pointsDelta = isPreviouslyApprovedEdit
+  const pointsDelta = !transition.firstApproval
     ? 0
     : await getModerationPointsDeltaWithDailyBackoff(redis, {
         userId: submission.userId,

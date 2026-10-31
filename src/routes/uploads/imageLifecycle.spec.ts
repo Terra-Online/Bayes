@@ -1,23 +1,29 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { insertCommentSnapshot } from "@/test/fixtures/commentSnapshots";
 import {
   createImageLifecycleFixture,
   type ImageLifecycleFixture,
 } from "@/test/fixtures/imageLifecycle";
-import { insertSubmission } from "@/test/fixtures/submissions";
+import { insertImageSnapshot } from "@/test/fixtures/imageSnapshots";
+
+vi.mock("cloudflare:workers", () => ({
+  DurableObject: class {},
+  exports: { PublicReadCache: { purgeMarker: async () => ({ success: true }) } },
+}));
+vi.mock("@cloudflare/containers", () => ({ getRandom: vi.fn() }));
 
 let database: ImageLifecycleFixture["database"];
 let env: ImageLifecycleFixture["env"];
 let moderation: ImageLifecycleFixture["moderation"];
 let webhooks: ImageLifecycleFixture["webhooks"];
 let request: ImageLifecycleFixture["request"];
-let submission: ImageLifecycleFixture["submission"];
-let persistedState: ImageLifecycleFixture["persistedState"];
 let liveNotifications: ImageLifecycleFixture["liveNotifications"];
 
 beforeEach(() => {
-  ({ database, env, moderation, webhooks, liveNotifications, request, submission, persistedState } =
+  ({ database, env, moderation, webhooks, liveNotifications, request } =
     createImageLifecycleFixture());
+
   vi.stubGlobal(
     "fetch",
     vi.fn(async () => new Response(null, { status: 204 })),
@@ -43,37 +49,36 @@ function upload(
 }
 
 function post(id: string, action: string, user = "reader") {
-  return request(`/images/${id}/${action}`, user, {});
+  return request(`/images/${id}/${action}`, user, { snapshotId: `snapshot-${id}` });
 }
 
-async function publicImage(user: string | null = null) {
-  const response = await request("/images/photo?markerId=marker-1", user);
-  expect(response.status).toBe(200);
-  return ((await response.json()) as { item: Record<string, unknown> }).item;
-}
-
-function activeUsers(table: "ugc_submission_upvotes" | "ugc_submission_flags", id = "photo") {
-  return database.sqlite
-    .prepare(`SELECT user_id FROM ${table} WHERE submission_id = ? AND active = 1 ORDER BY user_id`)
-    .all(id)
-    .map((row) => row.user_id);
+function persistedState() {
+  return [
+    "ugc_submissions",
+    "ugc_snapshots",
+    "ugc_submission_upvotes",
+    "ugc_submission_flags",
+    "notifications",
+    "notification_messages",
+    "ugc_snapshots_review_audit",
+  ].map((table) => database.sqlite.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all());
 }
 
 describe("image write permissions", () => {
-  it.each(["pending_openai", "pending_audit", "stale"])(
-    "preserves a %s image when readers try to vote or flag it or the owner requests removal",
+  it.each(["pending_openai", "pending_audit", "rejected", "unknown"] as const)(
+    "preserves a %s image when readers try to vote or flag it",
     async (status) => {
-      insertSubmission(database.sqlite, { id: "photo", kind: "image", userId: "author", status });
+      insertImageSnapshot(database.sqlite, { id: "photo", userId: "author", reviewStatus: status });
       const before = persistedState();
       for (const action of ["upvote", "unvote", "flag", "unflag"]) {
         const response = await post("photo", action);
         expect(response.status).toBe(409);
-        expect(await response.json()).toMatchObject({ code: "INVALID_SUBMISSION_STATUS" });
-      }
-      for (const action of ["remove-request", "unrecall"]) {
-        const response = await post("photo", action, "author");
-        expect(response.status).toBe(409);
-        expect(await response.json()).toMatchObject({ code: "INVALID_STATUS_TRANSITION" });
+        expect(await response.json()).toMatchObject({
+          code:
+            action === "flag" || action === "unflag"
+              ? "PUBLIC_SNAPSHOT_CONFLICT"
+              : "INVALID_SUBMISSION_STATUS",
+        });
       }
       expect(persistedState()).toEqual(before);
       expect(webhooks).toEqual([]);
@@ -81,27 +86,10 @@ describe("image write permissions", () => {
     },
   );
 
-  it("keeps existing flags during removal review and cannot cancel an image with no removal request", async () => {
-    insertSubmission(database.sqlite, { id: "photo", kind: "image", userId: "author" });
-    const notRequested = await post("photo", "unrecall", "author");
-    expect(notRequested.status).toBe(409);
-    expect(submission("photo").status).toBe("active");
-    await post("photo", "flag");
-    await post("photo", "remove-request", "author");
-    const before = persistedState();
-    for (const action of ["flag", "unflag"]) {
-      const response = await post("photo", action);
-      expect(response.status).toBe(409);
-      expect(await response.json()).toMatchObject({ code: "INVALID_SUBMISSION_STATUS" });
-    }
-    expect(persistedState()).toEqual(before);
-    expect(webhooks).toHaveLength(2);
-  });
-
-  it.each(["upvote", "unvote", "flag", "unflag", "recall", "unrecall", "remove-request"])(
+  it.each(["upvote", "unvote", "flag", "unflag"])(
     "does not apply image %s to a missing item or a comment",
     async (action) => {
-      insertSubmission(database.sqlite, { id: "comment", userId: "author" });
+      insertCommentSnapshot(database.sqlite, { id: "comment", userId: "author" });
       const before = persistedState();
       for (const id of ["missing", "comment"]) {
         const response = await post(id, action, "author");
@@ -138,7 +126,7 @@ describe("image write permissions", () => {
       code: "UPLOADS_TEMPORARILY_DISABLED",
     },
   ])("protects stored images and reactions from $name", async ({ user, locked, status, code }) => {
-    insertSubmission(database.sqlite, { id: "photo", kind: "image", userId: "author" });
+    insertImageSnapshot(database.sqlite, { id: "photo", userId: "author" });
     await post("photo", "upvote");
     await post("photo", "flag");
     if (locked) {
@@ -146,15 +134,7 @@ describe("image write permissions", () => {
       vi.spyOn(console, "error").mockImplementation(() => {});
     }
     const before = persistedState();
-    for (const action of [
-      "upvote",
-      "unvote",
-      "flag",
-      "unflag",
-      "recall",
-      "unrecall",
-      "remove-request",
-    ]) {
+    for (const action of ["upvote", "unvote", "flag", "unflag"]) {
       const response = await request(`/images/photo/${action}`, user, {});
       expect(response.status).toBe(status);
       expect(await response.json()).toMatchObject({ code });
@@ -173,17 +153,9 @@ describe("image write permissions", () => {
   it.each([
     ["flag", "author", "CANNOT_FLAG_OWN_SUBMISSION"],
     ["unflag", "author", "CANNOT_UNFLAG_OWN_SUBMISSION"],
-    ["recall", "reader", "RECALL_OWNER_ONLY"],
-    ["recall", "admin", "RECALL_OWNER_ONLY"],
-    ["unrecall", "reader", "RECALL_OWNER_ONLY"],
-    ["remove-request", "reader", "REMOVE_REQUEST_OWNER_ONLY"],
-    ["remove-request", "admin", "REMOVE_REQUEST_OWNER_ONLY"],
   ])("rejects %s by %s without changing the image or its reactions", async (action, user, code) => {
-    insertSubmission(database.sqlite, { id: "photo", kind: "image", userId: "author" });
+    insertImageSnapshot(database.sqlite, { id: "photo", userId: "author" });
     await post("photo", "flag");
-    if (action === "unrecall") {
-      await post("photo", "remove-request", "author");
-    }
     const before = persistedState();
     const notices = webhooks.length;
     const response = await post("photo", action, user);
@@ -196,294 +168,6 @@ describe("image write permissions", () => {
   });
 });
 
-describe("image votes", () => {
-  it("counts each reader once, isolates withdrawals, and lets a reader vote again", async () => {
-    insertSubmission(database.sqlite, { id: "photo", kind: "image", userId: "author" });
-    const first = await post("photo", "upvote");
-    expect(first.status).toBe(200);
-    expect(await first.json()).toEqual({ ok: true, created: true, upvoteCount: 1 });
-    expect(activeUsers("ugc_submission_upvotes")).toEqual(["reader"]);
-    expect(await publicImage("reader")).toMatchObject({ upvoteCount: 1, upvoted: true });
-    expect(await publicImage("other-reader")).toMatchObject({ upvoteCount: 1, upvoted: false });
-    expect(
-      database.sqlite
-        .prepare(
-          "SELECT recipient_user_id, submission_id, category, message_count FROM notifications",
-        )
-        .all(),
-    ).toEqual([
-      {
-        recipient_user_id: "author",
-        submission_id: "photo",
-        category: "community",
-        message_count: 1,
-      },
-    ]);
-    expect(liveNotifications).toEqual([
-      expect.objectContaining({
-        recipient: "author",
-        body: expect.objectContaining({ event: "notification.upserted" }),
-      }),
-    ]);
+// Snapshot-schema votes and reports are covered in reportAndImageVoteLifecycle.spec.ts.
 
-    const duplicate = await post("photo", "upvote");
-    expect(await duplicate.json()).toEqual({ ok: true, created: false, upvoteCount: 1 });
-    expect(activeUsers("ugc_submission_upvotes")).toEqual(["reader"]);
-    expect(liveNotifications).toHaveLength(1);
-    const second = await post("photo", "upvote", "other-reader");
-    expect(await second.json()).toEqual({ ok: true, created: true, upvoteCount: 2 });
-    const withdrawn = await post("photo", "unvote");
-    expect(await withdrawn.json()).toEqual({ ok: true, deleted: true, upvoteCount: 1 });
-    expect(activeUsers("ugc_submission_upvotes")).toEqual(["other-reader"]);
-    expect(await publicImage("reader")).toMatchObject({ upvoteCount: 1, upvoted: false });
-    const repeatedWithdrawal = await post("photo", "unvote");
-    expect(await repeatedWithdrawal.json()).toEqual({
-      ok: true,
-      deleted: false,
-      upvoteCount: 1,
-    });
-    const renewedVote = await post("photo", "upvote");
-    expect(await renewedVote.json()).toEqual({
-      ok: true,
-      created: true,
-      upvoteCount: 2,
-    });
-    expect(activeUsers("ugc_submission_upvotes")).toEqual(["other-reader", "reader"]);
-    expect(submission("photo").status).toBe("active");
-    expect(moderation).toEqual([]);
-  });
-});
-
-describe("image flags", () => {
-  it("keeps the image flagged until the last reader withdraws and accepts a later flag again", async () => {
-    insertSubmission(database.sqlite, { id: "photo", kind: "image", userId: "author" });
-    const first = await post("photo", "flag");
-    expect(first.status).toBe(200);
-    expect(await first.json()).toEqual({
-      ok: true,
-      created: true,
-      status: "flagged",
-      flagCount: 1,
-    });
-    expect(submission("photo").status).toBe("flagged");
-    expect(await publicImage("reader")).toMatchObject({ flagCount: 1, flagged: true });
-    expect(await publicImage("other-reader")).toMatchObject({ flagCount: 1, flagged: false });
-    const duplicateFlag = await post("photo", "flag");
-    expect(await duplicateFlag.json()).toEqual({
-      ok: true,
-      created: false,
-      status: "flagged",
-      flagCount: 1,
-    });
-    expect(activeUsers("ugc_submission_flags")).toEqual(["reader"]);
-    expect(webhooks).toEqual([
-      expect.objectContaining({
-        event: expect.objectContaining({
-          type: "flag_created",
-          actor: expect.objectContaining({ uid: "reader" }),
-          submission: expect.objectContaining({ id: "photo", kind: "image" }),
-          previousStatus: "active",
-          nextStatus: "flagged",
-          flagCount: 1,
-        }),
-      }),
-    ]);
-
-    const secondFlag = await post("photo", "flag", "other-reader");
-    expect(await secondFlag.json()).toMatchObject({
-      flagCount: 2,
-    });
-    const withdrawnFlag = await post("photo", "unflag");
-    expect(await withdrawnFlag.json()).toEqual({
-      ok: true,
-      deleted: true,
-      status: "flagged",
-      flagCount: 1,
-    });
-    expect(submission("photo").status).toBe("flagged");
-    expect(activeUsers("ugc_submission_flags")).toEqual(["other-reader"]);
-    const repeatedWithdrawal = await post("photo", "unflag");
-    expect(await repeatedWithdrawal.json()).toMatchObject({
-      deleted: false,
-      flagCount: 1,
-    });
-    expect(webhooks).toHaveLength(3);
-    const lastWithdrawal = await post("photo", "unflag", "other-reader");
-    expect(await lastWithdrawal.json()).toEqual({
-      ok: true,
-      deleted: true,
-      status: "active",
-      flagCount: 0,
-    });
-    expect(submission("photo").status).toBe("active");
-    expect(activeUsers("ugc_submission_flags")).toEqual([]);
-    expect(await publicImage("reader")).toMatchObject({
-      status: "active",
-      flagCount: 0,
-      flagged: false,
-    });
-    expect(webhooks.at(-1)).toMatchObject({
-      event: {
-        type: "flag_removed",
-        previousStatus: "flagged",
-        nextStatus: "active",
-        flagCount: 0,
-      },
-    });
-    const renewedFlag = await post("photo", "flag");
-    expect(await renewedFlag.json()).toMatchObject({
-      created: true,
-      flagCount: 1,
-    });
-    expect(activeUsers("ugc_submission_flags")).toEqual(["reader"]);
-    expect(moderation).toEqual([]);
-  });
-});
-
-describe("image removal requests", () => {
-  it.each([false, true])(
-    "keeps an image visible during removal review and restores its remaining flags on cancellation (flagged: %s)",
-    async (flagged) => {
-      insertSubmission(database.sqlite, { id: "photo", kind: "image", userId: "author" });
-      if (flagged) {
-        await post("photo", "flag");
-      }
-      const response = await post("photo", "remove-request", "author");
-      expect(response.status).toBe(200);
-      expect(await response.json()).toEqual({ ok: true, status: "remove_request" });
-      expect(submission("photo").status).toBe("remove_request");
-      expect(await publicImage()).toMatchObject({
-        status: "remove_request",
-        flagCount: flagged ? 1 : 0,
-      });
-      expect(webhooks.at(-1)).toMatchObject({
-        event: {
-          type: "remove_request_created",
-          actor: { uid: "author" },
-          submission: { id: "photo" },
-          previousStatus: flagged ? "flagged" : "active",
-          nextStatus: "remove_request",
-        },
-      });
-      // Removal review does not hide the image or disable ordinary voting.
-      const voteDuringReview = await post("photo", "upvote");
-      expect(await voteDuringReview.json()).toMatchObject({
-        created: true,
-        upvoteCount: 1,
-      });
-      const withdrawnVote = await post("photo", "unvote");
-      expect(await withdrawnVote.json()).toMatchObject({
-        deleted: true,
-        upvoteCount: 0,
-      });
-      const beforeRetry = submission("photo");
-      const events = webhooks.length;
-      const retry = await post("photo", "remove-request", "author");
-      expect(retry.status).toBe(409);
-      expect(submission("photo")).toEqual(beforeRetry);
-      expect(webhooks).toHaveLength(events);
-      const cancelled = await post("photo", "unrecall", "author");
-      const restored = flagged ? "flagged" : "active";
-      expect(cancelled.status).toBe(200);
-      expect(await cancelled.json()).toEqual({
-        ok: true,
-        status: restored,
-        flagCount: flagged ? 1 : 0,
-      });
-      expect(submission("photo").status).toBe(restored);
-      expect(activeUsers("ugc_submission_flags")).toEqual(flagged ? ["reader"] : []);
-      expect(await publicImage()).toMatchObject({ status: restored });
-      expect(webhooks.at(-1)).toMatchObject({
-        event: {
-          type: "remove_request_cancelled",
-          actor: { uid: "author" },
-          previousStatus: "remove_request",
-          nextStatus: restored,
-          flagCount: flagged ? 1 : 0,
-        },
-      });
-      expect(moderation).toEqual([]);
-    },
-  );
-});
-
-describe("image recall", () => {
-  it.each(["pending_openai", "pending_audit", "active", "flagged", "remove_request"])(
-    "withdraws a %s image from public and author lists and records one resolution even when retried",
-    async (status) => {
-      insertSubmission(database.sqlite, { id: "photo", kind: "image", userId: "author", status });
-      const response = await post("photo", "recall", "author");
-      expect(response.status).toBe(200);
-      expect(await response.json()).toEqual({ ok: true, status: "stale" });
-      expect(submission("photo")).toMatchObject({
-        status: "stale",
-        file_path: "images/photo.webp",
-        snapshot_id: "snapshot-photo",
-      });
-      expect((await request("/images/photo?markerId=marker-1", null)).status).toBe(404);
-      const authorList = await request("/images/mine?markerId=marker-1");
-      expect(await authorList.json()).toEqual({ items: [] });
-      expect(
-        database.sqlite
-          .prepare(
-            "SELECT from_status, to_status, source FROM ugc_review_events WHERE submission_id = 'photo'",
-          )
-          .all(),
-      ).toEqual([{ from_status: status, to_status: "stale", source: "user_action" }]);
-      expect(
-        database.sqlite
-          .prepare(
-            "SELECT recipient_user_id, type, submission_id, message_count FROM notifications",
-          )
-          .all(),
-      ).toEqual([
-        {
-          recipient_user_id: "author",
-          type: "system.remove_request.resolved",
-          submission_id: "photo",
-          message_count: 1,
-        },
-      ]);
-      expect(liveNotifications).toEqual([
-        expect.objectContaining({
-          recipient: "author",
-          body: expect.objectContaining({
-            event: "notification.upserted",
-            notification: expect.objectContaining({
-              target: expect.objectContaining({ submissionId: "photo", markerId: "marker-1" }),
-            }),
-          }),
-        }),
-      ]);
-      const recalled = submission("photo");
-      const retry = await post("photo", "recall", "author");
-      expect(await retry.json()).toEqual({ ok: true, status: "stale" });
-      expect(submission("photo")).toEqual(recalled);
-      expect(
-        database.sqlite.prepare("SELECT COUNT(*) AS count FROM ugc_review_events").get(),
-      ).toEqual({ count: 1 });
-      expect(
-        database.sqlite.prepare("SELECT COUNT(*) AS count FROM notification_messages").get(),
-      ).toEqual({ count: 1 });
-      expect(liveNotifications).toHaveLength(1);
-      expect(moderation).toEqual([]);
-      expect(webhooks).toEqual([]);
-    },
-  );
-});
-
-vi.mock("cloudflare:workers", () => ({
-  DurableObject: class {},
-  exports: { PublicReadCache: { purgeMarker: async () => ({ success: true }) } },
-}));
-vi.mock("@cloudflare/containers", () => ({ getRandom: vi.fn() }));
-vi.mock("@upstash/redis", () => ({
-  Redis: class {
-    async zremrangebyscore() {}
-    async zcard() {
-      return 0;
-    }
-    async zadd() {}
-    async expire() {}
-  },
-}));
+// Replaced recall/removal expectations: authorDeletion.spec.ts exercises logical DELETE and retired POST 404.

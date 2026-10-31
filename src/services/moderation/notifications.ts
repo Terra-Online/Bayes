@@ -1,17 +1,21 @@
 import { buildSubmissionShareUrl } from "@/lib/pointShare";
 import { enqueueModerationNotification } from "@/queues/client/moderationWebhook";
-import type { SubmissionRecord, SubmissionStatus } from "@/repositories/submission/types";
+import type { SubmissionStatus } from "@/repositories/submission/types";
 import type { CommentTranslationPrewarmTarget } from "@/services/ugc/translation/types";
 import type { AuthUser, Bindings } from "@/types/app";
 
-import type { ModerationNotificationEvent, SubmissionModerationSource } from "./messages";
+import type {
+  ModerationNotificationEvent,
+  ModerationSubmission,
+  SubmissionModerationSource,
+} from "./messages";
 
 const DISCORD_WEBHOOK_TIMEOUT_MS = 5_000;
 
 export async function notifyFlagCreated(
   env: Bindings,
   payload: {
-    submission: SubmissionRecord;
+    submission: ModerationSubmission & { status: SubmissionStatus };
     actor: AuthUser;
     changed: boolean;
     flagCount: number;
@@ -32,7 +36,7 @@ export async function notifyFlagCreated(
 export async function notifySubmissionModerationResult(
   env: Bindings,
   payload: {
-    submission: SubmissionRecord;
+    submission: ModerationSubmission;
     previousStatus: SubmissionStatus;
     nextStatus: "active" | "pending_audit";
     source: SubmissionModerationSource;
@@ -50,7 +54,7 @@ export async function notifySubmissionModerationResult(
 export async function notifyCommentTransPrewarmDone(
   env: Bindings,
   payload: {
-    submission: SubmissionRecord;
+    submission: ModerationSubmission;
     source: SubmissionModerationSource;
     targets: CommentTranslationPrewarmTarget[];
   },
@@ -66,7 +70,7 @@ export async function notifyCommentTransPrewarmDone(
 export async function notifyFlagRemoved(
   env: Bindings,
   payload: {
-    submission: SubmissionRecord;
+    submission: ModerationSubmission & { status: SubmissionStatus };
     actor: AuthUser;
     changed: boolean;
     flagCount: number;
@@ -81,45 +85,6 @@ export async function notifyFlagRemoved(
     flagCount: payload.flagCount,
     previousStatus: payload.submission.status,
     nextStatus: payload.nextStatus,
-  });
-}
-
-export async function notifyRemoveRequestCreated(
-  env: Bindings,
-  payload: {
-    submission: SubmissionRecord;
-    actor: AuthUser;
-    nextStatus: SubmissionStatus;
-    source: "remove_request" | "recall";
-  },
-): Promise<void> {
-  await enqueueModerationNotification(env, {
-    type: "remove_request_created",
-    submission: payload.submission,
-    actor: payload.actor,
-    previousStatus: payload.submission.status,
-    nextStatus: payload.nextStatus,
-    source: payload.source,
-  });
-}
-
-export async function notifyRemoveRequestCancelled(
-  env: Bindings,
-  payload: {
-    submission: SubmissionRecord;
-    actor: AuthUser;
-    nextStatus: SubmissionStatus;
-    flagCount: number;
-  },
-): Promise<void> {
-  await enqueueModerationNotification(env, {
-    type: "remove_request_cancelled",
-    submission: payload.submission,
-    actor: payload.actor,
-    previousStatus: payload.submission.status,
-    nextStatus: payload.nextStatus,
-    flagCount: payload.flagCount,
-    source: "remove_request",
   });
 }
 
@@ -223,8 +188,6 @@ function formatDiscordWebhookPayload(
   const actionTitle = {
     flag_created: "Flag created",
     flag_removed: "Flag removed",
-    remove_request_created: "Remove request created",
-    remove_request_cancelled: "Remove request cancelled",
   }[event.type];
 
   const fields = [
@@ -233,27 +196,17 @@ function formatDiscordWebhookPayload(
     { name: "status", value: `${event.previousStatus} -> ${event.nextStatus}`, inline: true },
   ];
 
-  if (isFlagNotificationEvent(event)) {
-    fields.push(
-      { name: "flag_changed", value: String(event.changed), inline: true },
-      { name: "flag_count", value: String(event.flagCount), inline: true },
-    );
-  } else {
-    fields.push({ name: "source", value: event.source, inline: true });
-    if (typeof event.flagCount === "number") {
-      fields.push({ name: "flag_count", value: String(event.flagCount), inline: true });
-    }
-  }
+  fields.push(
+    { name: "flag_changed", value: String(event.changed), inline: true },
+    { name: "flag_count", value: String(event.flagCount), inline: true },
+  );
 
   return {
     username: "OEM Moderation",
     embeds: [
       {
         title: actionTitle,
-        color:
-          event.type === "flag_removed" || event.type === "remove_request_cancelled"
-            ? 0x3182ce
-            : 0xdd6b20,
+        color: event.type === "flag_removed" ? 0x3182ce : 0xdd6b20,
         fields,
         timestamp: new Date().toISOString(),
       },
@@ -262,7 +215,7 @@ function formatDiscordWebhookPayload(
 }
 
 function submissionFields(
-  submission: SubmissionRecord,
+  submission: ModerationSubmission,
 ): Array<{ name: string; value: string; inline: boolean }> {
   return [
     { name: "submission", value: submission.id, inline: true },
@@ -282,12 +235,6 @@ function submissionFields(
   ];
 }
 
-function isFlagNotificationEvent(
-  event: ModerationNotificationEvent,
-): event is Extract<ModerationNotificationEvent, { type: "flag_created" | "flag_removed" }> {
-  return event.type === "flag_created" || event.type === "flag_removed";
-}
-
 function actorFields(actor: AuthUser): Array<{ name: string; value: string; inline: boolean }> {
   return [
     { name: "actor", value: `${actor.nickname} (${actor.publicUid})`, inline: true },
@@ -295,7 +242,7 @@ function actorFields(actor: AuthUser): Array<{ name: string; value: string; inli
   ];
 }
 
-function formatSubmitter(submission: SubmissionRecord): string {
+function formatSubmitter(submission: ModerationSubmission): string {
   if (submission.submitter?.nickname && submission.submitter.publicUid) {
     return `${submission.submitter.nickname} (${submission.submitter.publicUid})`;
   }

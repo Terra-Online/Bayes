@@ -3,14 +3,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "@/app";
 import { runWithAuthRequest } from "@/lib/auth/createAuth";
 import type { PublicCommentContext } from "@/repositories/submission/getPublicComment";
+import type { SnapshotReviewStatus } from "@/repositories/submission/types";
 import { createMockBindings, type MockBindings } from "@/test/bindings";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { insertAuthUser, insertSession } from "@/test/fixtures/auth";
-import {
-  insertSubmission,
-  type SeededSubmission,
-  type SubmissionFixture,
-} from "@/test/fixtures/submissions";
+import type { SubmissionFixture } from "@/test/fixtures/submissions";
 import { insertUser } from "@/test/fixtures/users";
 
 vi.mock("cloudflare:workers", () => ({ DurableObject: class {}, exports: {} }));
@@ -22,6 +19,7 @@ let app: ReturnType<typeof createApp>;
 
 beforeEach(() => {
   database = createTestDatabase();
+
   mocks = createMockBindings({ DB: database.db });
   app = createApp();
   insertUser(database.sqlite, {
@@ -44,13 +42,40 @@ beforeEach(() => {
 
 afterEach(() => database.close());
 
-type CommentFixture = Omit<SubmissionFixture, "userId"> & { userId?: string };
+type CommentFixture = Omit<SubmissionFixture, "userId" | "status"> & {
+  userId?: string;
+  reviewStatus?: SnapshotReviewStatus;
+};
 
-function insertComment(payload: CommentFixture): SeededSubmission {
-  return insertSubmission(database.sqlite, {
-    ...payload,
-    userId: payload.userId ?? "reply-author",
-  });
+function insertComment(payload: CommentFixture): void {
+  const kind = payload.kind ?? "comment";
+  const userId = payload.userId ?? "reply-author";
+  database.sqlite
+    .prepare(`INSERT INTO ugc_submissions
+    (id,kind,poi_id,poi_hash,poi_type,user_id,parent_id,comment_depth,created_at)
+    VALUES (?,?,?,'hash','poi',?,?,?,?)`)
+    .run(
+      payload.id,
+      kind,
+      payload.markerId ?? "marker-1",
+      userId,
+      payload.parentId ?? null,
+      payload.depth ?? 0,
+      payload.createdAt ?? "2026-09-10T00:00:00.000Z",
+    );
+  database.sqlite
+    .prepare(`INSERT INTO ugc_snapshots
+    (id,submission_id,kind,revision,content,file_path,review_status,creator_user_id)
+    VALUES (?,?,?,1,?,?,?,?)`)
+    .run(
+      `snapshot-${payload.id}`,
+      payload.id,
+      kind,
+      payload.content ?? `Content ${payload.id}`,
+      kind === "image" ? "prod/image.webp" : null,
+      payload.reviewStatus ?? "approved",
+      userId,
+    );
 }
 
 function request(path: string, headers?: HeadersInit) {
@@ -88,13 +113,13 @@ const unavailableCases: Array<{
     path: "/comments/image?markerId=marker-1",
     fixture: { id: "image", kind: "image", content: "Image secret" },
   },
-  ...["pending_openai", "pending_audit", "stale"].map((status) => ({
-    name: `${status} target`,
-    path: `/comments/${status}?markerId=marker-1`,
+  ...(["pending_openai", "pending_audit", "unknown"] as const).map((reviewStatus) => ({
+    name: `${reviewStatus} target`,
+    path: `/comments/${reviewStatus}?markerId=marker-1`,
     fixture: {
-      id: status,
-      status,
-      content: `Private ${status} content`,
+      id: reviewStatus,
+      reviewStatus,
+      content: `Private ${reviewStatus} content`,
     },
   })),
 ];
@@ -111,7 +136,6 @@ describe("public comment context through HTTP", () => {
       id: "parent",
       parentId: "root",
       depth: 1,
-      status: "flagged",
       content: "Parent context",
       createdAt: "2026-09-10T00:01:00.000Z",
     });
@@ -119,7 +143,6 @@ describe("public comment context through HTTP", () => {
       id: "target",
       parentId: "parent",
       depth: 2,
-      status: "remove_request",
       content: "Target context",
       createdAt: "2026-09-10T00:02:00.000Z",
     });
@@ -127,6 +150,7 @@ describe("public comment context through HTTP", () => {
       insertUser(database.sqlite, { uid });
     }
     database.sqlite.exec(`
+      INSERT INTO ugc_submission_flags (submission_id,user_id) VALUES ('parent','root-author');
       INSERT INTO ugc_submission_votes (submission_id, user_id, value, active) VALUES
         ('root', 'voter-1', 1, 1),
         ('root', 'voter-2', -1, 1),
@@ -143,11 +167,13 @@ describe("public comment context through HTTP", () => {
       score: 0,
       replyCount: 1,
     });
+    expect(context.path[1]).toMatchObject({ status: "flagged" });
     expect(context.path[2]).toMatchObject({
       parentId: "parent",
       depth: 2,
       content: "Target context",
-      status: "remove_request",
+      snapshotId: "snapshot-target",
+      status: "active",
       score: 1,
     });
     expect(context.path[2]?.viewerVote).toBeUndefined();
@@ -197,7 +223,7 @@ describe("public comment context through HTTP", () => {
       id: "hidden-parent",
       parentId: "root",
       depth: 1,
-      status: "stale",
+      reviewStatus: "unknown",
       content: "Private removed content",
     });
     insertComment({
@@ -268,7 +294,7 @@ describe("public comment context through HTTP", () => {
         id: `hidden-${String(index).padStart(3, "0")}`,
         parentId: "target",
         depth: 1,
-        status: "pending_audit",
+        reviewStatus: "pending_audit",
         content: `Private ${index}`,
       });
     }
@@ -294,7 +320,7 @@ describe("public comment context through HTTP", () => {
         id: `hidden-${depth}`,
         parentId: depth === 1 ? "target" : `hidden-${depth - 1}`,
         depth,
-        status: "pending_audit",
+        reviewStatus: "pending_audit",
       });
     }
     if (ending !== "leaf" && ending !== "cycle") {
@@ -302,7 +328,7 @@ describe("public comment context through HTTP", () => {
         id: "beyond-limit",
         parentId: "hidden-64",
         depth: 65,
-        status: ending === "hidden child" ? "pending_audit" : "active",
+        reviewStatus: ending === "hidden child" ? "pending_audit" : "approved",
         markerId: ending === "other marker" ? "marker-2" : "marker-1",
         kind: ending === "image" ? "image" : "comment",
       });
@@ -349,7 +375,7 @@ describe("public comment context through HTTP", () => {
       id: "hidden-reply",
       parentId: "target",
       depth: 2,
-      status: "pending_audit",
+      reviewStatus: "pending_audit",
       content: "Private reply content",
     });
     insertComment({
@@ -390,8 +416,8 @@ describe("public comment context through HTTP", () => {
       });
       if (fixture) {
         expect(body).not.toContain(fixture.content);
-        if (fixture.status) {
-          expect(body).not.toContain(fixture.status);
+        if (fixture.reviewStatus) {
+          expect(body).not.toContain(fixture.reviewStatus);
         }
       }
     },

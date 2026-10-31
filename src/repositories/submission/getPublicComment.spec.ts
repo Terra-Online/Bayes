@@ -27,10 +27,13 @@ describe("public comment context query plan", () => {
     await getPublicCommentContextById(database.db, { id: "target", markerId: "marker-1" });
 
     // This is a SQL access-path guarantee; result ordering is covered through HTTP.
-    const descendants = database.queries.find((query) =>
-      query.sql.includes("WITH RECURSIVE reply_context"),
-    );
+    const descendants = database.queries.find((query) => query.sql.includes("reply_context AS"));
     expect(descendants).toBeDefined();
-    expect(database.explain(descendants!)).toContain("idx_ugc_comment_threads");
+    expect(database.explain(descendants!)).not.toMatch(
+      /MATERIALIZE v_ugc_public_submissions|SCAN f\b/,
+    );
+    expect(database.explain(descendants!)).toMatch(
+      /idx_ugc_(comment_parent|kind_poi_parent_created)/,
+    );
   });
 });

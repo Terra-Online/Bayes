@@ -25,6 +25,7 @@ let otherViewerHeaders: SessionHeaders;
 beforeEach(() => {
   database = createTestDatabase();
   seedImageReadScenario(database.sqlite);
+
   insertAuthUser(database.sqlite, { id: "viewer" });
   viewerHeaders = insertSession(database.sqlite, { userId: "viewer" }).headers;
   otherViewerHeaders = insertAuthenticatedUser(database.sqlite, { uid: "other-viewer" }).headers;
@@ -62,7 +63,8 @@ describe("public image details through HTTP", () => {
       url: "https://assets.example.com/images/photo.webp",
       content: "Caption",
       author: { nickname: "Author", publicUid: "123CD" },
-      status: "active",
+      snapshotId: "current",
+      status: "flagged",
       upvoteCount: 2,
       flagCount: 1,
     });
@@ -70,33 +72,15 @@ describe("public image details through HTTP", () => {
     expect(image.flagged).toBeUndefined();
   });
 
-  it.each(["active", "flagged", "remove_request"])("allows public status %s", async (status) => {
-    database.sqlite.prepare("UPDATE ugc_submissions SET status = ? WHERE id = 'photo'").run(status);
-
-    const image = await requestImage("/images/photo?markerId=42");
-    expect(image).toMatchObject({ id: "photo", status });
-  });
-
-  it.each(["pending_openai", "pending_audit", "stale"])(
-    "hides non-public status %s",
+  it.each(["pending_openai", "pending_audit", "unknown", "rejected"])(
+    "hides a first snapshot with review status %s",
     async (status) => {
       database.sqlite
-        .prepare("UPDATE ugc_submissions SET status = ? WHERE id = 'photo'")
+        .prepare("UPDATE ugc_snapshots SET review_status=? WHERE id='current'")
         .run(status);
-
-      const response = await request("/images/photo?markerId=42");
-      expect(response.status).toBe(404);
-      expect(await response.json()).toMatchObject({ code: "NOT_FOUND" });
+      expect((await request("/images/photo?markerId=42")).status).toBe(404);
     },
   );
-
-  it("does not return a comment through the image endpoint", async () => {
-    database.sqlite.prepare("UPDATE ugc_submissions SET kind = 'comment' WHERE id = 'photo'").run();
-
-    const response = await request("/images/photo?markerId=42");
-    expect(response.status).toBe(404);
-    expect(await response.json()).toMatchObject({ code: "NOT_FOUND" });
-  });
 
   it.each([
     { name: "missing ID", id: "missing", markerId: "42" },

@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "@/app";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { insertAuthUser, insertSession, testAuthConfig } from "@/test/fixtures/auth";
-import { insertSubmission } from "@/test/fixtures/submissions";
+import { insertCommentSnapshot } from "@/test/fixtures/commentSnapshots";
 import { insertUser } from "@/test/fixtures/users";
 import type { Bindings } from "@/types/app";
 
@@ -47,6 +47,7 @@ describe.each(["new comments", "comment edits"] as const)("%s content boundaries
     redis.expire.mockResolvedValue(1);
     publicReadCache.purgeMarker.mockResolvedValue({ success: true });
     database = createTestDatabase();
+
     insertUser(database.sqlite, { uid: "author" });
     insertAuthUser(database.sqlite, { id: "author" });
     sessionHeaders = insertSession(database.sqlite, { userId: "author" }).headers;
@@ -68,7 +69,7 @@ describe.each(["new comments", "comment edits"] as const)("%s content boundaries
     // Each source gets an independent edit target so its moderation snapshot is observable.
     const id = crypto.randomUUID();
     if (operation === "comment edits") {
-      insertSubmission(database.sqlite, { id, userId: "author", content: "Original comment" });
+      insertCommentSnapshot(database.sqlite, { id, userId: "author", content: "Original comment" });
     }
     const moderationCount = send.mock.calls.length;
     const pending: Promise<unknown>[] = [];
@@ -88,7 +89,7 @@ describe.each(["new comments", "comment edits"] as const)("%s content boundaries
           headers: { ...sessionHeaders, "content-type": "application/json" },
           body: JSON.stringify(
             operation === "comment edits"
-              ? { content }
+              ? { content, parentSnapshotId: `snapshot-${id}` }
               : {
                   markerId: "marker-1",
                   poiHash: "hash",
@@ -112,8 +113,10 @@ describe.each(["new comments", "comment edits"] as const)("%s content boundaries
     expect(payload).toMatchObject({ ok: true, submission: { status: "pending_openai" } });
     expect(
       database.sqlite
-        .prepare("SELECT content, snapshot_id, status FROM ugc_submissions WHERE id = ?")
-        .get(payload.submission.id),
+        .prepare(
+          "SELECT content, id AS snapshot_id, review_status AS status FROM ugc_snapshots WHERE id = ?",
+        )
+        .get(payload.submission.snapshotId),
     ).toEqual({
       content: storedContent,
       snapshot_id: payload.submission.snapshotId,

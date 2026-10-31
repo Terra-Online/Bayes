@@ -29,7 +29,6 @@ export function mapStatus(value: unknown): SubmissionStatus {
     value === "pending_audit" ||
     value === "active" ||
     value === "flagged" ||
-    value === "remove_request" ||
     value === "stale"
   ) {
     return value;
@@ -61,26 +60,9 @@ export function mapSubmission(row: Record<string, unknown>): SubmissionRecord {
     snapshotId: String(row.snapshot_id),
     userId: String(row.user_id),
     content: row.content === null ? null : String(row.content ?? ""),
-    editOriginalContent:
-      row.edit_original_content === null || row.edit_original_content === undefined
-        ? null
-        : String(row.edit_original_content),
-    editOriginalStatus:
-      row.edit_original_status === null || row.edit_original_status === undefined
-        ? null
-        : mapStatus(row.edit_original_status),
-    editOriginalSnapshotId:
-      row.edit_original_snapshot_id === null || row.edit_original_snapshot_id === undefined
-        ? null
-        : String(row.edit_original_snapshot_id),
     filePath: row.file_path === null || row.file_path === undefined ? null : String(row.file_path),
     status: mapStatus(row.status),
     flagCount: toCount(row.flag_count),
-    moderationNote: row.moderation_note === null ? null : String(row.moderation_note ?? ""),
-    moderationQueuedAt:
-      row.moderation_queued_at === null || row.moderation_queued_at === undefined
-        ? null
-        : String(row.moderation_queued_at),
     mimeType: row.mime_type === null || row.mime_type === undefined ? null : String(row.mime_type),
     sizeBytes:
       row.size_bytes === null || row.size_bytes === undefined ? null : Number(row.size_bytes),
@@ -131,6 +113,7 @@ export function publicImageFromRow(
   return {
     id: submission.id,
     markerId: submission.markerId,
+    snapshotId: submission.snapshotId,
     url: `${assetBaseUrl}/${filePath}`,
     content: submission.content,
     author:
@@ -149,6 +132,21 @@ export function publicImageFromRow(
   };
 }
 
+function commentStatusFromRow(row: Record<string, unknown>): SubmissionStatus {
+  if (
+    row.author_deleted_at != null ||
+    row.admin_deleted_at != null ||
+    row.review_status === "unknown" ||
+    row.review_status === "rejected"
+  ) {
+    return "stale";
+  }
+  if (row.review_status === "approved") {
+    return toCount(row.flag_count) > 0 ? "flagged" : "active";
+  }
+  return mapStatus(row.review_status);
+}
+
 export function publicCommentFromRow(
   row: Record<string, unknown>,
   viewerUserId?: string,
@@ -156,13 +154,13 @@ export function publicCommentFromRow(
   const submission = mapSubmission(row);
   return {
     id: submission.id,
+    snapshotId: submission.snapshotId,
     markerId: submission.markerId,
     poiHash: submission.poiHash,
     poiType: submission.poiType,
     parentId: submission.parentId,
     depth: submission.commentDepth,
     content: submission.content ?? "",
-    editUndoAvailable: submission.editOriginalContent !== null,
     author:
       submission.submitter?.publicUid && submission.submitter.nickname
         ? {
@@ -176,7 +174,7 @@ export function publicCommentFromRow(
               : {}),
           }
         : null,
-    status: submission.status,
+    status: commentStatusFromRow(row),
     score: Number(row.score ?? 0) || 0,
     viewerVote: viewerUserId ? mapVoteValue(row.viewer_vote) : undefined,
     flagged: viewerUserId ? Boolean(row.viewer_flagged) : undefined,

@@ -1,3 +1,4 @@
+import { getPublicCommentContextById } from "@/repositories/submission/getPublicComment";
 import {
   listCommentViewerStateByMarker,
   type CommentViewerReaction,
@@ -95,7 +96,14 @@ function mergeViewerPendingComments(
     );
 
   pending.forEach((comment) => {
-    if (commentById.has(comment.id)) {
+    const existing = commentById.get(comment.id);
+    if (existing) {
+      // Replace only the version, retaining the public tree and viewer reactions.
+      Object.assign(existing, {
+        content: comment.content,
+        snapshotId: comment.snapshotId,
+        status: comment.status,
+      });
       return;
     }
 
@@ -128,4 +136,38 @@ function applyImageViewerReactions(
       flagged: reaction?.flagged ?? false,
     };
   });
+}
+
+/** Public target eligibility is checked before applying any private owner version. */
+export async function readCommentContext(
+  db: D1Database,
+  input: { id: string; markerId: string; viewerUserId?: string },
+) {
+  const context = await getPublicCommentContextById(db, input);
+  if (!context || !input.viewerUserId) {
+    return context;
+  }
+  const { pendingComments } = await listCommentViewerStateByMarker(db, {
+    markerIds: [input.markerId],
+    userId: input.viewerUserId,
+    submissionIds: [],
+    pendingLimit: 200,
+  });
+  const pendingById = new Map(pendingComments.map((comment) => [comment.id, comment]));
+  const overlay = (comment: PublicSubmissionComment): PublicSubmissionComment => {
+    const pending = pendingById.get(comment.id);
+    return pending
+      ? {
+          ...comment,
+          content: pending.content,
+          snapshotId: pending.snapshotId,
+          status: pending.status,
+        }
+      : comment;
+  };
+  return {
+    ...context,
+    path: context.path.map(overlay),
+    replies: context.replies.map(overlay),
+  };
 }

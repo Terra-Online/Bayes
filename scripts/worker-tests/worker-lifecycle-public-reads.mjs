@@ -27,13 +27,14 @@ export async function testPublicReads(t, { worker, db, read, gate }) {
   await t.test(
     "image origin: native GET and HEAD retain payload, cache policy and purge tags",
     async () => {
-      await db
-        .prepare(
-          `INSERT INTO ugc_submissions
-       (id, kind, poi_id, poi_hash, poi_type, snapshot_id, user_id, file_path, status)
-       VALUES ('native-image', 'image', 'origin-image', 'hash', 'poi', 'native-image-snapshot', 'user', 'images/native.webp', 'active')`,
-        )
-        .run();
+      await db.batch([
+        db.prepare(`INSERT INTO ugc_submissions
+          (id,kind,poi_id,poi_hash,poi_type,user_id)
+          VALUES ('native-image','image','origin-image','hash','poi','user')`),
+        db.prepare(`INSERT INTO ugc_snapshots
+          (id,submission_id,kind,revision,file_path,review_status,creator_user_id)
+          VALUES ('native-image-snapshot','native-image','image',1,'images/native.webp','approved','user')`),
+      ]);
       const url =
         "https://fixture.test/origin/images?markerId=origin-image&limit=6&namespace=default&assetBaseUrl=https://assets.test";
       const get = await within(worker.dispatchFetch(url));
@@ -76,14 +77,18 @@ export async function testPublicReads(t, { worker, db, read, gate }) {
         ["native-reply", "native-comment", 1],
         ["native-reply-2", "native-comment", 1],
       ]) {
-        await db
-          .prepare(
-            `INSERT INTO ugc_submissions
-         (id, kind, poi_id, poi_hash, poi_type, snapshot_id, user_id, content, status, parent_id, comment_depth)
-         VALUES (?1, 'comment', 'origin-comment', 'hash', 'poi', ?2, 'user', ?3, 'active', ?4, ?5)`,
-          )
-          .bind(id, `${id}-snapshot`, `Content ${id}`, parentId, depth)
-          .run();
+        await db.batch([
+          db
+            .prepare(`INSERT INTO ugc_submissions
+            (id,kind,poi_id,poi_hash,poi_type,user_id,parent_id,comment_depth)
+            VALUES (?1,'comment','origin-comment','hash','poi','user',?2,?3)`)
+            .bind(id, parentId, depth),
+          db
+            .prepare(`INSERT INTO ugc_snapshots
+            (id,submission_id,kind,revision,content,review_status,creator_user_id)
+            VALUES (?1,?2,'comment',1,?3,'approved','user')`)
+            .bind(`${id}-snapshot`, id, `Content ${id}`),
+        ]);
       }
       const url =
         "https://fixture.test/origin/comments?markerId=origin-comment&limit=6&replyLimit=1&namespace=default";

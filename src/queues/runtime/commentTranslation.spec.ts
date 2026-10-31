@@ -1,13 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { TranslationMsg } from "@/queues/types/messages";
+import { appendCommentVersion } from "@/repositories/submission/appendCommentVersion";
 import { createMockBindings } from "@/test/bindings";
 import {
   createCommentTranslationFixture,
   createTranslationSigningKey,
+  insertTranslationSubmission,
   type CommentTranslationFixture,
 } from "@/test/fixtures/commentTranslation";
-import { insertSubmission } from "@/test/fixtures/submissions";
 
 import { processTranslationQueueBatch } from "./commentTranslation";
 
@@ -52,7 +53,7 @@ beforeEach(async () => {
   fixture.env.ENABLE_COMMENT_TRANSLATION_PREWARM = "true";
   webhookQueue = createMockBindings({ DB: fixture.database.db }).webhookQueue;
   fixture.env.OEM_WEBHOOK_Q = webhookQueue;
-  insertSubmission(fixture.database.sqlite, {
+  insertTranslationSubmission(fixture.database.sqlite, {
     id: "comment",
     userId: "author",
     content: "测试评论",
@@ -77,6 +78,67 @@ afterEach(() => {
 });
 
 describe("comment translation queue delivery", () => {
+  it.each(["retained", "replaced", "deleted"] as const)(
+    "pins public A with private B and only reports A while it remains public: %s",
+    async (completion) => {
+      expect(
+        await appendCommentVersion(fixture.database.db, {
+          submissionId: "comment",
+          parentSnapshotId: "snapshot-comment",
+          snapshotId: "private-B",
+          actorId: "author",
+          content: "Private correction",
+        }),
+      ).toMatchObject({ outcome: "appended" });
+      let changed = false;
+      fixture.provider.translationResponse = () => {
+        if (!changed) {
+          changed = true;
+          if (completion === "replaced") {
+            fixture.database.sqlite.exec(
+              "UPDATE ugc_snapshots SET review_status='approved' WHERE id='private-B'",
+            );
+          }
+          if (completion === "deleted") {
+            fixture.database.sqlite.exec(
+              "UPDATE ugc_submissions SET author_deleted_at='deleted' WHERE id='comment'",
+            );
+          }
+        }
+        return Response.json({
+          translations: [{ translatedText: "Translated A", detectedLanguageCode: "zh-CN" }],
+        });
+      };
+      webhookQueue.send.mockResolvedValue({
+        metadata: { metrics: { backlogCount: 1, backlogBytes: 64 } },
+      });
+      const { batch, ack, retry } = createDelivery();
+      await processTranslationQueueBatch(fixture.env, batch);
+      expect(ack).toHaveBeenCalledOnce();
+      expect(retry).not.toHaveBeenCalled();
+      expect(fixture.translationRequests).toHaveLength(5);
+      expect(
+        fixture.translationRequests.every(
+          (request) => request.contents.length === 1 && request.contents[0] === "测试评论",
+        ),
+      ).toBe(true);
+      if (completion === "retained") {
+        expect(webhookQueue.send).toHaveBeenCalledWith(
+          expect.objectContaining({
+            event: expect.objectContaining({
+              submission: expect.objectContaining({
+                id: "comment",
+                snapshotId: "snapshot-comment",
+              }),
+            }),
+          }),
+        );
+      } else {
+        expect(webhookQueue.send).not.toHaveBeenCalled();
+      }
+    },
+  );
+
   it("acknowledges failed translation targets and reports them in the completion notification", async () => {
     fixture.provider.translationResponse = () => new Response("unavailable", { status: 503 });
     webhookQueue.send.mockResolvedValue({

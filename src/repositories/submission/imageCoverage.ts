@@ -1,3 +1,4 @@
+import { publicImageSelection } from "./imageSelection";
 import { buildImageScopeFilters } from "./listImages";
 
 export type MarkerImageCount = {
@@ -12,14 +13,14 @@ export async function listVisibleImageCountsByMarker(
     excludePathPrefix?: string;
   },
 ): Promise<MarkerImageCount[]> {
-  const filters = ["kind = 'image'", "status IN ('active', 'flagged', 'remove_request')"];
+  const filters = ["kind = 'image'"];
   const scope = buildImageScopeFilters(payload);
   filters.push(...scope.clauses);
 
   const result = await db
     .prepare(
       `SELECT poi_id, COUNT(*) AS image_count
-       FROM ugc_submissions
+       FROM ${publicImageSelection}
        WHERE ${filters.join(" AND ")}
        GROUP BY poi_id`,
     )

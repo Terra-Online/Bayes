@@ -28,6 +28,7 @@ beforeEach(() => {
     userId: "author",
     content: "  测试\n 评论  ",
   });
+
   kv = new Map();
   env = {
     ...createMockBindings({ DB: database.db }).bindings,
@@ -265,9 +266,10 @@ describe("translation reuse across glossary revisions", () => {
 
   it("translates changed text and stores it under the configured version", async () => {
     insertCachedTranslation();
-    database.sqlite
-      .prepare("UPDATE ugc_submissions SET content = ? WHERE id = ?")
-      .run("不同的评论", "comment");
+    database.sqlite.exec(`INSERT INTO ugc_snapshots
+      (id,submission_id,kind,revision,content,review_status,creator_user_id)
+      VALUES ('new-body','comment','comment',2,'不同的评论','approved','author');
+      UPDATE ugc_submissions SET revision=2 WHERE id='comment';`);
     env.GOOGLE_TRANSLATE_PROJECT_ID = "test";
     env.GOOGLE_TRANSLATE_CLIENT_EMAIL = "translate@example.test";
     env.GOOGLE_TRANSLATE_PRIVATE_KEY = generateKeyPairSync("rsa", {

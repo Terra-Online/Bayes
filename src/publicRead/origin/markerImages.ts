@@ -20,7 +20,7 @@ async function getPublicMarkerImageCacheKey(
   namespace: PublicImageCacheNamespace,
   markerId: string,
 ): Promise<string> {
-  const version = "v2";
+  const version = "v3";
   return `ugc:marker-images:${version}:${namespace}:${await sha256Hex(markerId)}`;
 }
 

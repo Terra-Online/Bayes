@@ -7,7 +7,11 @@ import type { PublicSubmissionComment } from "@/repositories/submission/types";
 import { createMockBindings, type MockBindings } from "@/test/bindings";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { insertAuthenticatedUser, type SessionHeaders } from "@/test/fixtures/auth";
-import { insertSubmission } from "@/test/fixtures/submissions";
+import {
+  insertCommentSnapshot,
+  type CommentSnapshotFixture,
+} from "@/test/fixtures/commentSnapshots";
+import { insertImageSnapshot, type ImageSnapshotFixture } from "@/test/fixtures/imageSnapshots";
 import { insertUser } from "@/test/fixtures/users";
 import type { Bindings } from "@/types/app";
 
@@ -35,6 +39,7 @@ let lifetimes: Promise<unknown>[][];
 beforeEach(() => {
   workersCache.fetch.mockReset();
   database = createTestDatabase();
+
   viewerHeaders = insertAuthenticatedUser(database.sqlite, { uid: "viewer" }).headers;
   insertUser(database.sqlite, { uid: "other" });
   bindings = createMockBindings({ DB: database.db });
@@ -67,8 +72,17 @@ async function request(path: string, headers?: HeadersInit) {
     } as unknown as ExecutionContext),
   );
 }
+function insertReadSubmission(
+  input: (CommentSnapshotFixture | ImageSnapshotFixture) & { kind?: "image" | "comment" },
+): void {
+  if (input.kind === "image") {
+    insertImageSnapshot(database.sqlite, { ...input, kind: "image" });
+  } else {
+    insertCommentSnapshot(database.sqlite, { ...input, content: input.content ?? undefined });
+  }
+}
 function submissionQueries() {
-  return database.queries.filter(({ sql }) => /ugc_submissions/.test(sql));
+  return database.queries.filter(({ sql }) => /ugc_(submissions|public_submissions)/.test(sql));
 }
 function reactionQueries() {
   return submissionQueries().filter(
@@ -79,8 +93,8 @@ function reactionQueries() {
 // Returned-ID SQL observation protects the read budget; authentication queries are separate.
 describe("personalized UGC cache overlays", () => {
   it("only requests reactions for images returned by the public cache", async () => {
-    insertSubmission(database.sqlite, { id: "image-1", userId: "other", kind: "image" });
-    insertSubmission(database.sqlite, {
+    insertReadSubmission({ id: "image-1", userId: "other", kind: "image" });
+    insertReadSubmission({
       id: "not-returned",
       userId: "other",
       kind: "image",
@@ -112,20 +126,20 @@ describe("personalized UGC cache overlays", () => {
       ["reply", "root", 1],
       ["nested", "reply", 2],
     ] as const) {
-      insertSubmission(database.sqlite, { id, parentId, depth, userId: "other" });
+      insertReadSubmission({ id, parentId, depth, userId: "other" });
     }
-    insertSubmission(database.sqlite, { id: "pending", userId: "viewer", status: "pending_audit" });
-    insertSubmission(database.sqlite, {
+    insertReadSubmission({ id: "pending", userId: "viewer", reviewStatus: "pending_audit" });
+    insertReadSubmission({
       id: "other-pending",
       userId: "other",
-      status: "pending_audit",
+      reviewStatus: "pending_audit",
     });
-    insertSubmission(database.sqlite, {
+    insertReadSubmission({
       id: "pending-reply",
       userId: "viewer",
       parentId: "reply",
       depth: 2,
-      status: "pending_openai",
+      reviewStatus: "pending_openai",
     });
     database.sqlite
       .exec(`INSERT INTO ugc_submission_votes (submission_id, user_id, value) VALUES ('nested', 'viewer', -1), ('root', 'other', 1);
@@ -238,19 +252,19 @@ describe("personalized UGC cache overlays", () => {
 
 describe("combined point image reads", () => {
   it("shares the authenticated user, keeps private results outside the public cache", async () => {
-    insertSubmission(database.sqlite, {
+    insertReadSubmission({
       id: "public",
       userId: "other",
       kind: "image",
       markerId: "m",
       filePath: "_test/public.webp",
     });
-    insertSubmission(database.sqlite, {
+    insertReadSubmission({
       id: "pending",
       userId: "viewer",
       kind: "image",
       markerId: "m",
-      status: "pending_audit",
+      reviewStatus: "pending_audit",
       filePath: "_test/pending.webp",
     });
     const response = await request("/images?includeMine=1&markerId=m&scope=test", viewerHeaders);
@@ -261,7 +275,9 @@ describe("combined point image reads", () => {
       mine: { items: [{ id: "pending" }] },
     });
     expect(
-      submissionQueries().find(({ sql }) => /idx_ugc_user_kind_poi_created/.test(sql))!.values,
+      submissionQueries().find(({ sql }) =>
+        /WITH ranked_images[\s\S]*frontier_snapshot_id/.test(sql),
+      )!.values,
     ).toEqual(["viewer", '["m"]', "\\_test/%", 6]);
     expect(reactionQueries()[0]!.values).toEqual(["viewer", '["m"]', '["public"]', "\\_test/%"]);
     // Private selection and credentials must never enter the shared cache request.
@@ -287,7 +303,7 @@ describe("combined point image reads", () => {
       if (
         part === "images"
           ? /AS viewer_upvoted/.test(sql)
-          : /idx_ugc_user_kind_poi_created/.test(sql)
+          : /WITH ranked_images[\s\S]*frontier_snapshot_id/.test(sql)
       ) {
         throw new Error("private diagnostic");
       }
@@ -307,12 +323,12 @@ describe("combined point image reads", () => {
         ? Response.json({}, { status: 503 })
         : Response.json({ items: [] }),
     );
-    insertSubmission(database.sqlite, {
+    insertReadSubmission({
       id: "pending",
       userId: "viewer",
       kind: "image",
       markerId: "m",
-      status: "pending_audit",
+      reviewStatus: "pending_audit",
     });
     const response = await request("/images?includeMine=1&markerIds=m,empty", viewerHeaders);
     expect(response.status).toBe(207);

@@ -6,7 +6,7 @@ import { requestIdMiddleware } from "@/middleware/request-id";
 import { createMockBindings, createMockR2Object, type MockBindings } from "@/test/bindings";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { insertAuthenticatedUser, type SessionHeaders } from "@/test/fixtures/auth";
-import { insertSubmission } from "@/test/fixtures/submissions";
+import { insertImageSnapshot } from "@/test/fixtures/imageSnapshots";
 import type { Bindings } from "@/types/app";
 
 vi.mock("@cloudflare/containers", () => ({ getRandom: vi.fn() }));
@@ -47,6 +47,7 @@ describe("image submission through HTTP", () => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     database = createTestDatabase();
+
     mocks = createMockBindings({ DB: database.db });
     vi.mocked(getRandom).mockResolvedValue(mocks.imageTranscoder);
     const uploader = insertAuthenticatedUser(database.sqlite, { uid: "u", role: "n" });
@@ -134,7 +135,9 @@ describe("image submission through HTTP", () => {
     );
     expect(
       database.sqlite
-        .prepare("SELECT mime_type, status FROM ugc_submissions WHERE id = ?")
+        .prepare(
+          "SELECT mime_type, review_status AS status FROM ugc_snapshots WHERE submission_id = ?",
+        )
         .get(payload.submission.id),
     ).toEqual({ mime_type: "image/webp", status: "pending_openai" });
     expect(mocks.autoModerationQueue.send).toHaveBeenCalledOnce();
@@ -142,7 +145,7 @@ describe("image submission through HTTP", () => {
 
   it("keeps beta uploads and private lists in the test namespace while local demo reads select production", async () => {
     env.UGC_UPLOAD_TEST_PREFIX = "prod";
-    insertSubmission(database.sqlite, {
+    insertImageSnapshot(database.sqlite, {
       id: "production",
       userId: "u",
       kind: "image",
@@ -164,7 +167,9 @@ describe("image submission through HTTP", () => {
     expect(payload.duplicatePoi).toBeNull();
     expect(
       database.sqlite
-        .prepare("SELECT file_path, status FROM ugc_submissions WHERE id = ?")
+        .prepare(
+          "SELECT file_path, review_status AS status FROM ugc_snapshots WHERE submission_id = ?",
+        )
         .get(payload.submission.id),
     ).toEqual({ file_path: payload.submission.filePath, status: "pending_openai" });
     const read = (query = "") =>
@@ -204,7 +209,9 @@ describe("image submission through HTTP", () => {
     expect(submission.filePath).toBe(`_test/poi/unknown/unknown/${submission.snapshotId}.webp`);
     expect(
       database.sqlite
-        .prepare("SELECT poi_hash, poi_type, file_path, status FROM ugc_submissions WHERE id = ?")
+        .prepare(
+          "SELECT s.poi_hash, s.poi_type, r.file_path, r.review_status AS status FROM ugc_submissions s JOIN ugc_snapshots r ON r.submission_id=s.id WHERE s.id = ?",
+        )
         .get(submission.id),
     ).toEqual({
       poi_hash: "unknown",
@@ -227,7 +234,7 @@ describe("image submission through HTTP", () => {
     expect(await response.json()).toMatchObject({ code: "INTERNAL_ERROR" });
     const rows = database.sqlite
       .prepare(
-        "SELECT id, file_path, snapshot_id, status, moderation_queued_at FROM ugc_submissions",
+        "SELECT submission_id AS id, file_path, id AS snapshot_id, review_status AS status, moderation_queued_at FROM ugc_snapshots",
       )
       .all();
     expect(rows).toEqual([
@@ -295,8 +302,8 @@ describe("image submission through HTTP", () => {
     });
     expect(
       database.sqlite
-        .prepare(`SELECT id, user_id, poi_id, kind, status, file_path,
-      snapshot_id, mime_type, size_bytes, moderation_queued_at FROM ugc_submissions`)
+        .prepare(`SELECT s.id, s.user_id, s.poi_id, s.kind, r.review_status AS status, r.file_path,
+      r.id AS snapshot_id, r.mime_type, r.size_bytes, r.moderation_queued_at FROM ugc_submissions s JOIN ugc_snapshots r ON r.submission_id=s.id`)
         .all(),
     ).toEqual([
       {
@@ -388,7 +395,7 @@ describe("image submission through HTTP", () => {
       );
       expect(
         database.sqlite
-          .prepare("SELECT mime_type, size_bytes FROM ugc_submissions WHERE id = ?")
+          .prepare("SELECT mime_type, size_bytes FROM ugc_snapshots WHERE submission_id = ?")
           .get(payload.submission.id),
       ).toEqual({ mime_type: mimeType, size_bytes: 3 });
       expect(getRandom).not.toHaveBeenCalled();

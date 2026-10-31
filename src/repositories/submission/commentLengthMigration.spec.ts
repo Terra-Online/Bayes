@@ -4,8 +4,8 @@ import { afterEach, beforeEach, expect, it } from "vitest";
 
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { migrations } from "@/test/database/migrations";
+import { insertSubmission } from "@/test/fixtures/legacySubmissions";
 import { insertNotification } from "@/test/fixtures/notifications";
-import { insertSubmission } from "@/test/fixtures/submissions";
 import { insertUser } from "@/test/fixtures/users";
 
 const migration = readFileSync(

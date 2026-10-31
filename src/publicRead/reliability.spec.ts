@@ -209,9 +209,10 @@ describe("bounded public reads", () => {
         userId: "author",
         kind: kind === "images" ? "image" : "comment",
       });
+
       const before = database.sqlite.prepare("SELECT * FROM ugc_submissions").all();
       database.hooks.beforeQuery = (sql) => {
-        if (/ugc_submissions/.test(sql)) {
+        if (/ugc_(submissions|public_submissions)/.test(sql)) {
           throw new Error("D1_ERROR: D1 DB is overloaded.");
         }
       };
@@ -239,6 +240,7 @@ describe("bounded public reads", () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     insertUser(database.sqlite, { uid: "author" });
     insertSubmission(database.sqlite, { id: "stored", userId: "author" });
+
     const before = database.sqlite.prepare("SELECT * FROM ugc_submissions").all();
     database.hooks.beforeQuery = () => {
       throw new Error("D1_ERROR: private database detail");

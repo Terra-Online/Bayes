@@ -35,6 +35,7 @@ export const commentSubmissionSchema = z.object({
 });
 
 export const commentEditSchema = z.object({
+  parentSnapshotId: z.string().min(1).max(64),
   content: commentContentSchema,
 });
 
@@ -57,3 +58,7 @@ export const commentQuerySchema = commentsQuerySchema
     markerId: true,
   })
   .required({ markerId: true });
+
+export const submissionReportSchema = z.object({
+  snapshotId: z.string().min(1).max(64),
+});

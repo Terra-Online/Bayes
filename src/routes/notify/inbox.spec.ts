@@ -354,3 +354,58 @@ describe("notification inbox HTTP", () => {
     },
   );
 });
+
+it("preserves saved resolution messages, destinations and unread counts through snapshot import and owner-scoped reads", async () => {
+  insertSubmission(database.sqlite, {
+    id: "archived",
+    userId: "alice",
+    kind: "image",
+    status: "stale",
+  });
+  insertNotification(database.sqlite, {
+    id: "resolution",
+    recipientUserId: "alice",
+    type: "system.remove_request.resolved",
+    createdAt: "2026-10-01T00:00:00Z",
+  });
+  database.sqlite
+    .exec(`UPDATE notifications SET payload_json='{"kind":"image","note":"Saved original text"}',
+      submission_id='archived',marker_id='point',poi_hash='hash',poi_type='poi' WHERE id='resolution';
+    INSERT INTO notification_messages
+      (id,notification_id,submission_id,marker_id,poi_hash,poi_type,payload_json,dedupe_key,created_at)
+      VALUES ('saved-message','resolution','archived','point','hash','poi','{"kind":"image","note":"Saved original text"}','saved-key','2026-10-01T00:00:00Z');`);
+  const beforeSystem = await inbox();
+  const beforeCommunity = await inbox("/community/messages");
+  const retained = ["notifications", "notification_messages", "notification_counters"] as const;
+  const original = retained.map((table) =>
+    database.sqlite.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all(),
+  );
+
+  expect(
+    retained.map((table) => database.sqlite.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all()),
+  ).toEqual(original);
+  expect(await inbox()).toEqual(beforeSystem);
+  expect(await inbox("/community/messages")).toEqual(beforeCommunity);
+  expect(beforeSystem.items[0]).toMatchObject({
+    id: "resolution",
+    type: "system.remove_request.resolved",
+    payload: { kind: "image" },
+    target: { submissionId: "archived", markerId: "point", poiHash: "hash", poiType: "poi" },
+    readAt: null,
+  });
+  const wrongOwner = await request("/system/messages/resolution/read", "bob", { method: "PATCH" });
+  expect(await wrongOwner.json()).toMatchObject({ changed: false });
+  const read = await request("/system/messages/resolution/read", "alice", { method: "PATCH" });
+  expect(read.status).toBe(200);
+  expect(await read.json()).toMatchObject({
+    changed: true,
+    unread: { system: 3, community: 1, total: 4 },
+  });
+  const readAt = (await inbox()).items.find((item) => item.id === "resolution")!.readAt;
+  expect(readAt).toEqual(expect.any(String));
+  await request("/system/messages/resolution/read", "alice", { method: "PATCH" });
+  expect((await inbox()).items.find((item) => item.id === "resolution")!.readAt).toBe(readAt);
+  expect(
+    (await inbox("/system/messages?unreadOnly=1")).items.some((item) => item.id === "resolution"),
+  ).toBe(false);
+});
