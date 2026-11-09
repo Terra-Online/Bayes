@@ -124,7 +124,7 @@ it("keeps public A cached while its author reads pending B with replies and reac
   });
 });
 
-it("blocks default traversal at hidden middle nodes but retains deep-link context filtering", async () => {
+it("preserves hidden connectors as placeholders in lists and every context entry point", async () => {
   for (const [id, parentId, depth, status] of [
     ["root", null, 0, "active"],
     ["hidden", "root", 1, "stale"],
@@ -134,18 +134,46 @@ it("blocks default traversal at hidden middle nodes but retains deep-link contex
   }
 
   const list = await request("/comments?markerId=marker-1");
-  expect(await list.json()).toMatchObject({ items: [{ id: "root", replyCount: 0, replies: [] }] });
-  expect((await request("/comments/hidden?markerId=marker-1", viewerHeaders)).status).toBe(404);
+  expect(await list.json()).toMatchObject({
+    items: [
+      {
+        id: "root",
+        replyCount: 1,
+        replies: [
+          { type: "placeholder", id: "hidden", replies: [{ type: "comment", id: "leaf" }] },
+        ],
+      },
+    ],
+  });
+  const hidden = await request("/comments/hidden?markerId=marker-1", viewerHeaders);
+  expect(hidden.status).toBe(200);
+  expect(await hidden.json()).toMatchObject({
+    item: {
+      targetId: "hidden",
+      path: [{ id: "root" }, { type: "placeholder", id: "hidden" }],
+      replies: [{ type: "comment", id: "leaf" }],
+    },
+  });
   expect((await request("/comments/leaf?markerId=wrong")).status).toBe(404);
   const leaf = await request("/comments/leaf?markerId=marker-1");
   expect(await leaf.json()).toMatchObject({
-    item: { path: [{ id: "root" }, { id: "leaf", parentId: "hidden" }], replies: [] },
+    item: {
+      path: [
+        { id: "root" },
+        { type: "placeholder", id: "hidden" },
+        { id: "leaf", parentId: "hidden" },
+      ],
+      replies: [],
+    },
   });
   const root = await request("/comments/root?markerId=marker-1");
   expect(await root.json()).toMatchObject({
     item: {
       path: [{ id: "root" }],
-      replies: [{ id: "leaf", parentId: "hidden" }],
+      replies: [
+        { type: "placeholder", id: "hidden" },
+        { id: "leaf", parentId: "hidden" },
+      ],
       repliesTruncated: false,
     },
   });
@@ -216,17 +244,13 @@ it("preserves per-marker vote ranking, reply order and limits without promoting 
     }>;
   };
   expect(items.map((item) => item.id)).toEqual(["marker-1-high", "marker-2-high"]);
-  // The existing public cache slices direct replies only; nested cached replies retain their cache limit.
+  // Request limits apply recursively, including to cached descendants.
   expect(items[0]).toMatchObject({
     replyCount: 3,
     replies: [
       {
         id: "marker-1-reply-a",
-        replies: [
-          { id: "marker-1-nested-a" },
-          { id: "marker-1-nested-b" },
-          { id: "marker-1-nested-c" },
-        ],
+        replies: [{ id: "marker-1-nested-a" }, { id: "marker-1-nested-b" }],
       },
       { id: "marker-1-reply-b", replies: [] },
     ],
@@ -264,4 +288,114 @@ it("keeps unavailable owner archives private and does not attach them as pending
   ).toBe(true);
   const publicList = await request("/comments?markerId=marker-1", viewerHeaders);
   expect(await publicList.json()).toMatchObject({ items: [] });
+});
+
+it("prunes before branch quotas and keeps cache selection recursive and version-consistent", async () => {
+  for (const [id, status] of [
+    ["empty", "stale"],
+    ["hidden-root", "stale"],
+    ["public-root", "active"],
+  ] as const) {
+    insertSubmission(database.sqlite, { id, status, userId: "other", content: `Body ${id}` });
+  }
+  insertUser(database.sqlite, { uid: "second-voter" });
+  database.sqlite.exec(`INSERT INTO ugc_submission_votes(submission_id,user_id,value) VALUES
+    ('empty','viewer',1),('empty','second-voter',1),('hidden-root','viewer',1)`);
+  insertSubmission(database.sqlite, {
+    id: "dead-child",
+    parentId: "hidden-root",
+    depth: 1,
+    status: "stale",
+    userId: "other",
+    createdAt: "2020-01-01",
+  });
+  insertSubmission(database.sqlite, {
+    id: "connector",
+    parentId: "hidden-root",
+    depth: 1,
+    status: "stale",
+    userId: "other",
+    createdAt: "2020-01-02",
+  });
+  insertSubmission(database.sqlite, {
+    id: "leaf",
+    parentId: "connector",
+    depth: 2,
+    userId: "other",
+  });
+  for (let index = 0; index < 8; index++) {
+    insertSubmission(database.sqlite, {
+      id: `sibling-${index}`,
+      parentId: "hidden-root",
+      depth: 1,
+      userId: "other",
+      createdAt: `2020-02-0${index + 1}`,
+    });
+  }
+  const read = async (replyLimit: number) => {
+    const response = await request(`/comments?markerId=marker-1&limit=1&replyLimit=${replyLimit}`);
+    expect(response.status).toBe(200);
+    return (await response.json()) as {
+      items: import("@/repositories/submission/types").PublicCommentNode[];
+    };
+  };
+  const first = await read(1);
+  expect(first.items).toEqual([
+    {
+      type: "placeholder",
+      id: "hidden-root",
+      markerId: "marker-1",
+      parentId: null,
+      depth: 0,
+      replyCount: 9,
+      replies: [
+        {
+          type: "placeholder",
+          id: "connector",
+          markerId: "marker-1",
+          parentId: "hidden-root",
+          depth: 1,
+          replyCount: 1,
+          replies: [expect.objectContaining({ type: "comment", id: "leaf" })],
+        },
+      ],
+    },
+  ]);
+  expect(JSON.stringify(first)).not.toContain("Body hidden-root");
+  await Promise.all(lifetimes.flat());
+  expect(await read(1)).toEqual(first);
+  expect((await read(10)).items[0]?.replies).toHaveLength(9);
+  expect((await read(0)).items).toMatchObject([
+    { type: "comment", id: "public-root", replies: [] },
+  ]);
+});
+
+it("selects public roots beyond the tree cache window when replies are disabled", async () => {
+  for (let index = 0; index < 51; index++) {
+    insertSubmission(database.sqlite, {
+      id: `hidden-${index}`,
+      userId: "other",
+      status: "stale",
+      createdAt: "2025-01-01",
+    });
+    insertSubmission(database.sqlite, {
+      id: `child-${index}`,
+      userId: "other",
+      parentId: `hidden-${index}`,
+      depth: 1,
+    });
+  }
+  insertSubmission(database.sqlite, {
+    id: "public-root",
+    userId: "other",
+    createdAt: "2020-01-01",
+  });
+  for (let read = 0; read < 2; read++) {
+    const response = await request("/comments?markerId=marker-1&limit=1&replyLimit=0");
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      items: [{ id: "public-root", type: "comment", replies: [] }],
+    });
+    await Promise.all(lifetimes.flat());
+  }
 });

@@ -289,7 +289,7 @@ describe("public read SQL under D1 limits", () => {
     expect(connection.queries[0]!.values).toHaveLength(3);
   });
 
-  it("preserves per-parent reply limits, ordering, and hidden-ancestor exclusion", async () => {
+  it("preserves per-parent branch limits and ordering after pruning hidden branches", async () => {
     seedSubmission("root", "marker-1");
     for (const suffix of ["a", "b", "c"]) {
       seedSubmission(`reply-${suffix}`, "marker-1", { parentId: "root", depth: 1 });
@@ -306,15 +306,19 @@ describe("public read SQL under D1 limits", () => {
       markerId: "marker-1",
       replyLimit: 2,
     });
-    expect(comments[0]!.replyCount).toBe(3);
-    expect(comments[0]!.replies.map((reply) => reply.id)).toEqual(["reply-a", "reply-b"]);
-    expect(comments[0]!.replies[0]!.replyCount).toBe(3);
-    expect(comments[0]!.replies[0]!.replies.map((reply) => reply.id)).toEqual([
+    expect(comments[0]!.replyCount).toBe(4);
+    expect(comments[0]!.replies.map((reply) => reply.id)).toEqual(["hidden", "reply-a"]);
+    expect(comments[0]!.replies[1]!.replyCount).toBe(3);
+    expect(comments[0]!.replies[1]!.replies.map((reply) => reply.id)).toEqual([
       "nested-a",
       "nested-b",
     ]);
-    // A visible descendant must not bypass a hidden or paginated-out ancestor.
-    expect(JSON.stringify(comments)).not.toContain("hidden-child");
+    // Hidden connectors preserve their descendants; paginated-out branches stay absent.
+    expect(comments[0]!.replies[0]).toMatchObject({
+      type: "placeholder",
+      id: "hidden",
+      replies: [{ id: "hidden-child" }],
+    });
     expect(JSON.stringify(comments)).not.toContain("excluded-child");
   });
 

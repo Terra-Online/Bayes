@@ -2,6 +2,7 @@ import { formatPublicUid } from "@/repositories/users";
 
 import type {
   PublicSubmissionComment,
+  PublicCommentNode,
   PublicSubmissionImage,
   SubmissionKind,
   SubmissionRecord,
@@ -147,12 +148,32 @@ function commentStatusFromRow(row: Record<string, unknown>): SubmissionStatus {
   return mapStatus(row.review_status);
 }
 
+/** Hidden rows expose structure only, never content or author metadata. */
+export function publicCommentNodeFromRow(
+  row: Record<string, unknown>,
+  viewerUserId?: string,
+): PublicCommentNode {
+  if (row.snapshot_id == null) {
+    return {
+      type: "placeholder",
+      id: String(row.id),
+      markerId: String(row.poi_id),
+      parentId: row.parent_id == null ? null : String(row.parent_id),
+      depth: toCount(row.comment_depth),
+      replyCount: toCount(row.reply_count),
+      replies: [],
+    };
+  }
+  return publicCommentFromRow(row, viewerUserId);
+}
+
 export function publicCommentFromRow(
   row: Record<string, unknown>,
   viewerUserId?: string,
 ): PublicSubmissionComment {
   const submission = mapSubmission(row);
   return {
+    type: "comment",
     id: submission.id,
     snapshotId: submission.snapshotId,
     markerId: submission.markerId,

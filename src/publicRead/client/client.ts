@@ -20,10 +20,8 @@ import {
   PUBLIC_READ_IMAGES_PATH,
   PUBLIC_READ_PROGRESS_STATS_PATH,
 } from "@/publicRead/contract/requests";
-import type {
-  PublicSubmissionComment,
-  PublicSubmissionImage,
-} from "@/repositories/submission/types";
+import type { PublicCommentNode, PublicSubmissionImage } from "@/repositories/submission/types";
+import { selectCommentBranches } from "@/services/ugc/read/commentTree";
 
 function createPublicReadRequest(
   path: string,
@@ -253,7 +251,7 @@ export async function readPublicCommentsFromWorkersCache(payload: {
   limit: number;
   replyLimit: number;
   cacheNamespace: PublicReadCacheNamespace;
-}): Promise<PublicReadResult<PublicSubmissionComment>> {
+}): Promise<PublicReadResult<PublicCommentNode>> {
   const markerIds = normalizePublicReadMarkerIds(payload.markerIds);
   const request = (markerId: string) =>
     fetchSingleMarker(
@@ -261,23 +259,20 @@ export async function readPublicCommentsFromWorkersCache(payload: {
       buildPublicCommentsSearchParams({
         markerIds: [markerId],
         limit: PUBLIC_MARKER_COMMENT_CACHE_LIMIT,
-        replyLimit: PUBLIC_MARKER_COMMENT_REPLY_CACHE_LIMIT,
+        replyLimit: payload.replyLimit > 0 ? PUBLIC_MARKER_COMMENT_REPLY_CACHE_LIMIT : 0,
         cacheNamespace: payload.cacheNamespace,
       }),
     );
-  const selectComments = (comments: PublicSubmissionComment[]) =>
-    comments.slice(0, payload.limit).map((comment) => ({
-      ...comment,
-      replies: comment.replies.slice(0, payload.replyLimit),
-    }));
+  const selectComments = (comments: PublicCommentNode[]) =>
+    selectCommentBranches(comments, payload.limit, payload.replyLimit);
   const markerItems =
     markerIds.length === 1
-      ? await readSingleItem<PublicSubmissionComment>(
+      ? await readSingleItem<PublicCommentNode>(
           () => request(markerIds[0]!),
           "comment",
           selectComments,
         )
-      : await readItems<PublicSubmissionComment>(markerIds, request, "comment", selectComments);
+      : await readItems<PublicCommentNode>(markerIds, request, "comment", selectComments);
   if (!markerItems.ok) {
     return markerItems;
   }

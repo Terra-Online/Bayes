@@ -5,7 +5,7 @@ export type PublicCommentCacheNamespace = PublicReadCacheNamespace;
 
 export const PUBLIC_MARKER_IMAGE_CACHE_LIMIT = 24;
 export const PUBLIC_MARKER_COMMENT_CACHE_LIMIT = 50;
-export const PUBLIC_MARKER_COMMENT_REPLY_CACHE_LIMIT = 5;
+export const PUBLIC_MARKER_COMMENT_REPLY_CACHE_LIMIT = 10;
 
 export type PublicMarkerListResponse<T> = {
   items: T[];

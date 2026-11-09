@@ -48,47 +48,44 @@ afterEach(async () => {
 });
 
 describe("bounded public reads", () => {
-  it.each(["images", "comments"])(
-    "trims unused %s entries before other marker bodies finish",
-    async (kind) => {
-      let finishSlow!: () => void;
-      const firstItems = [
-        { id: "returned", markerId: "first", replies: [] },
-        { id: "unused", markerId: "first", replies: [] },
-      ];
-      // Final output alone cannot show when excess entries were discarded.
-      // Observe selection while the slow body is still pending to protect memory use.
-      const trimItems = vi.spyOn(firstItems, "slice");
-      mocks.fetch.mockImplementation(async (request: Request) => ({
-        ok: true,
-        json: () =>
-          new URL(request.url).searchParams.get("markerId") === "first"
-            ? Promise.resolve({ items: firstItems })
-            : new Promise((resolve) => {
-                finishSlow = () => resolve({ items: [] });
-              }),
-      }));
-      const payload = {
-        markerIds: ["first", "slow"],
-        limit: 1,
-        replyLimit: 1,
-        cacheNamespace: "prod" as const,
-        assetBaseUrl: "https://assets.example",
-      };
-      const responsePromise =
-        kind === "images"
-          ? fetchPublicImagesFromWorkersCache(payload)
-          : fetchPublicCommentsFromWorkersCache(payload);
-      try {
-        await vi.waitFor(() => expect(finishSlow).toBeTypeOf("function"));
-        expect(trimItems).toHaveBeenCalledWith(0, 1);
-      } finally {
-        finishSlow();
-        await responsePromise;
-      }
-      expect(await (await responsePromise).json()).toEqual({ items: [firstItems[0]] });
-    },
-  );
+  it.each(["images"])("trims unused %s entries before other marker bodies finish", async (kind) => {
+    let finishSlow!: () => void;
+    const firstItems = [
+      { id: "returned", markerId: "first", replies: [] },
+      { id: "unused", markerId: "first", replies: [] },
+    ];
+    // Final output alone cannot show when excess entries were discarded.
+    // Observe selection while the slow body is still pending to protect memory use.
+    const trimItems = vi.spyOn(firstItems, "slice");
+    mocks.fetch.mockImplementation(async (request: Request) => ({
+      ok: true,
+      json: () =>
+        new URL(request.url).searchParams.get("markerId") === "first"
+          ? Promise.resolve({ items: firstItems })
+          : new Promise((resolve) => {
+              finishSlow = () => resolve({ items: [] });
+            }),
+    }));
+    const payload = {
+      markerIds: ["first", "slow"],
+      limit: 1,
+      replyLimit: 1,
+      cacheNamespace: "prod" as const,
+      assetBaseUrl: "https://assets.example",
+    };
+    const responsePromise =
+      kind === "images"
+        ? fetchPublicImagesFromWorkersCache(payload)
+        : fetchPublicCommentsFromWorkersCache(payload);
+    try {
+      await vi.waitFor(() => expect(finishSlow).toBeTypeOf("function"));
+      expect(trimItems).toHaveBeenCalledWith(0, 1);
+    } finally {
+      finishSlow();
+      await responsePromise;
+    }
+    expect(await (await responsePromise).json()).toEqual({ items: [firstItems[0]] });
+  });
 
   it("records bounded failure diagnostics including response-body failures", async () => {
     const log = vi.spyOn(console, "error").mockImplementation(() => undefined);

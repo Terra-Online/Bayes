@@ -61,14 +61,26 @@ export interface PublicSubmissionImage {
   createdAt: string;
 }
 
-export interface PublicSubmissionComment {
+interface CommentStructure {
   id: string;
-  snapshotId: string;
   markerId: string;
-  poiHash: string;
-  poiType: string;
   parentId: string | null;
   depth: number;
+  replyCount: number;
+  replies: PublicCommentNode[];
+}
+
+export interface CommentPlaceholder extends CommentStructure {
+  type: "placeholder";
+}
+
+export type PublicCommentNode = PublicSubmissionComment | CommentPlaceholder;
+
+export interface PublicSubmissionComment extends CommentStructure {
+  type: "comment";
+  snapshotId: string;
+  poiHash: string;
+  poiType: string;
   content: string;
   author: {
     nickname: string;
@@ -80,8 +92,6 @@ export interface PublicSubmissionComment {
   score: number;
   viewerVote?: ViewerVoteValue;
   flagged?: boolean;
-  replyCount: number;
-  replies: PublicSubmissionComment[];
   createdAt: string;
 }
 
@@ -91,7 +101,7 @@ export interface UserSubmissionComment extends Omit<
 > {
   snapshotId: string;
   flagCount: number;
-  replies?: PublicSubmissionComment[];
+  replies?: PublicCommentNode[];
   replyCount?: number;
 }
 

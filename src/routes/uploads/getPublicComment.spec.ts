@@ -113,15 +113,6 @@ const unavailableCases: Array<{
     path: "/comments/image?markerId=marker-1",
     fixture: { id: "image", kind: "image", content: "Image secret" },
   },
-  ...(["pending_openai", "pending_audit", "unknown"] as const).map((reviewStatus) => ({
-    name: `${reviewStatus} target`,
-    path: `/comments/${reviewStatus}?markerId=marker-1`,
-    fixture: {
-      id: reviewStatus,
-      reviewStatus,
-      content: `Private ${reviewStatus} content`,
-    },
-  })),
 ];
 
 describe("public comment context through HTTP", () => {
@@ -176,8 +167,10 @@ describe("public comment context through HTTP", () => {
       status: "active",
       score: 1,
     });
-    expect(context.path[2]?.viewerVote).toBeUndefined();
-    expect(context.path[2]?.flagged).toBeUndefined();
+    expect(
+      "viewerVote" in context.path[2]! ? context.path[2].viewerVote : undefined,
+    ).toBeUndefined();
+    expect("flagged" in context.path[2]! ? context.path[2].flagged : undefined).toBeUndefined();
   });
 
   it("returns viewer reactions for header credentials while query-only requests remain anonymous", async () => {
@@ -221,12 +214,18 @@ describe("public comment context through HTTP", () => {
     );
     expect(queryOnly.status).toBe(200);
     const anonymous = (await queryOnly.json()) as { item: PublicCommentContext };
-    expect(anonymous.item.path[1]?.viewerVote).toBeUndefined();
-    expect(anonymous.item.path[0]?.flagged).toBeUndefined();
-    expect(anonymous.item.replies[0]?.viewerVote).toBeUndefined();
+    expect(
+      "viewerVote" in anonymous.item.path[1]! ? anonymous.item.path[1].viewerVote : undefined,
+    ).toBeUndefined();
+    expect(
+      "flagged" in anonymous.item.path[0]! ? anonymous.item.path[0].flagged : undefined,
+    ).toBeUndefined();
+    expect(
+      "viewerVote" in anonymous.item.replies[0]! ? anonymous.item.replies[0].viewerVote : undefined,
+    ).toBeUndefined();
   });
 
-  it("omits a non-public ancestor without exposing its content", async () => {
+  it("returns a structural placeholder for a non-public ancestor without exposing its content", async () => {
     insertComment({ id: "root", userId: "root-author", content: "Public root" });
     insertComment({
       id: "hidden-parent",
@@ -244,7 +243,16 @@ describe("public comment context through HTTP", () => {
 
     const context = await requestContext("target");
 
-    expect(context.path.map((comment) => comment.id)).toEqual(["root", "target"]);
+    expect(context.path.map((comment) => comment.id)).toEqual(["root", "hidden-parent", "target"]);
+    expect(context.path[1]).toEqual({
+      type: "placeholder",
+      id: "hidden-parent",
+      markerId: "marker-1",
+      parentId: "root",
+      depth: 1,
+      replyCount: 1,
+      replies: [],
+    });
     expect(JSON.stringify(context)).not.toContain("Private removed content");
   });
 
@@ -296,7 +304,7 @@ describe("public comment context through HTTP", () => {
     expect(context.replies.map((comment) => comment.id)).toEqual(["cycle-parent"]);
   });
 
-  it("bounds hidden descendant traversal and reports conservative truncation", async () => {
+  it("prunes all-hidden descendant branches before bounded selection", async () => {
     insertComment({ id: "target" });
     for (let index = 0; index < 300; index += 1) {
       insertComment({
@@ -311,13 +319,13 @@ describe("public comment context through HTTP", () => {
     const context = await requestContext("target");
 
     expect(context.replies).toEqual([]);
-    expect(context.repliesTruncated).toBe(true);
+    expect(context.repliesTruncated).toBe(false);
     expect(JSON.stringify(context)).not.toContain("Private");
   });
 
   it.each([
     { ending: "public child", truncated: true },
-    { ending: "hidden child", truncated: true },
+    { ending: "hidden child", truncated: false },
     { ending: "leaf", truncated: false },
     { ending: "other marker", truncated: false },
     { ending: "image", truncated: false },
@@ -397,9 +405,36 @@ describe("public comment context through HTTP", () => {
     const context = await requestContext("target");
 
     expect(context.path.map((comment) => comment.id)).toEqual(["root", "target"]);
-    expect(context.replies.map((comment) => comment.id)).toEqual(["public-grandchild"]);
+    expect(context.replies.map((comment) => comment.id)).toEqual([
+      "hidden-reply",
+      "public-grandchild",
+    ]);
     expect(JSON.stringify(context)).not.toContain("Private reply content");
   });
+
+  it.each(["pending_openai", "pending_audit", "rejected", "unknown"] as const)(
+    "returns an explicit %s target as a placeholder even without public descendants",
+    async (reviewStatus) => {
+      insertComment({ id: "hidden", reviewStatus, content: "Private body" });
+      const context = await requestContext("hidden");
+      expect(context).toEqual({
+        targetId: "hidden",
+        path: [
+          {
+            type: "placeholder",
+            id: "hidden",
+            markerId: "marker-1",
+            parentId: null,
+            depth: 0,
+            replyCount: 0,
+            replies: [],
+          },
+        ],
+        replies: [],
+        repliesTruncated: false,
+      });
+    },
+  );
 
   it.each(unavailableCases)(
     "returns an indistinguishable 404 for $name",

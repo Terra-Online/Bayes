@@ -8,7 +8,7 @@ import {
   type ImageViewerReaction,
 } from "@/repositories/submission/listImages";
 import type {
-  PublicSubmissionComment,
+  PublicCommentNode,
   PublicSubmissionImage,
   UserSubmissionComment,
 } from "@/repositories/submission/types";
@@ -19,11 +19,11 @@ export async function readCommentViewerFeed(
   input: {
     markerIds: string[];
     viewerUserId: string;
-    publicComments: PublicSubmissionComment[];
+    publicComments: PublicCommentNode[];
   },
-): Promise<PublicSubmissionComment[]> {
+): Promise<PublicCommentNode[]> {
   const submissionIds: string[] = [];
-  const collectIds = (comments: PublicSubmissionComment[]): void => {
+  const collectIds = (comments: PublicCommentNode[]): void => {
     for (const comment of comments) {
       submissionIds.push(comment.id);
       collectIds(comment.replies);
@@ -58,11 +58,14 @@ export async function readImageViewerFeed(
 }
 
 function applyCommentViewerReactions(
-  comments: PublicSubmissionComment[],
+  comments: PublicCommentNode[],
   reactions: Map<string, CommentViewerReaction>,
-): PublicSubmissionComment[] {
+): PublicCommentNode[] {
   return comments.map((comment) => {
     const reaction = reactions.get(comment.id);
+    if (comment.type === "placeholder") {
+      return { ...comment, replies: applyCommentViewerReactions(comment.replies, reactions) };
+    }
     return {
       ...comment,
       viewerVote: reaction?.viewerVote ?? 0,
@@ -73,11 +76,11 @@ function applyCommentViewerReactions(
 }
 
 function mergeViewerPendingComments(
-  publicComments: PublicSubmissionComment[],
+  publicComments: PublicCommentNode[],
   viewerComments: UserSubmissionComment[],
-): PublicSubmissionComment[] {
-  const commentById = new Map<string, PublicSubmissionComment>();
-  const indexTree = (comments: PublicSubmissionComment[]): void => {
+): PublicCommentNode[] {
+  const commentById = new Map<string, PublicCommentNode>();
+  const indexTree = (comments: PublicCommentNode[]): void => {
     comments.forEach((comment) => {
       commentById.set(comment.id, comment);
       indexTree(comment.replies);
@@ -85,7 +88,7 @@ function mergeViewerPendingComments(
   };
   indexTree(publicComments);
 
-  const pendingRoots: PublicSubmissionComment[] = [];
+  const pendingRoots: PublicCommentNode[] = [];
   const pending = viewerComments
     .filter((comment) => comment.status === "pending_openai" || comment.status === "pending_audit")
     .sort(
@@ -98,6 +101,15 @@ function mergeViewerPendingComments(
   pending.forEach((comment) => {
     const existing = commentById.get(comment.id);
     if (existing) {
+      if (existing.type === "placeholder") {
+        Object.assign(existing, {
+          ...comment,
+          type: "comment",
+          replies: existing.replies,
+          replyCount: existing.replyCount,
+        });
+        return;
+      }
       // Replace only the version, retaining the public tree and viewer reactions.
       Object.assign(existing, {
         content: comment.content,
@@ -107,7 +119,7 @@ function mergeViewerPendingComments(
       return;
     }
 
-    const normalized: PublicSubmissionComment = {
+    const normalized: PublicCommentNode = {
       ...comment,
       replyCount: comment.replyCount ?? 0,
       replies: comment.replies ?? [],
@@ -138,7 +150,7 @@ function applyImageViewerReactions(
   });
 }
 
-/** Public target eligibility is checked before applying any private owner version. */
+/** Public structure is selected before applying any private owner version. */
 export async function readCommentContext(
   db: D1Database,
   input: { id: string; markerId: string; viewerUserId?: string },
@@ -154,11 +166,15 @@ export async function readCommentContext(
     pendingLimit: 200,
   });
   const pendingById = new Map(pendingComments.map((comment) => [comment.id, comment]));
-  const overlay = (comment: PublicSubmissionComment): PublicSubmissionComment => {
+  const overlay = (comment: PublicCommentNode): PublicCommentNode => {
     const pending = pendingById.get(comment.id);
     return pending
       ? {
           ...comment,
+          ...pending,
+          type: "comment" as const,
+          replies: comment.replies,
+          replyCount: comment.replyCount,
           content: pending.content,
           snapshotId: pending.snapshotId,
           status: pending.status,

@@ -98,7 +98,13 @@ it.each(["comment", "image"] as const)(
     expect(mocks.autoModerationQueue.send).not.toHaveBeenCalled();
     expect(mocks.ugcBucket.delete).not.toHaveBeenCalled();
     expect(mocks.webhookQueue.send).not.toHaveBeenCalled();
-    expect((await request(`/${kind}s/target?markerId=marker-1`, "GET")).status).toBe(404);
+    const hidden = await request(`/${kind}s/target?markerId=marker-1`, "GET");
+    expect(hidden.status).toBe(kind === "image" ? 404 : 200);
+    if (kind === "comment") {
+      expect(await hidden.json()).toMatchObject({
+        item: { path: [{ id: "target", type: "placeholder" }] },
+      });
+    }
     if (kind === "image") {
       expect((await request("/public-file/images/target.webp", "GET")).status).toBe(404);
       expect(mocks.ugcBucket.get).not.toHaveBeenCalled();
@@ -138,7 +144,14 @@ it("retains children when deleting a comment and rejects new replies and edits",
   expect(
     database.sqlite.prepare("SELECT parent_id FROM ugc_submissions WHERE id='child'").get(),
   ).toEqual({ parent_id: "target" });
-  expect((await request("/comments/target?markerId=marker-1", "GET")).status).toBe(404);
+  const hidden = await request("/comments/target?markerId=marker-1", "GET");
+  expect(hidden.status).toBe(200);
+  expect(await hidden.json()).toMatchObject({
+    item: {
+      path: [{ id: "target", type: "placeholder" }],
+      replies: [{ id: "child", type: "comment" }],
+    },
+  });
   const edit = await runWithAuthRequest(() =>
     createApp().request(
       "http://localhost/uploads/v1/comments/target/edit",

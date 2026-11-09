@@ -36,6 +36,7 @@ export function buildPublicCommentsSearchParams(payload: {
     searchParams.append("markerId", markerId),
   );
   searchParams.set("limit", String(payload.limit));
+  searchParams.set("version", "4");
   searchParams.set("replyLimit", String(payload.replyLimit));
   searchParams.set("namespace", payload.cacheNamespace);
   return searchParams;
