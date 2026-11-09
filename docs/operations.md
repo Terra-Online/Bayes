@@ -8,10 +8,11 @@ your own resources before deploying a fork.
 
 [`wrangler.toml`](../wrangler.toml) declares backend D1 (`DB`), R2 (`UGC_BUCKET`),
 KV (`OEM_KV`), Durable Objects, the image transcoder, rate-limit bindings, mail,
-three queue producers/consumers and their dead-letter queues, a Tail Worker,
-and a one-minute cron. The logger has its own Wrangler config and `OEM_ERR` D1.
+three queue producers/consumers and their dead-letter queues, and a one-minute
+cron. Logpush archives requests and errors to private R2. The legacy Tail Worker
+and its `OEM_ERR` D1 are retained separately, with no backend Tail subscription.
 
-Review custom domains, resource IDs/names, queue names, Tail Worker service,
+Review custom domains, resource IDs/names, queue names,
 and environment bindings for your installation.
 
 Keep a deployment-specific secrets file separate from local values and inspect
@@ -26,16 +27,15 @@ The normal command performs these steps:
 2. Run `pnpm run check`.
 3. Refuse a `BETTER_AUTH_URL` containing localhost or `127.0.0.1`.
 4. Optionally apply WAF rules.
-5. Apply remote logger migrations and deploy `oem-errogger`.
-6. Apply remote backend D1 migrations.
-7. Deploy `oem-backend` with the secrets file and `--keep-vars`.
+5. Apply remote backend D1 migrations.
+6. Deploy `oem-backend` with the secrets file and `--keep-vars`.
 
 ```sh
 DEPLOY_VARS_FILE=.production.vars pnpm run deploy
 ```
 
 The secrets file defaults to `.dev.vars` if `DEPLOY_VARS_FILE` is absent. A full
-deployment updates both Workers and both databases; it is not an atomic release.
+deployment updates only the backend Worker and its database; it is not an atomic release.
 Review migration compatibility and recovery before running it.
 
 `.production.vars` is an illustrative filename, not an automatically ignored
@@ -49,9 +49,14 @@ one. Keep it outside the checkout, or add your chosen filename to `.git/info/exc
 | `pnpm run db:migrate:remote` | Apply backend migrations to remote D1 |
 | `pnpm run deploy:raw` | Deploy backend directly, skipping wrapper checks and migrations |
 
-### Logger deployment
+### Legacy logger maintenance
 
-For logger-only deployment, use `pnpm run deploy:logger`. The equivalent wrapper
+The retained `oem-errogger` Worker and `OEM-ERR` database are outside normal
+releases. Backend configuration explicitly clears Tail subscriptions on deployment;
+new logs are archived by Logpush. Retaining the Worker also retains its existing
+daily cleanup cron, so historical D1 rows still expire after 120 days.
+
+For deliberate logger-only deployment, use `pnpm run deploy:logger`. The equivalent wrapper
 invocation is `pnpm run deploy -- --logger-only`. Use `pnpm run logger:deploy:raw`
 only when deliberately handling checks and migrations separately. Logger database
 commands are defined in [package.json](../package.json).
@@ -63,7 +68,7 @@ appropriate credentials. Check feature locks and queue consumers if mutations
 succeed but background processing does not complete.
 
 Use request IDs to correlate failures. The
-[logger guide](../oem-logger/README.md) documents error retention and D1 queries.
+[logging guide](../oem-logger/README.md) documents Logpush archives and legacy D1 queries.
 For performance work, compare versioned windows with comparable traffic and
 outcomes. CPU, wall time, SQL rows read, cache misses, and long-lived WebSockets
 measure different things. An old observation report is not release acceptance.
