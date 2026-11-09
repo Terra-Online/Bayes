@@ -2,10 +2,10 @@ import { Hono } from "hono";
 import { createMiddleware } from "hono/factory";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
-import { runWithAuthRequest } from "@/lib/auth/createAuth";
 import { decryptSecret } from "@/lib/crypto";
 import { onAppError } from "@/middleware/error-handler";
 import type { PendingSessionRedis } from "@/repositories/binding/pendingSession";
+import { runWithAuthRequest } from "@/services/auth/betterAuth";
 import type { EndfieldRoleOption } from "@/services/official/client/types";
 import type { EndfieldProvider } from "@/services/official/contract/provider";
 import { createMockBindings } from "@/test/bindings";

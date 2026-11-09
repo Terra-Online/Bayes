@@ -37,7 +37,7 @@ Authentication middleware resolves the session and the OEM user profile.
 Business roles and karma belong to that profile. Public user identifiers and
 internal user IDs serve different purposes; use the identifier required by the
 specific schema. Browser cookie and OAuth exchange handling live in
-[`browserSession.ts`](../src/lib/auth/browserSession.ts).
+[`browserSession.ts`](../src/services/auth/browserSession.ts).
 
 ## Progress and statistics
 

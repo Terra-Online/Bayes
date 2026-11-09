@@ -1,10 +1,9 @@
 import { pointsToKarma } from "@/lib/karma/rules";
+import { buildUidSuffixFromNickname } from "@/services/profile/contract/publicUid";
 import type { Role } from "@/types/app";
 
 const UID_START = 100000;
-const NICKNAME_PATTERN = /^[A-Za-z0-9_-]{2,26}$/;
 const DEFAULT_UID_SUFFIX = "AA";
-const UID_SUFFIX_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 const USER_ACTIVITY_UPDATE_INTERVAL_MS = 60 * 60 * 1000;
 
 export interface UserRecord {
@@ -55,34 +54,6 @@ function normalizeUidSuffix(raw: string | undefined): string {
   return DEFAULT_UID_SUFFIX;
 }
 
-function randomUpperLetters(count: number): string {
-  if (count <= 0) {
-    return "";
-  }
-
-  const bytes = crypto.getRandomValues(new Uint8Array(count));
-  let output = "";
-  for (let index = 0; index < bytes.length; index += 1) {
-    const mapped = bytes[index]! % UID_SUFFIX_ALPHABET.length;
-    output += UID_SUFFIX_ALPHABET[mapped]!;
-  }
-  return output;
-}
-
-function buildUidSuffixFromNickname(nickname: string): string {
-  const letters = nickname.replace(/[^A-Za-z]/g, "").toUpperCase();
-
-  if (letters.length >= 2) {
-    return letters.slice(-2);
-  }
-
-  if (letters.length === 1) {
-    return `${letters}${randomUpperLetters(1)}`;
-  }
-
-  return randomUpperLetters(2);
-}
-
 export function getErrorMessage(error: unknown): string {
   if (error instanceof Error) {
     return error.message;
@@ -120,14 +91,6 @@ function normalizeRole(raw: unknown): Role {
     default:
       return "n";
   }
-}
-
-function normalizeEditableNickname(raw: string): string {
-  const value = raw.trim();
-  if (!NICKNAME_PATTERN.test(value)) {
-    throw new Error("INVALID_NICKNAME_FORMAT");
-  }
-  return value;
 }
 
 function parseStringArrayJson(raw: unknown): string[] {
@@ -407,48 +370,34 @@ async function refreshUserActivity(
   return row ? mapUser(row) : user;
 }
 
-export async function updateUserNickname(
+export async function saveUserProfile(
   db: D1Database,
   payload: {
     uid: string;
     nickname: string;
     avatar?: number;
+    uidSuffix: string;
+    nicknameCustomized: boolean;
   },
-): Promise<UserRecord> {
-  const current = await getUserByUid(db, payload.uid);
-  if (!current) {
-    throw new Error("USER_NOT_FOUND");
-  }
-
-  const normalizedNickname = normalizeEditableNickname(payload.nickname);
-  let normalizedAvatar: number | undefined;
-  if (payload.avatar !== undefined) {
-    normalizedAvatar = Number.isFinite(payload.avatar) ? Math.floor(payload.avatar) : NaN;
-  }
-
-  if (
-    normalizedAvatar !== undefined &&
-    (!Number.isFinite(normalizedAvatar) || normalizedAvatar < 1 || normalizedAvatar > 99)
-  ) {
-    throw new Error("INVALID_AVATAR");
-  }
-
-  const nextUidSuffix = current.nicknameCustomized
-    ? current.uidSuffix
-    : buildUidSuffixFromNickname(normalizedNickname);
-
+): Promise<UserRecord | null> {
   try {
     await db
       .prepare(
         `UPDATE users
          SET nickname = ?2,
              uid_suffix = ?3,
-           avt = COALESCE(?4, avt),
-             nickname_customized = 1,
+             avt = COALESCE(?4, avt),
+             nickname_customized = ?5,
              last_active = CURRENT_TIMESTAMP
          WHERE uid = ?1`,
       )
-      .bind(payload.uid, normalizedNickname, nextUidSuffix, normalizedAvatar ?? null)
+      .bind(
+        payload.uid,
+        payload.nickname,
+        payload.uidSuffix,
+        payload.avatar ?? null,
+        payload.nicknameCustomized ? 1 : 0,
+      )
       .run();
   } catch (error) {
     const message = getErrorMessage(error);
@@ -457,12 +406,7 @@ export async function updateUserNickname(
     }
     throw new Error(message);
   }
-
-  const updated = await getUserByUid(db, payload.uid);
-  if (!updated) {
-    throw new Error("USER_NOT_FOUND");
-  }
-  return updated;
+  return getUserByUid(db, payload.uid);
 }
 
 export interface UserProgressWrite {

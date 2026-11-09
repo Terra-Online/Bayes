@@ -90,6 +90,59 @@ describe("browser cross-origin access", () => {
   });
 });
 
+it("keeps the profile and session readable after a failed profile write and allows retry", async () => {
+  database = createTestDatabase();
+  vi.spyOn(console, "error").mockImplementation(() => undefined);
+  const owner = insertAuthenticatedUser(database.sqlite, {
+    uid: "profile-owner",
+    nickname: "ProfileOwner",
+    uid_number: 123456,
+    uid_suffix: "AB",
+    avt: 7,
+  });
+  const external = createMockBindings({ DB: database.db });
+  external.authRateLimit.limit.mockResolvedValue({ success: true });
+  const app = createApp();
+  const session = () =>
+    app.request("http://localhost/auth/v1/session", { headers: owner.headers }, external.bindings);
+  expect((await session()).status).toBe(200);
+  const original = database.sqlite.prepare("SELECT * FROM users WHERE uid = ?").get(owner.user.uid);
+  async function update(nickname: string, avatar: number): Promise<Response> {
+    return app.request(
+      "http://localhost/auth/v1/profile",
+      {
+        method: "PATCH",
+        headers: { ...owner.headers, "content-type": "application/json" },
+        body: JSON.stringify({ nickname, avatar }),
+      },
+      external.bindings,
+    );
+  }
+  database.hooks.beforeQuery = (sql) => {
+    if (/^UPDATE users\s+SET nickname/i.test(sql)) {
+      throw new Error("profile storage unavailable");
+    }
+  };
+  const failed = await update("ChangedName", 33);
+  expect(failed.status).toBe(500);
+  expect(await failed.json()).toMatchObject({ code: "PROFILE_UPDATE_FAILED" });
+  database.hooks.beforeQuery = undefined;
+  expect(database.sqlite.prepare("SELECT * FROM users WHERE uid = ?").get(owner.user.uid)).toEqual(
+    original,
+  );
+  expect(await (await session()).json()).toMatchObject({
+    user: { nickname: "ProfileOwner", avatar: 7 },
+  });
+  const retried = await update("ChangedName", 33);
+  expect(retried.status).toBe(200);
+  expect(await retried.json()).toMatchObject({
+    user: { uid: "123456AB", nickname: "ChangedName", avatar: 33 },
+  });
+  expect(await (await session()).json()).toMatchObject({
+    user: { nickname: "ChangedName", avatar: 33 },
+  });
+});
+
 it("fails privately for missing auth configuration and resumes the existing session after configuration recovery", async () => {
   database = createTestDatabase();
   vi.spyOn(console, "error").mockImplementation(() => undefined);
