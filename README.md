@@ -14,7 +14,7 @@ and Endfield account integration.
 - **Progress**: per-user Durable Objects, D1 persistence, and recoverable statistics delivery.
 - **Community content**: R2 images, D1 comments and reactions, public caches, and queued moderation.
 - **Live features**: notification and locator WebSockets.
-- **Error logging**: a separate Tail Worker.
+- **Request and error archives**: Logpush to private R2; the legacy Tail Worker is retained for manual maintenance.
 
 ## Where to start
 

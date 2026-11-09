@@ -5,9 +5,11 @@ const DEFAULT_TRUSTED_ORIGINS = [
   "https://opendfieldmap.org",
   "https://www.opendfieldmap.org",
   "https://beta.opendfieldmap.org",
+  "https://satellite.opendfieldmap.org",
   "https://opendfieldmap.cn",
   "https://www.opendfieldmap.cn",
   "https://beta.opendfieldmap.cn",
+  "https://satellite.opendfieldmap.cn",
   "https://api.opendfieldmap.org",
   "https://api.opendfieldmap.cn",
 ];

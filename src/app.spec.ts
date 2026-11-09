@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { parseAuthTrustedOrigins } from "@/services/auth/betterAuth/origins";
+import {
+  applyDefaultSocialCallbackUrls,
+  resolveTrustedRequestOrigin,
+} from "@/services/auth/rules/frontendOrigins";
 import { createMockBindings } from "@/test/bindings";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { insertAuthenticatedUser } from "@/test/fixtures/auth";
@@ -39,6 +44,52 @@ afterEach(() => {
 });
 
 describe("browser cross-origin access", () => {
+  it.each(["https://satellite.opendfieldmap.org", "https://satellite.opendfieldmap.cn"])(
+    "allows satellite origin %s through CORS and both login origin checks",
+    async (origin) => {
+      database = createTestDatabase();
+      const env = {
+        ...createMockBindings({ DB: database.db }).bindings,
+        BETTER_AUTH_URL: "https://api.opendfieldmap.org",
+      };
+      const app = createApp().get("/frontend-origin-test", (c) =>
+        c.json({
+          trusted: parseAuthTrustedOrigins(c.env).includes(origin),
+          request: resolveTrustedRequestOrigin(c.env, { origin: c.req.header("origin") }),
+          callback: applyDefaultSocialCallbackUrls(
+            c.env,
+            { origin: c.req.header("origin") },
+            { callbackURL: `${origin}/satellite/` },
+          )?.callbackURL,
+        }),
+      );
+      const preflight = await app.request(
+        "/frontend-origin-test",
+        {
+          method: "OPTIONS",
+          headers: { origin, "access-control-request-method": "GET" },
+        },
+        env,
+      );
+      expect(preflight.status).toBe(204);
+      expect(preflight.headers.get("access-control-allow-origin")).toBe(origin);
+      expect(preflight.headers.get("access-control-allow-credentials")).toBe("true");
+      const response = await app.request("/frontend-origin-test", { headers: { origin } }, env);
+      expect(await response.json()).toEqual({
+        trusted: true,
+        request: origin,
+        callback: `${origin}/satellite/`,
+      });
+      const impostor = await app.request(
+        "/frontend-origin-test",
+        { headers: { origin: `${origin}.example.com` } },
+        env,
+      );
+      expect(impostor.headers.get("access-control-allow-origin")).not.toBe(`${origin}.example.com`);
+      expect(await impostor.json()).toMatchObject({ request: null });
+    },
+  );
+
   it("allows a configured frontend and rejects untrusted origins on preflights and private errors", async () => {
     const backend = "https://api.example.test";
     const origin = "https://preview.example.test";

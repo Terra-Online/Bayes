@@ -17,9 +17,11 @@ const DEFAULT_TRUSTED_FRONTEND_ORIGINS = [
   "https://opendfieldmap.org",
   "https://www.opendfieldmap.org",
   "https://beta.opendfieldmap.org",
+  "https://satellite.opendfieldmap.org",
   "https://opendfieldmap.cn",
   "https://www.opendfieldmap.cn",
   "https://beta.opendfieldmap.cn",
+  "https://satellite.opendfieldmap.cn",
 ];
 
 const LOCAL_TRUSTED_FRONTEND_ORIGINS = [
