@@ -6,6 +6,8 @@ compatibility_flags = ["nodejs_compat"]
 workers_dev = false
 preview_urls = false
 logpush = true
+# Error archives use Logpush; retain the legacy logger without subscribing to it.
+tail_consumers = []
 
 [cache]
 enabled = true
@@ -134,9 +136,6 @@ queue = "oem-webhook"
 max_batch_size = 10
 max_batch_timeout = 5
 dead_letter_queue = "oem-webhook-dlq"
-
-[[tail_consumers]]
-service = "oem-errogger"
 
 [triggers]
 crons = ["*/1 * * * *"]

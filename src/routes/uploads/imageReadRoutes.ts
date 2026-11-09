@@ -12,7 +12,7 @@ import { readImageViewerFeed } from "@/services/ugc/read/feeds";
 import { readImageSections } from "@/services/ugc/read/imageSections";
 import type { AppEnv } from "@/types/app";
 
-import { getOptionalAuthIdentity, hasAuthHeaders, requireMarkerIds } from "./helpers";
+import { getOptionalAuthIdentity, hasAuthCredentials, requireMarkerIds } from "./helpers";
 import { imageListRateLimit, parseImageListAccess, requireActiveUser } from "./middleware";
 import { imageSectionsResponse, publicReadResponse, viewerReadResponse } from "./responses";
 import { resolveImageScope, resolvePrivateAssetBaseUrl, resolvePublicAssetBaseUrl } from "./scope";
@@ -73,7 +73,10 @@ export function createRoutes() {
 
         const config = getRuntimeConfig(c.env);
         const scope = resolveImageScope(c.req.raw, config.ugcUploadPathPrefix, parsed.data.scope);
-        const identity = await getOptionalAuthIdentity(c.env, c.req.raw.headers);
+        const identity = await getOptionalAuthIdentity(c.env, {
+          cookie: c.req.header("cookie"),
+          authorization: c.req.header("authorization"),
+        });
         const item = await getPublicImageById(c.env.DB, {
           id: c.req.param("id"),
           markerId: parsed.data.markerId,
@@ -140,13 +143,17 @@ export function createRoutes() {
           assetBaseUrl,
         });
 
-        if (parsed.data.publicOnly === "1" || !hasAuthHeaders(c.req.raw.headers)) {
+        const credentials = {
+          cookie: c.req.header("cookie"),
+          authorization: c.req.header("authorization"),
+        };
+        if (parsed.data.publicOnly === "1" || !hasAuthCredentials(credentials)) {
           return publicReadResponse(await publicResponsePromise);
         }
 
         const [publicResponse, identity] = await Promise.all([
           publicResponsePromise,
-          getOptionalAuthIdentity(c.env, c.req.raw.headers),
+          getOptionalAuthIdentity(c.env, credentials),
         ]);
         if (!identity || !publicResponse.ok) {
           return publicReadResponse(publicResponse);

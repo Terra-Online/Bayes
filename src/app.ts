@@ -11,10 +11,12 @@ const DEFAULT_CORS_ORIGINS = [
   "https://opendfieldmap.org",
   "https://www.opendfieldmap.org",
   "https://beta.opendfieldmap.org",
+  "https://satellite.opendfieldmap.org",
   "https://admin.opendfieldmap.org",
   "https://opendfieldmap.cn",
   "https://www.opendfieldmap.cn",
   "https://beta.opendfieldmap.cn",
+  "https://satellite.opendfieldmap.cn",
 ];
 
 const LOCAL_CORS_ORIGINS = [

@@ -115,7 +115,7 @@ if [[ ${#MISSING_KEYS[@]} -gt 0 ]]; then
   exit 1
 fi
 
-echo "[deploy-with-dev-vars] Running backend and logger checks"
+echo "[deploy-with-dev-vars] Running backend checks"
 pnpm run check
 
 betterAuthUrlLine="$(rg -m1 '^BETTER_AUTH_URL=' "$ENV_FILE" || true)"
@@ -143,7 +143,6 @@ else
 fi
 
 echo "[deploy-with-dev-vars] Uploading secrets from $ENV_FILE and deploying with --keep-vars"
-deploy_logger
 
 echo "[deploy-with-dev-vars] Applying remote backend D1 migrations"
 pnpm exec wrangler d1 migrations apply DB --remote

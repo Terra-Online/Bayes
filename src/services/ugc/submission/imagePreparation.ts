@@ -1,6 +1,6 @@
 import { getRandom } from "@cloudflare/containers";
 
-import { toSerializableError } from "@/lib/auth/errors";
+import { toSerializableError } from "@/lib/errors";
 import { ApiError, transientDependencyError } from "@/lib/errors";
 
 import type { oem_imgTrans } from "./imageTranscoderContainer";

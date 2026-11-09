@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { parseAuthTrustedOrigins } from "@/services/auth/betterAuth/origins";
+import {
+  applyDefaultSocialCallbackUrls,
+  resolveTrustedRequestOrigin,
+} from "@/services/auth/rules/frontendOrigins";
 import { createMockBindings } from "@/test/bindings";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { insertAuthenticatedUser } from "@/test/fixtures/auth";
@@ -39,6 +44,52 @@ afterEach(() => {
 });
 
 describe("browser cross-origin access", () => {
+  it.each(["https://satellite.opendfieldmap.org", "https://satellite.opendfieldmap.cn"])(
+    "allows satellite origin %s through CORS and both login origin checks",
+    async (origin) => {
+      database = createTestDatabase();
+      const env = {
+        ...createMockBindings({ DB: database.db }).bindings,
+        BETTER_AUTH_URL: "https://api.opendfieldmap.org",
+      };
+      const app = createApp().get("/frontend-origin-test", (c) =>
+        c.json({
+          trusted: parseAuthTrustedOrigins(c.env).includes(origin),
+          request: resolveTrustedRequestOrigin(c.env, { origin: c.req.header("origin") }),
+          callback: applyDefaultSocialCallbackUrls(
+            c.env,
+            { origin: c.req.header("origin") },
+            { callbackURL: `${origin}/satellite/` },
+          )?.callbackURL,
+        }),
+      );
+      const preflight = await app.request(
+        "/frontend-origin-test",
+        {
+          method: "OPTIONS",
+          headers: { origin, "access-control-request-method": "GET" },
+        },
+        env,
+      );
+      expect(preflight.status).toBe(204);
+      expect(preflight.headers.get("access-control-allow-origin")).toBe(origin);
+      expect(preflight.headers.get("access-control-allow-credentials")).toBe("true");
+      const response = await app.request("/frontend-origin-test", { headers: { origin } }, env);
+      expect(await response.json()).toEqual({
+        trusted: true,
+        request: origin,
+        callback: `${origin}/satellite/`,
+      });
+      const impostor = await app.request(
+        "/frontend-origin-test",
+        { headers: { origin: `${origin}.example.com` } },
+        env,
+      );
+      expect(impostor.headers.get("access-control-allow-origin")).not.toBe(`${origin}.example.com`);
+      expect(await impostor.json()).toMatchObject({ request: null });
+    },
+  );
+
   it("allows a configured frontend and rejects untrusted origins on preflights and private errors", async () => {
     const backend = "https://api.example.test";
     const origin = "https://preview.example.test";
@@ -87,6 +138,59 @@ describe("browser cross-origin access", () => {
     const directClient = await app.request(`${backend}/auth/v1/session`, {}, env);
     expect(directClient.status).toBe(401);
     expect(await directClient.json()).toMatchObject({ code: "SESSION_REQUIRED" });
+  });
+});
+
+it("keeps the profile and session readable after a failed profile write and allows retry", async () => {
+  database = createTestDatabase();
+  vi.spyOn(console, "error").mockImplementation(() => undefined);
+  const owner = insertAuthenticatedUser(database.sqlite, {
+    uid: "profile-owner",
+    nickname: "ProfileOwner",
+    uid_number: 123456,
+    uid_suffix: "AB",
+    avt: 7,
+  });
+  const external = createMockBindings({ DB: database.db });
+  external.authRateLimit.limit.mockResolvedValue({ success: true });
+  const app = createApp();
+  const session = () =>
+    app.request("http://localhost/auth/v1/session", { headers: owner.headers }, external.bindings);
+  expect((await session()).status).toBe(200);
+  const original = database.sqlite.prepare("SELECT * FROM users WHERE uid = ?").get(owner.user.uid);
+  async function update(nickname: string, avatar: number): Promise<Response> {
+    return app.request(
+      "http://localhost/auth/v1/profile",
+      {
+        method: "PATCH",
+        headers: { ...owner.headers, "content-type": "application/json" },
+        body: JSON.stringify({ nickname, avatar }),
+      },
+      external.bindings,
+    );
+  }
+  database.hooks.beforeQuery = (sql) => {
+    if (/^UPDATE users\s+SET nickname/i.test(sql)) {
+      throw new Error("profile storage unavailable");
+    }
+  };
+  const failed = await update("ChangedName", 33);
+  expect(failed.status).toBe(500);
+  expect(await failed.json()).toMatchObject({ code: "PROFILE_UPDATE_FAILED" });
+  database.hooks.beforeQuery = undefined;
+  expect(database.sqlite.prepare("SELECT * FROM users WHERE uid = ?").get(owner.user.uid)).toEqual(
+    original,
+  );
+  expect(await (await session()).json()).toMatchObject({
+    user: { nickname: "ProfileOwner", avatar: 7 },
+  });
+  const retried = await update("ChangedName", 33);
+  expect(retried.status).toBe(200);
+  expect(await retried.json()).toMatchObject({
+    user: { uid: "123456AB", nickname: "ChangedName", avatar: 33 },
+  });
+  expect(await (await session()).json()).toMatchObject({
+    user: { nickname: "ChangedName", avatar: 33 },
   });
 });
 

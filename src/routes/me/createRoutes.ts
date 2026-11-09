@@ -8,7 +8,7 @@ import {
   getContributionCounts,
   getContributionImage,
 } from "@/repositories/me";
-import { toSessionUser } from "@/routes/auth/sessionUser";
+import { toUserResponse } from "@/routes/response/userResponse";
 import { contributionQuerySchema } from "@/routes/schema/me";
 import { listContributions } from "@/services/me/contributions";
 import type { AppEnv } from "@/types/app";
@@ -63,7 +63,7 @@ export function createRoutes() {
       const counts = await readCached(c.env.DB, `counts:${user.uid}`, 15_000, () =>
         getContributionCounts(c.env.DB, user.uid),
       );
-      return c.json({ user: toSessionUser(user), contributions: counts }, 200, privateHeaders(15));
+      return c.json({ user: toUserResponse(user), contributions: counts }, 200, privateHeaders(15));
     })
     .get("/contributions", async (c) => {
       const user = c.get("authUser");

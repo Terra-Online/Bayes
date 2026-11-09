@@ -1,11 +1,17 @@
 # OEM logging
 
+Logpush is the active archive pipeline. The legacy `oem-errogger` Worker, its
+code, and D1 `OEM-ERR` are retained for manual maintenance. Normal releases do
+not migrate or deploy the logger, and backend configuration explicitly clears
+Tail subscriptions. This takes effect when that backend configuration is deployed.
+The retained logger cron continues to expire historical D1 errors after 120 days.
+
 | Pipeline | Destination | Retention |
 | --- | --- | --- |
-| `oem-backend` → Tail Worker `oem-errogger` | D1 `OEM-ERR`, table `worker_errors` | 120 days |
+| Legacy Tail Worker `oem-errogger` (no backend subscription after deployment) | D1 `OEM-ERR`, table `worker_errors` | 120 days |
 | `oem-backend` → Logpush | Private R2 bucket `opendfieldmap-log` | 180 days, once the lifecycle is applied |
 
-## Tail errors
+## Legacy Tail errors
 
 The Tail Worker writes one row per failed invocation. `error_reasons_json`
 records matching categories: `http_5xx`, `runtime_exception`, `console_error`,
@@ -19,7 +25,7 @@ and `outcome_failure`. The original redacted TailItem is kept in `payload_json`.
   five minutes is ignored unless the invocation also has a 5xx response or error log.
 
 Daily cleanup runs at 03:17 UTC, using `event_timestamp_ms`. Apply migration 0002
-before deploying the updated logger; the deployment wrapper handles this order.
+before manually deploying the logger; `pnpm run deploy:logger` handles this order.
 Existing rows retain their payloads and have an empty category array.
 
 Query recent errors, adding a `WHERE ray_id = 'RAY_ID'` filter when needed:
@@ -83,7 +89,7 @@ When ready to enable remote delivery:
    `pnpm run logpush:apply` to configure the job and lifecycle. The tool never
    creates a bucket, preserves unrelated lifecycle rules, and reuses the matching
    job. Destination validation may upload a test object; changes are not atomic.
-4. Deploy the backend and logger, applying the logger migration first.
+4. Deploy the backend. The retained legacy logger is not required for Logpush.
 
 Provisioning is not part of builds or deployment. Credentials and raw API error
 bodies are not printed. `--vars-file /absolute/path` supports external credentials.
@@ -94,7 +100,7 @@ Logpush starts with new data and does not backfill earlier logs or D1 records.
 After activation, check `logpush:status` and the Logpush health dashboard for
 enabled state, recent completion, and errors. Inspect normal traffic and an
 existing real failure in R2; confirm CPU/wall time, request metadata, lifecycle,
-and recent errors in D1. R2 expiry uses object age; D1 uses event time.
+and error records in R2. R2 expiry uses object age; legacy D1 cleanup uses event time.
 
 Download a daily prefix with an AWS CLI profile that has R2 read access:
 

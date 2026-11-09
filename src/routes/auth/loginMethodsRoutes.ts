@@ -1,0 +1,52 @@
+import { Hono } from "hono";
+
+import { requireAuth } from "@/middleware/auth";
+import { rateLimit } from "@/middleware/rate-limit";
+import { parseInput } from "@/routes/input";
+import { linkAccountSchema, unlinkAccountSchema } from "@/routes/schema/auth";
+import {
+  beginLinkLoginMethod,
+  listLoginMethods,
+  unlinkLoginMethod,
+} from "@/services/auth/loginMethods";
+import type { AppEnv } from "@/types/app";
+
+export function createRoutes() {
+  return new Hono<AppEnv<{ requestId: string }>>()
+    .get("/list-accounts", requireAuth, rateLimit("auth"), async (c) => {
+      const user = c.get("authUser");
+
+      const accounts = await listLoginMethods(c.env, { currentUserId: user.uid });
+      const response = c.json({ accounts });
+      response.headers.set("Cache-Control", "private, no-store");
+      return response;
+    })
+    .post("/link-social", requireAuth, rateLimit("auth"), async (c) => {
+      const input = parseInput(
+        linkAccountSchema,
+        await c.req.json().catch(() => null),
+        "Invalid account link payload.",
+      );
+
+      return beginLinkLoginMethod(c.env, {
+        ...input,
+        raw_request: c.req.raw,
+        requestId: c.get("requestId"),
+      });
+    })
+    .post("/unlink-account", requireAuth, rateLimit("auth"), async (c) => {
+      const input = parseInput(
+        unlinkAccountSchema,
+        await c.req.json().catch(() => null),
+        "Invalid account unlink payload.",
+      );
+
+      const user = c.get("authUser");
+      return unlinkLoginMethod(c.env, {
+        ...input,
+        currentUserId: user.uid,
+        raw_request: c.req.raw,
+        requestId: c.get("requestId"),
+      });
+    });
+}

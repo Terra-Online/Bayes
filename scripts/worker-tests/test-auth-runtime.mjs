@@ -23,6 +23,9 @@ async function runtime() {
   const worker = new Miniflare({
     ...fixture,
     d1Databases: { DB: "local-regression-primary", DB_SECOND: "local-regression-secondary" },
+    ratelimits: {
+      OEM_PUBLIC_RATE_LIMIT: { namespace_id: "100", simple: { limit: 100, period: 60 } },
+    },
     bindings: {
       BETTER_AUTH_URL: authOrigin,
       BETTER_AUTH_SECRET: secret,
@@ -134,6 +137,28 @@ try {
           ["DB-user", "DB_SECOND-user"],
         );
       });
+      await t.test(
+        "password login checks redirect destinations before authenticating credentials",
+        async () => {
+          for (const [field, code] of [
+            ["redirectTo", "INVALID_REDIRECT_URL"],
+            ["errorCallbackURL", "INVALID_ERROR_CALLBACK_URL"],
+            ["newUserCallbackURL", "INVALID_NEW_USER_CALLBACK_URL"],
+          ]) {
+            const response = await worker.dispatchFetch(`${authOrigin}/auth/v1/sign-in/email`, {
+              method: "POST",
+              headers: { "content-type": "application/json", origin: "https://opendfieldmap.org" },
+              body: JSON.stringify({
+                email: "db@example.test",
+                password: "unused-password",
+                [field]: "https://untrusted.example/return",
+              }),
+            });
+            assert.equal(response.status, 403, await response.clone().text());
+            assert.equal((await response.json()).code, code);
+          }
+        },
+      );
       await t.test(
         "one failed request cannot own or reject another request's pending auth work",
         async () => {
