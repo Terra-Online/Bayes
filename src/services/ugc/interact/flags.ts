@@ -6,13 +6,14 @@ import { setSubmissionReport } from "@/repositories/submission/flagSubmission";
 import { notifyFlagCreated, notifyFlagRemoved } from "@/services/moderation/notifications";
 import type { SubmissionActionInput, UgcActionDependencies } from "@/services/ugc/contract/actions";
 
-type ReportInput = SubmissionActionInput & { snapshotId: string };
-
-async function setReport(dependencies: UgcActionDependencies, input: ReportInput, active: boolean) {
+async function setReport(
+  dependencies: UgcActionDependencies,
+  input: SubmissionActionInput,
+  active: boolean,
+) {
   const { bindings } = dependencies;
   const result = await setSubmissionReport(bindings.DB, {
     submissionId: input.submissionId,
-    snapshotId: input.snapshotId,
     kind: input.kind,
     userId: input.actor.uid,
     active,
@@ -30,8 +31,8 @@ async function setReport(dependencies: UgcActionDependencies, input: ReportInput
   if (result.outcome !== "committed") {
     throw new ApiError(
       409,
-      "PUBLIC_SNAPSHOT_CONFLICT",
-      "The public version changed. Refresh before reporting.",
+      "INVALID_SUBMISSION_STATUS",
+      "Only public submissions can be reported or have reports withdrawn.",
     );
   }
   const status = result.flagCount > 0 ? ("flagged" as const) : ("active" as const);
@@ -63,12 +64,18 @@ async function setReport(dependencies: UgcActionDependencies, input: ReportInput
   return { changed: result.changed, status, flagCount: result.flagCount };
 }
 
-export async function flagSubmission(dependencies: UgcActionDependencies, input: ReportInput) {
+export async function flagSubmission(
+  dependencies: UgcActionDependencies,
+  input: SubmissionActionInput,
+) {
   const { changed, ...result } = await setReport(dependencies, input, true);
   return { created: changed, ...result };
 }
 
-export async function unflagSubmission(dependencies: UgcActionDependencies, input: ReportInput) {
+export async function unflagSubmission(
+  dependencies: UgcActionDependencies,
+  input: SubmissionActionInput,
+) {
   const { changed, ...result } = await setReport(dependencies, input, false);
   return { deleted: changed, ...result };
 }

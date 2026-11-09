@@ -2,11 +2,7 @@ import { Hono } from "hono";
 
 import { ApiError } from "@/lib/errors";
 import { rateLimit } from "@/middleware/rate-limit";
-import {
-  commentEditSchema,
-  commentSubmissionSchema,
-  submissionReportSchema,
-} from "@/routes/schema/uploads";
+import { commentEditSchema, commentSubmissionSchema } from "@/routes/schema/uploads";
 import { flagSubmission, unflagSubmission } from "@/services/ugc/interact/flags";
 import { voteComment } from "@/services/ugc/interact/votes";
 import { deleteSubmissionByAuthor } from "@/services/ugc/owner/deletion";
@@ -72,18 +68,9 @@ export function createRoutes() {
       async (c) => {
         const user = c.get("authUser");
         const submissionId = c.req.param("id");
-        const parsed = submissionReportSchema.safeParse(await c.req.json().catch(() => null));
-        if (!parsed.success) {
-          throw new ApiError(
-            422,
-            "VALIDATION_ERROR",
-            "Invalid report payload.",
-            parsed.error.flatten(),
-          );
-        }
         const result = await flagSubmission(
           { bindings: c.env, defer: (task) => c.executionCtx.waitUntil(task) },
-          { actor: user, submissionId, kind: "comment", ...parsed.data },
+          { actor: user, submissionId, kind: "comment" },
         );
         return c.json({ ok: true, ...result });
       },
@@ -96,18 +83,9 @@ export function createRoutes() {
       async (c) => {
         const user = c.get("authUser");
         const submissionId = c.req.param("id");
-        const parsed = submissionReportSchema.safeParse(await c.req.json().catch(() => null));
-        if (!parsed.success) {
-          throw new ApiError(
-            422,
-            "VALIDATION_ERROR",
-            "Invalid report payload.",
-            parsed.error.flatten(),
-          );
-        }
         const result = await unflagSubmission(
           { bindings: c.env, defer: (task) => c.executionCtx.waitUntil(task) },
-          { actor: user, submissionId, kind: "comment", ...parsed.data },
+          { actor: user, submissionId, kind: "comment" },
         );
         return c.json({ ok: true, ...result });
       },

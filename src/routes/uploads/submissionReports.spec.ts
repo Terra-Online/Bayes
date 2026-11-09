@@ -68,7 +68,7 @@ afterEach(() => {
   database.close();
 });
 
-async function post(path: string, body: object = { snapshotId: "A" }, headers = reviewer) {
+async function post(path: string, body: object = {}, headers = reviewer) {
   const pending: Promise<unknown>[] = [];
   const response = await runWithAuthRequest(() =>
     createApp().request(
@@ -76,7 +76,7 @@ async function post(path: string, body: object = { snapshotId: "A" }, headers = 
       {
         method: "POST",
         headers: { ...headers, "content-type": "application/json" },
-        body: JSON.stringify(body),
+        ...(Object.keys(body).length ? { body: JSON.stringify(body) } : {}),
       },
       mocks.bindings,
       { waitUntil: (task: Promise<unknown>) => pending.push(task) } as unknown as ExecutionContext,
@@ -86,11 +86,7 @@ async function post(path: string, body: object = { snapshotId: "A" }, headers = 
   return response;
 }
 
-it("requires the clicked public version for flag and unflag, including no-ops", async () => {
-  for (const action of ["flag", "unflag"]) {
-    expect((await post(`/comments/comment/${action}`, {})).status).toBe(422);
-    expect((await post(`/comments/comment/${action}`, { snapshotId: "old" })).status).toBe(409);
-  }
+it("sets and cancels submission reports without a version, including no-ops", async () => {
   const first = await post("/comments/comment/flag");
   expect(first.status).toBe(200);
   expect(await first.json()).toMatchObject({ created: true, status: "flagged", flagCount: 1 });
@@ -156,39 +152,24 @@ async function review(id = "comment", decision: "approved" | "rejected" = "appro
 }
 
 it.each(["comment", "image"] as const)(
-  "binds %s flags and withdrawals to public A while B is pending and rejects both stale directions",
+  "retains %s reports across editing and approval until explicitly cancelled",
   async (kind) => {
     const id = kind;
     const prefix = kind === "comment" ? "comments" : "images";
     if (kind === "image") {
       insertImageSnapshot(database.sqlite, { id, userId: "author", snapshotId: "A-image" });
     }
-    const snapshotId = kind === "comment" ? "A" : "A-image";
-    addPendingVersion(id, kind);
-    const request = (action: string, version = snapshotId) =>
-      post(`/${prefix}/${id}/${action}`, { snapshotId: version });
+    const request = (action: string) => post(`/${prefix}/${id}/${action}`);
     expect(await (await request("flag")).json()).toMatchObject({ created: true, flagCount: 1 });
-    expect(await (await request("unflag")).json()).toMatchObject({ deleted: true, flagCount: 0 });
-    expect((await request("flag", "B")).status).toBe(409);
-    expect((await request("flag")).status).toBe(200);
-    const firstReview = await review(id);
-    expect(firstReview.status).toBe(200);
-    expect(
-      database.sqlite
-        .prepare("SELECT active FROM ugc_submission_flags WHERE submission_id=?")
-        .get(id),
-    ).toEqual({ active: 0 });
-    for (const action of ["flag", "unflag"]) {
-      expect((await request(action)).status).toBe(409);
-    }
-    expect((await request("flag", "B")).status).toBe(200);
-    // A duplicate real review must not clear a fresh report on B.
-    expect((await review(id)).status).toBe(409);
-    expect(
-      database.sqlite
-        .prepare("SELECT active FROM ugc_submission_flags WHERE submission_id=?")
-        .get(id),
-    ).toEqual({ active: 1 });
+    addPendingVersion(id, kind);
+    expect(await (await request("flag")).json()).toMatchObject({ created: false, flagCount: 1 });
+    expect((await review(id)).status).toBe(200);
+    expect(await (await request("flag")).json()).toMatchObject({ created: false, flagCount: 1 });
+    expect(await (await request("unflag")).json()).toMatchObject({
+      deleted: true,
+      status: "active",
+      flagCount: 0,
+    });
   },
 );
 
@@ -218,9 +199,7 @@ it.each(["author", "admin", "rejected"])(
 
 it("preserves self-report policy, distinguishes missing/kind mismatch, and only notifies committed changes", async () => {
   for (const action of ["flag", "unflag"]) {
-    expect((await post(`/comments/comment/${action}`, { snapshotId: "A" }, author)).status).toBe(
-      403,
-    );
+    expect((await post(`/comments/comment/${action}`, {}, author)).status).toBe(403);
     expect((await post(`/comments/missing/${action}`)).status).toBe(404);
     expect((await post(`/images/comment/${action}`)).status).toBe(404);
   }
@@ -234,14 +213,15 @@ it("preserves self-report policy, distinguishes missing/kind mismatch, and only 
       message.type === "discord_notification" ? message.event.type : message.type,
     ),
   ).toEqual(["flag_created", "flag_removed", "flag_created"]);
-  expect((await post("/comments/comment/flag", { snapshotId: "A" }, admin)).status).toBe(200);
+  expect((await post("/comments/comment/flag", {}, admin)).status).toBe(200);
   expect(await (await post("/comments/comment/unflag")).json()).toMatchObject({
     status: "flagged",
     flagCount: 1,
   });
-  expect(
-    await (await post("/comments/comment/unflag", { snapshotId: "A" }, admin)).json(),
-  ).toMatchObject({ status: "active", flagCount: 0 });
+  expect(await (await post("/comments/comment/unflag", {}, admin)).json()).toMatchObject({
+    status: "active",
+    flagCount: 0,
+  });
 });
 
 it("preserves like timestamps on duplicate and cancel, aggregates reactivation, and never expires groups for ineligible writes", async () => {
@@ -344,70 +324,33 @@ async function management(path: string, body?: object) {
 }
 
 it.each(["comment", "image"] as const)(
-  "integrates %s user reports with management's public/frontier targets and retained hidden report clearing",
+  "lets management clear retained %s reports after replacement and deletion without a version",
   async (kind) => {
-    mocks.bindings.LOCK_MODERATION_ENDPOINTS = "false";
     const id = kind;
     const prefix = kind === "comment" ? "comments" : "images";
-    const snapshotId = kind === "comment" ? "A" : "A-image";
     if (kind === "image") {
-      insertImageSnapshot(database.sqlite, { id, userId: "author", snapshotId });
+      insertImageSnapshot(database.sqlite, { id, userId: "author" });
     }
-    database.sqlite
-      .prepare("UPDATE ugc_submissions SET created_at='2020-01-01T00:00:00.000Z' WHERE id=?")
-      .run(id);
+    expect((await post(`/${prefix}/${id}/flag`)).status).toBe(200);
     addPendingVersion(id, kind);
-    expect((await post(`/${prefix}/${id}/flag`, { snapshotId })).status).toBe(200);
-    const browse = await management("/pending?mode=reports&limit=1");
-    expect(browse.status).toBe(200);
-    expect(await browse.json()).toMatchObject({
-      items: [
-        {
-          id,
-          frontier: { snapshotId: "B" },
-          publicSnapshot: { snapshotId },
-          reportSnapshotId: snapshotId,
-          flagCount: 1,
-        },
-      ],
-      nextOffset: null,
-    });
-    expect(
-      (await management(`/${id}/status`, { action: "clear_flags", snapshotId: "B" })).status,
-    ).toBe(409);
-    // Real ticket07 review replaces A and clears only A reports.
     expect((await review(id)).status).toBe(200);
-    expect((await post(`/${prefix}/${id}/flag`, { snapshotId: "B" })).status).toBe(200);
-    expect((await management(`/${id}/status`, { action: "clear_flags", snapshotId })).status).toBe(
-      409,
-    );
-    // Author deletion has no points/review side effect and retains the current report.
     database.sqlite
       .prepare("UPDATE ugc_submissions SET author_deleted_at='gone' WHERE id=?")
       .run(id);
-    const hidden = await management(
-      "/pending?mode=reports&limit=1&status=pending_openai&from=2026-01-01T00:00:00Z",
-    );
-    expect(hidden.status).toBe(200);
-    expect(await hidden.json()).toMatchObject({
-      items: [
-        {
-          id,
-          publicSnapshot: null,
-          reportSnapshotId: "B",
-          flagCount: 1,
-          authorDeletedAt: "gone",
-        },
-      ],
-    });
-    expect((await post(`/${prefix}/${id}/unflag`, { snapshotId: "B" })).status).toBe(409);
+    const browse = await management("/pending?mode=reports&limit=1");
+    expect(browse.status).toBe(200);
+    const payload = (await browse.json()) as { items: Record<string, unknown>[] };
+    expect(payload.items).toMatchObject([
+      { id, publicSnapshot: null, flagCount: 1, authorDeletedAt: "gone" },
+    ]);
+    expect(payload.items[0]).not.toHaveProperty("reportSnapshotId");
     const audits = database.sqlite.prepare("SELECT * FROM ugc_snapshots_review_audit").all();
     const messages = database.sqlite.prepare("SELECT * FROM notification_messages").all();
     expect(
-      await (await management(`/${id}/status`, { action: "clear_flags", snapshotId: "B" })).json(),
+      await (await management(`/${id}/status`, { action: "clear_flags" })).json(),
     ).toMatchObject({ ok: true, outcome: "committed" });
     expect(
-      await (await management(`/${id}/status`, { action: "clear_flags", snapshotId: "B" })).json(),
+      await (await management(`/${id}/status`, { action: "clear_flags" })).json(),
     ).toMatchObject({ ok: true, outcome: "no_op" });
     expect(await (await management("/pending?mode=reports&limit=1")).json()).toMatchObject({
       items: [],

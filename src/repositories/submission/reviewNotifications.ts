@@ -287,7 +287,6 @@ export async function commitReviewBatch(
 ): Promise<{
   committed: boolean;
   firstApproval: boolean;
-  publicReplaced: boolean;
   notifications: NotificationRecord[];
 }> {
   const indexes: number[] = [];
@@ -304,8 +303,7 @@ export async function commitReviewBatch(
   const results = await db.batch<Record<string, unknown>>(statements);
   return {
     committed: Boolean(results[0].results?.length),
-    firstApproval: Boolean(results[3].results?.[0]?.firstApproval),
-    publicReplaced: Boolean(results[3].results?.[0]?.publicReplaced),
+    firstApproval: Boolean(results[2].results?.[0]?.firstApproval),
     notifications: indexes.flatMap((index) => notificationsFromResult(results[index])),
   };
 }

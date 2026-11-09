@@ -74,10 +74,7 @@ describe("image write permissions", () => {
         const response = await post("photo", action);
         expect(response.status).toBe(409);
         expect(await response.json()).toMatchObject({
-          code:
-            action === "flag" || action === "unflag"
-              ? "PUBLIC_SNAPSHOT_CONFLICT"
-              : "INVALID_SUBMISSION_STATUS",
+          code: "INVALID_SUBMISSION_STATUS",
         });
       }
       expect(persistedState()).toEqual(before);

@@ -186,7 +186,7 @@ describe("comment flags", () => {
       for (const action of ["flag", "unflag"]) {
         const response = await post(`/comments/target/${action}`, "reader");
         expect(response.status).toBe(409);
-        expect(await response.json()).toMatchObject({ code: "PUBLIC_SNAPSHOT_CONFLICT" });
+        expect(await response.json()).toMatchObject({ code: "INVALID_SUBMISSION_STATUS" });
       }
       expect(persistedState()).toEqual(before);
       expect(webhooks).toEqual([]);

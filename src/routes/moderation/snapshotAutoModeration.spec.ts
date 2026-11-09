@@ -166,7 +166,7 @@ it("backfills and consumes the retained exact snapshot without repeating review 
   expect(fixture.authorPoints()).toBe(26);
 });
 
-it("clears flags only on public A to B replacement and never on a duplicate approval", async () => {
+it("retains flags on public A to B replacement and duplicate approval", async () => {
   seed("comment", "approved");
   edit("comment");
   insertUser(fixture.database.sqlite, { uid: "flagger", uid_number: 400 });
@@ -178,14 +178,13 @@ it("clears flags only on public A to B replacement and never on a duplicate appr
   ).toEqual({ snapshot_id: "snapshot-comment" });
   expect((await run(["comment"])).status).toBe(200);
   expect(fixture.database.sqlite.prepare("SELECT active FROM ugc_submission_flags").get()).toEqual({
-    active: 0,
+    active: 1,
   });
   expect(
     fixture.database.sqlite.prepare("SELECT snapshot_id FROM v_ugc_public_submissions").get(),
   ).toEqual({ snapshot_id: "edit-comment" });
   expect(fixture.authorPoints()).toBe(20);
   expect(redisCounts.size).toBe(0);
-  fixture.database.sqlite.exec("UPDATE ugc_submission_flags SET active=1");
   await consume("edit-comment", "comment");
   expect(fixture.database.sqlite.prepare("SELECT active FROM ugc_submission_flags").get()).toEqual({
     active: 1,

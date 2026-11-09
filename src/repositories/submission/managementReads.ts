@@ -24,7 +24,6 @@ export interface ManagementSubmission {
   updatedAt: string;
   frontier: ManagementSnapshot;
   publicSnapshot: ManagementSnapshot | null;
-  reportSnapshotId: string;
   flagCount: number;
   authorDeletedAt: string | null;
   adminDeletedAt: string | null;
@@ -85,7 +84,6 @@ const selection = `WITH management AS (SELECT
   f.review_status AS reviewStatus,
   ${snapshot("f")} AS frontier,
   CASE WHEN p.id IS NULL THEN NULL ELSE ${snapshot("p")} END AS publicSnapshot,
-  COALESCE(p.id,f.id) AS reportSnapshotId,
   (SELECT COUNT(*) FROM ugc_submission_flags g WHERE g.submission_id=s.id AND g.active=1) AS flagCount,
   s.author_deleted_at AS authorDeletedAt,s.admin_deleted_at AS adminDeletedAt,s.admin_deleted_by AS adminDeletedBy,
   CASE WHEN s.author_deleted_at IS NOT NULL OR s.admin_deleted_at IS NOT NULL
@@ -161,7 +159,7 @@ export async function listManagementSubmissions(
   const result = await db.batch([
     db
       .prepare(`${selection} SELECT id,kind,markerId,poiHash,poiType,userId,parentId,commentDepth,createdAt,updatedAt,
-      frontier,publicSnapshot,reportSnapshotId,flagCount,authorDeletedAt,adminDeletedAt,adminDeletedBy,
+      frontier,publicSnapshot,flagCount,authorDeletedAt,adminDeletedAt,adminDeletedBy,
       status,submitter,latestReviewAudit FROM management WHERE ${where}
       ORDER BY ${order} LIMIT ?${bindings.length + 1} OFFSET ?${bindings.length + 2}`)
       .bind(...bindings, limit, offset),

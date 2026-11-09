@@ -50,14 +50,11 @@ export async function applyManualModeration(
   const { bindings } = dependencies;
   const { command } = input;
   if (command.action === "disable" || command.action === "clear_flags") {
-    const result = await (command.action === "disable" ? disableSubmission : clearSubmissionFlags)(
-      bindings.DB,
-      {
-        submissionId: input.submissionId,
-        snapshotId: command.snapshotId,
-        adminUserId: input.actor.uid,
-      },
-    );
+    const target = { submissionId: input.submissionId, adminUserId: input.actor.uid };
+    const result =
+      command.action === "disable"
+        ? await disableSubmission(bindings.DB, { ...target, snapshotId: command.snapshotId })
+        : await clearSubmissionFlags(bindings.DB, target);
     if (result.outcome === "conflict") {
       return conflict(bindings.DB, input.submissionId);
     }

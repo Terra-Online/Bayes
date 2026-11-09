@@ -44,7 +44,6 @@ export type ReviewResult =
       target: ReviewTarget;
       reviewStatus: ReviewCommand["decision"];
       firstApproval: boolean;
-      publicReplaced: boolean;
       notifications: NotificationRecord[];
     };
 
@@ -156,20 +155,10 @@ export async function reviewSnapshot(
       WHERE id=?2 AND ${receipt}`)
       .bind(auditId, target.snapshotId, decision),
     db
-      .prepare(`UPDATE ugc_submission_flags SET active=0
-      WHERE submission_id=?2 AND active=1 AND ?4='approved' AND ${receipt}
-        AND EXISTS (SELECT 1 FROM ugc_snapshots f JOIN ugc_snapshots p
-          ON p.submission_id=f.submission_id AND p.revision=f.revision-1
-          WHERE f.id=?3 AND p.review_status='approved')`)
-      .bind(auditId, target.id, target.snapshotId, decision),
-    db
       .prepare(`SELECT
       (?4='approved' AND NOT EXISTS (SELECT 1 FROM ugc_snapshots p
         WHERE p.submission_id=?2 AND p.review_status='approved'
-          AND p.revision < (SELECT revision FROM ugc_snapshots WHERE id=?3))) AS firstApproval,
-      (?4='approved' AND EXISTS (SELECT 1 FROM ugc_snapshots f JOIN ugc_snapshots p
-        ON p.submission_id=f.submission_id AND p.revision=f.revision-1
-        WHERE f.id=?3 AND p.review_status='approved')) AS publicReplaced
+          AND p.revision < (SELECT revision FROM ugc_snapshots WHERE id=?3))) AS firstApproval
       WHERE ${receipt}`)
       .bind(auditId, target.id, target.snapshotId, decision),
   ];
@@ -180,7 +169,6 @@ export async function reviewSnapshot(
         target,
         reviewStatus: decision,
         firstApproval: result.firstApproval,
-        publicReplaced: result.publicReplaced,
         notifications: result.notifications,
       }
     : { outcome: "ignored" };

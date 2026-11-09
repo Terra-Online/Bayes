@@ -23,12 +23,11 @@ export type SetSubmissionReportResult =
       };
     };
 
-/** The clicked public version, write, no-op classification and count share a batch. */
+/** Public eligibility, write, no-op classification and count share a batch. */
 export async function setSubmissionReport(
   db: D1Database,
   input: {
     submissionId: string;
-    snapshotId: string;
     kind: SubmissionKind;
     userId: string;
     active: boolean;
@@ -36,7 +35,7 @@ export async function setSubmissionReport(
 ): Promise<SetSubmissionReportResult> {
   const eligible = `SELECT s.id FROM ugc_submissions s
     JOIN v_ugc_submission_visibility v ON v.submission_id=s.id
-    WHERE s.id=?1 AND s.kind=?2 AND s.user_id<>?3 AND v.public_snapshot_id=?4`;
+    WHERE s.id=?1 AND s.kind=?2 AND s.user_id<>?3 AND v.public_snapshot_id IS NOT NULL`;
   const results = await db.batch<Record<string, unknown>>([
     db
       .prepare(`SELECT s.id, s.kind, s.user_id AS userId, s.poi_id AS markerId,
@@ -56,12 +55,12 @@ export async function setSubmissionReport(
           SELECT id,?3,1 FROM (${eligible}) WHERE 1
           ON CONFLICT(submission_id,user_id) DO UPDATE SET active=1
           WHERE ugc_submission_flags.active=0 RETURNING submission_id`)
-          .bind(input.submissionId, input.kind, input.userId, input.snapshotId)
+          .bind(input.submissionId, input.kind, input.userId)
       : db
           .prepare(`UPDATE ugc_submission_flags SET active=0
           WHERE submission_id=?1 AND user_id=?3 AND active=1
             AND EXISTS (${eligible}) RETURNING submission_id`)
-          .bind(input.submissionId, input.kind, input.userId, input.snapshotId),
+          .bind(input.submissionId, input.kind, input.userId),
     db
       .prepare(`SELECT COUNT(*) AS count FROM ugc_submission_flags
       WHERE submission_id=?1 AND active=1`)
@@ -74,7 +73,7 @@ export async function setSubmissionReport(
   if (row.userId === input.userId) {
     return { outcome: "forbidden" };
   }
-  if (!row.snapshotId || row.snapshotId !== input.snapshotId) {
+  if (!row.snapshotId) {
     return { outcome: "conflict" };
   }
   return {

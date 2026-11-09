@@ -17,6 +17,6 @@ export const managementActionSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("reject"), ...review }),
   z.object({ action: z.literal("send_to_manual"), ...review }),
   z.object({ action: z.literal("disable"), ...version }),
-  z.object({ action: z.literal("clear_flags"), ...version }),
+  z.object({ action: z.literal("clear_flags") }),
 ]);
 export type ManagementAction = z.infer<typeof managementActionSchema>;

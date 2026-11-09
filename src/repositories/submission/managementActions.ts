@@ -3,7 +3,6 @@ import type { SubmissionKind } from "./types";
 
 interface ManagementCommand {
   submissionId: string;
-  snapshotId: string;
   adminUserId: string;
 }
 interface ManagementTarget {
@@ -19,7 +18,7 @@ export type ManagementResult =
   | { outcome: "conflict" }
   | { outcome: "committed" | "no_op"; target: ManagementTarget };
 
-const admin = `EXISTS (SELECT 1 FROM users WHERE uid=?3 AND role IN ('p','a','r'))`;
+const admin = `EXISTS (SELECT 1 FROM users WHERE uid=?2 AND role IN ('p','a','r'))`;
 const targetSelection = `SELECT s.kind,s.poi_id AS markerId,s.user_id AS userId,u.role,
   f.review_status AS reviewStatus,s.author_deleted_at AS authorDeletedAt,
   EXISTS (SELECT 1 FROM ugc_snapshots earlier WHERE earlier.submission_id=s.id
@@ -33,20 +32,20 @@ const targetSelection = `SELECT s.kind,s.poi_id AS markerId,s.user_id AS userId,
  */
 export async function disableSubmission(
   db: D1Database,
-  input: ManagementCommand,
+  input: ManagementCommand & { snapshotId: string },
 ): Promise<ManagementResult> {
   const eligibility = `EXISTS (SELECT 1 FROM v_ugc_submission_visibility v
-    WHERE v.submission_id=s.id AND v.frontier_snapshot_id=?2)`;
+    WHERE v.submission_id=s.id AND v.frontier_snapshot_id=?3)`;
   const result = await db.batch([
     db
       .prepare(`UPDATE ugc_submissions AS s
-      SET admin_deleted_at=?4,admin_deleted_by=?3,updated_at=?4
+      SET admin_deleted_at=?4,admin_deleted_by=?2,updated_at=?4
       WHERE s.id=?1 AND s.admin_deleted_at IS NULL AND ${admin} AND ${eligibility}
       RETURNING id`)
-      .bind(input.submissionId, input.snapshotId, input.adminUserId, new Date().toISOString()),
+      .bind(input.submissionId, input.adminUserId, input.snapshotId, new Date().toISOString()),
     db
-      .prepare(`${targetSelection} AND v.frontier_snapshot_id=?2`)
-      .bind(input.submissionId, input.snapshotId, input.adminUserId),
+      .prepare(`${targetSelection} AND v.frontier_snapshot_id=?3`)
+      .bind(input.submissionId, input.adminUserId, input.snapshotId),
   ]);
   const target = result[1].results[0] as ManagementTarget | undefined;
   return target
@@ -57,24 +56,19 @@ export async function disableSubmission(
     : { outcome: "conflict" };
 }
 
-/** Report target is public when available, otherwise frontier, including hidden
- * records. Clearing is independent of review, deletion, notifications and points.
+/** Reports belong to the submission, including when its content is hidden.
+ * Clearing is independent of review, deletion, notifications and points.
  */
 export async function clearSubmissionFlags(
   db: D1Database,
   input: ManagementCommand,
 ): Promise<ManagementResult> {
-  const eligibility = `COALESCE(v.public_snapshot_id,v.frontier_snapshot_id)=?2`;
   const result = await db.batch([
     db
       .prepare(`UPDATE ugc_submission_flags SET active=0
-      WHERE submission_id=?1 AND active=1 AND ${admin}
-      AND EXISTS (SELECT 1 FROM v_ugc_submission_visibility v
-        WHERE v.submission_id=?1 AND ${eligibility}) RETURNING submission_id`)
-      .bind(input.submissionId, input.snapshotId, input.adminUserId),
-    db
-      .prepare(`${targetSelection} AND ${eligibility}`)
-      .bind(input.submissionId, input.snapshotId, input.adminUserId),
+      WHERE submission_id=?1 AND active=1 AND ${admin} RETURNING submission_id`)
+      .bind(input.submissionId, input.adminUserId),
+    db.prepare(targetSelection).bind(input.submissionId, input.adminUserId),
   ]);
   const target = result[1].results[0] as ManagementTarget | undefined;
   return target

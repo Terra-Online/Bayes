@@ -145,19 +145,12 @@ it("clears hidden retained reports explicitly without restoring or reviewing", a
   fixture.database.sqlite.exec(
     "UPDATE ugc_submissions SET author_deleted_at='deleted' WHERE id='comment'; INSERT INTO ugc_submission_flags(submission_id,user_id) VALUES ('comment','admin'),('other','admin')",
   );
-  expect(
-    (await act({ action: "clear_flags", snapshotId: "wrong" }, "comment", headers)).status,
-  ).toBe(409);
-  expect(
-    await (
-      await act({ action: "clear_flags", snapshotId: "snapshot-comment" }, "comment", headers)
-    ).json(),
-  ).toMatchObject({ outcome: "committed" });
-  expect(
-    await (
-      await act({ action: "clear_flags", snapshotId: "snapshot-comment" }, "comment", headers)
-    ).json(),
-  ).toMatchObject({ outcome: "no_op" });
+  expect(await (await act({ action: "clear_flags" }, "comment", headers)).json()).toMatchObject({
+    outcome: "committed",
+  });
+  expect(await (await act({ action: "clear_flags" }, "comment", headers)).json()).toMatchObject({
+    outcome: "no_op",
+  });
   expect(
     fixture.database.sqlite
       .prepare("SELECT * FROM v_ugc_public_submissions WHERE id='comment'")
@@ -190,7 +183,6 @@ it("browses retained hidden reports across bounded pages and ignores queue/date 
         id: "old",
         frontier: { snapshotId: "snapshot-old", reviewStatus: "rejected" },
         publicSnapshot: null,
-        reportSnapshotId: "snapshot-old",
         flagCount: 1,
         authorDeletedAt: "deleted",
         adminDeletedAt: null,
@@ -245,7 +237,6 @@ it.each(["comment", "image"] as const)(
         {
           id: "hidden",
           kind,
-          reportSnapshotId: "snapshot-hidden",
           publicSnapshot: null,
           flagCount: 1,
           adminDeletedAt: "disabled",
@@ -257,7 +248,7 @@ it.each(["comment", "image"] as const)(
     });
   },
 );
-it("keeps public A and frontier B distinct and protects new B reports from an old A clear", async () => {
+it("keeps public A and frontier B distinct while clearing reports at submission level", async () => {
   seed("comment", "approved");
   expect(
     (
@@ -296,15 +287,12 @@ it("keeps public A and frontier B distinct and protects new B reports from an ol
           content: "Corrected directions",
         },
         publicSnapshot: { snapshotId: "snapshot-comment", content: "Content comment" },
-        reportSnapshotId: "snapshot-comment",
         latestReviewAudit: null,
         flagCount: 1,
       },
     ],
   });
-  expect((await act({ action: "clear_flags", snapshotId: "B" }, "comment", headers)).status).toBe(
-    409,
-  );
+
   expect(
     (await act({ action: "disable", snapshotId: "snapshot-comment" }, "comment", headers)).status,
   ).toBe(409);
@@ -317,10 +305,7 @@ it("keeps public A and frontier B distinct and protects new B reports from an ol
       )
     ).status,
   ).toBe(409);
-  expect(
-    (await act({ action: "clear_flags", snapshotId: "snapshot-comment" }, "comment", headers))
-      .status,
-  ).toBe(200);
+  expect((await act({ action: "clear_flags" }, "comment", headers)).status).toBe(200);
   expect(
     fixture.database.sqlite.prepare("SELECT snapshot_id FROM v_ugc_public_submissions").get(),
   ).toEqual({ snapshot_id: "snapshot-comment" });
@@ -334,12 +319,9 @@ it("keeps public A and frontier B distinct and protects new B reports from an ol
     ).status,
   ).toBe(200);
   fixture.database.sqlite.exec("UPDATE ugc_submission_flags SET active=1");
-  expect(
-    (await act({ action: "clear_flags", snapshotId: "snapshot-comment" }, "comment", headers))
-      .status,
-  ).toBe(409);
+  expect((await act({ action: "clear_flags" }, "comment", headers)).status).toBe(200);
   expect(fixture.database.sqlite.prepare("SELECT active FROM ugc_submission_flags").get()).toEqual({
-    active: 1,
+    active: 0,
   });
   const after = await fixture.request("/pending?submissionId=comment", { headers });
   expect(await after.json()).toMatchObject({
@@ -347,8 +329,7 @@ it("keeps public A and frontier B distinct and protects new B reports from an ol
       {
         frontier: { snapshotId: "B" },
         publicSnapshot: { snapshotId: "B" },
-        reportSnapshotId: "B",
-        flagCount: 1,
+        flagCount: 0,
         latestReviewAudit: {
           snapshotId: "B",
           fromStatus: "pending_openai",
@@ -403,7 +384,6 @@ it("requires action versions and displayed review phases at the HTTP seam", asyn
     { action: "approve" },
     { action: "approve", snapshotId: "snapshot-comment" },
     { action: "disable" },
-    { action: "clear_flags" },
   ]) {
     expect((await act(body, "comment", headers)).status).toBe(422);
   }
