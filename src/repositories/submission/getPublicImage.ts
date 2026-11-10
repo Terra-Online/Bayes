@@ -1,3 +1,4 @@
+import { publicImageSelection } from "./imageSelection";
 import { buildImageScopeFilters } from "./listImages";
 import { publicImageFromRow } from "./mapper";
 import type { PublicSubmissionImage } from "./types";
@@ -18,7 +19,6 @@ export async function getPublicImageById(
     "s.id = ?1",
     "s.poi_id = ?2",
     "s.kind = 'image'",
-    "s.status IN ('active', 'flagged', 'remove_request')",
     ...scope.clauses.map((clause) => `s.${clause}`),
   ];
   const viewerBinding = scope.bindings.length + 3;
@@ -39,7 +39,7 @@ export async function getPublicImageById(
        u.uid_suffix AS user_uid_suffix,
        u.nickname AS user_nickname
        ${viewerSelect}
-     FROM ugc_submissions s
+     FROM ${publicImageSelection} s
      LEFT JOIN users u ON u.uid = s.user_id
      WHERE ${filters.join(" AND ")}`,
     )

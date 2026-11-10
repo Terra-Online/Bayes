@@ -1,5 +1,11 @@
-import { publicCommentFromRow, userCommentFromRow } from "./mapper";
-import type { PublicSubmissionComment, UserSubmissionComment, ViewerVoteValue } from "./types";
+import {
+  publicCommentRows,
+  ownerCommentRows,
+  pendingCommentRows,
+  retainedCommentRows,
+} from "./commentReadSql";
+import { publicCommentNodeFromRow, userCommentFromRow } from "./mapper";
+import type { PublicCommentNode, UserSubmissionComment, ViewerVoteValue } from "./types";
 
 export interface CommentViewerReaction {
   viewerVote: ViewerVoteValue;
@@ -12,10 +18,10 @@ export interface CommentViewerState {
 }
 
 function buildCommentTree(
-  roots: PublicSubmissionComment[],
-  replies: PublicSubmissionComment[],
+  roots: PublicCommentNode[],
+  replies: PublicCommentNode[],
   replyLimit: number,
-): PublicSubmissionComment[] {
+): PublicCommentNode[] {
   const commentById = new Map(roots.map((root) => [root.id, root]));
   for (const reply of replies) {
     commentById.set(reply.id, reply);
@@ -43,7 +49,7 @@ export async function listActiveCommentsByMarker(
     replyLimit?: number;
     viewerUserId?: string;
   },
-): Promise<PublicSubmissionComment[]> {
+): Promise<PublicCommentNode[]> {
   const requestedIds = payload.markerIds ?? (payload.markerId ? [payload.markerId] : []);
   const markerIds = [...new Set(requestedIds.map((item) => item.trim()).filter(Boolean))].slice(
     0,
@@ -69,14 +75,15 @@ export async function listActiveCommentsByMarker(
 
   const result = await db
     .prepare(
-      `WITH RECURSIVE matching_roots AS MATERIALIZED (
+      `WITH RECURSIVE ${publicCommentRows}, ${retainedCommentRows("SELECT value FROM json_each(?1)")}, matching_roots AS MATERIALIZED (
          SELECT id, poi_id, created_at
-         FROM ugc_submissions INDEXED BY idx_ugc_comment_threads
+         FROM comment_rows
          WHERE poi_id IN (SELECT value FROM json_each(?1))
            AND kind = 'comment'
            AND comment_depth = 0
            AND parent_id IS NULL
-           AND status IN ('active', 'flagged', 'remove_request')
+           AND id IN (SELECT id FROM retained_comments)
+           AND (snapshot_id IS NOT NULL OR ?3 > 0)
        ),
        root_candidates AS (
          SELECT
@@ -101,46 +108,30 @@ export async function listActiveCommentsByMarker(
          )
          WHERE poi_rank <= ?2
        ),
-       visible_replies AS (
-         SELECT id, parent_id, created_at
-         FROM ugc_submissions INDEXED BY idx_ugc_visible_comment_parent
-         WHERE ?3 > 0
-           AND parent_id IN (SELECT id FROM selected_roots)
-           AND kind = 'comment'
-           AND status IN ('active', 'flagged', 'remove_request')
-         UNION ALL
-         SELECT child.id, child.parent_id, child.created_at
-         FROM visible_replies parent
-         CROSS JOIN ugc_submissions child INDEXED BY idx_ugc_visible_comment_parent ON child.parent_id = parent.id
-         WHERE child.kind = 'comment'
-           AND child.status IN ('active', 'flagged', 'remove_request')
-       ),
-       reply_candidates AS (
-         SELECT
-           s.id,
+       reply_candidates AS MATERIALIZED (
+         SELECT s.id, s.parent_id,
            ROW_NUMBER() OVER (PARTITION BY s.parent_id ORDER BY s.created_at ASC, s.id ASC) AS reply_rank
-         FROM visible_replies s
+         FROM comment_rows s JOIN retained_comments r ON r.id=s.id
        ),
-       selected_comments AS (
-         SELECT id, score, poi_rank AS root_rank
-         FROM selected_roots
+       selected_comments(id, root_rank, traversal_depth) AS (
+         SELECT id, poi_rank, 0 FROM selected_roots
          UNION ALL
-         SELECT id, NULL AS score, NULL AS root_rank
-         FROM reply_candidates
-         WHERE reply_rank <= ?3
+         SELECT child.id, NULL, parent.traversal_depth+1
+         FROM selected_comments parent JOIN reply_candidates child ON child.parent_id=parent.id
+         WHERE child.reply_rank<=?3 AND parent.traversal_depth<64
        )
        SELECT
          s.*,
-         COALESCE(selected.score, (
+         COALESCE((
            SELECT SUM(value) FROM ugc_submission_votes INDEXED BY sqlite_autoindex_ugc_submission_votes_1
            WHERE submission_id = s.id AND active = 1
          ), 0) AS score,
          (SELECT COUNT(*) FROM ugc_submission_flags
           WHERE submission_id = s.id AND active = 1) AS flag_count,
-         (SELECT COUNT(*) FROM ugc_submissions child INDEXED BY idx_ugc_visible_comment_parent
+         (SELECT COUNT(*) FROM comment_rows child
           WHERE child.parent_id = s.id
             AND child.kind = 'comment'
-            AND child.status IN ('active', 'flagged', 'remove_request')) AS reply_count,
+            AND child.id IN (SELECT id FROM retained_comments)) AS reply_count,
          u.uid AS submitter_uid,
          u.uid_number AS user_uid_number,
          u.uid_suffix AS user_uid_suffix,
@@ -150,7 +141,7 @@ export async function listActiveCommentsByMarker(
          u.avt AS user_avt
          ${viewerSelect}
        FROM selected_comments selected
-       CROSS JOIN ugc_submissions s ON s.id = selected.id
+       CROSS JOIN comment_rows s ON s.id = selected.id
        ${viewerJoin}
        LEFT JOIN users u ON u.uid = s.user_id
        ORDER BY (selected.root_rank IS NULL) ASC,
@@ -161,7 +152,7 @@ export async function listActiveCommentsByMarker(
     .all<Record<string, unknown>>();
 
   const comments = (result.results ?? []).map((row) =>
-    publicCommentFromRow(row, payload.viewerUserId),
+    publicCommentNodeFromRow(row, payload.viewerUserId),
   );
   const roots = comments.filter((comment) => comment.parentId === null);
   const replies = comments.filter((comment) => comment.parentId !== null);
@@ -190,13 +181,12 @@ export async function listUserCommentsByMarker(
   const limitPlaceholder = 3;
   const result = await db
     .prepare(
-      `WITH selected_comments AS MATERIALIZED (
+      `WITH ${ownerCommentRows}, selected_comments AS MATERIALIZED (
          SELECT *
-         FROM ugc_submissions INDEXED BY idx_ugc_user_kind_poi_created
+         FROM comment_rows
          WHERE user_id = ?1
            AND poi_id IN (SELECT value FROM json_each(?2))
            AND kind = 'comment'
-           AND status IN ('pending_openai', 'pending_audit', 'active', 'flagged', 'remove_request')
          ORDER BY created_at DESC, id DESC
          LIMIT ?${limitPlaceholder}
        )
@@ -259,13 +249,14 @@ export async function listCommentViewerStateByMarker(
   const pendingLimitPlaceholder = 3;
   const pendingStatement = db
     .prepare(
-      `WITH selected_comments AS MATERIALIZED (
+      `WITH ${pendingCommentRows}, selected_comments AS MATERIALIZED (
        SELECT *
-       FROM ugc_submissions INDEXED BY idx_ugc_user_pending_comment
+       FROM comment_rows
        WHERE user_id = ?1
          AND poi_id IN (SELECT value FROM json_each(?2))
          AND kind = 'comment'
-         AND status IN ('pending_openai', 'pending_audit')
+         AND review_status IN ('pending_openai', 'pending_audit')
+         AND author_deleted_at IS NULL AND admin_deleted_at IS NULL
        ORDER BY created_at DESC, id DESC
        LIMIT ?${pendingLimitPlaceholder}
      )
@@ -315,7 +306,8 @@ export async function listCommentViewerStateByMarker(
      WHERE s.poi_id IN (SELECT value FROM json_each(?2))
        AND s.id IN (SELECT value FROM json_each(?3))
        AND s.kind = 'comment'
-       AND s.status IN ('active', 'flagged', 'remove_request')
+       AND EXISTS (SELECT 1 FROM v_ugc_submission_visibility visibility
+         WHERE visibility.submission_id = s.id AND visibility.public_snapshot_id IS NOT NULL)
        AND (v.user_id IS NOT NULL OR f.user_id IS NOT NULL)`,
           )
           .bind(payload.userId, JSON.stringify(markerIds), JSON.stringify(submissionIds))

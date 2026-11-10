@@ -2,9 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { onAppError } from "@/middleware/error-handler";
 import {
-  createModerationTestFixture,
-  type ModerationTestFixture,
-} from "@/test/fixtures/moderation";
+  createSnapshotModerationFixture,
+  type SnapshotModerationFixture,
+} from "@/test/fixtures/management";
 
 import { createRoutes } from "./createRoutes";
 
@@ -69,19 +69,19 @@ vi.mock("@/lib/karma/karmaConfig.json", () => ({
   },
 }));
 
-let database: ModerationTestFixture["database"];
-let env: ModerationTestFixture["env"];
-let createReviewerSession: ModerationTestFixture["createReviewerSession"];
-let submission: ModerationTestFixture["submission"];
-let request: ModerationTestFixture["request"];
-let storedSubmission: ModerationTestFixture["storedSubmission"];
-let authorPoints: ModerationTestFixture["authorPoints"];
-let reviewEvents: ModerationTestFixture["reviewEvents"];
-let notificationMessages: ModerationTestFixture["notificationMessages"];
+let database: SnapshotModerationFixture["database"];
+let env: SnapshotModerationFixture["env"];
+let createReviewerSession: SnapshotModerationFixture["createReviewerSession"];
+let submission: SnapshotModerationFixture["submission"];
+let request: SnapshotModerationFixture["request"];
+let storedSubmission: SnapshotModerationFixture["storedSubmission"];
+let authorPoints: SnapshotModerationFixture["authorPoints"];
+let reviewAudits: SnapshotModerationFixture["reviewAudits"];
+let notificationMessages: SnapshotModerationFixture["notificationMessages"];
 
 beforeEach(() => {
   redisCounts.clear();
-  const fixture = createModerationTestFixture();
+  const fixture = createSnapshotModerationFixture();
   ({
     database,
     env,
@@ -90,7 +90,7 @@ beforeEach(() => {
     request,
     storedSubmission,
     authorPoints,
-    reviewEvents,
+    reviewAudits,
     notificationMessages,
   } = fixture);
   vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -159,7 +159,7 @@ describe("moderation review tools", () => {
     expect(await unknown.json()).toMatchObject({ code: "USER_NOT_FOUND" });
     expect(delivered).toHaveLength(1);
     expect(authorPoints()).toBe(20);
-    expect(reviewEvents()).toEqual([]);
+    expect(reviewAudits()).toEqual([]);
   });
 
   it("refuses test cleanup when a production upload prefix is configured", async () => {
@@ -176,7 +176,7 @@ describe("moderation review tools", () => {
     expect(database.sqlite.prepare("SELECT * FROM ugc_submissions ORDER BY id").all()).toEqual(
       before,
     );
-    expect(reviewEvents()).toEqual([]);
+    expect(reviewAudits()).toEqual([]);
   });
 
   it("archives only test-namespace images and retains their rows, objects and history on repeat cleanup", async () => {
@@ -184,20 +184,18 @@ describe("moderation review tools", () => {
       id: "test-active",
       kind: "image",
       filePath: "_test/active.webp",
-      moderationNote: "Original review",
     });
     submission({
       id: "test-pending",
       kind: "image",
       filePath: "_test/pending.webp",
-      status: "pending_openai",
+      reviewStatus: "pending_openai",
     });
     submission({
       id: "test-stale",
       kind: "image",
       filePath: "_test/stale.webp",
-      status: "stale",
-      moderationNote: "Historical archive",
+      reviewStatus: "unknown",
     });
     submission({ id: "production", kind: "image" });
     submission({ id: "similar-prefix", kind: "image", filePath: "xtest/photo.webp" });
@@ -222,42 +220,36 @@ describe("moderation review tools", () => {
     expect(await response.json()).toEqual({
       ok: true,
       prefix: "_test",
-      archivedRows: 2,
+      archivedRows: 3,
       retainedObjects: true,
       deletedObjects: 0,
       deletedRows: 0,
     });
-    expect(storedSubmission("test-active")).toMatchObject({
-      status: "stale",
-      moderation_note: expect.stringContaining("Original review Archived from the test namespace"),
-    });
-    expect(storedSubmission("test-pending")).toMatchObject({
-      status: "stale",
-      file_path: "_test/pending.webp",
-    });
-    expect(storedSubmission("test-stale")).toMatchObject({
-      status: "stale",
-      moderation_note: "Historical archive",
-    });
-    for (const id of ["production", "similar-prefix", "sibling-prefix", "comment"]) {
-      expect(storedSubmission(id)).toMatchObject({ status: "active" });
+    for (const id of ["test-active", "test-pending", "test-stale"]) {
+      expect(storedSubmission(id)).toMatchObject({
+        admin_deleted_at: expect.any(String),
+        admin_deleted_by: expect.any(String),
+      });
     }
-    expect(reviewEvents()).toEqual([
+    for (const id of ["production", "similar-prefix", "sibling-prefix", "comment"]) {
+      expect(storedSubmission(id)).toMatchObject({ admin_deleted_at: null });
+    }
+    expect(
+      database.sqlite
+        .prepare(
+          "SELECT id,review_status,file_path FROM ugc_snapshots WHERE submission_id LIKE 'test-%' ORDER BY id",
+        )
+        .all(),
+    ).toEqual([
+      { id: "snapshot-test-active", review_status: "approved", file_path: "_test/active.webp" },
       {
-        submission_id: "test-active",
-        from_status: "active",
-        to_status: "stale",
-        source: "manual_moderation",
-        ai_reviewed: 0,
+        id: "snapshot-test-pending",
+        review_status: "pending_openai",
+        file_path: "_test/pending.webp",
       },
-      {
-        submission_id: "test-pending",
-        from_status: "pending_openai",
-        to_status: "stale",
-        source: "manual_moderation",
-        ai_reviewed: 0,
-      },
+      { id: "snapshot-test-stale", review_status: "unknown", file_path: "_test/stale.webp" },
     ]);
+    expect(reviewAudits()).toEqual([]);
     const afterArchive = database.sqlite.prepare("SELECT * FROM ugc_submissions ORDER BY id").all();
     expect(afterArchive).toHaveLength(7);
     const repeat = await request("/test-images", { method: "DELETE", headers });
@@ -279,7 +271,7 @@ describe("moderation review tools", () => {
       "_test/stale.webp",
       "images/production.webp",
     ]);
-    expect(reviewEvents()).toHaveLength(2);
+    expect(reviewAudits()).toHaveLength(0);
     expect(authorPoints()).toBe(20);
     expect(notificationMessages()).toEqual([]);
   });
@@ -289,13 +281,13 @@ describe("moderation review tools", () => {
     submission({
       id: "archived",
       kind: "image",
-      status: "stale",
+      reviewStatus: "unknown",
       filePath: "images/archived.webp",
     });
     submission({
       id: "archived-snapshot",
       kind: "image",
-      status: "stale",
+      reviewStatus: "unknown",
       filePath: "images/archived.webp",
     });
     const object = (key: string, size: number, uploaded: string) => ({
@@ -352,25 +344,34 @@ describe("moderation review tools", () => {
         },
       ],
     });
-    expect(storedSubmission("archived")).toMatchObject({
-      status: "stale",
-      file_path: "images/archived.webp",
-    });
-    expect(reviewEvents()).toEqual([]);
+    expect(
+      database.sqlite
+        .prepare("SELECT review_status,file_path FROM ugc_snapshots WHERE submission_id='archived'")
+        .get(),
+    ).toEqual({ review_status: "unknown", file_path: "images/archived.webp" });
+    expect(reviewAudits()).toEqual([]);
   });
 
   it("counts covered points separately from image volume and separates production from test images", async () => {
     env.UGC_UPLOAD_TEST_PREFIX = "_test";
     submission({ id: "ore-a", kind: "image", markerId: "ore-one" });
     submission({ id: "ore-b", kind: "image", markerId: "ore-one" });
-    submission({ id: "archive", kind: "image", markerId: "archive", status: "flagged" });
-    submission({ id: "chest", kind: "image", markerId: "chest-one", status: "remove_request" });
-    submission({ id: "pending", kind: "image", markerId: "ore-two", status: "pending_audit" });
-    submission({ id: "stale", kind: "image", markerId: "chest-two", status: "stale" });
+    submission({ id: "archive", kind: "image", markerId: "archive", reviewStatus: "approved" });
+    submission({ id: "chest", kind: "image", markerId: "chest-one", reviewStatus: "approved" });
+    submission({
+      id: "pending",
+      kind: "image",
+      markerId: "ore-two",
+      reviewStatus: "pending_audit",
+    });
+    submission({ id: "stale", kind: "image", markerId: "chest-two", reviewStatus: "unknown" });
     submission({ id: "unknown", kind: "image", markerId: "not-in-manifest" });
     submission({ id: "comment", markerId: "ore-two" });
     submission({ id: "test", kind: "image", markerId: "ore-two", filePath: "_test/ore.webp" });
     const headers = createReviewerSession("a");
+    database.sqlite.exec(
+      "INSERT INTO ugc_submission_flags(submission_id,user_id) VALUES ('archive','author')",
+    );
     const response = await request("/images/coverage", { headers });
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({
@@ -453,23 +454,23 @@ describe("moderation review tools", () => {
       id: "a-new",
       kind: "image",
       markerId: "a",
-      status: "flagged",
+      reviewStatus: "approved",
       createdAt: "2026-09-02 00:00:00",
     });
     submission({
       id: "a-waiting",
       kind: "image",
       markerId: "a",
-      status: "pending_audit",
+      reviewStatus: "pending_audit",
       createdAt: "2026-09-20 00:00:00",
     });
-    submission({ id: "a-stale", kind: "image", markerId: "a", status: "stale" });
+    submission({ id: "a-stale", kind: "image", markerId: "a", reviewStatus: "unknown" });
     submission({ id: "b-old", kind: "image", markerId: "b", createdAt: "2026-09-03 00:00:00" });
     submission({
       id: "b-new",
       kind: "image",
       markerId: "b",
-      status: "remove_request",
+      reviewStatus: "approved",
       createdAt: "2026-09-04 00:00:00",
     });
     submission({ id: "single", kind: "image", markerId: "single" });
@@ -477,7 +478,7 @@ describe("moderation review tools", () => {
       id: "single-waiting",
       kind: "image",
       markerId: "single",
-      status: "pending_openai",
+      reviewStatus: "pending_openai",
     });
     submission({ id: "test-one", kind: "image", markerId: "test", filePath: "_test/one.webp" });
     submission({ id: "test-two", kind: "image", markerId: "test", filePath: "_test/two.webp" });
@@ -555,25 +556,37 @@ describe("moderation review tools", () => {
   it("filters review items by status and UTC date range while reporting totals beyond the page limit", async () => {
     submission({
       id: "older-audit",
-      status: "pending_audit",
+      reviewStatus: "pending_audit",
       poiType: "chest",
       createdAt: "2026-09-10 01:00:00",
     });
     submission({
       id: "newer-audit",
       kind: "image",
-      status: "pending_audit",
+      reviewStatus: "pending_audit",
       poiType: "chest",
       createdAt: "2026-09-10 02:00:00",
     });
     submission({
       id: "reported",
-      status: "flagged",
+      reviewStatus: "approved",
       poiType: "archives",
       createdAt: "2026-09-10 03:00:00",
     });
-    submission({ id: "outside-dates", status: "pending_audit", createdAt: "2026-09-09 23:59:59" });
-    submission({ id: "outside-status", status: "active", createdAt: "2026-09-10 01:00:00" });
+    submission({
+      id: "outside-dates",
+      reviewStatus: "pending_audit",
+      createdAt: "2026-09-09 23:59:59",
+    });
+    submission({
+      id: "outside-status",
+      reviewStatus: "approved",
+      createdAt: "2026-09-10 01:00:00",
+    });
+    createReviewerSession("p", "reporter");
+    database.sqlite.exec(
+      "INSERT INTO ugc_submission_flags(submission_id,user_id) VALUES ('reported','reporter')",
+    );
     const query = new URLSearchParams({
       status: "pending_audit,flagged,pending_audit",
       from: "2026-09-10T08:00:00+08:00",
@@ -602,6 +615,10 @@ describe("moderation review tools", () => {
       byStatus: [
         { status: "flagged", count: 1 },
         { status: "pending_audit", count: 2 },
+      ],
+      byReviewStatus: [
+        { reviewStatus: "approved", count: 1 },
+        { reviewStatus: "pending_audit", count: 2 },
       ],
     });
   });

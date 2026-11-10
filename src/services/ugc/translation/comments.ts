@@ -1,7 +1,7 @@
 import { getRuntimeConfig, type RuntimeConfig } from "@/lib/config";
 import { sha256Hex } from "@/lib/crypto";
 import { getJsonFromKv, putJsonToKv } from "@/lib/kvJson";
-import { getVisibleCommentsByIds } from "@/repositories/submission/statusSubmission";
+import { getVisibleCommentsByIds } from "@/repositories/submission/commentTranslation";
 import {
   getTextTranslation,
   getTextTranslationByTarget,
@@ -33,6 +33,7 @@ const MAX_TRANSLATION_BATCH_SIZE = 100;
 const SAME_LANGUAGE_ERROR = "Target language cannot be equal to source language.";
 export type CommentTranslationItem = {
   commentId: string;
+  snapshotId?: string;
   translatedContent?: string;
   sourceLanguage?: string;
   targetLanguage: string;
@@ -42,7 +43,7 @@ export type CommentTranslationItem = {
   error?: string;
 };
 
-type TranslationOutcome = Omit<CommentTranslationItem, "commentId">;
+type TranslationOutcome = Omit<CommentTranslationItem, "commentId" | "snapshotId">;
 
 type TextTranslationCacheRecord = {
   translatedText: string;
@@ -623,6 +624,24 @@ export async function translateVisibleComments(
     targetLanguage: string;
   },
 ): Promise<{ items: CommentTranslationItem[] }> {
+  return translateResolvedComments(
+    env,
+    payload,
+    await getVisibleCommentsByIds(env.DB, payload.commentIds),
+  );
+}
+
+/** Translate a captured public version without rereading a changing frontier. */
+export async function translateResolvedComments(
+  env: Bindings,
+  payload: {
+    commentIds: string[];
+    cachedOnly?: boolean;
+    sourceLanguage?: string;
+    targetLanguage: string;
+  },
+  comments: Array<{ id: string; snapshotId: string; content: string | null }>,
+): Promise<{ items: CommentTranslationItem[] }> {
   const config = getRuntimeConfig(env).googleTranslate;
   const commentIds = [...new Set(payload.commentIds.map((id) => id.trim()).filter(Boolean))].slice(
     0,
@@ -651,7 +670,6 @@ export async function translateVisibleComments(
     };
   }
 
-  const comments = await getVisibleCommentsByIds(env.DB, commentIds);
   type VisibleComment = (typeof comments)[number];
   type Group = { content: string; normalizedText: string };
 
@@ -712,6 +730,7 @@ export async function translateVisibleComments(
       // Every visible group has either a cache outcome or a translation outcome.
       ...(group ? outcomeByGroup.get(group)! : { ...defaults, error: "COMMENT_NOT_TRANSLATABLE" }),
       commentId,
+      ...(commentById.has(commentId) ? { snapshotId: commentById.get(commentId)!.snapshotId } : {}),
     })),
   };
 }

@@ -5,10 +5,9 @@ import { ApiError } from "@/lib/errors";
 import { rateLimit } from "@/middleware/rate-limit";
 import { readPublicCommentsFromWorkersCache } from "@/publicRead/client/client";
 import { resolvePublicCommentCacheNamespace } from "@/publicRead/client/scope";
-import { getPublicCommentContextById } from "@/repositories/submission/getPublicComment";
 import { listUserCommentsByMarker } from "@/repositories/submission/listComments";
 import { commentQuerySchema, commentsQuerySchema } from "@/routes/schema/uploads";
-import { readCommentViewerFeed } from "@/services/ugc/read/feeds";
+import { readCommentContext, readCommentViewerFeed } from "@/services/ugc/read/feeds";
 import type { AppEnv } from "@/types/app";
 
 import { getOptionalAuthIdentity, hasAuthCredentials, requireMarkerIds } from "./helpers";
@@ -128,7 +127,7 @@ export function createRoutes() {
           cookie: c.req.header("cookie"),
           authorization: c.req.header("authorization"),
         });
-        const item = await getPublicCommentContextById(c.env.DB, {
+        const item = await readCommentContext(c.env.DB, {
           id: c.req.param("id"),
           markerId: parsed.data.markerId,
           ...(identity ? { viewerUserId: identity.uid } : {}),

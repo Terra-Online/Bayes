@@ -1,10 +1,11 @@
-import { publicCommentFromRow } from "./mapper";
-import type { PublicSubmissionComment } from "./types";
+import { publicCommentRows, retainedCommentRows } from "./commentReadSql";
+import { publicCommentNodeFromRow } from "./mapper";
+import type { PublicCommentNode } from "./types";
 
 export interface PublicCommentContext {
   targetId: string;
-  path: PublicSubmissionComment[];
-  replies: PublicSubmissionComment[];
+  path: PublicCommentNode[];
+  replies: PublicCommentNode[];
   repliesTruncated: boolean;
 }
 
@@ -25,20 +26,19 @@ export async function getPublicCommentContextById(
     : "";
   const result = await db
     .prepare(
-      `WITH RECURSIVE comment_path AS (
+      `WITH RECURSIVE ${publicCommentRows}, ${retainedCommentRows("SELECT ?2")}, comment_path AS (
          SELECT s.*, 0 AS ancestor_distance, json_array(s.id) AS visited_ids
-         FROM ugc_submissions s
+         FROM comment_rows s
          WHERE s.id = ?1
            AND s.poi_id = ?2
            AND s.kind = 'comment'
-           AND s.status IN ('active', 'flagged', 'remove_request')
          UNION ALL
          SELECT
            parent.*,
            child.ancestor_distance + 1,
            json_insert(child.visited_ids, '$[#]', parent.id)
          FROM comment_path child
-         INNER JOIN ugc_submissions parent ON parent.id = child.parent_id
+         INNER JOIN comment_rows parent ON parent.id = child.parent_id
          WHERE parent.poi_id = ?2
            AND parent.kind = 'comment'
            AND child.ancestor_distance < ?3
@@ -50,16 +50,17 @@ export async function getPublicCommentContextById(
        )
        SELECT
          path.*,
+         (SELECT COUNT(*) FROM ugc_submission_flags WHERE submission_id = path.id AND active = 1) AS flag_count,
          COALESCE((
            SELECT SUM(value)
            FROM ugc_submission_votes
            WHERE submission_id = path.id AND active = 1
          ), 0) AS score,
          (SELECT COUNT(*)
-          FROM ugc_submissions child INDEXED BY idx_ugc_visible_comment_parent
+          FROM comment_rows child
           WHERE child.parent_id = path.id
             AND child.kind = 'comment'
-            AND child.status IN ('active', 'flagged', 'remove_request')) AS reply_count,
+            AND child.id IN (SELECT id FROM retained_comments)) AS reply_count,
          u.uid AS submitter_uid,
          u.uid_number AS user_uid_number,
          u.uid_suffix AS user_uid_suffix,
@@ -70,7 +71,6 @@ export async function getPublicCommentContextById(
          ${pathViewerSelect}
        FROM comment_path path
        LEFT JOIN users u ON u.uid = path.user_id
-       WHERE path.status IN ('active', 'flagged', 'remove_request')
        ORDER BY path.ancestor_distance DESC`,
     )
     .bind(
@@ -81,7 +81,9 @@ export async function getPublicCommentContextById(
     )
     .all<Record<string, unknown>>();
 
-  const path = (result.results ?? []).map((row) => publicCommentFromRow(row, payload.viewerUserId));
+  const path = (result.results ?? []).map((row) =>
+    publicCommentNodeFromRow(row, payload.viewerUserId),
+  );
   if (path.length === 0) {
     return null;
   }
@@ -95,20 +97,20 @@ export async function getPublicCommentContextById(
     : "";
   const replyResult = await db
     .prepare(
-      `WITH RECURSIVE reply_context AS (
+      `WITH RECURSIVE ${publicCommentRows}, ${retainedCommentRows("SELECT ?2")}, reply_context AS (
          SELECT s.*, 0 AS relative_depth, json_array(s.id) AS visited_ids
-         FROM ugc_submissions s
+         FROM comment_rows s
          WHERE s.id = ?1
            AND s.poi_id = ?2
            AND s.kind = 'comment'
-           AND s.status IN ('active', 'flagged', 'remove_request')
          UNION ALL
          SELECT
            child.*,
            parent.relative_depth + 1,
            json_insert(parent.visited_ids, '$[#]', child.id)
          FROM reply_context parent
-         INNER JOIN ugc_submissions child ON child.parent_id = parent.id
+         INNER JOIN comment_rows child ON child.parent_id = parent.id
+         JOIN retained_comments retained ON retained.id=child.id
          WHERE child.poi_id = ?2
            AND child.kind = 'comment'
            AND parent.relative_depth < ?3
@@ -122,14 +124,16 @@ export async function getPublicCommentContextById(
        ),
        traversal_meta AS (
          SELECT COUNT(*) AS traversed_count,
+           EXISTS(SELECT 1 FROM reply_context WHERE relative_depth>0 AND snapshot_id IS NOT NULL) AS has_public_reply,
            EXISTS (
              SELECT 1 FROM reply_context boundary
              WHERE boundary.relative_depth = ?3
                AND EXISTS (
-                 SELECT 1 FROM ugc_submissions child
+                 SELECT 1 FROM comment_rows child
                  WHERE child.parent_id = boundary.id
                    AND child.poi_id = ?2
                    AND child.kind = 'comment'
+                   AND child.id IN (SELECT id FROM retained_comments)
                    AND NOT EXISTS (
                      SELECT 1 FROM json_each(boundary.visited_ids) visited
                      WHERE visited.value = child.id
@@ -142,13 +146,14 @@ export async function getPublicCommentContextById(
          SELECT *
          FROM reply_context
          WHERE relative_depth > 0
-           AND status IN ('active', 'flagged', 'remove_request')
          ORDER BY relative_depth ASC, created_at ASC, id ASC
          LIMIT ?5
        )
        SELECT
          reply.*,
+         (SELECT COUNT(*) FROM ugc_submission_flags WHERE submission_id = reply.id AND active = 1) AS flag_count,
          meta.traversed_count,
+         meta.has_public_reply,
          meta.depth_truncated,
          COALESCE((
            SELECT SUM(value)
@@ -156,10 +161,10 @@ export async function getPublicCommentContextById(
            WHERE submission_id = reply.id AND active = 1
          ), 0) AS score,
          (SELECT COUNT(*)
-          FROM ugc_submissions child INDEXED BY idx_ugc_visible_comment_parent
+          FROM comment_rows child
           WHERE child.parent_id = reply.id
             AND child.kind = 'comment'
-            AND child.status IN ('active', 'flagged', 'remove_request')) AS reply_count,
+            AND child.id IN (SELECT id FROM retained_comments)) AS reply_count,
          u.uid AS submitter_uid,
          u.uid_number AS user_uid_number,
          u.uid_suffix AS user_uid_suffix,
@@ -188,13 +193,28 @@ export async function getPublicCommentContextById(
   const depthTruncated = Number(replyResult.results?.[0]?.depth_truncated ?? 0) === 1;
   const replyCandidates = (replyResult.results ?? [])
     .filter((row) => row.id !== null && row.id !== undefined)
-    .map((row) => publicCommentFromRow(row, payload.viewerUserId));
+    .map((row) => publicCommentNodeFromRow(row, payload.viewerUserId));
   const traversalExhausted = traversedCount >= REPLY_TRAVERSAL_LIMIT + 1;
+  // A bounded prefix may end inside a hidden chain. Omit that incomplete
+  // branch rather than returning a placeholder with no selected public content.
+  const selected = replyCandidates.slice(0, REPLY_CONTEXT_LIMIT);
+  const retained = new Set<string>();
+  for (const node of [...selected].reverse()) {
+    if (node.type === "comment" || retained.has(node.id)) {
+      retained.add(node.id);
+      if (node.parentId) {
+        retained.add(node.parentId);
+      }
+    }
+  }
   return {
     targetId: payload.id,
     path,
-    replies: replyCandidates.slice(0, REPLY_CONTEXT_LIMIT),
+    replies: selected.filter((node) => retained.has(node.id)),
     repliesTruncated:
-      traversalExhausted || depthTruncated || replyCandidates.length > REPLY_CONTEXT_LIMIT,
+      traversalExhausted ||
+      depthTruncated ||
+      (Boolean(replyResult.results?.[0]?.has_public_reply) &&
+        replyCandidates.length > REPLY_CONTEXT_LIMIT),
   };
 }

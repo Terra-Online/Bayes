@@ -19,6 +19,7 @@ import { readPublicImagesFromWorkersCache } from "./client";
 
 describe("public image cache responses", () => {
   const image: PublicSubmissionImage = {
+    snapshotId: "snapshot-image",
     id: "image",
     markerId: "marker",
     url: "https://assets.example/image.webp",

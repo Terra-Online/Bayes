@@ -1,20 +1,12 @@
 import { z } from "zod";
 
-export const updateSchema = z.object({
-  status: z.enum([
-    "pending_openai",
-    "pending_audit",
-    "active",
-    "flagged",
-    "remove_request",
-    "stale",
-  ]),
-  moderationNote: z.string().max(500).optional(),
-});
+export { managementActionSchema as updateSchema } from "@/services/moderation/contract/actions";
 
 export const listSchema = z.object({
   submissionId: z.string().trim().min(1).max(64).optional(),
   status: z.string().max(200).optional(),
+  mode: z.enum(["all", "reports"]).optional(),
+  offset: z.coerce.number().int().min(0).optional(),
   from: z.iso.datetime({ offset: true }).optional(),
   to: z.iso.datetime({ offset: true }).optional(),
   limit: z.coerce.number().int().min(1).max(10000).optional(),

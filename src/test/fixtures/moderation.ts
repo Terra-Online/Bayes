@@ -38,7 +38,8 @@ export interface ModerationTestFixture {
   request: (path: string, options?: ModerationRequestOptions) => Promise<Response>;
   storedSubmission: (id: string) => ModerationRow | undefined;
   authorPoints: () => SQLOutputValue;
-  reviewEvents: () => ModerationRow[];
+  reviewAudits: () => ModerationRow[];
+  storedSnapshot: (id: string) => ModerationRow | undefined;
   notificationMessages: () => ModerationRow[];
 }
 
@@ -138,11 +139,16 @@ export function createModerationTestFixture(): ModerationTestFixture {
     return database.sqlite.prepare("SELECT points FROM users WHERE uid = 'author'").get()!.points;
   }
 
-  function reviewEvents(): ModerationRow[] {
+  function storedSnapshot(id: string): ModerationRow | undefined {
     return database.sqlite
-      .prepare(
-        "SELECT submission_id, from_status, to_status, source, ai_reviewed FROM ugc_review_events ORDER BY id",
-      )
+      .prepare(`SELECT f.* FROM ugc_snapshots f JOIN ugc_submissions s
+      ON s.id=f.submission_id AND s.revision=f.revision WHERE s.id=?`)
+      .get(id);
+  }
+  function reviewAudits(): ModerationRow[] {
+    return database.sqlite
+      .prepare(`SELECT s.submission_id, a.from_status, a.to_status, a.source
+      FROM ugc_snapshots_review_audit a JOIN ugc_snapshots s ON s.id=a.snapshot_id ORDER BY a.rowid`)
       .all();
   }
 
@@ -163,7 +169,8 @@ export function createModerationTestFixture(): ModerationTestFixture {
     request,
     storedSubmission,
     authorPoints,
-    reviewEvents,
+    reviewAudits,
+    storedSnapshot,
     notificationMessages,
   };
 }

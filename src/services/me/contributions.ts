@@ -23,6 +23,11 @@ export async function listContributions(
             ? buildPublicUgcAssetUrl(query.previewBaseUrl, `${record.id}/preview`)
             : null,
         status: record.status,
+        snapshotId: record.snapshotId,
+        revision: record.revision,
+        reviewStatus: record.reviewStatus,
+        authorDeletedAt: record.authorDeletedAt,
+        adminDeletedAt: record.adminDeletedAt,
         visibility: projection.visibility,
         review: projection.review,
         createdAt: record.createdAt,

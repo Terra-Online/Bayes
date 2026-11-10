@@ -5,7 +5,8 @@ import { onAppError } from "@/middleware/error-handler";
 import type { ContributionPage } from "@/services/me/contract/contributions";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { insertAuthUser, insertSession, testAuthConfig } from "@/test/fixtures/auth";
-import { insertSubmission } from "@/test/fixtures/submissions";
+import { insertCommentSnapshot } from "@/test/fixtures/commentSnapshots";
+import { insertImageSnapshot } from "@/test/fixtures/imageSnapshots";
 import { insertUser } from "@/test/fixtures/users";
 import type { AppEnv } from "@/types/app";
 
@@ -25,19 +26,21 @@ beforeEach(() => {
     insertAuthUser(database.sqlite, { id: uid });
     sessions.set(uid, insertSession(database.sqlite, { userId: uid }));
   }
-  for (const [id, kind, status, createdAt] of [
-    ["photo", "image", "active", "2026-09-02T10:00:00.000Z"],
+
+  for (const [id, kind, reviewStatus, createdAt] of [
+    ["photo", "image", "approved", "2026-09-02T10:00:00.000Z"],
     ["pending-photo", "image", "pending_openai", "2026-09-03T10:00:00.000Z"],
     ["review-comment", "comment", "pending_audit", "2026-09-03T10:00:00.000Z"],
-    ["archived-comment", "comment", "stale", "2026-09-01T10:00:00.000Z"],
+    ["archived-comment", "comment", "unknown", "2026-09-01T10:00:00.000Z"],
   ] as const) {
-    insertSubmission(database.sqlite, { id, userId: "author", kind, status, createdAt });
+    const insert = kind === "image" ? insertImageSnapshot : insertCommentSnapshot;
+    insert(database.sqlite, { id, userId: "author", reviewStatus, createdAt });
   }
-  insertSubmission(database.sqlite, {
+  insertImageSnapshot(database.sqlite, {
     id: "someone-elses-photo",
     userId: "other",
     kind: "image",
-    status: "pending_audit",
+    reviewStatus: "pending_audit",
     createdAt: "2026-09-04T10:00:00.000Z",
   });
 });
@@ -139,7 +142,7 @@ describe("personal contributions HTTP", () => {
     ).toEqual(["review-comment"]);
   });
 
-  it("keeps cached preview metadata private after both owners load their contribution lists", async () => {
+  it("keeps freshly selected preview metadata private after both owners load their contribution lists", async () => {
     await contributions("?kind=image");
     await contributions("?kind=image", "other");
     for (const [id, uid] of [

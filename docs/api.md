@@ -215,6 +215,35 @@ otherwise noted.
 | POST | `/comments/:id/edit` | Edit comment content |
 | POST | `/comments/:id/remove-request`, `/comments/:id/recall` | Comment removal/recall workflow |
 
+Reports belong to a submission, independently of its content snapshots. Image and
+comment `flag` / `unflag` requests have no body. Editing, approving a replacement,
+rejecting, or hiding content retains its reports. Only the reporter withdrawing
+that report or a moderator explicitly clearing reports deactivates them. Public
+eligibility is still required for both user report actions; moderators can clear
+retained reports on hidden submissions.
+
+Comment lists and single-comment context use an explicit node union:
+
+| Node type | Fields and behavior |
+| --- | --- |
+| `comment` | Existing public content fields, including the matching `snapshotId`, plus `type: "comment"`. |
+| `placeholder` | Only `type`, `id`, `markerId`, `parentId`, `depth`, `replyCount`, and `replies`. No body, author, snapshot, review reason, or reactions. |
+
+Lists conceptually prune hidden branches with no public descendants before
+ranking and selection. Hidden connectors retain their original position and
+count as branches: `limit` caps root branches; `replyLimit` caps direct branches
+at every parent. `replyCount` counts the pruned direct branches before those
+limits. With `replyLimit=0`, only public roots are returned. Cached and uncached
+reads apply the same recursive selection.
+
+`GET /comments/:id?markerId=…` returns an existing hidden target as a placeholder,
+even without public descendants. Ancestor paths retain hidden connectors;
+bounded descendant context omits incomplete hidden branches and reports
+truncation. Missing IDs, other points, and image IDs return 404. Author previews
+remain private, separate from public pruning. Placeholder nodes have no voting,
+reporting, reply, edit, or translation controls; existing mutation eligibility
+rules are unchanged.
+
 Lists accept `markerId` or comma-separated `markerIds`, optional `scope`
 (`test` or `prod`), and `limit`. Image limits are 1–24; comment limits are 1–50
 with `replyLimit` 0–10. `GET /images?includeMine=1` requires an active user and
@@ -330,6 +359,12 @@ Warnings accept `{ "publicUid": "..." }`, not a recipient email or display name.
 Status transitions can return conflicts and are constrained by the current state.
 Content retention is append-only; do not interpret DELETE route names as a
 promise of physical data deletion.
+
+The moderation status PATCH accepts `{ "action": "clear_flags" }` to clear all
+active reports on the submission ID in the URL. It needs no snapshot ID and does
+not review, restore, or delete content. Management reads expose `flagCount`,
+`frontier`, and `publicSnapshot`; there is no report snapshot target. Review and
+disable actions retain their snapshot requirements.
 
 Admin report endpoints require an administrator session:
 

@@ -1,3 +1,10 @@
+export type SnapshotReviewStatus =
+  | "pending_openai"
+  | "pending_audit"
+  | "approved"
+  | "rejected"
+  | "unknown";
+
 export interface SubmissionRecord {
   id: string;
   kind: SubmissionKind;
@@ -7,14 +14,9 @@ export interface SubmissionRecord {
   snapshotId: string;
   userId: string;
   content: string | null;
-  editOriginalContent: string | null;
-  editOriginalStatus: SubmissionStatus | null;
-  editOriginalSnapshotId: string | null;
   filePath: string | null;
   status: SubmissionStatus;
   flagCount: number;
-  moderationNote: string | null;
-  moderationQueuedAt: string | null;
   mimeType: string | null;
   sizeBytes: number | null;
   parentId: string | null;
@@ -34,13 +36,7 @@ export interface SubmissionSubmitter {
   avatar: number | null;
 }
 
-export type SubmissionStatus =
-  | "pending_openai"
-  | "pending_audit"
-  | "active"
-  | "flagged"
-  | "remove_request"
-  | "stale";
+export type SubmissionStatus = "pending_openai" | "pending_audit" | "active" | "flagged" | "stale";
 
 export type SubmissionKind = "image" | "comment";
 
@@ -48,6 +44,7 @@ export type SubmissionVoteValue = 1 | -1;
 export type ViewerVoteValue = SubmissionVoteValue | 0;
 
 export interface PublicSubmissionImage {
+  snapshotId: string;
   id: string;
   markerId: string;
   url: string;
@@ -64,15 +61,27 @@ export interface PublicSubmissionImage {
   createdAt: string;
 }
 
-export interface PublicSubmissionComment {
+interface CommentStructure {
   id: string;
   markerId: string;
-  poiHash: string;
-  poiType: string;
   parentId: string | null;
   depth: number;
+  replyCount: number;
+  replies: PublicCommentNode[];
+}
+
+export interface CommentPlaceholder extends CommentStructure {
+  type: "placeholder";
+}
+
+export type PublicCommentNode = PublicSubmissionComment | CommentPlaceholder;
+
+export interface PublicSubmissionComment extends CommentStructure {
+  type: "comment";
+  snapshotId: string;
+  poiHash: string;
+  poiType: string;
   content: string;
-  editUndoAvailable: boolean;
   author: {
     nickname: string;
     publicUid: string;
@@ -83,8 +92,6 @@ export interface PublicSubmissionComment {
   score: number;
   viewerVote?: ViewerVoteValue;
   flagged?: boolean;
-  replyCount: number;
-  replies: PublicSubmissionComment[];
   createdAt: string;
 }
 
@@ -94,7 +101,7 @@ export interface UserSubmissionComment extends Omit<
 > {
   snapshotId: string;
   flagCount: number;
-  replies?: PublicSubmissionComment[];
+  replies?: PublicCommentNode[];
   replyCount?: number;
 }
 
@@ -128,6 +135,5 @@ export const ALL_STATUSES: SubmissionStatus[] = [
   "pending_audit",
   "active",
   "flagged",
-  "remove_request",
   "stale",
 ];

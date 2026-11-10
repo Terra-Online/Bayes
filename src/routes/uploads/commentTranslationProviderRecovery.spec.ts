@@ -3,11 +3,11 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import type { CommentTranslationItem } from "@/services/ugc/translation/comments";
 import {
   createCommentTranslationFixture,
+  insertTranslationSubmission,
   createTranslationSigningKey,
   type CommentTranslationFixture,
   type TranslationProvider,
 } from "@/test/fixtures/commentTranslation";
-import { insertSubmission } from "@/test/fixtures/submissions";
 
 let database: CommentTranslationFixture["database"];
 let env: CommentTranslationFixture["env"];
@@ -72,7 +72,11 @@ describe("translation failure outcomes", () => {
       error: "Google token response did not include access_token.",
     },
   ])("keeps the comment retryable after $name", async ({ response, error }) => {
-    insertSubmission(database.sqlite, { id: "comment", userId: "author", content: originalText });
+    insertTranslationSubmission(database.sqlite, {
+      id: "comment",
+      userId: "author",
+      content: originalText,
+    });
     const before = database.sqlite.prepare("SELECT * FROM ugc_submissions").all();
     provider.tokenResponse = response;
     expect(await translations({ sourceLanguage: "zh-CN" })).toEqual([
@@ -108,7 +112,11 @@ describe("translation failure outcomes", () => {
   ])(
     "reports missing $binding without caching a result or changing the comment",
     async ({ binding, error }) => {
-      insertSubmission(database.sqlite, { id: "comment", userId: "author", content: originalText });
+      insertTranslationSubmission(database.sqlite, {
+        id: "comment",
+        userId: "author",
+        content: originalText,
+      });
       const before = database.sqlite.prepare("SELECT * FROM ugc_submissions").all();
       env[binding] = undefined;
       expect(await translations({ sourceLanguage: "zh-CN" })).toEqual([
@@ -122,7 +130,11 @@ describe("translation failure outcomes", () => {
   );
 
   it("translates through the configured local Google proxy and reuses the persisted result", async () => {
-    insertSubmission(database.sqlite, { id: "comment", userId: "author", content: originalText });
+    insertTranslationSubmission(database.sqlite, {
+      id: "comment",
+      userId: "author",
+      content: originalText,
+    });
     env.GOOGLE_TRANSLATE_FETCH_PROXY_URL = "http://127.0.0.1:9090/google";
     const forwarded: Array<{
       url: string;
@@ -175,7 +187,11 @@ describe("translation failure outcomes", () => {
   it.each(["http://remote.example.test/proxy", "not a URL"])(
     "keeps Google credentials on the direct provider connection when proxy configuration %s is disallowed",
     async (proxy) => {
-      insertSubmission(database.sqlite, { id: "comment", userId: "author", content: originalText });
+      insertTranslationSubmission(database.sqlite, {
+        id: "comment",
+        userId: "author",
+        content: originalText,
+      });
       env.GOOGLE_TRANSLATE_FETCH_PROXY_URL = proxy;
       expect(await translations({})).toEqual([
         expect.objectContaining({ translatedContent: translatedText, cached: false }),
@@ -188,7 +204,11 @@ describe("translation failure outcomes", () => {
   );
 
   it("reports a provider timeout without caching failure and succeeds when the reader retries", async () => {
-    insertSubmission(database.sqlite, { id: "comment", userId: "author", content: originalText });
+    insertTranslationSubmission(database.sqlite, {
+      id: "comment",
+      userId: "author",
+      content: originalText,
+    });
     const before = database.sqlite.prepare("SELECT * FROM ugc_submissions").all();
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const externalFetch = providerFetch.getMockImplementation()!;
@@ -233,7 +253,11 @@ describe("translation failure outcomes", () => {
   });
 
   it("does not cache a detected source language that is already the requested target language", async () => {
-    insertSubmission(database.sqlite, { id: "comment", userId: "author", content: translatedText });
+    insertTranslationSubmission(database.sqlite, {
+      id: "comment",
+      userId: "author",
+      content: translatedText,
+    });
     provider.translationResponse = () =>
       Response.json({ translations: [{ translatedText, detectedLanguageCode: "en" }] });
     expect(await translations({})).toEqual([
@@ -252,7 +276,11 @@ describe("translation failure outcomes", () => {
   });
 
   it("keeps a completed translation available when KV writes fail", async () => {
-    insertSubmission(database.sqlite, { id: "comment", userId: "author", content: originalText });
+    insertTranslationSubmission(database.sqlite, {
+      id: "comment",
+      userId: "author",
+      content: originalText,
+    });
     vi.spyOn(console, "warn").mockImplementation(() => {});
     env.OEM_KV!.put = async () => {
       throw new Error("KV unavailable");
@@ -278,7 +306,7 @@ describe("translation failure outcomes", () => {
       ["z", firstRequestedText],
       ["middle", exitText],
     ]) {
-      insertSubmission(database.sqlite, { id, userId: "author", content });
+      insertTranslationSubmission(database.sqlite, { id, userId: "author", content });
     }
     provider.translationResponse = () =>
       Response.json({
@@ -304,8 +332,12 @@ describe("translation failure outcomes", () => {
   });
 
   it("saves successful batch items while reporting an empty translation for another comment", async () => {
-    insertSubmission(database.sqlite, { id: "comment", userId: "author", content: originalText });
-    insertSubmission(database.sqlite, {
+    insertTranslationSubmission(database.sqlite, {
+      id: "comment",
+      userId: "author",
+      content: originalText,
+    });
+    insertTranslationSubmission(database.sqlite, {
       id: "empty-result",
       userId: "author",
       content: "出口在西边。",
@@ -349,9 +381,13 @@ describe("translation failure outcomes", () => {
   it.each(["http", "network"])(
     "preserves cached translations during a provider %s failure and leaves misses retryable",
     async (failure) => {
-      insertSubmission(database.sqlite, { id: "comment", userId: "author", content: originalText });
+      insertTranslationSubmission(database.sqlite, {
+        id: "comment",
+        userId: "author",
+        content: originalText,
+      });
       await translations({});
-      insertSubmission(database.sqlite, {
+      insertTranslationSubmission(database.sqlite, {
         id: "uncached",
         userId: "author",
         content: "出口在西边。",

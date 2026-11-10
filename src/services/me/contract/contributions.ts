@@ -1,35 +1,35 @@
+import type { SnapshotReviewStatus } from "@/repositories/submission/types";
 import type { SubmissionKind, SubmissionStatus } from "@/repositories/submission/types";
 
 export type ReviewKey = "uploaded" | "ai" | "manual" | "public" | "archived";
 export type ReviewStep = { key: ReviewKey; at: string | null };
 
 export type ReviewEvent = {
-  from: SubmissionStatus;
-  to: SubmissionStatus;
-  source: "auto_moderation" | "manual_moderation" | "user_action";
+  id: string;
+  snapshotId: string;
+  from: SnapshotReviewStatus;
+  to: SnapshotReviewStatus;
+  source: "ai" | "admin";
+  adminUserId: string | null;
+  note: string | null;
   at: string;
-  aiReviewed: boolean;
-};
-
-export type LegacyReviewEvidence = {
-  // Notification times are partial historical evidence, not necessarily decision times.
-  manualAt: string | null;
-  publicAt: string | null;
-  hasManualEvidence: boolean;
-  hasPublicationEvidence: boolean;
-  moderationNote: string | null;
 };
 
 export type ContributionReviewEvidence = {
+  snapshotId: string;
+  revision: number;
+  reviewStatus: SnapshotReviewStatus;
   status: SubmissionStatus;
   createdAt: string;
-  updatedAt: string;
-  // The repository supplies only current-snapshot events, ordered by event ID.
+  snapshotCreatedAt: string;
+  authorDeletedAt: string | null;
+  adminDeletedAt: string | null;
+  // Only genuine transitions for the selected frontier, in insertion order.
   events: readonly ReviewEvent[];
-  legacy: LegacyReviewEvidence;
 };
 
 export type ContributionReview = {
+  events: readonly ReviewEvent[];
   // Includes an ongoing manual stage; this does not imply a completed decision.
   manual: boolean;
   published: boolean;
@@ -50,6 +50,11 @@ export type ContributionItem = ContributionReviewProjection & {
   poiType: string;
   content: string | null;
   previewUrl: string | null;
+  snapshotId: string;
+  revision: number;
+  reviewStatus: SnapshotReviewStatus;
+  authorDeletedAt: string | null;
+  adminDeletedAt: string | null;
   status: SubmissionStatus;
   createdAt: string;
 };

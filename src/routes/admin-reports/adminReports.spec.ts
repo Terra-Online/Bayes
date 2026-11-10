@@ -201,6 +201,14 @@ describe("administrator reports HTTP", () => {
         status,
       });
     }
+    // A flagged public A remains eligible while B is private. Featuring a
+    // frontier file here would expose unapproved content in an admin report.
+    database.sqlite.exec(`INSERT INTO ugc_snapshots
+      (id,submission_id,kind,revision,file_path,review_status,creator_user_id)
+      VALUES ('private-newer','newer-image','image',2,'private.webp','pending_openai','artist');
+      UPDATE ugc_submissions SET revision=2 WHERE id='newer-image';
+      INSERT INTO ugc_submission_flags(submission_id,user_id,active)
+      VALUES ('newer-image','reader-one',1);`);
     insertSubmission(database.sqlite, { id: "comment", userId: "writer" });
     insertSubmission(database.sqlite, { id: "disliked-comment", userId: "writer" });
     for (const [submission, reader, active, at] of [

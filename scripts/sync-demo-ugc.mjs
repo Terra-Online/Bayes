@@ -23,6 +23,37 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const sha256 = (value) => createHash("sha256").update(value).digest("hex");
 const sql = (value) => `'${String(value ?? "").replaceAll("'", "''")}'`;
 
+/** One atomic local import. Identical syncs preserve history; changes append it.
+ * Existing identity, ownership and creation time always belong to the first sync.
+ */
+function buildDemoImageSql(image, userId) {
+  const id = `demo_r2_${image.id}`;
+  const filePath = decodeURIComponent(new URL(image.url).pathname.replace(/^\/+/, ""));
+  const createdAt = image.createdAt || new Date().toISOString();
+  const content = image.content == null ? "NULL" : sql(image.content);
+  const size = Number(image.localSize ?? 0);
+  return `
+    INSERT INTO ugc_submissions
+      (id,kind,poi_id,poi_hash,poi_type,user_id,created_at,updated_at)
+    VALUES (${sql(id)},'image',${sql(image.markerId)},${sql(image.markerId)},'demo',${sql(userId)},${sql(createdAt)},${sql(createdAt)})
+    ON CONFLICT(id) DO NOTHING;
+
+    INSERT INTO ugc_snapshots
+      (id,submission_id,kind,revision,content,file_path,mime_type,size_bytes,review_status,creator_user_id,created_at)
+    SELECT s.id || '-r' || (s.revision + CASE WHEN f.id IS NULL THEN 0 ELSE 1 END),
+      s.id,'image',s.revision + CASE WHEN f.id IS NULL THEN 0 ELSE 1 END,
+      ${content},${sql(filePath)},'image/webp',${size},'approved',s.user_id,${sql(createdAt)}
+    FROM ugc_submissions s LEFT JOIN ugc_snapshots f ON f.submission_id=s.id AND f.revision=s.revision
+    WHERE s.id=${sql(id)} AND s.user_id=${sql(userId)} AND s.kind='image'
+      AND (f.id IS NULL OR f.content IS NOT ${content} OR f.file_path IS NOT ${sql(filePath)}
+        OR f.mime_type IS NOT 'image/webp' OR f.size_bytes IS NOT ${size});
+
+    UPDATE ugc_submissions SET revision=revision+1,updated_at=${sql(createdAt)}
+    WHERE id=${sql(id)} AND EXISTS (SELECT 1 FROM ugc_snapshots
+      WHERE submission_id=${sql(id)} AND revision=ugc_submissions.revision+1);
+  `;
+}
+
 async function fetchWithRetry(url, init = {}, attempts = 5) {
   let lastError;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
@@ -194,19 +225,14 @@ async function importR2(images, state) {
 async function importDatabase(images) {
   const userStatement = `INSERT INTO users (uid, email, password_hash, email_verified, role, avt, nickname, uid_number, uid_suffix, nickname_customized) VALUES (${sql(DEMO_USER_ID)}, 'demo-r2-sync@local.invalid', '!', 'true', 'n', 0, 'R2 Demo', 999999, 'DEMO', 1) ON CONFLICT(uid) DO NOTHING;`;
   for (let cursor = 0; cursor < images.length; cursor += 200) {
-    const statements = ["PRAGMA foreign_keys = ON;", "BEGIN TRANSACTION;"];
+    // Wrangler executes the complete SQL file in one local D1 batch.
+    const statements = [];
     if (cursor === 0) {
       statements.push(userStatement);
     }
     for (const image of images.slice(cursor, cursor + 200)) {
-      const id = `demo_r2_${image.id}`;
-      const objectKey = getObjectKey(image.url);
-      const createdAt = image.createdAt || new Date().toISOString();
-      statements.push(
-        `INSERT INTO ugc_submissions (id, kind, poi_id, poi_hash, poi_type, snapshot_id, user_id, content, file_path, status, mime_type, size_bytes, created_at, updated_at) VALUES (${sql(id)}, 'image', ${sql(image.markerId)}, ${sql(image.markerId)}, 'demo', ${sql(id)}, ${sql(DEMO_USER_ID)}, ${image.content == null ? "NULL" : sql(image.content)}, ${sql(objectKey)}, 'active', 'image/webp', ${Number(image.localSize ?? 0)}, ${sql(createdAt)}, ${sql(createdAt)}) ON CONFLICT(id) DO UPDATE SET poi_id=excluded.poi_id, content=excluded.content, file_path=excluded.file_path, status='active', mime_type=excluded.mime_type, size_bytes=excluded.size_bytes, updated_at=excluded.updated_at;`,
-      );
+      statements.push(buildDemoImageSql(image, DEMO_USER_ID));
     }
-    statements.push("COMMIT;");
     await fs.writeFile(SQL_FILE, `${statements.join("\n")}\n`);
     await execFileAsync(
       "pnpm",
@@ -222,7 +248,7 @@ async function importDatabase(images) {
 async function clearLocalKv(images) {
   const keys = images.flatMap((image) =>
     ["default", "test", "prod"].map(
-      (namespace) => `ugc:marker-images:v2:${namespace}:${sha256(image.markerId)}`,
+      (namespace) => `ugc:marker-images:v3:${namespace}:${sha256(image.markerId)}`,
     ),
   );
   await fs.writeFile(KV_DELETE_FILE, `${JSON.stringify(keys)}\n`);

@@ -39,6 +39,7 @@ it("keeps every referenced image path across pages, including archived images, w
     userId: "author",
     filePath: "comment-only.webp",
   });
+
   const before = database.sqlite.prepare("SELECT COUNT(*) AS count FROM ugc_submissions").get();
   const paths = await listAllImageFilePaths(database.db);
   expect(paths).toHaveLength(1001);

@@ -114,7 +114,9 @@ export function createImageLifecycleFixture(): ImageLifecycleFixture {
         .all(),
       notifications: database.sqlite.prepare("SELECT * FROM notifications ORDER BY id").all(),
       messages: database.sqlite.prepare("SELECT * FROM notification_messages ORDER BY id").all(),
-      reviews: database.sqlite.prepare("SELECT * FROM ugc_review_events ORDER BY id").all(),
+      reviews: database.sqlite
+        .prepare("SELECT * FROM ugc_snapshots_review_audit ORDER BY rowid")
+        .all(),
     };
   }
   return {

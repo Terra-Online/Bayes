@@ -6,7 +6,7 @@ import {
   getKarmaEvaluationIntervalSeconds,
   pointsToKarma,
 } from "@/lib/karma/rules";
-import { AI_STALE_MODERATION_NOTE_PREFIX, RECALL_MODERATION_NOTE_PREFIX } from "@/lib/moderation";
+import { listKarmaEvaluationUsers } from "@/repositories/karmaEvaluation";
 
 const KARMA_EVALUATION_LEASE_KEY = "karma:evaluation:v2:lease";
 const KARMA_EVALUATION_CYCLE_KEY = "karma:evaluation:v2:cycle";
@@ -42,17 +42,6 @@ export type KarmaEvaluationResult = {
   updated: number;
   cycleComplete: boolean;
   nextRunAt: number | null;
-};
-
-type KarmaEvaluationRow = {
-  uid: string;
-  role: string;
-  karma: number | string;
-  points: number | string;
-  created_at: string;
-  last_active: string;
-  approved_images: number | string | null;
-  rejected_images: number | string | null;
 };
 
 function idleResult(cycle: KarmaEvaluationCycle | null): KarmaEvaluationResult {
@@ -177,52 +166,10 @@ async function evaluateKarmaUserChunk(
   uids: string[],
   evaluatedAt: Date,
 ): Promise<number> {
-  const selectedUserValues = uids.map((_, index) => `(?${index + 1})`).join(", ");
-  const aiStaleNotePlaceholder = `?${uids.length + 1}`;
-  const recallNotePlaceholder = `?${uids.length + 2}`;
-  const rows = await db
-    .prepare(
-      `WITH selected_users(uid) AS (
-         VALUES ${selectedUserValues}
-       ),
-       image_stats AS (
-         SELECT
-           s.user_id,
-           SUM(CASE WHEN kind = 'image' AND status IN ('active', 'flagged', 'remove_request') THEN 1 ELSE 0 END) AS approved_images,
-           SUM(
-             CASE
-               WHEN kind = 'image'
-                AND status = 'stale'
-                AND COALESCE(moderation_note, '') NOT LIKE ${aiStaleNotePlaceholder}
-                AND COALESCE(moderation_note, '') NOT LIKE ${recallNotePlaceholder}
-               THEN 1
-               ELSE 0
-             END
-           ) AS rejected_images
-         FROM selected_users selected
-         CROSS JOIN ugc_submissions s INDEXED BY idx_ugc_user_kind_poi_created ON selected.uid = s.user_id
-         WHERE s.kind = 'image'
-         GROUP BY s.user_id
-       )
-       SELECT
-         u.uid,
-         u.role,
-         u.karma,
-         u.points,
-         u.created_at,
-         u.last_active,
-         COALESCE(s.approved_images, 0) AS approved_images,
-         COALESCE(s.rejected_images, 0) AS rejected_images
-       FROM users u
-       INNER JOIN selected_users selected ON selected.uid = u.uid
-       LEFT JOIN image_stats s ON s.user_id = u.uid
-       WHERE u.role <> 'r' AND u.karma < 5`,
-    )
-    .bind(...uids, `${AI_STALE_MODERATION_NOTE_PREFIX}%`, `${RECALL_MODERATION_NOTE_PREFIX}%`)
-    .all<KarmaEvaluationRow>();
+  const rows = await listKarmaEvaluationUsers(db, uids);
 
   const updates: D1PreparedStatement[] = [];
-  for (const row of rows.results ?? []) {
+  for (const row of rows) {
     const currentKarma = toFiniteNumber(row.karma);
     const score = calculateKarmaEvaluationScore(
       {

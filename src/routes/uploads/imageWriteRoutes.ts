@@ -6,11 +6,7 @@ import { rateLimit } from "@/middleware/rate-limit";
 import { imageUploadFieldsSchema } from "@/routes/schema/uploads";
 import { flagSubmission, unflagSubmission } from "@/services/ugc/interact/flags";
 import { unvoteImage, upvoteImage } from "@/services/ugc/interact/votes";
-import {
-  cancelRemoveImageRequest,
-  requestSubmissionRemoval,
-} from "@/services/ugc/owner/removalRequests";
-import { recallSubmission } from "@/services/ugc/owner/withdrawals";
+import { deleteSubmissionByAuthor } from "@/services/ugc/owner/deletion";
 import { submitImage } from "@/services/ugc/submission/create";
 import type { AppEnv } from "@/types/app";
 
@@ -24,7 +20,7 @@ export function createRoutes() {
       const user = c.get("authUser");
 
       const form = await c.req.parseBody();
-      const file = pickFile(form.file) ?? pickFile(form.image);
+      const file = pickFile(form.file);
       if (!file) {
         throw new ApiError(422, "UPLOAD_FILE_MISSING", "Image file is required.");
       }
@@ -126,47 +122,15 @@ export function createRoutes() {
         return c.json({ ok: true, ...result });
       },
     )
-    .post(
-      "/images/:id/remove-request",
+    .delete(
+      "/images/:id",
       requireActiveUser,
       requireUploadsEnabled,
       rateLimit("auth"),
       async (c) => {
-        const user = c.get("authUser");
-        const submissionId = c.req.param("id");
-        const result = await requestSubmissionRemoval(
+        const result = await deleteSubmissionByAuthor(
           { bindings: c.env, defer: (task) => c.executionCtx.waitUntil(task) },
-          { actor: user, submissionId, kind: "image" },
-        );
-        return c.json({ ok: true, ...result });
-      },
-    )
-    .post(
-      "/images/:id/unrecall",
-      requireActiveUser,
-      requireUploadsEnabled,
-      rateLimit("auth"),
-      async (c) => {
-        const user = c.get("authUser");
-        const submissionId = c.req.param("id");
-        const result = await cancelRemoveImageRequest(
-          { bindings: c.env, defer: (task) => c.executionCtx.waitUntil(task) },
-          { actor: user, submissionId },
-        );
-        return c.json({ ok: true, ...result });
-      },
-    )
-    .post(
-      "/images/:id/recall",
-      requireActiveUser,
-      requireUploadsEnabled,
-      rateLimit("auth"),
-      async (c) => {
-        const user = c.get("authUser");
-        const submissionId = c.req.param("id");
-        const result = await recallSubmission(
-          { bindings: c.env, defer: (task) => c.executionCtx.waitUntil(task) },
-          { actor: user, submissionId, kind: "image" },
+          { actor: c.get("authUser"), submissionId: c.req.param("id"), kind: "image" },
         );
         return c.json({ ok: true, ...result });
       },
