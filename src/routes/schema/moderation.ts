@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import type { RevisionContent } from "@/services/ugc/contract/revisionContent";
+
 export { managementActionSchema as updateSchema } from "@/services/moderation/contract/actions";
 
 export const listSchema = z.object({
@@ -65,7 +67,15 @@ export const revisionSchema = z
     sourceSnapshotId: z.string().trim().min(1).max(64).optional(),
     note: z.string().trim().max(500).optional(),
   })
-  .refine((value) => (value.content !== undefined) !== (value.sourceSnapshotId !== undefined));
+  .refine((value) => (value.content !== undefined) !== (value.sourceSnapshotId !== undefined))
+  .transform(({ content, sourceSnapshotId, ...input }) => {
+    // The refinement guarantees exactly one of the existing request fields.
+    const change: RevisionContent =
+      content !== undefined
+        ? { type: "text", content }
+        : { type: "reuse", sourceSnapshotId: sourceSnapshotId! };
+    return { ...input, change };
+  });
 
 export const historySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(50),

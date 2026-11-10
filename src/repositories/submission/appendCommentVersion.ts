@@ -10,7 +10,12 @@ export async function appendCommentVersion(
     content: string;
   },
 ) {
-  const result = await appendVersion(db, { ...input, mode: "owner_edit" });
+  const { content, ...version } = input;
+  const result = await appendVersion(db, {
+    ...version,
+    mode: "owner_edit",
+    change: { type: "text", content },
+  });
   if (result.outcome === "appended" || result.outcome === "unchanged") {
     return { outcome: result.outcome, submission: result.submission };
   }

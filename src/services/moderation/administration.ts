@@ -10,6 +10,7 @@ import {
 } from "@/repositories/submission/correctReview";
 import { changeSubmissionDeletion } from "@/repositories/submission/lifecycle";
 import { commentContentSchema } from "@/services/ugc/contract/commentContent";
+import type { RevisionContent } from "@/services/ugc/contract/revisionContent";
 
 import type { ManualModerationDependencies } from "./manualModeration";
 
@@ -82,8 +83,7 @@ export async function administerRevision(
     submissionId: string;
     actorId: string;
     expectedSnapshotId: string;
-    content?: string;
-    sourceSnapshotId?: string;
+    change: RevisionContent;
     note?: string;
   },
 ) {
@@ -91,19 +91,19 @@ export async function administerRevision(
   if (!identity) {
     throw new ApiError(404, "SUBMISSION_NOT_FOUND", "Submission not found.");
   }
-  let content = input.content;
-  if (content !== undefined) {
+  let change = input.change;
+  if (change.type === "text") {
     const parsed = (
       identity.kind === "comment" ? commentContentSchema : z.string().max(1000)
-    ).safeParse(content);
+    ).safeParse(change.content);
     if (!parsed.success) {
       throw new ApiError(422, "VALIDATION_ERROR", "Invalid content.");
     }
-    content = parsed.data;
+    change = { type: "text", content: parsed.data };
   }
   const result = await appendVersion(dependencies.bindings.DB, {
     ...input,
-    content,
+    change,
     mode: "admin",
     parentSnapshotId: input.expectedSnapshotId,
     snapshotId: crypto.randomUUID(),

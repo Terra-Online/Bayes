@@ -1,3 +1,5 @@
+import type { RevisionContent } from "@/services/ugc/contract/revisionContent";
+
 import type { SubmissionKind, SubmissionStatus } from "./types";
 
 interface Version {
@@ -28,12 +30,13 @@ export async function appendVersion(
     snapshotId: string;
     actorId: string;
     mode: "owner_edit" | "admin";
-    content?: string;
-    sourceSnapshotId?: string;
+    change: RevisionContent;
     note?: string;
   },
 ): Promise<AppendVersionResult> {
   const now = new Date().toISOString();
+  const content = input.change.type === "text" ? input.change.content : null;
+  const sourceSnapshotId = input.change.type === "reuse" ? input.change.sourceSnapshotId : null;
   const admin = "EXISTS (SELECT 1 FROM users WHERE uid=?3 AND role IN ('a','r'))";
   const authorized = input.mode === "admin" ? admin : `(s.user_id=?3 OR ${admin})`;
   const eligible =
@@ -43,15 +46,15 @@ export async function appendVersion(
       : "s.kind='comment' AND s.deleted_at IS NULL AND f.review_status='approved'");
   const source =
     "LEFT JOIN ugc_snapshots original ON original.id=?7 AND original.submission_id=s.id";
-  const content = "CASE WHEN ?7 IS NOT NULL THEN original.content ELSE ?5 END";
+  const selectedContent = "CASE WHEN ?7 IS NOT NULL THEN original.content ELSE ?5 END";
   const args = [
     input.submissionId,
     input.parentSnapshotId,
     input.actorId,
     input.snapshotId,
-    input.content ?? null,
+    content,
     now,
-    input.sourceSnapshotId ?? null,
+    sourceSnapshotId,
     input.note ?? null,
   ];
   const results = await db.batch([
@@ -64,17 +67,12 @@ export async function appendVersion(
         THEN 'flagged' ELSE 'active' END AS status
       FROM ugc_submissions s JOIN ugc_snapshots f ON f.submission_id=s.id AND f.revision=s.revision
       ${source.replace("?7", "?4")} WHERE s.id=?1 ${input.mode === "owner_edit" ? "AND s.kind='comment'" : ""}`)
-      .bind(
-        input.submissionId,
-        input.parentSnapshotId,
-        input.actorId,
-        input.sourceSnapshotId ?? null,
-      ),
+      .bind(input.submissionId, input.parentSnapshotId, input.actorId, sourceSnapshotId),
     db
       .prepare(`INSERT INTO ugc_snapshots
       (id,submission_id,kind,revision,content,file_path,mime_type,size_bytes,review_status,
        creator_user_id,created_at,baseline_snapshot_id,source_snapshot_id,edit_note,creation_source)
-      SELECT ?4,s.id,s.kind,s.revision+1,${content},
+      SELECT ?4,s.id,s.kind,s.revision+1,${selectedContent},
         CASE WHEN ?7 IS NOT NULL THEN original.file_path ELSE f.file_path END,
         CASE WHEN ?7 IS NOT NULL THEN original.mime_type ELSE f.mime_type END,
         CASE WHEN ?7 IS NOT NULL THEN original.size_bytes ELSE f.size_bytes END,
