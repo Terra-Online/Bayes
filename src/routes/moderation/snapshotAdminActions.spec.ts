@@ -106,7 +106,7 @@ it("approves the displayed frontier with the authenticated admin and rejects the
   expect(fixture.notificationMessages()).toHaveLength(1);
 });
 
-it("disables only the displayed frontier once, retains reports and review facts, and keeps points failure independent", async () => {
+it("disables only the displayed frontier once, retains reports and review facts, and leaves points unchanged", async () => {
   seed("comment", "approved");
   const headers = fixture.createReviewerSession("a", "admin");
   fixture.database.sqlite.exec(
@@ -119,10 +119,10 @@ it("disables only the displayed frontier once, retains reports and review facts,
     "CREATE TEMP TRIGGER fail_points BEFORE UPDATE OF points ON users BEGIN SELECT RAISE(ABORT,'points fail'); END",
   );
   const body = { action: "disable", snapshotId: "snapshot-comment" };
-  expect((await act(body, "comment", headers)).status).toBe(500);
+  expect((await act(body, "comment", headers)).status).toBe(200);
   expect(fixture.storedSubmission("comment")).toMatchObject({
-    admin_deleted_by: "admin",
-    author_deleted_at: null,
+    deleted_by: "admin",
+    deleted_at: expect.any(String),
   });
   fixture.database.sqlite.exec("DROP TRIGGER fail_points");
   expect(await (await act(body, "comment", headers)).json()).toMatchObject({ outcome: "no_op" });
@@ -143,7 +143,7 @@ it("clears hidden retained reports explicitly without restoring or reviewing", a
   seed("other", "approved");
   const headers = fixture.createReviewerSession("p", "admin");
   fixture.database.sqlite.exec(
-    "UPDATE ugc_submissions SET author_deleted_at='deleted' WHERE id='comment'; INSERT INTO ugc_submission_flags(submission_id,user_id) VALUES ('comment','admin'),('other','admin')",
+    "UPDATE ugc_submissions SET deleted_at='deleted',deleted_by=user_id WHERE id='comment'; INSERT INTO ugc_submission_flags(submission_id,user_id) VALUES ('comment','admin'),('other','admin')",
   );
   expect(await (await act({ action: "clear_flags" }, "comment", headers)).json()).toMatchObject({
     outcome: "committed",
@@ -173,7 +173,7 @@ it("browses retained hidden reports across bounded pages and ignores queue/date 
   seed("other", "approved");
   const headers = fixture.createReviewerSession("p", "admin");
   fixture.database.sqlite.exec(
-    "UPDATE ugc_submissions SET author_deleted_at='deleted' WHERE id='old'; INSERT INTO ugc_submission_flags(submission_id,user_id) VALUES ('old','admin'),('other','admin')",
+    "UPDATE ugc_submissions SET deleted_at='deleted',deleted_by=user_id WHERE id='old'; INSERT INTO ugc_submission_flags(submission_id,user_id) VALUES ('old','admin'),('other','admin')",
   );
   const page = await fixture.request("/pending?mode=reports&limit=1", { headers });
   expect(page.status).toBe(200);
@@ -225,7 +225,7 @@ it.each(["comment", "image"] as const)(
     }
     const headers = fixture.createReviewerSession("p", "admin");
     fixture.database.sqlite.exec(
-      "UPDATE ugc_submissions SET admin_deleted_at='disabled',admin_deleted_by='admin'; INSERT INTO ugc_submission_flags(submission_id,user_id) VALUES ('hidden','admin')",
+      "UPDATE ugc_submissions SET deleted_at='disabled',deleted_by='admin'; INSERT INTO ugc_submission_flags(submission_id,user_id) VALUES ('hidden','admin')",
     );
     const response = await fixture.request(
       "/pending?mode=reports&from=2099-01-01T00:00:00Z&status=pending_audit&limit=1",
@@ -343,7 +343,7 @@ it("keeps public A and frontier B distinct while clearing reports at submission 
   expect(fixture.authorPoints()).toBe(20);
 });
 it.each(["p", "a", "r"] as const)(
-  "allows %s to disable once with the existing penalty and immutable first facts",
+  "allows %s to disable once without a penalty and with immutable first facts",
   async (role) => {
     seed("comment", "approved");
     const headers = fixture.createReviewerSession(role, "admin");
@@ -362,7 +362,7 @@ it.each(["p", "a", "r"] as const)(
     const other = fixture.createReviewerSession("a", "other-admin");
     expect(await (await act(body, "comment", other)).json()).toMatchObject({ outcome: "no_op" });
     expect(fixture.storedSubmission("comment")).toEqual(facts);
-    expect(fixture.authorPoints()).toBe(14);
+    expect(fixture.authorPoints()).toBe(20);
     expect(fixture.notificationMessages()).toEqual([]);
   },
 );
@@ -374,7 +374,7 @@ it.each(["n", "s"] as const)("denies %s report clearing and disable", async (rol
       403,
     );
   }
-  expect(fixture.storedSubmission("comment")).toMatchObject({ admin_deleted_at: null });
+  expect(fixture.storedSubmission("comment")).toMatchObject({ deleted_at: null });
 });
 it("requires action versions and displayed review phases at the HTTP seam", async () => {
   seed();

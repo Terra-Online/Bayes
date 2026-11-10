@@ -1,80 +1,64 @@
-import type { SnapshotReviewStatus } from "./types";
+import { changeSubmissionDeletion } from "./lifecycle";
 import type { SubmissionKind } from "./types";
 
 interface ManagementCommand {
   submissionId: string;
   adminUserId: string;
-}
-interface ManagementTarget {
-  kind: SubmissionKind;
-  markerId: string;
-  userId: string;
-  role: string | null;
-  reviewStatus: SnapshotReviewStatus;
-  hasEarlierApproval: boolean;
-  authorDeletedAt: string | null;
+  note?: string;
 }
 export type ManagementResult =
   | { outcome: "conflict" }
-  | { outcome: "committed" | "no_op"; target: ManagementTarget };
+  | { outcome: "committed" | "no_op"; target: { kind: SubmissionKind; markerId: string } };
 
-const admin = `EXISTS (SELECT 1 FROM users WHERE uid=?2 AND role IN ('p','a','r'))`;
-const targetSelection = `SELECT s.kind,s.poi_id AS markerId,s.user_id AS userId,u.role,
-  f.review_status AS reviewStatus,s.author_deleted_at AS authorDeletedAt,
-  EXISTS (SELECT 1 FROM ugc_snapshots earlier WHERE earlier.submission_id=s.id
-    AND earlier.revision<f.revision AND earlier.review_status='approved') AS hasEarlierApproval
-  FROM ugc_submissions s JOIN v_ugc_submission_visibility v ON v.submission_id=s.id
-  JOIN ugc_snapshots f ON f.id=v.frontier_snapshot_id
-  LEFT JOIN users u ON u.uid=s.user_id WHERE s.id=?1 AND ${admin}`;
-
-/** First facts and exact frontier eligibility are checked inside the same batch.
- * A no-op is returned only for an eligible repeat, never for a stale target.
- */
+/** Compatibility command; deletion now shares owner lifecycle semantics. */
 export async function disableSubmission(
   db: D1Database,
-  input: ManagementCommand & { snapshotId: string },
+  input: ManagementCommand & { snapshotId: string; expectedLifecycleVersion?: number },
 ): Promise<ManagementResult> {
-  const eligibility = `EXISTS (SELECT 1 FROM v_ugc_submission_visibility v
-    WHERE v.submission_id=s.id AND v.frontier_snapshot_id=?3)`;
-  const result = await db.batch([
-    db
-      .prepare(`UPDATE ugc_submissions AS s
-      SET admin_deleted_at=?4,admin_deleted_by=?2,updated_at=?4
-      WHERE s.id=?1 AND s.admin_deleted_at IS NULL AND ${admin} AND ${eligibility}
-      RETURNING id`)
-      .bind(input.submissionId, input.adminUserId, input.snapshotId, new Date().toISOString()),
-    db
-      .prepare(`${targetSelection} AND v.frontier_snapshot_id=?3`)
-      .bind(input.submissionId, input.adminUserId, input.snapshotId),
-  ]);
-  const target = result[1].results[0] as ManagementTarget | undefined;
-  return target
-    ? {
-        outcome: result[0].results.length ? "committed" : "no_op",
-        target: { ...target, hasEarlierApproval: Boolean(target.hasEarlierApproval) },
-      }
-    : { outcome: "conflict" };
+  const result = await changeSubmissionDeletion(db, {
+    submissionId: input.submissionId,
+    actorId: input.adminUserId,
+    snapshotId: input.snapshotId,
+    note: input.note,
+    permission: "reviewer",
+    action: "deleted",
+    expectedLifecycleVersion: input.expectedLifecycleVersion,
+    initialDeletionOnly: input.expectedLifecycleVersion === undefined,
+  });
+  if (result.outcome !== "committed" && result.outcome !== "no_op") {
+    return { outcome: "conflict" };
+  }
+  return { outcome: result.outcome, target: result.target };
 }
 
-/** Reports belong to the submission, including when its content is hidden.
- * Clearing is independent of review, deletion, notifications and points.
- */
+/** Each changed report gets a receipt, grouped under one moderator operation. */
 export async function clearSubmissionFlags(
   db: D1Database,
   input: ManagementCommand,
 ): Promise<ManagementResult> {
+  const operationId = crypto.randomUUID();
+  const now = new Date().toISOString();
+  const authorized = "EXISTS (SELECT 1 FROM users WHERE uid=?2 AND role IN ('p','a','r'))";
   const result = await db.batch([
     db
-      .prepare(`UPDATE ugc_submission_flags SET active=0
-      WHERE submission_id=?1 AND active=1 AND ${admin} RETURNING submission_id`)
+      .prepare(`INSERT INTO ugc_submission_flag_audit
+      (id,submission_id,reporter_user_id,action,actor_user_id,operation_id,note,created_at)
+      SELECT lower(hex(randomblob(16))),g.submission_id,g.user_id,'cleared',?2,?3,?4,?5
+      FROM ugc_submission_flags g WHERE submission_id=?1 AND active=1 AND ${authorized}
+      RETURNING id`)
+      .bind(input.submissionId, input.adminUserId, operationId, input.note ?? null, now),
+    db
+      .prepare(`UPDATE ugc_submission_flags AS g SET active=0
+      WHERE submission_id=?1 AND active=1 AND EXISTS (
+        SELECT 1 FROM ugc_submission_flag_audit a WHERE a.operation_id=?2
+        AND a.submission_id=g.submission_id AND a.reporter_user_id=g.user_id)`)
+      .bind(input.submissionId, operationId),
+    db
+      .prepare(`SELECT kind,poi_id AS markerId FROM ugc_submissions WHERE id=?1 AND ${authorized}`)
       .bind(input.submissionId, input.adminUserId),
-    db.prepare(targetSelection).bind(input.submissionId, input.adminUserId),
   ]);
-  const target = result[1].results[0] as ManagementTarget | undefined;
+  const target = result[2].results[0] as { kind: SubmissionKind; markerId: string } | undefined;
   return target
-    ? {
-        outcome: result[0].results.length ? "committed" : "no_op",
-        target: { ...target, hasEarlierApproval: Boolean(target.hasEarlierApproval) },
-      }
+    ? { outcome: result[0].results.length ? "committed" : "no_op", target }
     : { outcome: "conflict" };
 }

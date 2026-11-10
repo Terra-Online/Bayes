@@ -129,11 +129,9 @@ it.each(["pending_openai", "pending_audit", "rejected", "unknown", "deleted", "d
   "rejects editing %s even when the body is unchanged",
   async (state) => {
     if (state === "deleted") {
-      database.sqlite.exec("UPDATE ugc_submissions SET author_deleted_at='gone'");
+      database.sqlite.exec("UPDATE ugc_submissions SET deleted_at='gone',deleted_by=user_id");
     } else if (state === "disabled") {
-      database.sqlite.exec(
-        "UPDATE ugc_submissions SET admin_deleted_at='gone',admin_deleted_by='admin'",
-      );
+      database.sqlite.exec("UPDATE ugc_submissions SET deleted_at='gone',deleted_by='admin'");
     } else {
       database.sqlite.prepare("UPDATE ugc_snapshots SET review_status=?").run(state);
     }

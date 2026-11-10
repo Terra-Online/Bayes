@@ -181,7 +181,7 @@ it.each(["approved", "rejected", "unknown"] as const)(
     expect(status("snapshot-waiting")).toBe(reviewStatus);
   },
 );
-it.each(["author_deleted_at", "admin_deleted_at"])("refuses review after %s", async (fact) => {
+it.each(["deleted_at"])("refuses review after %s", async (fact) => {
   fixture.submission({ id: "waiting", reviewStatus: "pending_audit" });
   fixture.database.sqlite.exec(`UPDATE ugc_submissions SET ${fact}='deleted'`);
   expect(

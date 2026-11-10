@@ -4,6 +4,7 @@ import type { SubmissionKind, SubmissionStatus, SubmissionSubmitter } from "./ty
 export interface ManagementSnapshot {
   snapshotId: string;
   revision: number;
+  reviewVersion: number;
   content: string | null;
   filePath: string | null;
   mimeType: string | null;
@@ -25,6 +26,9 @@ export interface ManagementSubmission {
   frontier: ManagementSnapshot;
   publicSnapshot: ManagementSnapshot | null;
   flagCount: number;
+  deletedAt: string | null;
+  deletedBy: string | null;
+  lifecycleVersion: number;
   authorDeletedAt: string | null;
   adminDeletedAt: string | null;
   adminDeletedBy: string | null;
@@ -50,6 +54,11 @@ export interface ManagementFilters {
   createdTo?: string;
   limit?: number;
   offset?: number;
+  reviewStatus?: SnapshotReviewStatus;
+  deleted?: boolean;
+  deletedBy?: string;
+  authorId?: string;
+  kind?: SubmissionKind;
 }
 export interface ManagementPage {
   items: ManagementSubmission[];
@@ -75,7 +84,7 @@ const snapshot = (
   alias: string,
 ) => `json_object('snapshotId',${alias}.id,'revision',${alias}.revision,
   'content',${alias}.content,'filePath',${alias}.file_path,'mimeType',${alias}.mime_type,
-  'sizeBytes',${alias}.size_bytes,'reviewStatus',${alias}.review_status,'createdAt',${alias}.created_at)`;
+  'sizeBytes',${alias}.size_bytes,'reviewStatus',${alias}.review_status,'reviewVersion',${alias}.review_version,'createdAt',${alias}.created_at)`;
 // One coherent record selects frontier/public content and their IDs together.
 const selection = `WITH management AS (SELECT
   s.id,s.kind,s.poi_id AS markerId,s.poi_hash AS poiHash,s.poi_type AS poiType,
@@ -85,8 +94,11 @@ const selection = `WITH management AS (SELECT
   ${snapshot("f")} AS frontier,
   CASE WHEN p.id IS NULL THEN NULL ELSE ${snapshot("p")} END AS publicSnapshot,
   (SELECT COUNT(*) FROM ugc_submission_flags g WHERE g.submission_id=s.id AND g.active=1) AS flagCount,
-  s.author_deleted_at AS authorDeletedAt,s.admin_deleted_at AS adminDeletedAt,s.admin_deleted_by AS adminDeletedBy,
-  CASE WHEN s.author_deleted_at IS NOT NULL OR s.admin_deleted_at IS NOT NULL
+  s.deleted_at AS deletedAt,s.deleted_by AS deletedBy,s.lifecycle_version AS lifecycleVersion,
+  CASE WHEN s.deleted_by=s.user_id THEN s.deleted_at END AS authorDeletedAt,
+  CASE WHEN s.deleted_by IS NOT s.user_id THEN s.deleted_at END AS adminDeletedAt,
+  CASE WHEN s.deleted_by IS NOT s.user_id THEN s.deleted_by END AS adminDeletedBy,
+  CASE WHEN s.deleted_at IS NOT NULL
     OR f.review_status IN ('rejected','unknown') THEN 'stale'
     WHEN f.review_status IN ('pending_openai','pending_audit') THEN f.review_status
     WHEN EXISTS (SELECT 1 FROM ugc_submission_flags g WHERE g.submission_id=s.id AND g.active=1)
@@ -131,6 +143,21 @@ export async function listManagementSubmissions(
   } else if (input.mode === "reports") {
     clauses.push("flagCount > 0");
   } else {
+    if (input.reviewStatus) {
+      add("reviewStatus =", input.reviewStatus);
+    }
+    if (input.deleted !== undefined) {
+      clauses.push(input.deleted ? "deletedAt IS NOT NULL" : "deletedAt IS NULL");
+    }
+    if (input.deletedBy) {
+      add("deletedBy =", input.deletedBy);
+    }
+    if (input.authorId) {
+      add("userId =", input.authorId);
+    }
+    if (input.kind) {
+      add("kind =", input.kind);
+    }
     if (input.statuses?.length) {
       const params = input.statuses.map((status) => {
         bindings.push(status);
@@ -159,7 +186,7 @@ export async function listManagementSubmissions(
   const result = await db.batch([
     db
       .prepare(`${selection} SELECT id,kind,markerId,poiHash,poiType,userId,parentId,commentDepth,createdAt,updatedAt,
-      frontier,publicSnapshot,flagCount,authorDeletedAt,adminDeletedAt,adminDeletedBy,
+      frontier,publicSnapshot,flagCount,deletedAt,deletedBy,lifecycleVersion,authorDeletedAt,adminDeletedAt,adminDeletedBy,
       status,submitter,latestReviewAudit FROM management WHERE ${where}
       ORDER BY ${order} LIMIT ?${bindings.length + 1} OFFSET ?${bindings.length + 2}`)
       .bind(...bindings, limit, offset),

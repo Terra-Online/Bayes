@@ -256,7 +256,7 @@ export async function listCommentViewerStateByMarker(
          AND poi_id IN (SELECT value FROM json_each(?2))
          AND kind = 'comment'
          AND review_status IN ('pending_openai', 'pending_audit')
-         AND author_deleted_at IS NULL AND admin_deleted_at IS NULL
+         AND deleted_at IS NULL
        ORDER BY created_at DESC, id DESC
        LIMIT ?${pendingLimitPlaceholder}
      )

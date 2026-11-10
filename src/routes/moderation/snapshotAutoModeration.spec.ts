@@ -302,8 +302,8 @@ it("ignores terminal, deleted, disabled and nonfrontier queue targets before cal
   seed("disabled");
   seed("old");
   fixture.database.sqlite
-    .exec(`UPDATE ugc_submissions SET author_deleted_at='deleted' WHERE id='deleted';
-    UPDATE ugc_submissions SET admin_deleted_at='disabled' WHERE id='disabled';
+    .exec(`UPDATE ugc_submissions SET deleted_at='deleted',deleted_by=user_id WHERE id='deleted';
+    UPDATE ugc_submissions SET deleted_at='disabled' WHERE id='disabled';
     INSERT INTO ugc_snapshots(id,submission_id,kind,revision,content,review_status,creator_user_id)
     VALUES ('new','old','comment',2,'New content','approved','author');
     UPDATE ugc_submissions SET revision=2 WHERE id='old';`);
@@ -346,8 +346,8 @@ it("recovers eligible pending images and comments and retains the queue-send and
     .run(new Date().toISOString());
   fixture.database.sqlite
     .exec(`UPDATE ugc_snapshots SET moderation_queued_at='2000-01-01T00:00:00Z' WHERE id='snapshot-expired';
-    UPDATE ugc_submissions SET author_deleted_at='deleted' WHERE id='deleted';
-    UPDATE ugc_submissions SET admin_deleted_at='disabled' WHERE id='disabled';`);
+    UPDATE ugc_submissions SET deleted_at='deleted',deleted_by=user_id WHERE id='deleted';
+    UPDATE ugc_submissions SET deleted_at='disabled' WHERE id='disabled';`);
   const send = fixture.env.OEM_MODERATION_Q.send;
   fixture.env.OEM_MODERATION_Q.send = async () => {
     throw new Error("Queue unavailable");
@@ -453,7 +453,7 @@ it("keeps committed review effects when author deletion happens afterwards", asy
   seed("comment");
   expect((await run(["comment"])).status).toBe(200);
   fixture.database.sqlite.exec(
-    "UPDATE ugc_submissions SET author_deleted_at='deleted' WHERE id='comment'",
+    "UPDATE ugc_submissions SET deleted_at='deleted',deleted_by=user_id WHERE id='comment'",
   );
   await consume("snapshot-comment", "comment");
   expect(fixture.database.sqlite.prepare("SELECT * FROM v_ugc_public_submissions").all()).toEqual(

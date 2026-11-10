@@ -10,6 +10,7 @@ import { createRoutes as createHealthRoutes } from "./health/createRoutes";
 import { createRoutes as createLocatorRoutes } from "./locator/createRoutes";
 import { createRoutes as createLocatorPositionRoutes } from "./locator/positionRoutes";
 import { createRoutes as createMeRoutes } from "./me/createRoutes";
+import { createRoutes as createUgcAdministrationRoutes } from "./moderation/administrationRoutes";
 import { createRoutes as createModerationRoutes } from "./moderation/createRoutes";
 import { createRoutes as createNotifyRoutes } from "./notify/createRoutes";
 import { createRoutes as createProfileRoutes } from "./profile/createRoutes";
@@ -42,6 +43,7 @@ export function mountRoutes<E extends AppEnv<{ requestId: string }>>(app: Hono<E
   app.route("/uploads/v1", createImageFileRoutes());
   app.route("/uploads/v1", createCommentTranslationRoutes());
   app.route("/moderation/v1", createModerationRoutes());
+  app.route("/moderation/v1", createUgcAdministrationRoutes());
   app.route("/notify/v1", createNotifyRoutes());
   app.route("/me/v1", createMeRoutes());
   app.route("/", createRootRoutes());

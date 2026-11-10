@@ -244,7 +244,9 @@ describe("comment edits", () => {
 
   it("rejects editing a deleted comment without changing it", async () => {
     insertCommentSnapshot(database.sqlite, { id: "target", userId: "author" });
-    database.sqlite.exec("UPDATE ugc_submissions SET author_deleted_at='gone' WHERE id='target'");
+    database.sqlite.exec(
+      "UPDATE ugc_submissions SET deleted_at='gone',deleted_by=user_id WHERE id='target'",
+    );
     const response = await post("/comments/target/edit", "author", {
       content: comment.content,
       parentSnapshotId: "snapshot-target",

@@ -60,12 +60,10 @@ function seed(kind: "comment" | "image", reviewStatus: "approved" | "pending_ope
   );
 }
 it.each(["comment", "image"] as const)(
-  "logically deletes an owned %s once, preserves disabled facts, snapshots and flags, and keeps the owner archive",
+  "preserves an existing deletion when the %s owner deletes again, retaining snapshots and flags",
   async (kind) => {
     seed(kind);
-    database.sqlite.exec(
-      "UPDATE ugc_submissions SET admin_deleted_at='disabled',admin_deleted_by='admin'",
-    );
+    database.sqlite.exec("UPDATE ugc_submissions SET deleted_at='disabled',deleted_by='admin'");
     const path = `/${kind}s/target`;
     const first = await request(path);
     expect(first.status).toBe(200);
@@ -75,14 +73,11 @@ it.each(["comment", "image"] as const)(
     expect(await (await request(path)).json()).toEqual(payload);
     expect(
       database.sqlite
-        .prepare(
-          "SELECT author_deleted_at,admin_deleted_at,admin_deleted_by,revision FROM ugc_submissions WHERE id='target'",
-        )
+        .prepare("SELECT deleted_at,deleted_by,revision FROM ugc_submissions WHERE id='target'")
         .get(),
     ).toEqual({
-      author_deleted_at: (payload as { authorDeletedAt: string }).authorDeletedAt,
-      admin_deleted_at: "disabled",
-      admin_deleted_by: "admin",
+      deleted_at: "disabled",
+      deleted_by: "admin",
       revision: 1,
     });
     expect(database.sqlite.prepare("SELECT count(*) AS count FROM ugc_snapshots").get()).toEqual({
@@ -94,7 +89,7 @@ it.each(["comment", "image"] as const)(
     expect(database.sqlite.prepare("SELECT count(*) AS count FROM notifications").get()).toEqual({
       count: 0,
     });
-    expect(cache.purgeMarker).toHaveBeenCalledTimes(1);
+    expect(cache.purgeMarker).not.toHaveBeenCalled();
     expect(mocks.autoModerationQueue.send).not.toHaveBeenCalled();
     expect(mocks.ugcBucket.delete).not.toHaveBeenCalled();
     expect(mocks.webhookQueue.send).not.toHaveBeenCalled();
@@ -127,8 +122,8 @@ it.each(["comment", "image"] as const)(
     expect((await request(`/${kind === "comment" ? "images" : "comments"}/target`)).status).toBe(
       404,
     );
-    expect(database.sqlite.prepare("SELECT author_deleted_at FROM ugc_submissions").get()).toEqual({
-      author_deleted_at: null,
+    expect(database.sqlite.prepare("SELECT deleted_at FROM ugc_submissions").get()).toEqual({
+      deleted_at: null,
     });
   },
 );

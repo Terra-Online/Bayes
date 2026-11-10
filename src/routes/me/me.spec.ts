@@ -111,7 +111,7 @@ it.each([
 
 it("keeps historical previews available to their owner only", async () => {
   database.sqlite.exec(
-    "UPDATE ugc_submissions SET author_deleted_at = '2026-10-01' WHERE id = 'photo'",
+    "UPDATE ugc_submissions SET deleted_at='2026-10-01',deleted_by=user_id WHERE id = 'photo'",
   );
   expect((await requestPreview("photo", "author")).status).toBe(200);
   mocks.ugcBucket.get.mockClear();
@@ -339,12 +339,12 @@ it.each(["rejected", "unknown", "author_deleted", "admin_disabled"] as const)(
     });
     if (state === "author_deleted") {
       database.sqlite.exec(
-        "UPDATE ugc_submissions SET author_deleted_at='2026-10-01' WHERE id='hidden'",
+        "UPDATE ugc_submissions SET deleted_at='2026-10-01',deleted_by=user_id WHERE id='hidden'",
       );
     }
     if (state === "admin_disabled") {
       database.sqlite.exec(
-        "UPDATE ugc_submissions SET admin_deleted_at='2026-10-01', admin_deleted_by='admin' WHERE id='hidden'",
+        "UPDATE ugc_submissions SET deleted_at='2026-10-01', deleted_by='admin' WHERE id='hidden'",
       );
     }
     expect(

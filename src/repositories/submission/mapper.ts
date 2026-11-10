@@ -135,8 +135,7 @@ export function publicImageFromRow(
 
 function commentStatusFromRow(row: Record<string, unknown>): SubmissionStatus {
   if (
-    row.author_deleted_at != null ||
-    row.admin_deleted_at != null ||
+    row.deleted_at != null ||
     row.review_status === "unknown" ||
     row.review_status === "rejected"
   ) {

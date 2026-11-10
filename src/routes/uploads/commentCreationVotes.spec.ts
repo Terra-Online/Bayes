@@ -129,7 +129,9 @@ it("replies to the current public parent even when its frontier is pending, with
   expect(response.status).toBe(200);
   const { submission } = (await response.json()) as { submission: { id: string } };
   expect(submission).toMatchObject({ parentId: "parent", depth: 4 });
-  database.sqlite.exec("UPDATE ugc_submissions SET author_deleted_at='later' WHERE id='parent'");
+  database.sqlite.exec(
+    "UPDATE ugc_submissions SET deleted_at='later',deleted_by=user_id WHERE id='parent'",
+  );
   expect(
     database.sqlite.prepare("SELECT parent_id FROM ugc_submissions WHERE id=?").get(submission.id),
   ).toEqual({ parent_id: "parent" });
@@ -150,11 +152,13 @@ it.each(["deleted", "disabled", "rejected", "pending", "missing", "marker", "has
       });
     }
     if (reason === "deleted") {
-      database.sqlite.exec("UPDATE ugc_submissions SET author_deleted_at='gone' WHERE id='parent'");
+      database.sqlite.exec(
+        "UPDATE ugc_submissions SET deleted_at='gone',deleted_by=user_id WHERE id='parent'",
+      );
     }
     if (reason === "disabled") {
       database.sqlite.exec(
-        "UPDATE ugc_submissions SET admin_deleted_at='gone',admin_deleted_by='reader' WHERE id='parent'",
+        "UPDATE ugc_submissions SET deleted_at='gone',deleted_by='reader' WHERE id='parent'",
       );
     }
     if (["marker", "hash", "type"].includes(reason)) {

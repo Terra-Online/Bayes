@@ -21,8 +21,8 @@ export interface ImageSnapshotFixture {
 export function insertImageSnapshot(sqlite: DatabaseSync, input: ImageSnapshotFixture): void {
   const createdAt = input.createdAt ?? "2026-09-10T00:00:00.000Z";
   sqlite
-    .prepare(`INSERT INTO ugc_submissions (id,kind,poi_id,poi_hash,poi_type,user_id,created_at,updated_at)
-    VALUES (?,'image',?,?,?,?,?,?)`)
+    .prepare(`INSERT INTO ugc_submissions (id,kind,poi_id,poi_hash,poi_type,user_id,created_at,updated_at,karma_review_status)
+    VALUES (?,'image',?,?,?,?,?,?,?)`)
     .run(
       input.id,
       input.markerId ?? "marker-1",
@@ -31,6 +31,9 @@ export function insertImageSnapshot(sqlite: DatabaseSync, input: ImageSnapshotFi
       input.userId,
       createdAt,
       createdAt,
+      ["approved", "rejected"].includes(input.reviewStatus ?? "approved")
+        ? (input.reviewStatus ?? "approved")
+        : null,
     );
   sqlite
     .prepare(`INSERT INTO ugc_snapshots (id,submission_id,kind,revision,content,file_path,mime_type,review_status,creator_user_id,created_at)

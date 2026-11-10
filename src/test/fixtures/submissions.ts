@@ -53,10 +53,18 @@ export function insertSubmission(sqlite: DatabaseSync, input: SubmissionFixture)
     mimeType: input.kind === "image" ? "image/webp" : null,
     ...input,
   };
+  // Compatibility DTO vocabulary in existing scenarios maps to explicit facts.
+  // This fixture never synthesizes audit or deletion history.
+  const reviewStatuses: Record<string, string> = {
+    stale: "unknown",
+    active: "approved",
+    flagged: "approved",
+  };
+  const reviewStatus = reviewStatuses[item.status] ?? item.status;
   sqlite
     .prepare(`INSERT INTO ugc_submissions
-    (id,user_id,kind,poi_id,poi_hash,poi_type,parent_id,comment_depth,created_at,updated_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?)`)
+    (id,user_id,kind,poi_id,poi_hash,poi_type,parent_id,comment_depth,created_at,updated_at,karma_review_status)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
     .run(
       item.id,
       item.userId,
@@ -68,15 +76,10 @@ export function insertSubmission(sqlite: DatabaseSync, input: SubmissionFixture)
       item.depth,
       item.createdAt,
       item.updatedAt,
+      item.kind === "image" && ["approved", "rejected"].includes(reviewStatus)
+        ? reviewStatus
+        : null,
     );
-  // Compatibility DTO vocabulary in existing scenarios maps to explicit facts.
-  // This fixture never synthesizes audit or deletion history.
-  const reviewStatuses: Record<string, string> = {
-    stale: "unknown",
-    active: "approved",
-    flagged: "approved",
-  };
-  const reviewStatus = reviewStatuses[item.status] ?? item.status;
   sqlite
     .prepare(`INSERT INTO ugc_snapshots
     (id,submission_id,kind,revision,content,file_path,mime_type,review_status,creator_user_id,created_at)

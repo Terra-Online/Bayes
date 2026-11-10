@@ -50,10 +50,18 @@ export async function applyManualModeration(
   const { bindings } = dependencies;
   const { command } = input;
   if (command.action === "disable" || command.action === "clear_flags") {
-    const target = { submissionId: input.submissionId, adminUserId: input.actor.uid };
+    const target = {
+      submissionId: input.submissionId,
+      adminUserId: input.actor.uid,
+      note: command.note,
+    };
     const result =
       command.action === "disable"
-        ? await disableSubmission(bindings.DB, { ...target, snapshotId: command.snapshotId })
+        ? await disableSubmission(bindings.DB, {
+            ...target,
+            snapshotId: command.snapshotId,
+            expectedLifecycleVersion: command.expectedLifecycleVersion,
+          })
         : await clearSubmissionFlags(bindings.DB, target);
     if (result.outcome === "conflict") {
       return conflict(bindings.DB, input.submissionId);
@@ -67,28 +75,6 @@ export async function applyManualModeration(
           markerId: current.markerId,
         }),
       );
-      // Preserve the existing exemption for approved edits and already hidden
-      // submissions using review/deletion facts, rather than historical note text.
-      if (
-        !current.hasEarlierApproval &&
-        current.reviewStatus !== "rejected" &&
-        current.reviewStatus !== "unknown" &&
-        current.authorDeletedAt === null
-      ) {
-        const config = getRuntimeConfig(bindings);
-        await applyUserPointsDelta(
-          bindings.DB,
-          current.userId,
-          await getModerationPointsDeltaWithDailyBackoff(createRedisClient(bindings), {
-            userId: current.userId,
-            kind: current.kind,
-            status: "stale",
-            role: current.role,
-            surgeModeEnabled: config.surgeModeEnabled,
-            surgeBackoffMultiplier: config.surgeBackoffMultiplier,
-          }),
-        );
-      }
     }
     if (result.outcome === "committed" && command.action === "clear_flags") {
       dependencies.defer(
@@ -152,8 +138,9 @@ export async function applyManualModeration(
   }
   // Points remain independent. A committed phase cannot be replayed after points fail.
   if (
-    (decision === "approved" && transition.firstApproval) ||
-    (decision === "rejected" && !current.hasEarlierApproval)
+    current.creationSource !== "admin" &&
+    ((decision === "approved" && transition.firstApproval) ||
+      (decision === "rejected" && !current.hasEarlierApproval))
   ) {
     await applyUserPointsDelta(
       bindings.DB,

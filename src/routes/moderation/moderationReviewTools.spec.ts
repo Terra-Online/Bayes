@@ -227,12 +227,12 @@ describe("moderation review tools", () => {
     });
     for (const id of ["test-active", "test-pending", "test-stale"]) {
       expect(storedSubmission(id)).toMatchObject({
-        admin_deleted_at: expect.any(String),
-        admin_deleted_by: expect.any(String),
+        deleted_at: expect.any(String),
+        deleted_by: expect.any(String),
       });
     }
     for (const id of ["production", "similar-prefix", "sibling-prefix", "comment"]) {
-      expect(storedSubmission(id)).toMatchObject({ admin_deleted_at: null });
+      expect(storedSubmission(id)).toMatchObject({ deleted_at: null });
     }
     expect(
       database.sqlite

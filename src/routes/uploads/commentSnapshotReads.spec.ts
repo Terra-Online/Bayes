@@ -269,8 +269,8 @@ it("keeps unavailable owner archives private and does not attach them as pending
   database.sqlite
     .exec(`UPDATE ugc_snapshots SET review_status='rejected' WHERE submission_id='rejected';
     UPDATE ugc_snapshots SET review_status='unknown' WHERE submission_id='unknown';
-    UPDATE ugc_submissions SET author_deleted_at='gone' WHERE id='deleted';
-    UPDATE ugc_submissions SET admin_deleted_at='gone',admin_deleted_by='other' WHERE id='disabled';`);
+    UPDATE ugc_submissions SET deleted_at='gone',deleted_by=user_id WHERE id='deleted';
+    UPDATE ugc_submissions SET deleted_at='gone',deleted_by='other' WHERE id='disabled';`);
   const mine = await request("/comments/mine?markerId=marker-1", viewerHeaders);
   const payload = (await mine.json()) as {
     items: Array<{ id: string; snapshotId: string; status: string }>;

@@ -253,8 +253,8 @@ describe("12-hour resumable karma evaluation", () => {
         SELECT 'outside-' || number, 'outside-user', 'image', 'outside', 'hash', 'poi' FROM sequence;
       INSERT INTO ugc_snapshots (id,submission_id,kind,revision,file_path,review_status,creator_user_id)
         SELECT 'snapshot-' || id, id, 'image', 1, 'outside.webp', 'approved', user_id FROM ugc_submissions;
-      INSERT INTO ugc_submissions (id,user_id,kind,poi_id,poi_hash,poi_type)
-        VALUES ('selected-image','selected-000','image','selected','hash','poi');
+      INSERT INTO ugc_submissions (id,user_id,kind,poi_id,poi_hash,poi_type,karma_review_status)
+        VALUES ('selected-image','selected-000','image','selected','hash','poi','approved');
       INSERT INTO ugc_snapshots (id,submission_id,kind,revision,file_path,review_status,creator_user_id)
         VALUES ('selected-snapshot','selected-image','image',1,'selected.webp','approved','selected-000');
     `);
@@ -276,7 +276,7 @@ describe("12-hour resumable karma evaluation", () => {
     expect(plan).not.toMatch(/SCAN s USING INDEX|SCAN ugc_submissions\b/);
   });
 
-  it("counts genuine rejections while excluding unknown imports, deletion, disable and previously approved edits", async () => {
+  it("preserves normal-review quality facts despite later deletion or editorial visibility changes", async () => {
     insertKarmaUser("owner");
     seedUser(database.sqlite, { uid: "admin", role: "a", karma: 5 });
     for (const [id, reviewStatus] of [
@@ -291,8 +291,8 @@ describe("12-hour resumable karma evaluation", () => {
       insertImageSnapshot(database.sqlite, { id, userId: "owner", reviewStatus });
     }
     database.sqlite
-      .exec(`UPDATE ugc_submissions SET author_deleted_at='2026-09-05' WHERE id='deleted';
-      UPDATE ugc_submissions SET admin_deleted_at='2026-09-05', admin_deleted_by='admin' WHERE id='disabled';
+      .exec(`UPDATE ugc_submissions SET deleted_at='2026-09-05',deleted_by=user_id WHERE id='deleted';
+      UPDATE ugc_submissions SET deleted_at='2026-09-05', deleted_by='admin' WHERE id='disabled';
       INSERT INTO ugc_snapshots (id,submission_id,kind,revision,file_path,review_status,creator_user_id)
         VALUES ('rejected-edit','edit','image',2,'edit.webp','rejected','owner');
       UPDATE ugc_submissions SET revision=2 WHERE id='edit';`);
@@ -300,8 +300,8 @@ describe("12-hour resumable karma evaluation", () => {
     await evaluateKarmaIfDue(database.db, redis.redis);
     expect(calculateScore).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({
-        approvedImages: 1,
-        rejectedImages: 1,
+        approvedImages: 2,
+        rejectedImages: 3,
       }),
       expect.any(Date),
     );
@@ -325,7 +325,10 @@ describe("12-hour resumable karma evaluation", () => {
         });
       }
 
-      applyMigrations(imported.sqlite, ["0038_ugc_snapshots.sql"]);
+      applyMigrations(
+        imported.sqlite,
+        migrations.filter((file) => file >= "0038"),
+      );
       const calculateScore = vi.spyOn(rules, "calculateKarmaEvaluationScore");
       await evaluateKarmaIfDue(imported.db, redis.redis);
       expect(calculateScore).toHaveBeenCalledExactlyOnceWith(

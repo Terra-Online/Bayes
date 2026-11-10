@@ -208,12 +208,11 @@ otherwise noted.
 | POST | `/comments/translations` | Public with `cachedOnly: true`; otherwise active user required |
 | POST | `/images/:id/upvote`, `/images/:id/unvote` | Image reaction |
 | POST | `/images/:id/flag`, `/images/:id/unflag` | Image report state |
-| POST | `/images/:id/remove-request` | Request image removal |
-| POST | `/images/:id/recall`, `/images/:id/unrecall` | Recall or restore image under ownership rules |
+| DELETE | `/images/:id` | Author deletion; retained content |
 | POST | `/comments/:id/upvote`, `/comments/:id/downvote` | Comment reaction |
 | POST | `/comments/:id/flag`, `/comments/:id/unflag` | Comment report state |
 | POST | `/comments/:id/edit` | Edit comment content |
-| POST | `/comments/:id/remove-request`, `/comments/:id/recall` | Comment removal/recall workflow |
+| DELETE | `/comments/:id` | Author deletion; retained content |
 
 Reports belong to a submission, independently of its content snapshots. Image and
 comment `flag` / `unflag` requests have no body. Editing, approving a replacement,
@@ -365,6 +364,71 @@ active reports on the submission ID in the URL. It needs no snapshot ID and does
 not review, restore, or delete content. Management reads expose `flagCount`,
 `frontier`, and `publicSnapshot`; there is no report snapshot target. Review and
 disable actions retain their snapshot requirements.
+
+### UGC administration
+
+The endpoints below require `a/r` and unlocked moderation. Ordinary reviewers
+retain the existing pending-review, disable and clear-report operations above.
+
+| Method | Path under `/moderation/v1` | Purpose |
+| --- | --- | --- |
+| GET | `/submissions` | Filter retained records by `reviewStatus`, `deleted=true/false`, `deletedBy`, `authorId`, `kind`; `limit` 1–100 and `offset` |
+| GET | `/submissions/:id` | Current frontier, public snapshot, deletion facts and concurrency versions |
+| GET | `/submissions/:id/snapshots` | All retained snapshots, newest first; `limit` and `beforeRevision` |
+| GET | `/submissions/:id/history` | Creation facts, lifecycle, snapshot-review and report events |
+| GET | `/submissions/:id/reports/history` | Report events; optional `reporterUserId` |
+| GET | `/submissions/:id/snapshots/:snapshotId/file` | Authorized historical image stream; private, no-store |
+| POST | `/submissions/:id/revisions` | Append a correction or reuse historical content |
+| PATCH | `/submissions/:id/snapshots/:snapshotId/review` | Correct any retained snapshot to approved/rejected |
+| POST | `/submissions/:id/delete` | Unified deletion |
+| POST | `/submissions/:id/restore` | Undo the current deletion independently of review |
+
+Revision requests contain `expectedSnapshotId` and exactly one of `content` or
+`sourceSnapshotId`, plus optional `note`. A source must belong to this submission.
+Comment corrections use normal comment validation; image captions retain the
+1,000-character limit and reuse their file. New snapshots record their editor,
+baseline, optional source and note. They enter `pending_openai`; appending while
+any current version is pending returns `409`. Deleted content can be corrected,
+but is not queued for automatic review until restored. Queue delivery failure
+leaves the committed revision recoverable by normal backfill.
+
+Review correction requests contain `decision` (`approved` or `rejected`),
+`expectedReviewStatus`, `expectedReviewVersion`, and optional `note`. The review
+version comes from snapshot reads. Corrections neither reorder revisions nor
+restore deletion, and add no points or notifications. The immediately preceding
+snapshot can still become public or hidden while the newest is pending, according
+to the existing public-selection rule. Normal review remains on `/:id/status`.
+
+Deletion requests contain `expectedSnapshotId`, `expectedLifecycleVersion`, and
+optional `note`. Restoration needs `expectedLifecycleVersion` and optional `note`.
+Stale preconditions return `409 MODERATION_CONFLICT`. Versions increase on each
+actual state change, detecting changes away and back. Eligible no-ops append no
+audit records. Deletion, restoration and moderator disabling do not change points.
+Normal first-time review scoring remains, without rewards/penalties for admin
+editorial revisions. Periodic image-quality evaluation reads preserved
+normal-review scoring facts, independently of corrected visibility/review state.
+
+Canonical deletion fields are `deletedAt`, `deletedBy`, and `lifecycleVersion`.
+Owner DELETE retains its `authorDeletedAt` acknowledgement and adds canonical
+fields. Existing management/owner read aliases `authorDeletedAt`,
+`adminDeletedAt`, and `adminDeletedBy` are derived from the unified current actor;
+they no longer represent independent deletion restrictions. Cor disable commands now send `expectedLifecycleVersion` from the inspected row.
+Legacy unversioned disables are accepted for initial deletion or an eligible
+already-deleted no-op, and conflict after restoration. This prevents a delayed
+old request from deleting newly restored content. Removed recall/removal-request routes remain unmatched.
+
+History uses `limit` (1–100) and opaque `cursor` / `nextCursor`. Snapshots use
+`beforeRevision` / `nextBeforeRevision`. Histories have deterministic time/ID
+ordering and creation entries are projected from retained rows. Report clears
+write one event per affected report with a shared `operationId`. Current
+`flagCount` continues to count active report rows rather than replaying history.
+
+Migration 0039 preserves existing review audits and snapshots, selects the
+earliest legacy deletion and its known actor, and starts new lifecycle/report
+histories without backfill. Missing older history does not mean no action occurred.
+The migration and backend must be rolled out together with UGC writes quiesced;
+old backend code references the removed deletion columns. No target migration is
+performed by the implementation itself.
 
 Admin report endpoints require an administrator session:
 

@@ -36,3 +36,58 @@ export const runSchema = z.object({
 export const warningSchema = z.object({
   publicUid: z.string().trim().min(1).max(32),
 });
+
+export const deletionSchema = z.object({
+  expectedLifecycleVersion: z.number().int().min(0),
+  note: z.string().trim().max(500).optional(),
+});
+export const deleteSchema = deletionSchema.extend({
+  expectedSnapshotId: z.string().trim().min(1).max(64),
+});
+
+export const correctionSchema = z.object({
+  decision: z.enum(["approved", "rejected"]),
+  expectedReviewStatus: z.enum([
+    "approved",
+    "rejected",
+    "unknown",
+    "pending_openai",
+    "pending_audit",
+  ]),
+  expectedReviewVersion: z.number().int().min(0),
+  note: z.string().trim().max(500).optional(),
+});
+
+export const revisionSchema = z
+  .object({
+    expectedSnapshotId: z.string().trim().min(1).max(64),
+    content: z.string().optional(),
+    sourceSnapshotId: z.string().trim().min(1).max(64).optional(),
+    note: z.string().trim().max(500).optional(),
+  })
+  .refine((value) => (value.content !== undefined) !== (value.sourceSnapshotId !== undefined));
+
+export const historySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+  cursor: z.string().max(1000).optional(),
+  reporterUserId: z.string().min(1).max(64).optional(),
+});
+export const cursorSchema = z.object({
+  createdAt: z.string().min(1).max(64),
+  id: z.string().min(1).max(128),
+});
+export const snapshotPageSchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+  beforeRevision: z.coerce.number().int().min(1).optional(),
+});
+export const adminListSchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+  offset: z.coerce.number().int().min(0).max(100000).default(0),
+  reviewStatus: z
+    .enum(["approved", "rejected", "unknown", "pending_openai", "pending_audit"])
+    .optional(),
+  deleted: z.enum(["true", "false"]).optional(),
+  deletedBy: z.string().min(1).max(64).optional(),
+  authorId: z.string().min(1).max(64).optional(),
+  kind: z.enum(["comment", "image"]).optional(),
+});

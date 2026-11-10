@@ -12,7 +12,7 @@ export function applyMigrations(sqlite: DatabaseSync, files: string[] = migratio
     const sql = readFileSync(new URL(file, directory), "utf8");
     // Earlier migrations toggle foreign_keys outside transactions. The UGC
     // cutover requires deferred references through one actual commit.
-    if (file === "0038_ugc_snapshots.sql") {
+    if (["0038_ugc_snapshots.sql", "0039_ugc_administration.sql"].includes(file)) {
       sqlite.exec("BEGIN");
       try {
         sqlite.exec(sql);

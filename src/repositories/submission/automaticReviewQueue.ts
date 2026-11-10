@@ -8,7 +8,7 @@ export async function getPendingAutomaticReviews(
     .prepare(`SELECT s.id,f.id AS snapshotId
     FROM ugc_snapshots f JOIN ugc_submissions s ON s.id=f.submission_id AND s.revision=f.revision
     WHERE f.review_status='pending_openai'
-      AND s.author_deleted_at IS NULL AND s.admin_deleted_at IS NULL
+      AND s.deleted_at IS NULL
       AND (f.moderation_queued_at IS NULL OR f.moderation_queued_at < ?2)
     ORDER BY f.created_at ASC,f.id ASC LIMIT ?1`)
     .bind(limit, queuedBefore)
@@ -26,7 +26,7 @@ export async function markAutomaticReviewQueued(
     WHERE id=?2 AND submission_id=?1 AND review_status='pending_openai'
       AND EXISTS (SELECT 1 FROM ugc_submissions s
         WHERE s.id=?1 AND s.revision=ugc_snapshots.revision
-          AND s.author_deleted_at IS NULL AND s.admin_deleted_at IS NULL)`)
+          AND s.deleted_at IS NULL)`)
     .bind(input.id, input.snapshotId, input.queuedAt)
     .run();
 }

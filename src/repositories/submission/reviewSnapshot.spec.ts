@@ -31,8 +31,8 @@ afterEach(() => database.close());
 // These are write guards, not another review-policy acceptance matrix.
 it.each([
   ["phase", "UPDATE ugc_snapshots SET review_status='pending_audit'"],
-  ["author deletion", "UPDATE ugc_submissions SET author_deleted_at='gone'"],
-  ["admin disable", "UPDATE ugc_submissions SET admin_deleted_at='gone',admin_deleted_by='admin'"],
+  ["author deletion", "UPDATE ugc_submissions SET deleted_at='gone',deleted_by=user_id"],
+  ["admin disable", "UPDATE ugc_submissions SET deleted_at='gone',deleted_by='admin'"],
   [
     "frontier",
     `UPDATE ugc_snapshots SET review_status='approved';
