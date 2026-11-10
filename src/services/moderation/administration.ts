@@ -2,8 +2,8 @@ import { z } from "zod";
 
 import { ApiError } from "@/lib/errors";
 import { invalidateUploadCaches } from "@/publicRead/client/invalidate";
+import { enqueueAutoModeration } from "@/queues/client/autoModeration";
 import { appendVersion, getSubmissionKind } from "@/repositories/submission/appendVersion";
-import { markAutomaticReviewQueued } from "@/repositories/submission/automaticReviewQueue";
 import {
   correctSnapshotReview,
   type ReviewCorrection,
@@ -126,19 +126,11 @@ export async function administerRevision(
       }),
     );
     if (result.deletedAt === null) {
-      const queuedAt = new Date().toISOString();
-      await dependencies.bindings.OEM_MODERATION_Q.send({
-        type: "moderation",
-        submissionId: input.submissionId,
-        snapshotId: result.submission.snapshotId,
-        source: "upload",
-        queuedAt,
-      });
-      await markAutomaticReviewQueued(dependencies.bindings.DB, {
-        id: input.submissionId,
-        snapshotId: result.submission.snapshotId,
-        queuedAt,
-      });
+      await enqueueAutoModeration(
+        dependencies.bindings,
+        input.submissionId,
+        result.submission.snapshotId,
+      );
     }
   }
   return { outcome: result.outcome, submission: result.submission };

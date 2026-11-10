@@ -2,8 +2,8 @@ import { nanoid } from "nanoid";
 
 import { ApiError } from "@/lib/errors";
 import { invalidateUploadCaches } from "@/publicRead/client/invalidate";
+import { enqueueAutoModeration } from "@/queues/client/autoModeration";
 import { appendCommentVersion } from "@/repositories/submission/appendCommentVersion";
-import { markCommentModerationQueued } from "@/repositories/submission/createComment";
 import type { UgcActionDependencies, UgcActionInput } from "@/services/ugc/contract/actions";
 import { commentContentSchema } from "@/services/ugc/contract/commentContent";
 
@@ -52,24 +52,7 @@ export async function editComment(dependencies: UgcActionDependencies, input: Ed
         markerId: submission.markerId,
       }),
     );
-    const queuedAt = new Date().toISOString();
-    await bindings.OEM_MODERATION_Q.send({
-      type: "moderation",
-      submissionId: submission.id,
-      snapshotId: submission.snapshotId,
-      source: "upload",
-      queuedAt,
-    });
-    await markCommentModerationQueued(bindings.DB, {
-      submissionId: submission.id,
-      snapshotId: submission.snapshotId,
-      queuedAt,
-    }).catch((error) =>
-      console.warn("moderation queued marker update failed", {
-        submissionId: submission.id,
-        error,
-      }),
-    );
+    await enqueueAutoModeration(bindings, submission.id, submission.snapshotId);
   }
   return { submission };
 }

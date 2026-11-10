@@ -390,7 +390,7 @@ Comment corrections use normal comment validation; image captions retain the
 baseline, optional source and note. They enter `pending_openai`; appending while
 any current version is pending returns `409`. Deleted content can be corrected,
 but is not queued for automatic review until restored. Queue delivery failure
-leaves the committed revision recoverable by normal backfill.
+leaves the committed revision recoverable by normal backfill. Delivery bookkeeping failures after a successful send are logged without failing the committed edit request.
 
 Review correction requests contain `decision` (`approved` or `rejected`),
 `expectedReviewStatus`, `expectedReviewVersion`, and optional `note`. The review

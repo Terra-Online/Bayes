@@ -60,6 +60,37 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+it("returns a committed admin revision after queue delivery even when delivery bookkeeping fails", async () => {
+  fixture.submission({ id: "comment", reviewStatus: "approved" });
+  const headers = fixture.createReviewerSession("a", "admin");
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  fixture.database.sqlite.exec(`CREATE TEMP TRIGGER fail_queue_marker
+    BEFORE UPDATE OF moderation_queued_at ON ugc_snapshots
+    BEGIN SELECT RAISE(ABORT,'queue marker unavailable'); END`);
+
+  const response = await fixture.request("/submissions/comment/revisions", {
+    method: "POST",
+    headers,
+    body: { expectedSnapshotId: "snapshot-comment", content: "Corrected directions" },
+  });
+
+  expect(response.status).toBe(200);
+  const payload = (await response.json()) as { submission: { snapshotId: string } };
+  expect(fixture.storedSnapshot("comment")).toMatchObject({
+    id: payload.submission.snapshotId,
+    content: "Corrected directions",
+    review_status: "pending_openai",
+    moderation_queued_at: null,
+  });
+  expect(fixture.messages.moderation).toEqual([
+    expect.objectContaining({
+      submissionId: "comment",
+      snapshotId: payload.submission.snapshotId,
+      source: "upload",
+    }),
+  ]);
+});
+
 it("deletes and restores independently of review, audits each change, and rejects stale restoration", async () => {
   fixture.submission({ id: "comment", reviewStatus: "rejected" });
   const headers = fixture.createReviewerSession("a", "admin");
