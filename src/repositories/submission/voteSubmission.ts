@@ -1,9 +1,4 @@
-import {
-  notificationsFromResult,
-  prepareCommentVoteNotificationWrite,
-  prepareImageUpvoteNotificationWrite,
-  type NotificationRecord,
-} from "@/repositories/notifications";
+import type { UgcEventReference } from "@/services/ugc/contract/events";
 import type { AuthUser } from "@/types/app";
 
 import { mapVoteValue, toCount } from "./mapper";
@@ -16,41 +11,38 @@ export type SetImageUpvoteResult =
       changed: boolean;
       markerId: string;
       upvoteCount: number;
-      notifications: NotificationRecord[];
+      event: UgcEventReference | null;
     };
 
-/** Set/cancel is idempotent. Visibility, notifications and counts share one batch. */
+/** The conditional audit is the receipt authorizing this operation's state write. */
 export async function setImageUpvote(
   db: D1Database,
   payload: { submissionId: string; actor: AuthUser; active: boolean },
 ): Promise<SetImageUpvoteResult> {
-  const changedAt = new Date().toISOString();
-  const notificationStatements = payload.active
-    ? prepareImageUpvoteNotificationWrite(db, {
-        submissionId: payload.submissionId,
-        actor: payload.actor,
-        changedAt,
-      })
-    : [];
+  const eventId = crypto.randomUUID();
+  const now = new Date().toISOString();
   const results = await db.batch<Record<string, unknown>>([
-    // Notification eligibility predicts the exact conditional set below, in this
-    // transaction. A failure of either part rolls back both.
-    ...notificationStatements,
+    db
+      .prepare(`INSERT INTO ugc_vote_events
+      (id,submission_id,actor_user_id,previous_value,next_value,created_at)
+      SELECT ?1,s.id,?3,COALESCE(v.active,0),?4,?5
+      FROM ugc_submissions s
+      JOIN v_ugc_submission_visibility visibility ON visibility.submission_id=s.id
+      LEFT JOIN ugc_submission_upvotes v ON v.submission_id=s.id AND v.user_id=?3
+      WHERE s.id=?2 AND s.kind='image' AND visibility.public_snapshot_id IS NOT NULL
+        AND COALESCE(v.active,0)<>?4 RETURNING id`)
+      .bind(eventId, payload.submissionId, payload.actor.uid, payload.active ? 1 : 0, now),
     payload.active
       ? db
           .prepare(`INSERT INTO ugc_submission_upvotes (submission_id,user_id,active,created_at)
-          SELECT submission_id,?2,1,?3 FROM v_ugc_submission_visibility
-          WHERE submission_id=?1 AND kind='image' AND public_snapshot_id IS NOT NULL
-          ON CONFLICT(submission_id,user_id) DO UPDATE SET active=1,created_at=excluded.created_at
-          WHERE ugc_submission_upvotes.active=0 RETURNING submission_id`)
-          .bind(payload.submissionId, payload.actor.uid, changedAt)
+          SELECT submission_id,actor_user_id,1,created_at FROM ugc_vote_events WHERE id=?1
+          ON CONFLICT(submission_id,user_id) DO UPDATE SET active=1,created_at=excluded.created_at`)
+          .bind(eventId)
       : db
           .prepare(`UPDATE ugc_submission_upvotes SET active=0
-          WHERE submission_id=?1 AND user_id=?2 AND active=1
-            AND EXISTS (SELECT 1 FROM v_ugc_submission_visibility
-              WHERE submission_id=?1 AND kind='image' AND public_snapshot_id IS NOT NULL)
-          RETURNING submission_id`)
-          .bind(payload.submissionId, payload.actor.uid),
+          WHERE submission_id=?1 AND user_id=?2
+            AND EXISTS (SELECT 1 FROM ugc_vote_events WHERE id=?3)`)
+          .bind(payload.submissionId, payload.actor.uid, eventId),
     db
       .prepare(`SELECT s.poi_id,v.public_snapshot_id,
       (SELECT COUNT(*) FROM ugc_submission_upvotes WHERE submission_id=s.id AND active=1) AS count
@@ -58,21 +50,20 @@ export async function setImageUpvote(
       WHERE s.id=?1 AND s.kind='image'`)
       .bind(payload.submissionId),
   ]);
-  const row = results.at(-1)?.results[0];
+  const row = results[2].results[0];
   if (!row) {
     return { outcome: "missing" };
   }
   if (!row.public_snapshot_id) {
     return { outcome: "hidden" };
   }
+  const changed = results[0].results.length > 0;
   return {
     outcome: "committed",
-    changed: results[notificationStatements.length].results.length > 0,
+    changed,
     markerId: String(row.poi_id),
     upvoteCount: toCount(row.count),
-    notifications: notificationStatements.length
-      ? notificationsFromResult(results[notificationStatements.length - 1])
-      : [],
+    event: changed ? { source: "vote", eventId } : null,
   };
 }
 
@@ -84,61 +75,58 @@ export type SetCommentVoteResult =
       previousVote: SubmissionVoteValue | 0;
       currentVote: SubmissionVoteValue | 0;
       score: number;
-      notifications: NotificationRecord[];
+      event: UgcEventReference;
     };
 
-/** Eligibility, toggle/reversal, notification writes and result share one transaction. */
+/** Each effective toggle or reversal is retained, including cancellations and self-votes. */
 export async function setSubmissionVote(
   db: D1Database,
   payload: { submissionId: string; actor: AuthUser; value: SubmissionVoteValue },
 ): Promise<SetCommentVoteResult> {
-  const changedAt = new Date().toISOString();
-  const notificationStatements = prepareCommentVoteNotificationWrite(db, {
-    ...payload,
-    changedAt,
-  });
+  const eventId = crypto.randomUUID();
+  const now = new Date().toISOString();
   const results = await db.batch<Record<string, unknown>>([
     db
-      .prepare(`SELECT value,active FROM ugc_submission_votes
-      WHERE submission_id=?1 AND user_id=?2`)
-      .bind(payload.submissionId, payload.actor.uid),
+      .prepare(`INSERT INTO ugc_vote_events
+      (id,submission_id,actor_user_id,previous_value,next_value,created_at)
+      SELECT ?1,s.id,?3,CASE WHEN v.active=1 THEN v.value ELSE 0 END,
+        CASE WHEN v.active=1 AND v.value=?4 THEN 0 ELSE ?4 END,?5
+      FROM ugc_submissions s
+      JOIN v_ugc_submission_visibility visibility ON visibility.submission_id=s.id
+      LEFT JOIN ugc_submission_votes v ON v.submission_id=s.id AND v.user_id=?3
+      WHERE s.id=?2 AND s.kind='comment' AND visibility.public_snapshot_id IS NOT NULL
+      RETURNING previous_value,next_value`)
+      .bind(eventId, payload.submissionId, payload.actor.uid, payload.value, now),
     db
       .prepare(`INSERT INTO ugc_submission_votes
       (submission_id,user_id,value,active,created_at,updated_at)
-      SELECT submission_id,?2,?3,1,?4,?4 FROM v_ugc_submission_visibility
-      WHERE submission_id=?1 AND kind='comment' AND public_snapshot_id IS NOT NULL
-      ON CONFLICT(submission_id,user_id) DO UPDATE SET
-        value=excluded.value,
-        active=CASE WHEN ugc_submission_votes.active=1 AND ugc_submission_votes.value=excluded.value THEN 0 ELSE 1 END,
-        updated_at=excluded.updated_at
-      RETURNING submission_id`)
-      .bind(payload.submissionId, payload.actor.uid, payload.value, changedAt),
-    ...notificationStatements,
+      SELECT submission_id,actor_user_id,?2,CASE WHEN next_value=0 THEN 0 ELSE 1 END,created_at,created_at
+      FROM ugc_vote_events WHERE id=?1
+      ON CONFLICT(submission_id,user_id) DO UPDATE SET value=excluded.value,
+        active=excluded.active,updated_at=excluded.updated_at`)
+      .bind(eventId, payload.value),
     db
       .prepare(`SELECT s.poi_id,v.public_snapshot_id,
-        COALESCE((SELECT value FROM ugc_submission_votes WHERE submission_id=s.id AND user_id=?2 AND active=1),0) AS vote,
-        (SELECT COALESCE(SUM(value),0) FROM ugc_submission_votes WHERE submission_id=s.id AND active=1) AS score
+      (SELECT COALESCE(SUM(value),0) FROM ugc_submission_votes WHERE submission_id=s.id AND active=1) AS score
       FROM ugc_submissions s JOIN v_ugc_submission_visibility v ON v.submission_id=s.id
       WHERE s.id=?1 AND s.kind='comment'`)
-      .bind(payload.submissionId, payload.actor.uid),
+      .bind(payload.submissionId),
   ]);
-  const row = results.at(-1)?.results[0];
+  const row = results[2].results[0];
   if (!row) {
     return { outcome: "missing" };
   }
-  if (!row.public_snapshot_id || results[1].results.length === 0) {
+  const event = results[0].results[0];
+  if (!row.public_snapshot_id || !event) {
     return { outcome: "hidden" };
   }
-  const previous = results[0].results[0];
   return {
     outcome: "voted",
     markerId: String(row.poi_id),
-    previousVote: Number(previous?.active) === 1 ? mapVoteValue(previous?.value) : 0,
-    currentVote: mapVoteValue(row.vote),
+    previousVote: mapVoteValue(event.previous_value),
+    currentVote: mapVoteValue(event.next_value),
     score: Number(row.score),
-    notifications: notificationStatements.length
-      ? notificationsFromResult(results[1 + notificationStatements.length])
-      : [],
+    event: { source: "vote", eventId },
   };
 }
 

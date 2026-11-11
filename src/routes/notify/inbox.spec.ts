@@ -14,6 +14,8 @@ import { createRoutes } from "./createRoutes";
 
 const fanout = vi.fn();
 let backgroundTasks: Promise<unknown>[];
+vi.mock("cloudflare:workers", () => ({ DurableObject: class {} }));
+
 let database: TestDatabase;
 let sessions: Map<string, ReturnType<typeof insertSession>>;
 
@@ -43,6 +45,7 @@ beforeEach(() => {
       createdAt,
     });
   }
+  database.sqlite.exec("UPDATE notifications SET projected_at=created_at");
 });
 
 afterEach(async () => {
@@ -162,62 +165,49 @@ describe("notification inbox HTTP", () => {
     expect(await inbox("/system/messages?limit=1&cursor=%25")).toEqual(first);
   });
 
-  it("presents grouped approvals with each destination and counts the group as one unread notification", async () => {
-    for (const [id, at] of [
-      ["photo-one", "2026-09-05T10:00:00.000Z"],
-      ["photo-two", "2026-09-05T10:00:30.000Z"],
+  it("keeps destinations and read state independent and excludes private payload metadata", async () => {
+    for (const [id, submission] of [
+      ["approval-a", "photo-one"],
+      ["approval-b", "photo-two"],
     ]) {
-      insertSubmission(database.sqlite, { id, userId: "alice", kind: "image", markerId: id });
+      insertSubmission(database.sqlite, { id: submission, userId: "alice", kind: "image" });
       database.sqlite
-        .prepare(`INSERT INTO notification_messages
-        (id, notification_id, submission_id, marker_id, payload_json, dedupe_key, created_at)
-        VALUES (?, 'approval-a', ?, ?, ?, ?, ?)`)
-        .run(
-          `message-${id}`,
-          id,
-          id,
-          JSON.stringify({ kind: "image", email: "private@example.test" }),
-          `message-${id}`,
-          at,
-        );
+        .prepare("UPDATE notifications SET submission_id=?, payload_json=? WHERE id=?")
+        .run(submission, JSON.stringify({ kind: "image", email: "private@example.test" }), id);
     }
-    database.sqlite.exec(`UPDATE notifications SET message_count = 2,
-      last_event_at = '2026-09-05T10:00:30.000Z' WHERE id = 'approval-a'`);
-    const page = await inbox("/system/messages?limit=1");
-    expect(page.unread).toEqual({ system: 3, community: 1, total: 4 });
-    expect(page.items[0]).toMatchObject({
-      id: "approval-a",
-      type: "system.submission.approved",
-      payload: { kind: "image", messageCount: 2 },
-      isMultiMsg: true,
-      createdAt: "2026-09-05T10:00:30.000Z",
-      target: {
-        submissionId: null,
-        parentSubmissionId: null,
-        markerId: null,
-        poiHash: null,
-        poiType: null,
-      },
-    });
+    const page = await inbox("/system/messages");
     expect(
-      page.items[0].messages.map((message) => ({
-        id: message.id,
-        target: message.target.submissionId,
-        payload: message.payload,
-        readAt: message.readAt,
-      })),
+      page.items
+        .filter((item) => ["approval-a", "approval-b"].includes(item.id))
+        .map((item) => ({
+          id: item.id,
+          target: item.target.submissionId,
+          payload: item.payload,
+          isMultiMsg: item.isMultiMsg,
+          messages: item.messages,
+        })),
     ).toEqual([
-      { id: "message-photo-one", target: "photo-one", payload: { kind: "image" }, readAt: null },
-      { id: "message-photo-two", target: "photo-two", payload: { kind: "image" }, readAt: null },
+      {
+        id: "approval-b",
+        target: "photo-two",
+        payload: { kind: "image" },
+        isMultiMsg: false,
+        messages: [],
+      },
+      {
+        id: "approval-a",
+        target: "photo-one",
+        payload: { kind: "image" },
+        isMultiMsg: false,
+        messages: [],
+      },
     ]);
-    // Stored payloads can contain private metadata; neither the group nor its
-    // expanded messages may expose it to the recipient.
     expect(JSON.stringify(page)).not.toContain("private@example.test");
     const read = await request("/system/messages/approval-a/read", "alice", { method: "PATCH" });
     expect(await read.json()).toMatchObject({ unread: { system: 2, community: 1, total: 3 } });
-    const group = (await inbox("/system/messages?limit=1")).items[0];
-    expect(group.readAt).toEqual(expect.any(String));
-    expect(group.messages.map((message) => message.readAt)).toEqual([group.readAt, group.readAt]);
+    const items = (await inbox()).items;
+    expect(items.find((item) => item.id === "approval-a")!.readAt).toEqual(expect.any(String));
+    expect(items.find((item) => item.id === "approval-b")!.readAt).toBeNull();
   });
 
   it("marks one notification read, keeps its first read time on retry, and updates unread-only reads", async () => {
@@ -388,21 +378,8 @@ it("preserves saved resolution messages, destinations and unread counts through 
   database.sqlite
     .exec(`UPDATE notifications SET payload_json='{"kind":"image","note":"Saved original text"}',
       submission_id='archived',marker_id='point',poi_hash='hash',poi_type='poi' WHERE id='resolution';
-    INSERT INTO notification_messages
-      (id,notification_id,submission_id,marker_id,poi_hash,poi_type,payload_json,dedupe_key,created_at)
-      VALUES ('saved-message','resolution','archived','point','hash','poi','{"kind":"image","note":"Saved original text"}','saved-key','2026-10-01T00:00:00Z');`);
+    `);
   const beforeSystem = await inbox();
-  const beforeCommunity = await inbox("/community/messages");
-  const retained = ["notifications", "notification_messages", "notification_counters"] as const;
-  const original = retained.map((table) =>
-    database.sqlite.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all(),
-  );
-
-  expect(
-    retained.map((table) => database.sqlite.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all()),
-  ).toEqual(original);
-  expect(await inbox()).toEqual(beforeSystem);
-  expect(await inbox("/community/messages")).toEqual(beforeCommunity);
   expect(beforeSystem.items[0]).toMatchObject({
     id: "resolution",
     type: "system.remove_request.resolved",
@@ -470,11 +447,11 @@ it("retains the committed read and HTTP success when live delivery fails", async
   log.mockRestore();
 });
 
-it("does not mark notifications created or aggregated after the operation cutoff", async () => {
+it("does not mark a late projection of an older event after the operation cutoff", async () => {
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(new Date("2026-10-01T00:00:00.000Z"));
   database.sqlite
-    .prepare("UPDATE notifications SET last_event_at = ? WHERE id = 'approval-a'")
+    .prepare("UPDATE notifications SET projected_at = ? WHERE id = 'approval-a'")
     .run("2026-10-01T00:00:00.001Z");
   await request("/system/read-all", "alice", { method: "POST" });
   expect((await inbox()).items.find((item) => item.id === "approval-a")?.readAt).toBeNull();

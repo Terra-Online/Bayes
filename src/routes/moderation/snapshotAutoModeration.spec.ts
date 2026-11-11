@@ -215,7 +215,7 @@ it("retains flags when admin rejection removes the previous public version", asy
   });
 });
 
-it("aggregates first replies and author approvals, dedupes reply edits, and preserves unread counters", async () => {
+it("delivers individual first replies and author approvals, dedupes reply edits, and preserves unread counters", async () => {
   insertUser(fixture.database.sqlite, { uid: "parent-author", uid_number: 500 });
   seed("parent", "approved", { userId: "parent-author" });
   seed("reply1", "pending_openai", { parentId: "parent" });
@@ -223,11 +223,11 @@ it("aggregates first replies and author approvals, dedupes reply edits, and pres
   expect((await run(["reply1", "reply2"])).status).toBe(200);
   expect(
     fixture.database.sqlite
-      .prepare("SELECT type,message_count FROM notifications ORDER BY type")
+      .prepare("SELECT type,COUNT(*) AS count FROM notifications GROUP BY type ORDER BY type")
       .all(),
   ).toEqual([
-    { type: "community.comment.reply", message_count: 2 },
-    { type: "system.submission.approved", message_count: 2 },
+    { type: "community.comment.reply", count: 2 },
+    { type: "system.submission.approved", count: 2 },
   ]);
   // Existing daily backoff gives the second approval one point.
   expect(fixture.authorPoints()).toBe(23);
@@ -235,11 +235,11 @@ it("aggregates first replies and author approvals, dedupes reply edits, and pres
   await run(["reply1"]);
   expect(
     fixture.database.sqlite
-      .prepare("SELECT type,message_count FROM notifications ORDER BY type")
+      .prepare("SELECT type,COUNT(*) AS count FROM notifications GROUP BY type ORDER BY type")
       .all(),
   ).toEqual([
-    { type: "community.comment.reply", message_count: 2 },
-    { type: "system.submission.approved", message_count: 3 },
+    { type: "community.comment.reply", count: 2 },
+    { type: "system.submission.approved", count: 3 },
   ]);
   expect(
     fixture.database.sqlite
@@ -248,8 +248,8 @@ it("aggregates first replies and author approvals, dedupes reply edits, and pres
       )
       .all(),
   ).toEqual([
-    { user_id: "author", system_unread: 1, community_unread: 0 },
-    { user_id: "parent-author", system_unread: 0, community_unread: 1 },
+    { user_id: "author", system_unread: 3, community_unread: 0 },
+    { user_id: "parent-author", system_unread: 0, community_unread: 2 },
   ]);
   expect(fixture.authorPoints()).toBe(23);
 });
@@ -422,26 +422,25 @@ it.each(["stored image", "public fallback"])(
   },
 );
 
-it("reopens read author aggregation on an edit and starts a new group after the window expires", async () => {
+it("keeps earlier approvals read when an edit creates an independent notification", async () => {
   seed("comment");
   await run(["comment"]);
   fixture.database.sqlite.exec("UPDATE notifications SET read_at='read'");
   edit("comment");
   await run(["comment"]);
   expect(
-    fixture.database.sqlite.prepare("SELECT read_at,message_count FROM notifications").all(),
-  ).toEqual([{ read_at: null, message_count: 2 }]);
+    fixture.database.sqlite.prepare("SELECT read_at FROM notifications ORDER BY rowid").all(),
+  ).toEqual([{ read_at: "read" }, { read_at: null }]);
   expect(
     fixture.database.sqlite
       .prepare("SELECT system_unread FROM notification_counters WHERE user_id='author'")
       .get(),
   ).toEqual({ system_unread: 1 });
-  fixture.database.sqlite.exec("UPDATE notifications SET window_expires_at='2000-01-01T00:00:00Z'");
   seed("other");
   await run(["other"]);
   expect(
-    fixture.database.sqlite.prepare("SELECT message_count FROM notifications ORDER BY rowid").all(),
-  ).toEqual([{ message_count: 2 }, { message_count: 1 }]);
+    fixture.database.sqlite.prepare("SELECT read_at FROM notifications ORDER BY rowid").all(),
+  ).toEqual([{ read_at: "read" }, { read_at: null }, { read_at: null }]);
   expect(
     fixture.database.sqlite
       .prepare("SELECT system_unread FROM notification_counters WHERE user_id='author'")

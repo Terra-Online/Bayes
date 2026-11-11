@@ -1,9 +1,3 @@
-import { nanoid } from "nanoid";
-
-import type { AuthUser } from "@/types/app";
-
-import type { SubmissionKind, SubmissionVoteValue, ViewerVoteValue } from "./submission/types";
-
 export type NotificationCategory = "system" | "community";
 
 export type NotificationType =
@@ -21,15 +15,6 @@ export interface NotificationTarget {
   poiType: string | null;
 }
 
-export interface NotificationMessageRecord extends NotificationTarget {
-  id: string;
-  notificationId: string;
-  actorUserId: string | null;
-  payload: Record<string, unknown>;
-  dedupeKey: string;
-  createdAt: string;
-}
-
 export interface NotificationRecord extends NotificationTarget {
   id: string;
   recipientUserId: string;
@@ -40,10 +25,7 @@ export interface NotificationRecord extends NotificationTarget {
   dedupeKey: string;
   readAt: string | null;
   createdAt: string;
-  windowStartedAt: string | null;
-  windowExpiresAt: string | null;
-  messageCount: number;
-  messages: NotificationMessageRecord[];
+  projectedAt?: string;
 }
 
 export interface SerializedNotificationItem {
@@ -53,6 +35,7 @@ export interface SerializedNotificationItem {
   target: NotificationTarget;
   readAt: string | null;
   createdAt: string;
+  projectedAt?: string;
   isMultiMsg: boolean;
   messages: SerializedNotificationItem[];
 }
@@ -62,27 +45,11 @@ export interface NotificationCursor {
   id: string;
 }
 
-export interface CommentVoteNotificationPayload {
-  submissionId: string;
-  actor: AuthUser;
-  value: SubmissionVoteValue;
-  changedAt: string;
-}
-
-export interface CommentVoteResult {
-  previousVote: ViewerVoteValue;
-  currentVote: ViewerVoteValue;
-  notifications: NotificationRecord[];
-}
-
 export interface NotificationUnreadCounts {
   system: number;
   community: number;
   total: number;
 }
-
-const DEFAULT_AGGREGATION_WINDOW_MS = 60_000;
-const VOTE_AGGREGATION_WINDOW_MS = 6 * 60 * 60 * 1000;
 
 const NOTIFICATION_SELECT_COLUMNS = `
   id,
@@ -99,24 +66,7 @@ const NOTIFICATION_SELECT_COLUMNS = `
   dedupe_key,
   read_at,
   created_at,
-  window_started_at,
-  window_expires_at,
-  last_event_at,
-  message_count
-`;
-
-const NOTIFICATION_MESSAGE_SELECT_COLUMNS = `
-  id,
-  notification_id,
-  actor_user_id,
-  submission_id,
-  parent_submission_id,
-  marker_id,
-  poi_hash,
-  poi_type,
-  payload_json,
-  dedupe_key,
-  created_at
+  projected_at
 `;
 
 function parsePayload(raw: unknown): Record<string, unknown> {
@@ -161,7 +111,7 @@ function normalizeCount(raw: unknown, fallback = 0): number {
 }
 
 export function mapNotification(row: Record<string, unknown>): NotificationRecord {
-  const createdAt = String(row.last_event_at ?? row.created_at);
+  const createdAt = String(row.created_at);
   return {
     id: String(row.id),
     recipientUserId: String(row.recipient_user_id),
@@ -177,230 +127,8 @@ export function mapNotification(row: Record<string, unknown>): NotificationRecor
     dedupeKey: String(row.dedupe_key),
     readAt: nullableString(row.read_at),
     createdAt,
-    windowStartedAt: nullableString(row.window_started_at),
-    windowExpiresAt: nullableString(row.window_expires_at),
-    messageCount: Math.max(1, normalizeCount(row.message_count, 1)),
-    messages: [],
+    projectedAt: String(row.projected_at ?? row.created_at),
   };
-}
-
-function mapNotificationMessage(row: Record<string, unknown>): NotificationMessageRecord {
-  return {
-    id: String(row.id),
-    notificationId: String(row.notification_id),
-    actorUserId: nullableString(row.actor_user_id),
-    submissionId: nullableString(row.submission_id),
-    parentSubmissionId: nullableString(row.parent_submission_id),
-    markerId: nullableString(row.marker_id),
-    poiHash: nullableString(row.poi_hash),
-    poiType: nullableString(row.poi_type),
-    payload: parsePayload(row.payload_json),
-    dedupeKey: String(row.dedupe_key),
-    createdAt: String(row.created_at),
-  };
-}
-
-export function notificationsFromResult(
-  result: D1Result<Record<string, unknown>> | undefined,
-): NotificationRecord[] {
-  return (result?.results ?? []).map((row) => mapNotification(row));
-}
-
-function serializePayload(payload: Record<string, unknown>): string {
-  return JSON.stringify(payload);
-}
-
-function expiresAt(createdAt: string, windowMs = DEFAULT_AGGREGATION_WINDOW_MS): string {
-  return new Date(Date.parse(createdAt) + windowMs).toISOString();
-}
-
-function communityPayload(kind: SubmissionKind): Record<string, unknown> {
-  return { kind };
-}
-
-function appendParentUpdateStatement(db: D1Database, messageId: string): D1PreparedStatement {
-  return db
-    .prepare(
-      `UPDATE notifications
-       SET message_count = message_count + 1,
-           last_event_at = (
-             SELECT created_at
-             FROM notification_messages
-             WHERE id = ?1
-           ),
-           read_at = NULL
-       WHERE id = (
-         SELECT notification_id
-         FROM notification_messages
-         WHERE id = ?1
-       )
-       RETURNING ${NOTIFICATION_SELECT_COLUMNS}`,
-    )
-    .bind(messageId);
-}
-
-export function prepareCommentVoteNotificationWrite(
-  db: D1Database,
-  payload: CommentVoteNotificationPayload,
-): D1PreparedStatement[] {
-  if (payload.value !== 1) {
-    return [];
-  }
-
-  return prepareCommunityVoteNotificationWrite(db, {
-    ...payload,
-    kind: "comment",
-  });
-}
-
-export interface ImageUpvoteNotificationPayload {
-  submissionId: string;
-  actor: AuthUser;
-  changedAt: string;
-}
-
-export function prepareImageUpvoteNotificationWrite(
-  db: D1Database,
-  payload: ImageUpvoteNotificationPayload,
-): D1PreparedStatement[] {
-  return prepareCommunityVoteNotificationWrite(db, {
-    submissionId: payload.submissionId,
-    actor: payload.actor,
-    value: 1,
-    changedAt: payload.changedAt,
-    kind: "image",
-  });
-}
-
-function prepareCommunityVoteNotificationWrite(
-  db: D1Database,
-  payload: CommentVoteNotificationPayload & { kind: SubmissionKind },
-): D1PreparedStatement[] {
-  if (payload.value !== 1) {
-    return [];
-  }
-
-  // Image notifications run before the conditional set in the same transaction.
-  // Eligibility cannot change between these statements: notifications never mutate
-  // visibility or votes. This gates every aggregation mutation, including expiry,
-  // without treating a matching millisecond timestamp as proof of a new vote.
-  const visibilityCondition = `EXISTS (SELECT 1 FROM v_ugc_submission_visibility visibility
-    WHERE visibility.submission_id=s.id AND visibility.public_snapshot_id IS NOT NULL)${
-      payload.kind === "image"
-        ? ` AND NOT EXISTS (SELECT 1 FROM ugc_submission_upvotes existing
-      WHERE existing.submission_id=s.id AND existing.user_id=?2 AND existing.active=1)`
-        : ""
-    }`;
-  const notificationId = nanoid(18);
-  const messageId = nanoid(18);
-  const createdAt = payload.changedAt;
-  const openKey = JSON.stringify(["community", "vote", payload.submissionId]);
-  const eventDedupeKey = `vote:${payload.submissionId}:${payload.actor.uid}:${payload.kind === "image" ? messageId : createdAt}`;
-  const basePayloadJson = serializePayload(communityPayload(payload.kind));
-  const voteSource =
-    payload.kind === "image"
-      ? ""
-      : `
-       INNER JOIN ugc_submission_votes v
-         ON v.submission_id = s.id
-        AND v.user_id = ?2
-        AND v.value = 1
-        AND v.active = 1
-        AND v.updated_at = ?5`;
-
-  return [
-    db
-      .prepare(
-        `UPDATE notifications
-       SET open_aggregation_key = NULL
-       WHERE open_aggregation_key = ?1
-         AND window_expires_at <= ?2
-         ${
-           payload.kind === "comment"
-             ? `AND EXISTS (
-           SELECT 1 FROM ugc_submission_votes vote
-           JOIN v_ugc_submission_visibility visibility ON visibility.submission_id=vote.submission_id
-           WHERE vote.submission_id=?3 AND vote.user_id=?4 AND vote.active=1 AND vote.value=1
-             AND vote.updated_at=?2 AND visibility.public_snapshot_id IS NOT NULL
-         )`
-             : `AND EXISTS (SELECT 1 FROM ugc_submissions s
-               JOIN v_ugc_submission_visibility visibility ON visibility.submission_id=s.id
-               WHERE s.id=?3 AND s.kind='image' AND s.user_id<>?4
-                 AND visibility.public_snapshot_id IS NOT NULL
-                 AND NOT EXISTS (SELECT 1 FROM ugc_submission_upvotes vote
-                   WHERE vote.submission_id=s.id AND vote.user_id=?4 AND vote.active=1))`
-         }`,
-      )
-      .bind(openKey, createdAt, payload.submissionId, payload.actor.uid),
-    db
-      .prepare(
-        `INSERT INTO notifications (
-         id, recipient_user_id, category, type, actor_user_id,
-         submission_id, parent_submission_id, marker_id, poi_hash, poi_type,
-         payload_json, dedupe_key, read_at, created_at,
-         open_aggregation_key, window_started_at, window_expires_at,
-         last_event_at, message_count
-       )
-       SELECT
-         ?1, s.user_id, 'community', 'community.comment.vote', ?2,
-         s.id, s.parent_id, s.poi_id, s.poi_hash, s.poi_type,
-         ?3,
-         ?4, NULL, ?5,
-         ?6, ?5, ?7, ?5, 0
-       FROM ugc_submissions s${voteSource}
-       WHERE s.id = ?8
-         AND s.kind = ?10
-         AND ${visibilityCondition}
-         AND s.user_id <> ?2
-         AND NOT EXISTS (
-           SELECT 1 FROM notification_messages WHERE dedupe_key = ?9
-         )
-       ON CONFLICT(open_aggregation_key) DO NOTHING`,
-      )
-      .bind(
-        notificationId,
-        payload.actor.uid,
-        basePayloadJson,
-        `group:${notificationId}`,
-        createdAt,
-        openKey,
-        expiresAt(createdAt, VOTE_AGGREGATION_WINDOW_MS),
-        payload.submissionId,
-        eventDedupeKey,
-        payload.kind,
-      ),
-    db
-      .prepare(
-        `INSERT INTO notification_messages (
-         id, notification_id, actor_user_id, submission_id, parent_submission_id,
-         marker_id, poi_hash, poi_type, payload_json, dedupe_key, created_at
-       )
-       SELECT
-         ?1, n.id, ?2, s.id, s.parent_id,
-         s.poi_id, s.poi_hash, s.poi_type,
-         ?3,
-         ?4, ?5
-       FROM ugc_submissions s${voteSource}
-       INNER JOIN notifications n ON n.open_aggregation_key = ?6
-       WHERE s.id = ?7
-         AND s.kind = ?8
-         AND ${visibilityCondition}
-         AND s.user_id <> ?2
-         AND ?5 < n.window_expires_at
-       ON CONFLICT(dedupe_key) DO NOTHING`,
-      )
-      .bind(
-        messageId,
-        payload.actor.uid,
-        basePayloadJson,
-        eventDedupeKey,
-        createdAt,
-        openKey,
-        payload.submissionId,
-        payload.kind,
-      ),
-    appendParentUpdateStatement(db, messageId),
-  ];
 }
 
 export function encodeNotificationCursor(cursor: NotificationCursor): string {
@@ -428,36 +156,6 @@ export function decodeNotificationCursor(raw: string | undefined): NotificationC
   };
 }
 
-async function hydrateNotificationMessages(
-  db: D1Database,
-  notifications: NotificationRecord[],
-): Promise<NotificationRecord[]> {
-  if (notifications.length === 0) {
-    return notifications;
-  }
-  const placeholders = notifications.map((_, index) => `?${index + 1}`).join(", ");
-  const result = await db
-    .prepare(
-      `SELECT ${NOTIFICATION_MESSAGE_SELECT_COLUMNS}
-       FROM notification_messages
-       WHERE notification_id IN (${placeholders})
-       ORDER BY created_at ASC, id ASC`,
-    )
-    .bind(...notifications.map((item) => item.id))
-    .all<Record<string, unknown>>();
-  const grouped = new Map<string, NotificationMessageRecord[]>();
-  for (const row of result.results ?? []) {
-    const message = mapNotificationMessage(row);
-    const messages = grouped.get(message.notificationId) ?? [];
-    messages.push(message);
-    grouped.set(message.notificationId, messages);
-  }
-  return notifications.map((notification) => ({
-    ...notification,
-    messages: grouped.get(notification.id) ?? [],
-  }));
-}
-
 export async function getNotificationById(
   db: D1Database,
   id: string,
@@ -469,8 +167,7 @@ export async function getNotificationById(
   if (!row) {
     return null;
   }
-  const [notification] = await hydrateNotificationMessages(db, [mapNotification(row)]);
-  return notification ?? null;
+  return mapNotification(row);
 }
 
 export async function listNotifications(
@@ -493,8 +190,8 @@ export async function listNotifications(
     const createdAtIndex = bindings.length + 1;
     const idIndex = bindings.length + 2;
     conditions.push(
-      `(COALESCE(last_event_at, created_at) < ?${createdAtIndex} OR ` +
-        `(COALESCE(last_event_at, created_at) = ?${createdAtIndex} AND id < ?${idIndex}))`,
+      `(created_at < ?${createdAtIndex} OR ` +
+        `(created_at = ?${createdAtIndex} AND id < ?${idIndex}))`,
     );
     bindings.push(payload.cursor.createdAt, payload.cursor.id);
   }
@@ -506,7 +203,7 @@ export async function listNotifications(
       `SELECT ${NOTIFICATION_SELECT_COLUMNS}
        FROM notifications
        WHERE ${conditions.join(" AND ")}
-       ORDER BY COALESCE(last_event_at, created_at) DESC, id DESC
+       ORDER BY created_at DESC, id DESC
        LIMIT ?${limitIndex}`,
     )
     .bind(...bindings)
@@ -515,7 +212,7 @@ export async function listNotifications(
   const rows = (result.results ?? []).map((row) => mapNotification(row));
   const hasNext = rows.length > limit;
   const page = hasNext ? rows.slice(0, limit) : rows;
-  const items = await hydrateNotificationMessages(db, page);
+  const items = page;
   const last = items.at(-1);
   return {
     items,
@@ -534,37 +231,6 @@ function targetOf(item: NotificationTarget): NotificationTarget {
   };
 }
 
-function commonTarget(messages: NotificationMessageRecord[]): NotificationTarget {
-  const first = messages[0];
-  if (!first) {
-    return targetOf({
-      submissionId: null,
-      parentSubmissionId: null,
-      markerId: null,
-      poiHash: null,
-      poiType: null,
-    });
-  }
-  const target = targetOf(first);
-  const matches = messages.every(
-    (message) =>
-      message.submissionId === target.submissionId &&
-      message.parentSubmissionId === target.parentSubmissionId &&
-      message.markerId === target.markerId &&
-      message.poiHash === target.poiHash &&
-      message.poiType === target.poiType,
-  );
-  return matches
-    ? target
-    : {
-        submissionId: null,
-        parentSubmissionId: null,
-        markerId: null,
-        poiHash: null,
-        poiType: null,
-      };
-}
-
 function minimalPayload(
   type: NotificationType,
   payload: Record<string, unknown>,
@@ -575,60 +241,19 @@ function minimalPayload(
   return { kind: payload.kind === "image" ? "image" : "comment" };
 }
 
-function serializeMessage(
-  parent: NotificationRecord,
-  message: NotificationMessageRecord,
-): SerializedNotificationItem {
-  return {
-    id: message.id,
-    type: parent.type,
-    payload: minimalPayload(parent.type, message.payload),
-    target: targetOf(message),
-    readAt: parent.readAt,
-    createdAt: message.createdAt,
-    isMultiMsg: false,
-    messages: [],
-  };
-}
-
 export function serializeNotificationItem(
   notification: NotificationRecord,
 ): SerializedNotificationItem {
-  const messages = notification.messages;
-  if (messages.length <= 1) {
-    const message = messages[0];
-    return {
-      id: notification.id,
-      type: notification.type,
-      payload: minimalPayload(notification.type, message?.payload ?? notification.payload),
-      target: message ? targetOf(message) : targetOf(notification),
-      readAt: notification.readAt,
-      createdAt: message?.createdAt ?? notification.createdAt,
-      isMultiMsg: false,
-      messages: [],
-    };
-  }
-
-  const firstPayload = minimalPayload(
-    notification.type,
-    messages[0]?.payload ?? notification.payload,
-  );
-  const kind =
-    firstPayload.kind === "image" || firstPayload.kind === "comment"
-      ? firstPayload.kind
-      : undefined;
   return {
     id: notification.id,
     type: notification.type,
-    payload: {
-      ...(kind ? { kind } : {}),
-      messageCount: messages.length,
-    },
-    target: commonTarget(messages),
+    payload: minimalPayload(notification.type, notification.payload),
+    target: targetOf(notification),
     readAt: notification.readAt,
     createdAt: notification.createdAt,
-    isMultiMsg: true,
-    messages: messages.map((message) => serializeMessage(notification, message)),
+    ...(notification.projectedAt ? { projectedAt: notification.projectedAt } : {}),
+    isMultiMsg: false,
+    messages: [],
   };
 }
 
@@ -651,7 +276,7 @@ export async function getNotificationUnreadCounts(
 }
 
 // Use the same cutoff in storage and live events so delayed read delivery cannot
-// mark a subsequently created or reopened aggregate read.
+// mark a subsequently projected notification read, even if its event is older.
 export async function markNotificationRead(
   db: D1Database,
   payload: { userId: string; category: NotificationCategory; readAt?: string; id: string },
@@ -664,7 +289,7 @@ export async function markNotificationRead(
          AND recipient_user_id = ?2
          AND category = ?3
          AND read_at IS NULL
-         AND julianday(COALESCE(last_event_at, created_at)) <= julianday(?4)`,
+         AND julianday(MAX(created_at,projected_at)) <= julianday(?4)`,
     )
     .bind(payload.id, payload.userId, payload.category, payload.readAt ?? new Date().toISOString())
     .run();
@@ -687,7 +312,7 @@ export async function markNotificationsRead(
          AND category = ?2
          AND id IN (SELECT value FROM json_each(?4))
          AND read_at IS NULL
-         AND julianday(COALESCE(last_event_at, created_at)) <= julianday(?3)`,
+         AND julianday(MAX(created_at,projected_at)) <= julianday(?3)`,
     )
     .bind(
       payload.userId,
@@ -710,7 +335,7 @@ export async function markAllNotificationsRead(
        WHERE recipient_user_id = ?1
          AND category = ?2
          AND read_at IS NULL
-         AND julianday(COALESCE(last_event_at, created_at)) <= julianday(?3)`,
+         AND julianday(MAX(created_at,projected_at)) <= julianday(?3)`,
     )
     .bind(payload.userId, payload.category, payload.readAt ?? new Date().toISOString())
     .run();

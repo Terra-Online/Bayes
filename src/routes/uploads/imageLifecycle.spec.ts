@@ -59,7 +59,7 @@ function persistedState() {
     "ugc_submission_upvotes",
     "ugc_submission_flags",
     "notifications",
-    "notification_messages",
+    "ugc_vote_events",
     "ugc_snapshots_review_audit",
   ].map((table) => database.sqlite.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all());
 }

@@ -63,7 +63,7 @@ function persistedState() {
     "ugc_snapshots",
     "ugc_submission_flags",
     "notifications",
-    "notification_messages",
+    "ugc_vote_events",
     "ugc_snapshots_review_audit",
   ].map((table) => database.sqlite.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all());
 }
@@ -209,16 +209,13 @@ describe("image votes", () => {
     expect(await publicImage("other-reader")).toMatchObject({ upvoteCount: 1, upvoted: false });
     expect(
       database.sqlite
-        .prepare(
-          "SELECT recipient_user_id, submission_id, category, message_count FROM notifications",
-        )
+        .prepare("SELECT recipient_user_id, submission_id, category FROM notifications")
         .all(),
     ).toEqual([
       {
         recipient_user_id: "author",
         submission_id: "photo",
         category: "community",
-        message_count: 1,
       },
     ]);
     expect(liveNotifications).toEqual([

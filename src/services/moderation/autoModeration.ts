@@ -17,7 +17,7 @@ import {
 } from "@/repositories/submission/reviewSnapshot";
 import { applyUserPointsDelta } from "@/repositories/users";
 import { getModerationPointsDeltaWithDailyBackoff } from "@/services/karma/moderationPoints";
-import { publishNotificationsCreated } from "@/services/notify/live";
+import { hintUgcEvent } from "@/services/notify/hints";
 import type { Bindings } from "@/types/app";
 
 import { notifySubmissionModerationResult } from "./notifications";
@@ -204,14 +204,7 @@ async function applyAutoModerationDecision(
   if (transition.outcome === "ignored") {
     return null;
   }
-  if (transition.notifications.length > 0) {
-    await publishNotificationsCreated(bindings, transition.notifications).catch((error) => {
-      console.warn("submission notification fanout failed", {
-        submissionId: submission.id,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    });
-  }
+  await hintUgcEvent(bindings, transition.event);
 
   await notifySubmissionModerationResult(bindings, {
     submission,

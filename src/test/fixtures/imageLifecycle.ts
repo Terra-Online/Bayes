@@ -14,7 +14,7 @@ export interface PersistedImageState {
   votes: Record<string, SQLOutputValue>[];
   flags: Record<string, SQLOutputValue>[];
   notifications: Record<string, SQLOutputValue>[];
-  messages: Record<string, SQLOutputValue>[];
+  voteEvents: Record<string, SQLOutputValue>[];
   reviews: Record<string, SQLOutputValue>[];
 }
 
@@ -113,7 +113,7 @@ export function createImageLifecycleFixture(): ImageLifecycleFixture {
         .prepare("SELECT * FROM ugc_submission_flags ORDER BY submission_id, user_id")
         .all(),
       notifications: database.sqlite.prepare("SELECT * FROM notifications ORDER BY id").all(),
-      messages: database.sqlite.prepare("SELECT * FROM notification_messages ORDER BY id").all(),
+      voteEvents: database.sqlite.prepare("SELECT * FROM ugc_vote_events ORDER BY id").all(),
       reviews: database.sqlite
         .prepare("SELECT * FROM ugc_snapshots_review_audit ORDER BY rowid")
         .all(),

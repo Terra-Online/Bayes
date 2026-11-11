@@ -458,7 +458,7 @@ describe("automatic moderation", () => {
 });
 
 describe("automatic moderation recovery and preserved decisions", () => {
-  it.each(["notification", "points"] as const)(
+  it.each(["audit", "points"] as const)(
     "preserves the separate commit boundary when the %s write fails, including a retry",
     async (failure) => {
       submission({ id: "waiting", status: "pending_openai" });
@@ -466,9 +466,9 @@ describe("automatic moderation recovery and preserved decisions", () => {
       const headers = createReviewerSession("a");
       // Fail a real database write, leaving the production workflow and transaction real.
       database.sqlite.exec(
-        failure === "notification"
-          ? `CREATE TEMP TRIGGER fail_review_write BEFORE INSERT ON notification_messages
-           BEGIN SELECT RAISE(ABORT, 'notification write failed'); END`
+        failure === "audit"
+          ? `CREATE TEMP TRIGGER fail_review_write BEFORE INSERT ON ugc_snapshots_review_audit
+           BEGIN SELECT RAISE(ABORT, 'audit write failed'); END`
           : `CREATE TEMP TRIGGER fail_review_write BEFORE UPDATE OF points ON users
            BEGIN SELECT RAISE(ABORT, 'points write failed'); END`,
       );
@@ -476,19 +476,19 @@ describe("automatic moderation recovery and preserved decisions", () => {
       const failed = await request("/run", options);
       expect(failed.status).toBe(500);
       expect(storedSnapshot("waiting")).toMatchObject({
-        review_status: failure === "notification" ? "pending_openai" : "approved",
+        review_status: failure === "audit" ? "pending_openai" : "approved",
       });
       expect(authorPoints()).toBe(20);
-      expect(reviewAudits()).toHaveLength(failure === "notification" ? 0 : 1);
-      expect(notificationMessages()).toHaveLength(failure === "notification" ? 0 : 1);
-      expect(liveMessages).toHaveLength(failure === "notification" ? 0 : 1);
-      expect(translationMessages).toHaveLength(failure === "notification" ? 0 : 1);
+      expect(reviewAudits()).toHaveLength(failure === "audit" ? 0 : 1);
+      expect(notificationMessages()).toHaveLength(failure === "audit" ? 0 : 1);
+      expect(liveMessages).toHaveLength(failure === "audit" ? 0 : 1);
+      expect(translationMessages).toHaveLength(failure === "audit" ? 0 : 1);
       database.sqlite.exec("DROP TRIGGER fail_review_write");
       const retry = await request("/run", options);
       expect(retry.status).toBe(200);
       expect(storedSnapshot("waiting")).toMatchObject({ review_status: "approved" });
       // A committed review is not replayed to recover a failed independent points write.
-      expect(authorPoints()).toBe(failure === "notification" ? 22 : 20);
+      expect(authorPoints()).toBe(failure === "audit" ? 22 : 20);
       expect(reviewAudits()).toHaveLength(1);
       expect(notificationMessages()).toHaveLength(1);
       expect(liveMessages).toHaveLength(1);

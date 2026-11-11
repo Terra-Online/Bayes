@@ -88,6 +88,10 @@ export async function testNotifications(t, { worker, db, read, connect, authHead
           await db
             .prepare("UPDATE notifications SET read_at = NULL WHERE id = 'owner-notification'")
             .run();
+          // Fixture-only reopening: individual inbox entries never reopen in production.
+          await db
+            .prepare("UPDATE notification_counters SET system_unread=1 WHERE user_id='user'")
+            .run();
           const response = await worker.dispatchFetch(`http://localhost/notify/v1/${path}`, {
             method,
             headers: { ...authHeaders, "content-type": "application/json" },

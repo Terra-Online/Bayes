@@ -226,7 +226,7 @@ it("preserves self-report policy, distinguishes missing/kind mismatch, and only 
   });
 });
 
-it("preserves like timestamps on duplicate and cancel, aggregates reactivation, and never expires groups for ineligible writes", async () => {
+it("preserves like timestamps on duplicate and cancel and delivers each reactivation independently", async () => {
   vi.useFakeTimers({ toFake: ["Date"] });
   try {
     vi.setSystemTime(new Date("2026-10-29T00:00:00.000Z"));
@@ -240,8 +240,8 @@ it("preserves like timestamps on duplicate and cancel, aggregates reactivation, 
     );
     // A second real set in the same millisecond is a new event, a duplicate set is not.
     await post("/images/image/upvote", {});
-    expect(database.sqlite.prepare("SELECT message_count FROM notifications").get()).toEqual({
-      message_count: 2,
+    expect(database.sqlite.prepare("SELECT COUNT(*) AS count FROM notifications").get()).toEqual({
+      count: 2,
     });
     database.sqlite.exec("UPDATE notifications SET read_at='read'");
     vi.setSystemTime(new Date("2026-10-29T07:00:00.000Z"));
@@ -251,13 +251,8 @@ it("preserves like timestamps on duplicate and cancel, aggregates reactivation, 
     await post("/images/image/unvote", {});
     await post("/images/image/upvote", {});
     expect(
-      database.sqlite
-        .prepare("SELECT message_count,read_at FROM notifications ORDER BY created_at")
-        .all(),
-    ).toEqual([
-      { message_count: 2, read_at: "read" },
-      { message_count: 1, read_at: null },
-    ]);
+      database.sqlite.prepare("SELECT read_at FROM notifications ORDER BY rowid").all(),
+    ).toEqual([{ read_at: "read" }, { read_at: "read" }, { read_at: null }]);
     expect(database.sqlite.prepare("SELECT created_at FROM ugc_submission_upvotes").get()).toEqual({
       created_at: "2026-10-29T07:00:00.000Z",
     });
@@ -285,16 +280,16 @@ it("rolls reports back on persistence failure without external notifications", a
   expect(mocks.webhookQueue.send).toHaveBeenCalledTimes(1);
 });
 
-it("rolls image likes and notification aggregation back together when either write fails", async () => {
+it("rolls image likes and their audit back together when either write fails", async () => {
   insertImageSnapshot(database.sqlite, { id: "image", userId: "author" });
-  for (const table of ["ugc_submission_upvotes", "notification_messages"]) {
+  for (const table of ["ugc_submission_upvotes", "ugc_vote_events"]) {
     database.sqlite.exec(`CREATE TRIGGER fail_vote BEFORE INSERT ON ${table}
       BEGIN SELECT RAISE(ABORT,'vote unavailable'); END`);
     expect((await post("/images/image/upvote", {})).status).toBe(500);
     for (const name of [
       "ugc_submission_upvotes",
       "notifications",
-      "notification_messages",
+      "ugc_vote_events",
       "notification_counters",
     ]) {
       expect(database.sqlite.prepare(`SELECT * FROM ${name}`).all()).toEqual([]);
@@ -302,8 +297,8 @@ it("rolls image likes and notification aggregation back together when either wri
     database.sqlite.exec("DROP TRIGGER fail_vote");
   }
   expect((await post("/images/image/upvote", {})).status).toBe(200);
-  expect(database.sqlite.prepare("SELECT message_count FROM notifications").get()).toEqual({
-    message_count: 1,
+  expect(database.sqlite.prepare("SELECT COUNT(*) AS count FROM notifications").get()).toEqual({
+    count: 1,
   });
 });
 
@@ -347,7 +342,7 @@ it.each(["comment", "image"] as const)(
     ]);
     expect(payload.items[0]).not.toHaveProperty("reportSnapshotId");
     const audits = database.sqlite.prepare("SELECT * FROM ugc_snapshots_review_audit").all();
-    const messages = database.sqlite.prepare("SELECT * FROM notification_messages").all();
+    const messages = database.sqlite.prepare("SELECT * FROM ugc_vote_events").all();
     expect(
       await (await management(`/${id}/status`, { action: "clear_flags" })).json(),
     ).toMatchObject({ ok: true, outcome: "committed" });
@@ -361,7 +356,7 @@ it.each(["comment", "image"] as const)(
     expect(database.sqlite.prepare("SELECT * FROM ugc_snapshots_review_audit").all()).toEqual(
       audits,
     );
-    expect(database.sqlite.prepare("SELECT * FROM notification_messages").all()).toEqual(messages);
+    expect(database.sqlite.prepare("SELECT * FROM ugc_vote_events").all()).toEqual(messages);
     expect(
       database.sqlite.prepare("SELECT deleted_at FROM ugc_submissions WHERE id=?").get(id),
     ).toEqual({ deleted_at: "gone" });
