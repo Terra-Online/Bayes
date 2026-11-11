@@ -163,7 +163,7 @@ export async function commitArchiveProgressSync(
       ),
   );
   statements.push(
-    db.prepare("UPDATE users SET last_active = CURRENT_TIMESTAMP WHERE uid = ?1").bind(options.uid),
+    db.prepare("UPDATE users SET last_active = CURRENT_TIMESTAMP WHERE id = ?1").bind(options.uid),
   );
   await db.batch(statements);
 }

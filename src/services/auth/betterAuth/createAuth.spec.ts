@@ -173,9 +173,9 @@ describe("completed authentication context reuse", () => {
       "D1 temporarily unavailable",
     );
     database.hooks.beforeQuery = undefined;
-    database.sqlite.exec("ALTER TABLE auth_users RENAME COLUMN email TO invalid_email");
+    database.sqlite.exec("ALTER TABLE users RENAME COLUMN email TO invalid_email");
     await expect(readInitializedContext(createAuth(env))).rejects.toThrow();
-    database.sqlite.exec("ALTER TABLE auth_users RENAME COLUMN invalid_email TO email");
+    database.sqlite.exec("ALTER TABLE users RENAME COLUMN invalid_email TO email");
     const context = await readInitializedContext(createAuth(env));
     expect(await readInitializedContext(createAuth(env))).not.toBe(context);
     expect(schemaReads()).toBe(2);

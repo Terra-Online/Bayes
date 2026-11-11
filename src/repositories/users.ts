@@ -11,11 +11,10 @@ export interface UserRecord {
   uidNumber: number;
   uidSuffix: string;
   email: string;
-  passwordHash: string;
   role: Role;
   avt: number;
   nickname: string;
-  nicknameCustomized: boolean;
+  nicknameConfirmed: boolean;
   progressVersion: number;
   progressMarker: string;
   progressChecksum: string;
@@ -34,12 +33,14 @@ export interface UserRecord {
   lastActive: string;
 }
 
-export interface EnsureUserProfilePayload {
-  uid: string;
+export interface CreateUserInput {
+  id: string;
   email: string;
-  displayName?: string;
-  nickname?: string;
-  avt?: number;
+  name: string;
+  emailVerified: boolean;
+  image: string | null;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 function normalizeUidSuffix(raw: string | undefined): string {
@@ -119,27 +120,6 @@ export function formatPublicUid(uidNumber: number, uidSuffix: string): string {
   return `${normalizedNumber}${normalizedSuffix}`;
 }
 
-async function allocateNextUidNumber(db: D1Database): Promise<number> {
-  try {
-    const row = await db
-      .prepare("INSERT INTO user_uid_sequence DEFAULT VALUES RETURNING id")
-      .first<{ id: number | string }>();
-
-    const sequenceValue = Number(row?.id ?? Number.NaN);
-    if (Number.isFinite(sequenceValue) && sequenceValue > 0) {
-      return UID_START + Math.floor(sequenceValue);
-    }
-  } catch (error) {
-    const message = getErrorMessage(error);
-    if (message.includes("user_uid_sequence") || message.includes("RETURNING")) {
-      throw new Error("UID_SEQUENCE_NOT_READY_MIGRATION_REQUIRED");
-    }
-    throw error;
-  }
-
-  throw new Error("UID_SEQUENCE_NOT_READY_MIGRATION_REQUIRED");
-}
-
 function mapUser(row: Record<string, unknown>): UserRecord {
   const role = normalizeRole(row.role);
   const points = Number(row.points ?? 0);
@@ -147,15 +127,14 @@ function mapUser(row: Record<string, unknown>): UserRecord {
   const karma = Number.isFinite(karmaFromDb) ? karmaFromDb : pointsToKarma(points);
 
   return {
-    uid: String(row.uid),
+    uid: String(row.id),
     uidNumber: Number(row.uid_number ?? 0),
     uidSuffix: normalizeUidSuffix(typeof row.uid_suffix === "string" ? row.uid_suffix : undefined),
     email: String(row.email),
-    passwordHash: String(row.password_hash),
     role,
     avt: Number(row.avt ?? 0),
     nickname: String(row.nickname),
-    nicknameCustomized: Number(row.nickname_customized ?? 0) === 1,
+    nicknameConfirmed: Number(row.nickname_confirmed ?? 0) === 1,
     progressVersion: Number(row.progress_version ?? 0),
     progressMarker: String(row.progress_marker ?? ""),
     progressChecksum: String(row.progress_checksum ?? ""),
@@ -182,17 +161,9 @@ function mapUser(row: Record<string, unknown>): UserRecord {
   };
 }
 
-export async function getUserByEmail(db: D1Database, email: string): Promise<UserRecord | null> {
-  const row = await db
-    .prepare("SELECT * FROM users WHERE email = ?1 LIMIT 1")
-    .bind(email)
-    .first<Record<string, unknown>>();
-  return row ? mapUser(row) : null;
-}
-
 export async function getUserByUid(db: D1Database, uid: string): Promise<UserRecord | null> {
   const row = await db
-    .prepare("SELECT * FROM users WHERE uid = ?1 LIMIT 1")
+    .prepare("SELECT * FROM users WHERE id = ?1 LIMIT 1")
     .bind(uid)
     .first<Record<string, unknown>>();
   return row ? mapUser(row) : null;
@@ -237,176 +208,87 @@ function normalizeNickname(raw: string | undefined, uid: string, email?: string)
   return Array.from(new Set(candidates));
 }
 
-export async function ensureUserProfile(
-  db: D1Database,
-  payload: EnsureUserProfilePayload,
-): Promise<UserRecord> {
-  const existing = await getUserByUid(db, payload.uid);
-  if (existing) {
-    return refreshUserActivity(db, existing, payload.email.toLowerCase());
-  }
-
-  const existingByEmail = await getUserByEmail(db, payload.email.toLowerCase());
-  if (existingByEmail) {
-    return refreshUserActivity(db, existingByEmail, existingByEmail.email);
-  }
-
-  const email = payload.email.toLowerCase();
-  const nicknameCandidates = normalizeNickname(
-    payload.nickname ?? payload.displayName,
-    payload.uid,
-    email,
-  );
-  const avt = Number.isFinite(payload.avt) ? Number(payload.avt) : 0;
-  const shouldMarkNicknameCustomized = Boolean(
-    payload.nickname && payload.nickname.trim().length > 0,
-  );
-  const fallbackNickname = nicknameCandidates[0] ?? payload.uid;
-  const initialUidSuffix = shouldMarkNicknameCustomized
-    ? buildUidSuffixFromNickname(payload.nickname as string)
-    : buildUidSuffixFromNickname(fallbackNickname);
-
-  for (let uidAttempt = 0; uidAttempt < 5; uidAttempt += 1) {
-    const uidNumber = await allocateNextUidNumber(db);
-
-    for (const nickname of nicknameCandidates) {
-      const nextUidSuffix = shouldMarkNicknameCustomized
-        ? initialUidSuffix
-        : buildUidSuffixFromNickname(nickname);
-
-      try {
-        await db
-          .prepare(
-            `INSERT INTO users (uid, uid_number, uid_suffix, email, password_hash, role, avt, nickname, nickname_customized, email_verified)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)`,
-          )
+/** The sequence allocation and complete user row commit or roll back together. */
+export async function createUser(db: D1Database, input: CreateUserInput): Promise<void> {
+  const candidates = normalizeNickname(input.name, input.id, input.email);
+  for (const nickname of candidates) {
+    try {
+      await db.batch([
+        db.prepare("INSERT INTO user_uid_sequence DEFAULT VALUES"),
+        db
+          .prepare(`INSERT INTO users
+          (id, email, name, email_verified, image, created_at, updated_at,
+           uid_number, uid_suffix, nickname, nickname_confirmed)
+          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7,
+            ?8 + (SELECT MAX(id) FROM user_uid_sequence), ?9, ?10, 0)`)
           .bind(
-            payload.uid,
-            uidNumber,
-            nextUidSuffix,
-            email,
-            "better-auth-managed",
-            "n",
-            avt,
+            input.id,
+            input.email.toLowerCase(),
+            input.name,
+            input.emailVerified ? 1 : 0,
+            input.image,
+            input.createdAt.toISOString(),
+            input.updatedAt.toISOString(),
+            UID_START,
+            buildUidSuffixFromNickname(nickname),
             nickname,
-            shouldMarkNicknameCustomized ? 1 : 0,
-            "false",
-          )
-          .run();
-
-        const created = await getUserByUid(db, payload.uid);
-        if (created) {
-          return created;
-        }
-      } catch (error) {
-        const message = getErrorMessage(error);
-        if (message.includes("users.nickname")) {
-          continue;
-        }
-        if (message.includes("users.uid") || message.includes("users.email")) {
-          // Concurrent requests can race on first profile bootstrap. If another
-          // request already inserted the same user, return that row instead of 500.
-          const createdByUid = await getUserByUid(db, payload.uid);
-          if (createdByUid) {
-            return createdByUid;
-          }
-
-          const createdByEmail = await getUserByEmail(db, email);
-          if (createdByEmail && createdByEmail.uid === payload.uid) {
-            return createdByEmail;
-          }
-
-          if (createdByEmail && createdByEmail.uid !== payload.uid) {
-            throw new Error("EMAIL_ALREADY_BOUND_TO_ANOTHER_USER");
-          }
-
-          continue;
-        }
-        if (message.includes("users.uid_number") || message.includes("idx_users_uid_number")) {
-          break;
-        }
-        if (message.includes("UID_SEQUENCE_NOT_READY_MIGRATION_REQUIRED")) {
-          throw new Error(message);
-        }
-        throw new Error(message);
+          ),
+      ]);
+      return;
+    } catch (error) {
+      // A provider's display name is not unique. Retry with a different default;
+      // the failed batch has also rolled back its sequence allocation.
+      if (!getErrorMessage(error).includes("users.nickname")) {
+        throw error;
       }
     }
   }
-
-  const created = await getUserByUid(db, payload.uid);
-  if (created) {
-    return created;
-  }
-
-  throw new Error("Unable to create profile for authenticated user.");
+  throw new Error("Unable to allocate a unique default nickname.");
 }
 
-async function refreshUserActivity(
-  db: D1Database,
-  user: UserRecord,
-  email: string,
-): Promise<UserRecord> {
+export async function readSessionUser(db: D1Database, id: string): Promise<UserRecord> {
+  const user = await getUserByUid(db, id);
+  if (!user) {
+    throw new Error("Authenticated user is missing from users.");
+  }
+  return refreshUserActivity(db, user);
+}
+
+async function refreshUserActivity(db: D1Database, user: UserRecord): Promise<UserRecord> {
   const lastActive = Date.parse(
     user.lastActive.includes("T") ? user.lastActive : `${user.lastActive.replace(" ", "T")}Z`,
   );
-  if (
-    user.email === email &&
-    Number.isFinite(lastActive) &&
-    Date.now() - lastActive < USER_ACTIVITY_UPDATE_INTERVAL_MS
-  ) {
+  if (Number.isFinite(lastActive) && Date.now() - lastActive < USER_ACTIVITY_UPDATE_INTERVAL_MS) {
     return user;
   }
-
   const row = await db
-    .prepare(
-      `UPDATE users
-     SET email = ?2, last_active = CURRENT_TIMESTAMP
-     WHERE uid = ?1
-       AND (email <> ?2 OR datetime(last_active) IS NULL OR datetime(last_active) <= datetime('now', '-1 hour'))
-     RETURNING *`,
-    )
-    .bind(user.uid, email)
+    .prepare(`UPDATE users SET last_active = CURRENT_TIMESTAMP
+    WHERE id = ?1 AND (datetime(last_active) IS NULL OR datetime(last_active) <= datetime('now', '-1 hour'))
+    RETURNING *`)
+    .bind(user.uid)
     .first<Record<string, unknown>>();
   return row ? mapUser(row) : user;
 }
 
 export async function saveUserProfile(
   db: D1Database,
-  payload: {
-    uid: string;
-    nickname: string;
-    avatar?: number;
-    uidSuffix: string;
-    nicknameCustomized: boolean;
-  },
+  payload: { uid: string; nickname: string; avatar?: number },
 ): Promise<UserRecord | null> {
   try {
-    await db
-      .prepare(
-        `UPDATE users
-         SET nickname = ?2,
-             uid_suffix = ?3,
-             avt = COALESCE(?4, avt),
-             nickname_customized = ?5,
-             last_active = CURRENT_TIMESTAMP
-         WHERE uid = ?1`,
-      )
-      .bind(
-        payload.uid,
-        payload.nickname,
-        payload.uidSuffix,
-        payload.avatar ?? null,
-        payload.nicknameCustomized ? 1 : 0,
-      )
-      .run();
+    const row = await db
+      .prepare(`UPDATE users
+      SET nickname = ?2, avt = COALESCE(?3, avt), nickname_confirmed = 1,
+          updated_at = CURRENT_TIMESTAMP, last_active = CURRENT_TIMESTAMP
+      WHERE id = ?1 RETURNING *`)
+      .bind(payload.uid, payload.nickname, payload.avatar ?? null)
+      .first<Record<string, unknown>>();
+    return row ? mapUser(row) : null;
   } catch (error) {
-    const message = getErrorMessage(error);
-    if (message.includes("users.nickname")) {
+    if (getErrorMessage(error).includes("users.nickname")) {
       throw new Error("NICKNAME_CONFLICT");
     }
-    throw new Error(message);
+    throw error;
   }
-  return getUserByUid(db, payload.uid);
 }
 
 export interface UserProgressWrite {
@@ -442,7 +324,7 @@ export async function applyUserPointsDelta(
     .prepare(
       `UPDATE users
        SET points = MAX(0, points + ?2)
-       WHERE uid = ?1`,
+       WHERE id = ?1`,
     )
     .bind(uid, delta)
     .run();

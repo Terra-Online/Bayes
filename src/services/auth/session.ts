@@ -2,7 +2,7 @@
 // we use explicit data for this module's interface. HTTP objects stay inside this module.
 
 import { ApiError } from "@/lib/errors";
-import { ensureUserProfile, formatPublicUid } from "@/repositories/users";
+import { readSessionUser, formatPublicUid } from "@/repositories/users";
 import {
   buildSessionCredentialHeaders,
   createAuth,
@@ -253,11 +253,7 @@ async function resolveIdentity(
 }
 
 async function loadAuthUser(identity: AuthIdentity, lookup: AuthLookup): Promise<AuthUser> {
-  const profile = await ensureUserProfile(lookup.env.DB, {
-    uid: identity.uid,
-    email: identity.email,
-    displayName: identity.displayName,
-  });
+  const profile = await readSessionUser(lookup.env.DB, identity.uid);
 
   const authUser: AuthUser = {
     uid: profile.uid,
@@ -268,7 +264,7 @@ async function loadAuthUser(identity: AuthIdentity, lookup: AuthLookup): Promise
     email: profile.email,
     nickname: profile.nickname,
     registeredAt: profile.createdAt,
-    needsProfileSetup: !profile.nicknameCustomized,
+    needsProfileSetup: !profile.nicknameConfirmed,
   };
 
   storeCompleted(lookup, lookup.cache.users, authUser);

@@ -3,6 +3,7 @@ import {
   createCredentialRecoveryScope,
   isAutoRefreshableEndfieldError,
   recoverBindingCredentials,
+  readBindingCredentials,
 } from "@/services/official/auth/credentials";
 import type { DecryptedBinding } from "@/services/official/auth/types";
 import {
@@ -18,10 +19,9 @@ import {
 } from "@/services/official/client/positionSocket";
 import type { Bindings } from "@/types/app";
 
-import { prepareLocatorAccess, type LocatorIdentity } from "./access";
 import { getPositionCacheKey, writePositionCache } from "./cache";
 import { positionReconnectDelay } from "./reconnect";
-import type { PositionCacheEntry } from "./types";
+import type { PositionCacheEntry, LocatorIdentity } from "./types";
 
 export type LocatorStreamEvent =
   | { type: "status"; status: "connecting" | "connected" | "reconnecting"; reason?: string }
@@ -352,12 +352,12 @@ export function createPositionStream(
     }
     try {
       const identity = await input.resolveIdentity();
-      const resolved = await prepareLocatorAccess(identity, env);
+      const credentials = await readBindingCredentials(identity, env);
       if (closed) {
         return;
       }
-      userUid = resolved.uid;
-      binding = resolved.binding;
+      userUid = identity.uid;
+      binding = credentials;
       void bridgeUpstream(false);
     } catch (error) {
       emit({

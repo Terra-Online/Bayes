@@ -12,6 +12,7 @@ import { applyMigrations, migrations } from "@/test/database/migrations";
 import { insertAuthenticatedUser, type SessionHeaders } from "@/test/fixtures/auth";
 import { insertImageSnapshot } from "@/test/fixtures/imageSnapshots";
 import { insertSubmission as insertLegacySubmission } from "@/test/fixtures/legacySubmissions";
+import { insertLegacyUser } from "@/test/fixtures/legacyUsers";
 import { insertUser as seedUser } from "@/test/fixtures/users";
 import type { AppEnv } from "@/types/app";
 
@@ -198,7 +199,7 @@ describe("12-hour resumable karma evaluation", () => {
       database.sqlite.prepare("SELECT COUNT(*) AS count FROM users WHERE karma = 2").get()?.count,
     ).toBe(2001);
     expect(
-      database.sqlite.prepare("SELECT karma FROM users WHERE uid = 'pinned'").get()?.karma,
+      database.sqlite.prepare("SELECT karma FROM users WHERE id = 'pinned'").get()?.karma,
     ).toBe(5);
     const queriesAfterCompletedCycle = database.queries.length;
     expect(await evaluateKarmaIfDue(database.db, redis.redis)).toMatchObject({ evaluated: false });
@@ -221,7 +222,7 @@ describe("12-hour resumable karma evaluation", () => {
       { values: ["changed", 2, 0, 150, "2026-09-05 11:00:00", "n"], changes: 1 },
     ]);
     const sweep = database.queries.find((query) =>
-      query.sql.replace(/\s+/g, " ").includes("ORDER BY uid"),
+      query.sql.replace(/\s+/g, " ").includes("ORDER BY id"),
     )!;
     const aggregation = database.queries.find((query) => query.sql.includes("image_stats"))!;
     expect(database.explain(sweep)).toContain("idx_users_karma_sweep");
@@ -236,7 +237,7 @@ describe("12-hour resumable karma evaluation", () => {
       updated: 1,
     });
     expect(
-      database.sqlite.prepare("SELECT karma FROM users WHERE uid = 'inactive'").get()?.karma,
+      database.sqlite.prepare("SELECT karma FROM users WHERE id = 'inactive'").get()?.karma,
     ).toBe(0);
   });
 
@@ -310,7 +311,7 @@ describe("12-hour resumable karma evaluation", () => {
   it("does not punish imported stale records or reconstruct rejection from old notes", async () => {
     const imported = createTestDatabase(migrations.filter((file) => file < "0038"));
     try {
-      seedUser(imported.sqlite, { uid: "legacy", points: 150 });
+      insertLegacyUser(imported.sqlite, { uid: "legacy", points: 150, uid_number: 100001 });
       for (const [id, note] of [
         ["old-manual", "Rejected by moderator"],
         ["old-ai", "OpenAI moderation flagged: unsafe"],
@@ -325,6 +326,7 @@ describe("12-hour resumable karma evaluation", () => {
         });
       }
 
+      imported.sqlite.exec("INSERT INTO auth_users (id, name, email) VALUES ('legacy', 'Legacy', 'legacy@example.test')");
       applyMigrations(
         imported.sqlite,
         migrations.filter((file) => file >= "0038"),
@@ -361,7 +363,7 @@ describe("12-hour resumable karma evaluation", () => {
       insertKarmaUser(`user-${String(index).padStart(3, "0")}`);
     }
     database.sqlite.exec(`CREATE TRIGGER fail_second_chunk BEFORE UPDATE OF karma ON users
-      WHEN OLD.uid = 'user-090'
+      WHEN OLD.id = 'user-090'
       BEGIN SELECT RAISE(ABORT, 'second chunk failed'); END`);
     await expect(evaluateKarmaIfDue(database.db, redis.redis)).rejects.toThrow(
       "second chunk failed",
@@ -390,7 +392,7 @@ describe("12-hour resumable karma evaluation", () => {
         sql: 'select "name", "type" from "sqlite_master" where "type" in (?, ?) and "name" not like ? and "name" not like ? and "name" != ? and "name" != ?',
         values: ["table", "view", "sqlite_%", "_cf_%", "kysely_migration", "kysely_migration_lock"],
       },
-      ...["auth_users", "auth_sessions", "auth_accounts", "auth_verifications"].map((table) => ({
+      ...["users", "auth_sessions", "auth_accounts", "auth_verifications"].map((table) => ({
         sql: "SELECT * FROM pragma_table_info(?)",
         values: [table],
       })),
@@ -399,10 +401,10 @@ describe("12-hour resumable karma evaluation", () => {
         values: [manual.headers.authorization.slice("Bearer ".length)],
       },
       {
-        sql: 'select "primary".* from (select * from "auth_users" where "auth_users"."id" = ?) as "primary"',
+        sql: 'select "primary".* from (select * from "users" where "users"."id" = ?) as "primary"',
         values: ["karma-admin"],
       },
-      { sql: "SELECT * FROM users WHERE uid = ?1 LIMIT 1", values: ["karma-admin"] },
+      { sql: "SELECT * FROM users WHERE id = ?1 LIMIT 1", values: ["karma-admin"] },
     ];
     expect(
       database.queries.filter(
@@ -426,7 +428,7 @@ describe("12-hour resumable karma evaluation", () => {
     insertKarmaUser("first");
     let leaseExpiryInjected = false;
     database.hooks.beforeQuery = (sql) => {
-      if (sql.replace(/\s+/g, " ").includes("ORDER BY uid")) {
+      if (sql.replace(/\s+/g, " ").includes("ORDER BY id")) {
         database.hooks.beforeQuery = undefined;
         leaseExpiryInjected = true;
         vi.setSystemTime(START + 181_000);
@@ -436,7 +438,7 @@ describe("12-hour resumable karma evaluation", () => {
       "KARMA_EVALUATION_LEASE_LOST",
     );
     expect(leaseExpiryInjected).toBe(true);
-    expect(database.sqlite.prepare("SELECT karma FROM users WHERE uid='first'").get()).toEqual({
+    expect(database.sqlite.prepare("SELECT karma FROM users WHERE id='first'").get()).toEqual({
       karma: 0,
     });
     expect(await redis.get(CYCLE_KEY)).toMatchObject({ cursor: "" });
@@ -445,7 +447,7 @@ describe("12-hour resumable karma evaluation", () => {
       updated: 1,
       cycleComplete: true,
     });
-    expect(database.sqlite.prepare("SELECT karma FROM users WHERE uid='first'").get()).toEqual({
+    expect(database.sqlite.prepare("SELECT karma FROM users WHERE id='first'").get()).toEqual({
       karma: 2,
     });
   });
@@ -463,7 +465,7 @@ describe("12-hour resumable karma evaluation", () => {
       return result;
     });
     expect(await evaluateKarmaIfDue(database.db, redis.redis)).toMatchObject({ evaluated: false });
-    expect(database.sqlite.prepare("SELECT karma FROM users WHERE uid='first'").get()).toEqual({
+    expect(database.sqlite.prepare("SELECT karma FROM users WHERE id='first'").get()).toEqual({
       karma: 0,
     });
     expect(await redis.get(LEASE_KEY)).toBeNull();
@@ -547,7 +549,7 @@ describe("12-hour resumable karma evaluation", () => {
     database.hooks.beforeQuery = (sql) => {
       if (sql.startsWith("UPDATE users SET karma")) {
         database.hooks.beforeQuery = undefined;
-        database.sqlite.exec("UPDATE users SET points = 900, role = 'p' WHERE uid = 'first'");
+        database.sqlite.exec("UPDATE users SET points = 900, role = 'p' WHERE id = 'first'");
       }
     };
     expect(await runManually(manual)).toMatchObject({
@@ -558,8 +560,8 @@ describe("12-hour resumable karma evaluation", () => {
       selected: 1,
       updated: 1,
     });
-    expect(
-      database.sqlite.prepare("SELECT karma FROM users WHERE uid = 'first'").get()?.karma,
-    ).toBe(4);
+    expect(database.sqlite.prepare("SELECT karma FROM users WHERE id = 'first'").get()?.karma).toBe(
+      4,
+    );
   });
 });

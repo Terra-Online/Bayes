@@ -4,3 +4,5 @@ export type PositionCacheEntry = {
   data: Awaited<ReturnType<typeof getEndfieldPosition>>;
   refreshedAt: number;
 };
+
+export type LocatorIdentity = { uid: string };

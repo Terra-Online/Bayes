@@ -38,7 +38,7 @@ export async function clearSubmissionFlags(
 ): Promise<ManagementResult> {
   const operationId = crypto.randomUUID();
   const now = new Date().toISOString();
-  const authorized = "EXISTS (SELECT 1 FROM users WHERE uid=?2 AND role IN ('p','a','r'))";
+  const authorized = "EXISTS (SELECT 1 FROM users WHERE id=?2 AND role IN ('p','a','r'))";
   const result = await db.batch([
     db
       .prepare(`INSERT INTO ugc_submission_flag_audit

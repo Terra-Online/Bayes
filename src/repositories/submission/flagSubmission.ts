@@ -41,12 +41,12 @@ export async function setSubmissionReport(
       .prepare(`SELECT s.id, s.kind, s.user_id AS userId, s.poi_id AS markerId,
       s.poi_hash AS poiHash, s.poi_type AS poiType,
       v.public_snapshot_id AS snapshotId, r.file_path AS filePath,
-      u.uid AS authorUid,u.uid_number AS uidNumber,u.uid_suffix AS uidSuffix,
+      u.id AS authorUid,u.uid_number AS uidNumber,u.uid_suffix AS uidSuffix,
       u.nickname,u.role,u.karma,u.avt AS avatar,
       (SELECT COUNT(*) FROM ugc_submission_flags WHERE submission_id=s.id AND active=1) AS flagCount
       FROM ugc_submissions s JOIN v_ugc_submission_visibility v ON v.submission_id=s.id
       LEFT JOIN ugc_snapshots r ON r.id=v.public_snapshot_id
-      LEFT JOIN users u ON u.uid=s.user_id
+      LEFT JOIN users u ON u.id=s.user_id
       WHERE s.id=?1 AND s.kind=?2`)
       .bind(input.submissionId, input.kind),
     input.active

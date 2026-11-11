@@ -63,7 +63,11 @@ export function createAuthCacheFixture(): AuthCacheFixture {
       let claimed = false;
       const spy = vi.spyOn(database.db, "prepare").mockImplementation((sql) => {
         const statement = prepare(sql);
-        if (claimed || !new RegExp(`FROM ["\\x60]?${table}["\\x60]?\\s`, "i").test(sql)) {
+        const matches =
+          table === "users"
+            ? /^SELECT \* FROM users WHERE id/i.test(sql)
+            : new RegExp(`FROM ["\\x60]?${table}["\\x60]?\\s`, "i").test(sql);
+        if (claimed || !matches) {
           return statement;
         }
         claimed = true;

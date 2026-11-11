@@ -223,7 +223,7 @@ async function importR2(images, state) {
 }
 
 async function importDatabase(images) {
-  const userStatement = `INSERT INTO users (uid, email, password_hash, email_verified, role, avt, nickname, uid_number, uid_suffix, nickname_customized) VALUES (${sql(DEMO_USER_ID)}, 'demo-r2-sync@local.invalid', '!', 'true', 'n', 0, 'R2 Demo', 999999, 'DEMO', 1) ON CONFLICT(uid) DO NOTHING;`;
+  const userStatement = `INSERT INTO users (id, email, email_verified, role, avt, nickname, uid_number, uid_suffix, nickname_confirmed) VALUES (${sql(DEMO_USER_ID)}, 'demo-r2-sync@local.invalid', 0, 'n', 0, 'R2 Demo', 999999, 'MO', 1) ON CONFLICT(id) DO NOTHING;`;
   for (let cursor = 0; cursor < images.length; cursor += 200) {
     // Wrangler executes the complete SQL file in one local D1 batch.
     const statements = [];

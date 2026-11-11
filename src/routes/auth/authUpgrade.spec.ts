@@ -144,7 +144,7 @@ describe("Better Auth 1.7 with the production D1 table layout", () => {
     // Existing direct-API scenarios could resend immediately. Public sends honor cooldown.
     vi.setSystemTime(Date.now() + 121_000);
     const response = await request("/email-otp/send-verification-otp", { email, type: "sign-in" });
-    expect(response.status).toBe(200);
+    expect(response.status, JSON.stringify(vi.mocked(console.error).mock.calls)).toBe(200);
     const message = external.idMails.send.mock.calls.at(-1)![0];
     if (!("text" in message) || typeof message.text !== "string") {
       throw new Error("Expected text OTP mail");
@@ -165,11 +165,11 @@ describe("Better Auth 1.7 with the production D1 table layout", () => {
     const responses = await Promise.all([register(otp), register(otp)]);
     expect(
       responses.map((response) => response.status).sort(),
-      JSON.stringify(vi.mocked(console.error).mock.calls),
+      JSON.stringify(await Promise.all(responses.map((r) => r.clone().json()))),
     ).toEqual([200, 400]);
     const failed = responses.find((response) => !response.ok)!;
     expect(await failed.json()).toMatchObject({ code: "INVALID_OTP" });
-    expect(count("auth_users")).toBe(1);
+    expect(count("users")).toBe(1);
     expect(count("auth_sessions")).toBe(1);
     expect(count("auth_accounts")).toBe(1);
     // Adapter protocol guarantee: the consumed OTP is returned by the atomic delete.
@@ -184,6 +184,32 @@ describe("Better Auth 1.7 with the production D1 table layout", () => {
     expect(await login.json()).toMatchObject({ user: { email } });
   });
 
+  it("rolls back the user and UID allocation together and reuses the number on retry", async () => {
+    const otp = await issueOTP();
+    database.hooks.beforeQuery = (sql) => {
+      if (/^insert into users/i.test(sql)) {
+        throw new Error("synthetic user write failure");
+      }
+    };
+    expect((await register(otp)).status).toBe(500);
+    expect(count("users")).toBe(0);
+    expect(count("user_uid_sequence")).toBe(0);
+    expect(count("auth_sessions")).toBe(0);
+    database.hooks.beforeQuery = undefined;
+    expect((await register(await issueOTP())).status).toBe(200);
+    expect(
+      database.sqlite
+        .prepare("SELECT uid_number, role, avt, nickname_confirmed, email_verified FROM users")
+        .get(),
+    ).toEqual({
+      uid_number: 100001,
+      role: "n",
+      avt: 0,
+      nickname_confirmed: 0,
+      email_verified: 1,
+    });
+  });
+
   it("rejects wrong OTPs without creating a user and preserves the attempt budget", async () => {
     const otp = await issueOTP();
     const wrong = otp === "000000" ? "111111" : "000000";
@@ -191,15 +217,15 @@ describe("Better Auth 1.7 with the production D1 table layout", () => {
       expect((await register(wrong)).status).toBe(400);
     }
     expect((await register(otp)).status).toBe(403);
-    expect(count("auth_users")).toBe(0);
+    expect(count("users")).toBe(0);
     expect(count("auth_sessions")).toBe(0);
   });
 
   it("maps a real adapter email collision hidden behind a 500 to a safe 409", async () => {
     const otp = await issueOTP();
     database.hooks.beforeQuery = (sql) => {
-      if (/^insert into "auth_users"/i.test(sql)) {
-        throw new Error("D1_ERROR: UNIQUE constraint failed: auth_users.email: SQLITE_CONSTRAINT");
+      if (/^insert into "?users"?/i.test(sql)) {
+        throw new Error("D1_ERROR: UNIQUE constraint failed: users.email: SQLITE_CONSTRAINT");
       }
     };
     const response = await register(otp);
@@ -338,20 +364,19 @@ describe("Better Auth 1.7 with the production D1 table layout", () => {
     const response = await register(otp);
     expect(response.status).toBe(500);
     expect(await response.text()).not.toContain("password write failed");
-    expect(count("auth_users")).toBe(1);
+    expect(count("users")).toBe(1);
     expect(
-      database.sqlite.prepare("SELECT emailVerified FROM auth_users").get()!.emailVerified,
+      database.sqlite.prepare("SELECT email_verified AS emailVerified FROM users").get()!
+        .emailVerified,
     ).toBe(1);
     expect(count("auth_sessions")).toBe(0);
     expect(
-      database.queries
-        .map((query) => query.sql)
-        .some((sql) => /^delete from auth_users/i.test(sql)),
+      database.queries.map((query) => query.sql).some((sql) => /^delete from users/i.test(sql)),
     ).toBe(false);
     database.hooks.beforeQuery = undefined;
     const retry = await register(await issueOTP());
     expect(retry.status).toBe(200);
-    expect(count("auth_users")).toBe(1);
+    expect(count("users")).toBe(1);
   });
 
   it("cleans an unverified GitHub account on email proof and permits re-linking", async () => {
@@ -409,7 +434,7 @@ describe("Better Auth 1.7 with the production D1 table layout", () => {
       callbackURL: "https://opendfieldmap.org",
       disableRedirect: true,
     });
-    expect(response.status).toBe(200);
+    expect(response.status, JSON.stringify(vi.mocked(console.error).mock.calls)).toBe(200);
     const body = (await response.json()) as { url: string };
     const url = new URL(body.url);
     expect(url.hostname).toBe(host);

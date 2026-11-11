@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 
-import { executeNativeSql as sql } from "./native-test-database.mjs";
+import { executeNativeSql as sql, migrateNativeDatabase } from "./native-test-database.mjs";
 import { bundleFixture, deferred, Miniflare, root, within } from "./worker-test-runtime.mjs";
 
 const temporary = await mkdtemp(join(tmpdir(), "bayes-auth-regression-"));
@@ -22,7 +22,11 @@ async function runtime() {
   let release = deferred();
   const worker = new Miniflare({
     ...fixture,
-    d1Databases: { DB: "local-regression-primary", DB_SECOND: "local-regression-secondary" },
+    d1Databases: {
+      DB: "local-regression-primary",
+      DB_SECOND: "local-regression-secondary",
+      DB_MIGRATION: "local-user-migration",
+    },
     ratelimits: {
       OEM_PUBLIC_RATE_LIMIT: { namespace_id: "100", simple: { limit: 100, period: 60 } },
     },
@@ -57,20 +61,27 @@ async function runtime() {
         "0002_better_auth.sql",
         "0005_auth_verifications_unique_identifier.sql",
       ]) {
-        await sql(database, await readFile(join(root, "migrations", name), "utf8"));
+        await sql(
+          database,
+          (await readFile(join(root, "migrations", name), "utf8")).replaceAll(
+            "REFERENCES auth_users(id)",
+            "REFERENCES users(id)",
+          ),
+        );
       }
       await sql(
         database,
         `
         CREATE TABLE users (
-          uid TEXT PRIMARY KEY, email TEXT UNIQUE, password_hash TEXT DEFAULT '', role TEXT DEFAULT 'n',
-          karma INTEGER DEFAULT 0, avt INTEGER DEFAULT 1, nickname TEXT UNIQUE, nickname_customized INTEGER DEFAULT 1,
+          id TEXT PRIMARY KEY, email TEXT UNIQUE, name TEXT NOT NULL DEFAULT '', email_verified INTEGER NOT NULL DEFAULT 0, image TEXT, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, role TEXT DEFAULT 'n',
+          karma INTEGER DEFAULT 0, avt INTEGER DEFAULT 1, nickname TEXT UNIQUE, nickname_confirmed INTEGER DEFAULT 1,
           uid_number INTEGER DEFAULT 100001, uid_suffix TEXT DEFAULT 'AA',
           created_at TEXT DEFAULT CURRENT_TIMESTAMP, last_active TEXT DEFAULT CURRENT_TIMESTAMP
         );
-        INSERT INTO auth_users (id, name, email, emailVerified) VALUES ('${binding}-user', 'LocalUser', '${binding.toLowerCase()}@example.test', 1);
+        INSERT INTO users (id, email, name, nickname, email_verified) VALUES ('${binding}-user', '${binding.toLowerCase()}@example.test', 'LocalUser', 'LocalUser', 1);
         INSERT INTO auth_sessions (id, expiresAt, token, userId) VALUES ('${binding}-session', datetime('now', '+180 days'), 'same-local-token', '${binding}-user');
-        INSERT INTO users (uid, email, nickname) VALUES ('${binding}-user', '${binding.toLowerCase()}@example.test', 'LocalUser');
+        CREATE TABLE user_uid_sequence (id INTEGER PRIMARY KEY AUTOINCREMENT);
+        INSERT INTO user_uid_sequence (id) VALUES (1);
       `,
       );
     }
@@ -267,6 +278,67 @@ try {
           );
         },
       );
+      await t.test(
+        "populated native D1 migration preserves business data under the auth ID",
+        async () => {
+          const db = await worker.getD1Database("DB_MIGRATION");
+          const files = (await readdir(join(root, "migrations")))
+            .filter((file) => file.endsWith(".sql"))
+            .sort();
+          await migrateNativeDatabase(
+            db,
+            files.filter((file) => file < "0039"),
+          );
+          await sql(
+            db,
+            `
+          INSERT INTO auth_users (id, email, name, emailVerified) VALUES ('auth', 'owner@example.test', 'Owner', 1);
+          INSERT INTO users (uid, email, password_hash, nickname, uid_number, uid_suffix, points)
+            VALUES ('business', 'owner@example.test', '', 'Owner', 123456, 'AB', 31);
+          INSERT INTO endfield_bindings (uid, provider, server_id, role_id, cred_enc, token_enc)
+            VALUES ('business', 'skland', 1, 'role', 'cred', 'token');
+          INSERT INTO auth_sessions (id, token, expiresAt, userId) VALUES ('session', 'token', '2099-01-01', 'auth');
+        `,
+          );
+          await migrateNativeDatabase(db, ["0039_unified_users.sql"]);
+          assert.deepEqual(
+            await db.prepare("SELECT id, uid_number, uid_suffix, points FROM users").first(),
+            { id: "auth", uid_number: 123456, uid_suffix: "AB", points: 31 },
+          );
+          assert.equal(await db.prepare("SELECT uid FROM endfield_bindings").first("uid"), "auth");
+          assert.equal(
+            await db.prepare("SELECT userId FROM auth_sessions").first("userId"),
+            "auth",
+          );
+          assert.deepEqual((await db.prepare("PRAGMA foreign_key_check").all()).results, []);
+        },
+      );
+      await t.test("user creation rolls back its UID allocation on native D1", async () => {
+        const db = await worker.getD1Database("DB");
+        await sql(
+          db,
+          `CREATE TRIGGER reject_new_user BEFORE INSERT ON users
+          WHEN NEW.email = 'rollback@example.test'
+          BEGIN SELECT RAISE(ABORT, 'synthetic write failure'); END;`,
+        );
+        assert.equal((await request("/create-user?email=rollback@example.test")).status, 500);
+        assert.equal(
+          await db
+            .prepare("SELECT COUNT(*) FROM users WHERE email = 'rollback@example.test'")
+            .first("COUNT(*)"),
+          0,
+        );
+        assert.equal(await db.prepare("SELECT MAX(id) FROM user_uid_sequence").first("MAX(id)"), 1);
+        await sql(db, "DROP TRIGGER reject_new_user");
+        const created = await request("/create-user?email=rollback@example.test");
+        assert.equal(created.status, 200, await created.clone().text());
+        const user = await db
+          .prepare(
+            "SELECT uid_number, nickname_confirmed FROM users WHERE email = 'rollback@example.test'",
+          )
+          .first();
+        assert.deepEqual(user, { uid_number: 100002, nickname_confirmed: 0 });
+      });
     } finally {
       current.release();
       await worker.dispose();

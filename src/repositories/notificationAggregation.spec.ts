@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { migrations } from "@/test/database/migrations";
 import { insertImageSnapshot } from "@/test/fixtures/imageSnapshots";
+import { insertLegacyUser } from "@/test/fixtures/legacyUsers";
 import { insertSubmission as seedSubmission } from "@/test/fixtures/submissions";
 import { insertUser } from "@/test/fixtures/users";
 
@@ -526,7 +527,7 @@ describe("notification aggregation SQL", () => {
 
   it("removes legacy rejected notifications and lets the delete trigger repair unread counters", async () => {
     database = createTestDatabase(migrations.filter((file) => file < "0030"));
-    insertUser(database.sqlite, { uid: "user-1" });
+    insertLegacyUser(database.sqlite, { uid: "user-1" });
     database.sqlite.exec(`
       INSERT INTO notifications (
         id, recipient_user_id, category, type, payload_json, dedupe_key, created_at

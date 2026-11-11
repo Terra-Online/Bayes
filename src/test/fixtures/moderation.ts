@@ -141,7 +141,7 @@ export function createModerationTestFixture(): ModerationTestFixture {
   }
 
   function authorPoints(): SQLOutputValue {
-    return database.sqlite.prepare("SELECT points FROM users WHERE uid = 'author'").get()!.points;
+    return database.sqlite.prepare("SELECT points FROM users WHERE id = 'author'").get()!.points;
   }
 
   function storedSnapshot(id: string): ModerationRow | undefined {

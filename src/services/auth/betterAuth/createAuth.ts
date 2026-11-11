@@ -10,6 +10,7 @@ import { createAuthConfiguration } from "./configuration";
 import { sameAuthEnvironment } from "./environment";
 import * as schemaCache from "./schemaCache";
 import { wrapDatabaseWithSchemaCache, type SchemaQueryResults } from "./schemaCacheWrapper";
+import { installUserCreation } from "./userCreation";
 
 type AuthInvocation = { onError?: (error: unknown) => void };
 const authInvocation = new AsyncLocalStorage<AuthInvocation>();
@@ -53,6 +54,7 @@ export function createAuth(env: Bindings, options?: AuthInvocation): Auth {
     const requestEnv = { ...env };
     const { auth, wrapped } = buildAuth(requestEnv, currentSlot.schemaQueryResults);
     const ready = auth.$context.then(async (context) => {
+      installUserCreation(context.adapter, requestEnv.DB);
       await context.checkSchema?.();
       if (!currentSlot.schemaQueryResults) {
         currentSlot.schemaQueryResults = new Map(wrapped.getUncachedResults());

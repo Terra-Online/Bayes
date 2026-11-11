@@ -131,7 +131,7 @@ describe("OEMUserDO progress consistency", () => {
     expect(
       JSON.parse(
         String(
-          database.sqlite.prepare("SELECT * FROM users WHERE uid='A'").get()
+          database.sqlite.prepare("SELECT * FROM users WHERE id='A'").get()
             ?.progress_retained_point_ids,
         ),
       ),
@@ -155,7 +155,7 @@ describe("OEMUserDO progress consistency", () => {
       progress: { pointIds: ["p1"], retainedPointIds: ["legacy-old"] },
     });
     expect(
-      database.sqlite.prepare("SELECT * FROM users WHERE uid='A'").get()?.progress_version,
+      database.sqlite.prepare("SELECT * FROM users WHERE id='A'").get()?.progress_version,
     ).toBe(1);
     const replay = await request(syncRequest(markerIndexHash, firstRequest));
     expect(await replay.json()).toEqual(first);
@@ -179,7 +179,7 @@ describe("OEMUserDO progress consistency", () => {
       details: { current: { pointIds: ["p1"], retainedPointIds: ["legacy"] } },
     });
     expect(
-      database.sqlite.prepare("SELECT * FROM users WHERE uid='A'").get()?.progress_version,
+      database.sqlite.prepare("SELECT * FROM users WHERE id='A'").get()?.progress_version,
     ).toBe(1);
     await Promise.all(state.waits);
   });
@@ -192,7 +192,7 @@ describe("OEMUserDO progress consistency", () => {
     database.sqlite
       .prepare(`UPDATE users SET progress_version=1, progress_marker='Aw==',
       progress_marker_index_hash=?, progress_checksum=?, progress_point_count=2,
-      progress_retained_point_ids=? WHERE uid='A'`)
+      progress_retained_point_ids=? WHERE id='A'`)
       .run(sourceManifestHash, sourceRevision, JSON.stringify(["legacy-old", "p2"]));
     const { request, markerIndexHash, state } = fixtureForTest(database);
     insertProgressManifest(database, sourceManifestHash, ["p1", "removed"]);
@@ -224,7 +224,7 @@ describe("OEMUserDO progress consistency", () => {
     expect(
       JSON.parse(
         String(
-          database.sqlite.prepare("SELECT * FROM users WHERE uid='A'").get()
+          database.sqlite.prepare("SELECT * FROM users WHERE id='A'").get()
             ?.progress_retained_point_ids,
         ),
       ),
@@ -235,7 +235,7 @@ describe("OEMUserDO progress consistency", () => {
   it("keeps retained acknowledgements even for an empty bitmap state", async () => {
     const database = databaseForTest();
     insertUser(database.sqlite, { uid: "A", uid_number: 100001 });
-    database.sqlite.exec(`UPDATE users SET progress_retained_point_ids='["legacy"]' WHERE uid='A'`);
+    database.sqlite.exec(`UPDATE users SET progress_retained_point_ids='["legacy"]' WHERE id='A'`);
     const { request, markerIndexHash } = fixtureForTest(database);
     const response = await request(
       new Request(`https://progress-user/state?markerIndexHash=${markerIndexHash}`),
@@ -261,10 +261,10 @@ describe("OEMUserDO progress consistency", () => {
 
     expect(response.status).toBe(200);
     expect(
-      database.sqlite.prepare("SELECT * FROM users WHERE uid='A'").get()?.progress_version,
+      database.sqlite.prepare("SELECT * FROM users WHERE id='A'").get()?.progress_version,
     ).toBe(1);
     expect(
-      database.sqlite.prepare("SELECT * FROM users WHERE uid='B'").get()?.progress_version,
+      database.sqlite.prepare("SELECT * FROM users WHERE id='B'").get()?.progress_version,
     ).toBe(0);
   });
 
@@ -306,7 +306,7 @@ describe("OEMUserDO progress consistency", () => {
       // This checks ordering without imposing a machine-dependent latency budget.
       await vi.waitFor(() => expect(syncResponse?.status).toBe(200));
       expect(
-        database.sqlite.prepare("SELECT * FROM users WHERE uid='A'").get()?.progress_version,
+        database.sqlite.prepare("SELECT * FROM users WHERE id='A'").get()?.progress_version,
       ).toBe(1);
     } finally {
       acknowledge(Response.json({ applied: true }));
@@ -344,7 +344,7 @@ describe("OEMUserDO archive progress consistency", () => {
       database.sqlite.prepare("SELECT * FROM user_archive_progress WHERE uid='A'").get()?.version,
     ).toBe(1);
     expect(
-      database.sqlite.prepare("SELECT * FROM users WHERE uid='A'").get()?.progress_version,
+      database.sqlite.prepare("SELECT * FROM users WHERE id='A'").get()?.progress_version,
     ).toBe(0);
     expect(database.sqlite.prepare("SELECT * FROM progress_stats_outbox").all()).toHaveLength(0);
   });

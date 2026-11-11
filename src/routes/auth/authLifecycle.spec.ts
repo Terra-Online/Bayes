@@ -7,7 +7,7 @@ import { createAuth } from "@/services/auth/betterAuth";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { insertAuthUser, insertSession, testAuthConfig } from "@/test/fixtures/auth";
 import { stubRequestWithDuplex } from "@/test/fixtures/request";
-import { insertUser } from "@/test/fixtures/users";
+import { insertUser, updateUser } from "@/test/fixtures/users";
 import type { AppEnv, Bindings } from "@/types/app";
 
 import { createRoutes as createAuthRoutes } from "./createRoutes";
@@ -35,7 +35,6 @@ describe("authenticated account and profile HTTP lifecycle", () => {
       OEM_AUTH_RATE_LIMIT: { limit: async () => ({ success: true }) },
       OEM_PUBLIC_RATE_LIMIT: { limit: async () => ({ success: true }) },
     } as unknown as Bindings;
-    insertAuthUser(database.sqlite, { id: "owner" });
     insertUser(database.sqlite, {
       uid: "owner",
       uid_number: 123456,
@@ -46,7 +45,6 @@ describe("authenticated account and profile HTTP lifecycle", () => {
       karma: 2,
       points: 340,
     });
-    insertAuthUser(database.sqlite, { id: "other" });
     insertUser(database.sqlite, {
       uid: "other",
       uid_number: 123457,
@@ -54,6 +52,8 @@ describe("authenticated account and profile HTTP lifecycle", () => {
       nickname: "TakenName",
       avt: 9,
     });
+    insertAuthUser(database.sqlite, { id: "owner" });
+    insertAuthUser(database.sqlite, { id: "other" });
     owner = insertSession(database.sqlite, { userId: "owner" }).headers;
     other = insertSession(database.sqlite, { userId: "other" }).headers;
 
@@ -97,8 +97,8 @@ describe("authenticated account and profile HTTP lifecycle", () => {
   function storedProfile(uid = "owner") {
     return database.sqlite
       .prepare(
-        `SELECT uid, uid_number, uid_suffix, nickname, nickname_customized, avt,
-                email, role, karma, points, created_at FROM users WHERE uid = ?`,
+        `SELECT id AS uid, uid_number, uid_suffix, nickname, nickname_confirmed, avt,
+                email, role, karma, points, created_at FROM users WHERE id = ?`,
       )
       .get(uid);
   }
@@ -155,7 +155,7 @@ describe("authenticated account and profile HTTP lifecycle", () => {
       uid_number: 123456,
       uid_suffix: "AB",
       nickname: "Renamed_Explorer",
-      nickname_customized: 1,
+      nickname_confirmed: 1,
       avt: 12,
       points: 340,
       role: "a",
@@ -165,10 +165,10 @@ describe("authenticated account and profile HTTP lifecycle", () => {
     expect(storedProfile("other")).toMatchObject({ nickname: "TakenName", avt: 9 });
   });
 
-  it("completes historical nickname onboarding once and keeps the chosen public UID on later renames", async () => {
+  it("confirms a nickname while keeping the public UID assigned at creation", async () => {
     // An uncustomized profile chooses its suffix on the first nickname update.
     // Later edits keep that public identity.
-    database.sqlite.exec("UPDATE users SET nickname_customized = 0 WHERE uid = 'owner'");
+    database.sqlite.exec("UPDATE users SET nickname_confirmed = 0 WHERE id = 'owner'");
     expect(await (await request("/session")).json()).toMatchObject({
       user: { uid: "123456AB", needsProfileSetup: true },
     });
@@ -178,7 +178,7 @@ describe("authenticated account and profile HTTP lifecycle", () => {
     const profile = (await onboarded.json()) as { user: { uid: string } };
     expect(profile).toMatchObject({
       user: {
-        uid: "123456ER",
+        uid: "123456AB",
         nickname: "Explorer",
         avatar: 7,
         needsProfileSetup: false,
@@ -195,7 +195,7 @@ describe("authenticated account and profile HTTP lifecycle", () => {
     expect(storedProfile()).toMatchObject({
       uid: "owner",
       uid_number: 123456,
-      nickname_customized: 1,
+      nickname_confirmed: 1,
       avt: 7,
       points: 340,
     });
@@ -547,7 +547,7 @@ describe("authenticated account and profile HTTP lifecycle", () => {
           name: "BrowserOwner",
         },
       });
-      insertUser(database.sqlite, {
+      updateUser(database.sqlite, {
         uid: existing.user.id,
         email: "browser@example.test",
         nickname: "BrowserOwner",

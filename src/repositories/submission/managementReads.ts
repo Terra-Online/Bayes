@@ -103,7 +103,7 @@ const selection = `WITH management AS (SELECT
     WHEN f.review_status IN ('pending_openai','pending_audit') THEN f.review_status
     WHEN EXISTS (SELECT 1 FROM ugc_submission_flags g WHERE g.submission_id=s.id AND g.active=1)
     THEN 'flagged' ELSE 'active' END AS status,
-  CASE WHEN u.uid IS NULL THEN NULL ELSE json_object('uid',u.uid,'uidNumber',u.uid_number,
+  CASE WHEN u.id IS NULL THEN NULL ELSE json_object('uid',u.id,'uidNumber',u.uid_number,
     'publicUid',CASE WHEN u.uid_number IS NOT NULL AND u.uid_suffix IS NOT NULL THEN CAST(u.uid_number AS TEXT)||u.uid_suffix ELSE NULL END,
     'role',u.role,'karma',u.karma,'nickname',u.nickname,'avatar',u.avt) END AS submitter,
   (SELECT json_object('id',a.id,'snapshotId',a.snapshot_id,'fromStatus',a.from_status,
@@ -113,7 +113,7 @@ const selection = `WITH management AS (SELECT
   JOIN v_ugc_submission_visibility v ON v.submission_id=s.id
   JOIN ugc_snapshots f ON f.id=v.frontier_snapshot_id AND f.submission_id=s.id
   LEFT JOIN ugc_snapshots p ON p.id=v.public_snapshot_id AND p.submission_id=s.id
-  LEFT JOIN users u ON u.uid=s.user_id)`;
+  LEFT JOIN users u ON u.id=s.user_id)`;
 
 type Row = Omit<
   ManagementSubmission,

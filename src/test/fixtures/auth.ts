@@ -52,9 +52,20 @@ export const testAuthConfig: TestAuthConfig = {
 
 export function insertAuthUser(sqlite: DatabaseSync, input: AuthUserFixture): SeededAuthUser {
   const user: SeededAuthUser = { email: `${input.id}@example.test`, name: input.id, ...input };
+  const existing = sqlite.prepare("SELECT id FROM users WHERE id = ?").get(user.id);
+  if (!existing) {
+    insertUser(sqlite, {
+      uid: user.id,
+      email: user.email.toLowerCase(),
+      nickname:
+        user.name.replace(/[^A-Za-z0-9]/g, "").slice(0, 20) ||
+        `U${user.id.replace(/[^A-Za-z0-9]/g, "").slice(0, 20)}`,
+      nickname_confirmed: 0,
+    });
+  }
   sqlite
-    .prepare("INSERT INTO auth_users (id, email, name, emailVerified) VALUES (?, ?, ?, 1)")
-    .run(user.id, user.email, user.name);
+    .prepare("UPDATE users SET email = ?, name = ?, email_verified = 1 WHERE id = ?")
+    .run(user.email.toLowerCase(), user.name, user.id);
   return user;
 }
 
@@ -76,7 +87,7 @@ export function insertSession(sqlite: DatabaseSync, input: { userId: string }): 
   return { headers: { authorization: `Bearer ${token}` } };
 }
 
-/** Prepare both user records with the same identity and a session for business HTTP tests. */
+/** Prepare a complete user and a session for business HTTP tests. */
 export function insertAuthenticatedUser(
   sqlite: DatabaseSync,
   input: UserFixture,

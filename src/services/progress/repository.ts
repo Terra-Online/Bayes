@@ -85,7 +85,7 @@ function prepareProgressUpdate(
            progress_cloud_synced = ?12,
            progress_synced_at = COALESCE(?13, progress_synced_at),
            last_active = CURRENT_TIMESTAMP
-       WHERE uid = ?1`,
+       WHERE id = ?1`,
     )
     .bind(
       uid,

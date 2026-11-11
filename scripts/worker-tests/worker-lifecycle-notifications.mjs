@@ -6,12 +6,7 @@ export async function testNotifications(t, { worker, db, read, connect, authHead
     async () => {
       await db
         .prepare(
-          "INSERT INTO users (uid, email, password_hash, nickname) VALUES ('neighbor', 'neighbor@example.test', '', 'Neighbor')",
-        )
-        .run();
-      await db
-        .prepare(
-          "INSERT INTO auth_users (id, email, name, emailVerified) VALUES ('neighbor', 'neighbor@example.test', 'Neighbor', 1)",
+          "INSERT INTO users (id, email, name, nickname, email_verified, uid_number, uid_suffix) VALUES ('neighbor', 'neighbor@example.test', 'Neighbor', 'Neighbor', 1, 100002, 'AA')",
         )
         .run();
       await db

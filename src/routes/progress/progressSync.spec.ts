@@ -150,7 +150,7 @@ describe("persisted progress HTTP sync", () => {
     });
     expect(
       fixture.database.sqlite
-        .prepare("SELECT progress_version FROM users WHERE uid = 'explorer'")
+        .prepare("SELECT progress_version FROM users WHERE id = 'explorer'")
         .get(),
     ).toEqual({ progress_version: 1 });
     const migrated = await fixture.expectAcceptedSync(
@@ -232,7 +232,7 @@ describe("persisted progress HTTP sync", () => {
       expect(
         fixture.database.sqlite
           .prepare(
-            "SELECT progress_version, progress_cloud_synced, progress_last_mutation_id FROM users WHERE uid = 'explorer'",
+            "SELECT progress_version, progress_cloud_synced, progress_last_mutation_id FROM users WHERE id = 'explorer'",
           )
           .get(),
       ).toEqual({ progress_version: 0, progress_cloud_synced: 0, progress_last_mutation_id: null });
@@ -389,7 +389,7 @@ describe("persisted progress HTTP sync", () => {
       ]);
       expect(
         fixture.database.sqlite
-          .prepare("SELECT progress_version FROM users WHERE uid = 'explorer'")
+          .prepare("SELECT progress_version FROM users WHERE id = 'explorer'")
           .get(),
       ).toEqual({ progress_version: kind === "map" ? 2 : 0 });
       expect(
@@ -445,7 +445,7 @@ describe("progress HTTP access and manifests", () => {
     });
     expect(
       fixture.database.sqlite
-        .prepare("SELECT progress_version, progress_cloud_synced FROM users WHERE uid = 'explorer'")
+        .prepare("SELECT progress_version, progress_cloud_synced FROM users WHERE id = 'explorer'")
         .get(),
     ).toEqual({ progress_version: 0, progress_cloud_synced: 0 });
   });
@@ -462,7 +462,7 @@ describe("progress HTTP access and manifests", () => {
     }
     expect(
       fixture.database.sqlite
-        .prepare("SELECT progress_version FROM users WHERE uid = 'explorer'")
+        .prepare("SELECT progress_version FROM users WHERE id = 'explorer'")
         .get(),
     ).toEqual({ progress_version: 0 });
     expect(

@@ -29,9 +29,9 @@ describe("D1 migration chain", () => {
     expect(columns()).toContain("progress_retained_point_ids");
     expect(database.prepare("PRAGMA integrity_check").get()?.integrity_check).toBe("ok");
     expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
-    database.exec(`INSERT INTO users (uid, email, password_hash, nickname)
-      VALUES ('fresh-user', 'fresh@example.test', '', 'Fresh');`);
-    expect(database.prepare("SELECT role FROM users WHERE uid = 'fresh-user'").get()?.role).toBe(
+    database.exec(`INSERT INTO users (id, email, nickname, uid_number, uid_suffix)
+      VALUES ('fresh-user', 'fresh@example.test', 'Fresh', 100001, 'AA');`);
+    expect(database.prepare("SELECT role FROM users WHERE id = 'fresh-user'").get()?.role).toBe(
       "n",
     );
   });
@@ -67,7 +67,7 @@ describe("D1 migration chain", () => {
     expect(database.prepare("SELECT * FROM users").get()).toEqual(before);
     expect(database.prepare("SELECT * FROM endfield_bindings").get()).toEqual(binding);
     expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
-    apply(migrations.filter((file) => file >= "0018"));
+    apply(migrations.filter((file) => file >= "0018" && file < "0039"));
     expect(database.prepare("SELECT uid FROM users").get()?.uid).toBe("bound-user");
     expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
   });

@@ -59,7 +59,7 @@ export async function getUserRegistrationReport(db: D1Database): Promise<UserReg
            COALESCE(NULLIF(TRIM(primary_accounts.providerId), ''), 'unknown') AS source,
            COUNT(*) AS count
          FROM users
-         LEFT JOIN primary_accounts ON primary_accounts.userId = users.uid
+         LEFT JOIN primary_accounts ON primary_accounts.userId = users.id
          GROUP BY COALESCE(NULLIF(TRIM(primary_accounts.providerId), ''), 'unknown')
          ORDER BY count DESC, source ASC`,
       )

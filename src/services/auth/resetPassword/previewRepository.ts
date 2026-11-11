@@ -8,7 +8,7 @@ export function findResetVerification(db: D1Database, token: string) {
 
 export function findResetUserEmail(db: D1Database, userId: string) {
   return db
-    .prepare("SELECT email FROM auth_users WHERE id = ?1 LIMIT 1")
+    .prepare("SELECT email FROM users WHERE id = ?1 LIMIT 1")
     .bind(userId)
     .first<{ email: string }>();
 }

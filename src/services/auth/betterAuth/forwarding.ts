@@ -147,7 +147,7 @@ function uniqueConstraint(error: unknown): string | undefined {
     const cause = current as { message?: unknown; cause?: unknown };
     if (typeof cause.message === "string") {
       const match =
-        /UNIQUE constraint failed: (auth_users\.email|auth_verifications\.identifier)(?=\s*(?:$|: SQLITE_|\[))/i.exec(
+        /UNIQUE constraint failed: (users\.email|auth_verifications\.identifier)(?=\s*(?:$|: SQLITE_|\[))/i.exec(
           cause.message,
         );
       if (match) {
@@ -167,7 +167,7 @@ function authConflictResponse(
   let status: number;
   let code: string;
   let message: string;
-  if (constraint === "auth_users.email" && context.publicPath.endsWith("/register")) {
+  if (constraint === "users.email" && context.publicPath.endsWith("/register")) {
     status = 409;
     code = "USER_ALREADY_EXISTS";
     message = "A user with this email already exists.";

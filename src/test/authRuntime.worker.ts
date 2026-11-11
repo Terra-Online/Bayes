@@ -116,6 +116,16 @@ export default {
           if (url.pathname === "/init") {
             await createAuth(env).api.getSession({ headers: new Headers() });
             response = Response.json({ initialized: true });
+          } else if (url.pathname === "/create-user") {
+            response = Response.json(
+              await createAuth(env).api.signUpEmail({
+                body: {
+                  email: url.searchParams.get("email")!,
+                  name: "NativeNew",
+                  password: "Native-password123",
+                },
+              }),
+            );
           } else if (url.pathname === "/singleton-init") {
             await singletonAuth(env);
             response = Response.json({ initialized: true });

@@ -156,13 +156,14 @@ describe.each(["http://localhost:8787", "https://api.opendfieldmap.org"])(
       expect(sessionRecord().expiresAt).toEqual(new Date(START_MS + 180 * DAY_MS));
     });
 
-    it("retains a renewed cookie when profile creation fails and allows the browser to retry", async () => {
+    it("retains a renewed cookie when reading user data fails and allows the browser to retry", async () => {
       const { headers } = await signIn();
       vi.setSystemTime(START_MS + 40 * DAY_MS);
-      database.sqlite.exec(`
-        CREATE TEMP TRIGGER fail_profile_insert BEFORE INSERT ON users
-        BEGIN SELECT RAISE(FAIL, 'D1_ERROR: database temporarily unavailable'); END;
-      `);
+      database.hooks.beforeQuery = (sql) => {
+        if (/^SELECT \* FROM users WHERE id/i.test(sql)) {
+          throw new Error("D1_ERROR: database temporarily unavailable");
+        }
+      };
 
       const failed = await app.request("/auth/v1/session", { headers }, env);
       expect(failed.status).toBe(503);
@@ -173,7 +174,7 @@ describe.each(["http://localhost:8787", "https://api.opendfieldmap.org"])(
       expect(renewedCookie).toContain("Max-Age=15552000");
       expect(sessionRecord().expiresAt).toEqual(new Date(START_MS + 220 * DAY_MS));
 
-      database.sqlite.exec("DROP TRIGGER fail_profile_insert");
+      database.hooks.beforeQuery = undefined;
       const retried = await app.request(
         "/auth/v1/session",
         { headers: { cookie: renewedCookie.split(";")[0]! } },
