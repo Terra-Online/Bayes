@@ -102,11 +102,11 @@ export async function publishNotificationsCreated(
 export class OEMNotificationDO extends DurableObject<Bindings> {
   private pendingDelivery: Promise<unknown> = Promise.resolve();
 
-  // D1 hydration and broadcast stay in arrival order; a slow older query must
-  // not publish an obsolete unread count after a newer read event.
+  // Keep each D1 read and its broadcast together, in DO arrival order.
+  // This is an in-memory sequence, not a retry queue.
   private enqueueDelivery(operation: () => Promise<Response>): Promise<Response> {
     const result = this.pendingDelivery.then(operation);
-    // Keep later operations running after a failure; the caller still receives result.
+    // Let the next operation run after a failure; return the original result to the caller.
     this.pendingDelivery = result.catch(() => undefined);
     return result;
   }

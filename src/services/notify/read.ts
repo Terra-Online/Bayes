@@ -7,7 +7,8 @@ export interface NotificationReadChange {
   readAt: string;
 }
 
-// A live-delivery failure must not turn a committed read into a failed request.
+// Called through waitUntil only after the read is persisted.
+// Live delivery is best effort; failure must not undo the committed read.
 export async function publishNotificationRead(
   env: Bindings,
   userId: string,
@@ -24,6 +25,7 @@ export async function publishNotificationRead(
       throw new Error(`read fanout failed: ${response.status}`);
     }
   } catch (error) {
+    // Leave eligible transport retries to the runtime; log the final failure here.
     console.error("[notify] read sync failed; read remains persisted", { userId, error });
   }
 }

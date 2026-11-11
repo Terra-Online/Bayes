@@ -323,6 +323,15 @@ broadcast, and a delivery failure does not undo the database write. Reconnecting
 receives a fresh `notification.ready` count snapshot; reopening the inbox reloads
 its items. The 10-connection cap applies only to read updates, not new notifications.
 No database migration is required.
+
+Read synchronization adds no application retry loop and does not mark the shared
+DO `fetch()` handler as `retryable()`. The platform's automatic retries cover
+eligible stub transport failures, not DO execution errors, overload, HTTP error
+responses or individual WebSocket sends. They do not guarantee receipt by a client.
+The in-memory delivery sequence preserves DO arrival order; `waitUntil()` keeps
+background work alive after the HTTP response. Neither is a durable retry queue.
+See [Cloudflare automatic retries](https://developers.cloudflare.com/durable-objects/best-practices/automatic-retries/).
+
 A plain HTTP request to `/live` returns `426`.
 The Worker intercepts real live upgrades before Hono and authenticates and
 rate-limits that path separately.
