@@ -304,6 +304,20 @@ For category routes, replace `:category` with `system` or `community`.
 
 List limits are 1–50, default 20; batch read accepts 1–100 IDs.
 Notification HTTP data responses use `private, no-store`.
+
+Successful single, batch and category-wide read changes publish a `notification.read`
+WebSocket event to at most the recipient's 10 newest connections (including the
+requesting connection if selected). Other connections stay open. The event contains
+`category`, `ids` (an array, or `null` for the whole category), `readAt` and the current
+`unread` counts. Clients apply it locally without fetching the inbox again. Apply the
+read only to items whose latest event timestamp (`createdAt`) is at or before
+`readAt`, so a newer aggregated notification stays unread.
+
+Read delivery is best effort after persistence: retries that change no rows do not
+broadcast, and a delivery failure does not undo the database write. Reconnecting
+receives a fresh `notification.ready` count snapshot; reopening the inbox reloads
+its items. The 10-connection cap applies only to read updates, not new notifications.
+No database migration is required.
 A plain HTTP request to `/live` returns `426`.
 The Worker intercepts real live upgrades before Hono and authenticates and
 rate-limits that path separately.

@@ -11,6 +11,8 @@ import {
 } from "@/repositories/notifications";
 import type { Bindings } from "@/types/app";
 
+import type { NotificationReadChange } from "./read";
+
 export interface NotificationLiveEnvelope {
   event: "notification.upserted";
   notification: SerializedNotificationItem;
@@ -95,6 +97,15 @@ export async function publishNotificationsCreated(
 }
 
 export class OEMNotificationDO extends DurableObject<Bindings> {
+  private delivery: Promise<unknown> = Promise.resolve();
+
+  // D1 hydration and broadcast stay in arrival order; a slow older query must
+  // not publish an obsolete unread count after a newer read event.
+  private deliver(operation: () => Promise<Response>): Promise<Response> {
+    const result = this.delivery.then(operation);
+    this.delivery = result.catch(() => undefined);
+    return result;
+  }
   constructor(ctx: DurableObjectState, env: Bindings) {
     super(ctx, env);
     ctx.setWebSocketAutoResponse(
@@ -105,10 +116,13 @@ export class OEMNotificationDO extends DurableObject<Bindings> {
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/connect") {
-      return this.handleConnect(request);
+      return this.deliver(() => this.handleConnect(request));
     }
     if (request.method === "POST" && url.pathname === "/fanout") {
-      return this.handleFanout(request);
+      return this.deliver(() => this.handleFanout(request));
+    }
+    if (request.method === "POST" && url.pathname === "/read") {
+      return this.deliver(() => this.handleRead(request));
     }
     return jsonResponse(
       { code: "NOT_FOUND", message: "Notification DO route not found." },
@@ -254,16 +268,32 @@ export class OEMNotificationDO extends DurableObject<Bindings> {
   }
 
   private async handleFanout(request: Request): Promise<Response> {
-    this.requireUser(request);
-    const envelope = (await request.json().catch(() => null)) as NotificationLiveEnvelope | null;
-    if (!envelope || envelope.event !== "notification.upserted" || !envelope.notification) {
+    const uid = this.requireUser(request);
+    const envelope = (await request.json().catch(() => null)) as {
+      event?: string;
+      notification?: { id?: string };
+    } | null;
+    if (
+      !envelope ||
+      envelope.event !== "notification.upserted" ||
+      typeof envelope.notification?.id !== "string"
+    ) {
       return jsonResponse(
         { code: "VALIDATION_ERROR", message: "Invalid notification fanout payload." },
         { status: 422 },
       );
     }
 
-    const body = JSON.stringify(envelope);
+    // An earlier queued creation may reach this object after its read update.
+    const current = await getNotificationById(this.env.DB, envelope.notification.id);
+    if (!current || current.recipientUserId !== uid) {
+      return jsonResponse({ ok: true, delivered: 0 });
+    }
+    const body = JSON.stringify({
+      event: "notification.upserted",
+      notification: serializeNotificationItem(current),
+      unread: await getNotificationUnreadCounts(this.env.DB, uid),
+    } satisfies NotificationLiveEnvelope);
     let delivered = 0;
     for (const socket of this.ctx.getWebSockets()) {
       try {
@@ -274,6 +304,51 @@ export class OEMNotificationDO extends DurableObject<Bindings> {
           socket.close(1011, "notification send failed");
         } catch {
           // Ignore close failures from already-closed sockets.
+        }
+      }
+    }
+    return jsonResponse({ ok: true, delivered });
+  }
+
+  private async handleRead(request: Request): Promise<Response> {
+    const uid = this.requireUser(request);
+    const change = (await request.json().catch(() => null)) as NotificationReadChange | null;
+    if (
+      !change ||
+      !["community", "system"].includes(change.category) ||
+      !Number.isFinite(Date.parse(change.readAt)) ||
+      (change.ids !== null &&
+        (!Array.isArray(change.ids) ||
+          change.ids.length > 100 ||
+          !change.ids.every((id) => typeof id === "string")))
+    ) {
+      return jsonResponse({ code: "VALIDATION_ERROR" }, { status: 422 });
+    }
+    const sockets = this.ctx
+      .getWebSockets()
+      .map((socket) => ({
+        socket,
+        attachment: socket.deserializeAttachment() as WebSocketAttachment | null,
+      }))
+      .filter(({ attachment }) => attachment?.uid === uid)
+      .sort((a, b) => Date.parse(b.attachment!.connectedAt) - Date.parse(a.attachment!.connectedAt))
+      .slice(0, 10);
+    if (sockets.length === 0) {
+      return jsonResponse({ ok: true, delivered: 0 });
+    }
+    const unread = await getNotificationUnreadCounts(this.env.DB, uid);
+    const body = JSON.stringify({ event: "notification.read", ...change, unread });
+    let delivered = 0;
+    for (const { socket } of sockets) {
+      try {
+        socket.send(body);
+        delivered++;
+      } catch {
+        // Reconnection's ready snapshot repairs missed updates.
+        try {
+          socket.close(1011, "notification send failed");
+        } catch {
+          /* already closed */
         }
       }
     }
