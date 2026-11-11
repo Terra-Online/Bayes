@@ -52,8 +52,25 @@ UPDATE ugc_submissions SET admin_deleted_by = (SELECT auth_id FROM _user_merge_m
 WHERE admin_deleted_by IN (SELECT business_id FROM _user_merge_map WHERE business_id <> auth_id);
 UPDATE ugc_submissions SET user_id = (SELECT auth_id FROM _user_merge_map WHERE business_id = ugc_submissions.user_id)
 WHERE user_id IN (SELECT business_id FROM _user_merge_map WHERE business_id <> auth_id);
+-- Identity remapping changes the reference, not snapshot authorship or content.
+-- Suspend the guard only within this migration transaction and restore it verbatim.
+DROP TRIGGER prevent_ugc_snapshot_content_update;
 UPDATE ugc_snapshots SET creator_user_id = (SELECT auth_id FROM _user_merge_map WHERE business_id = ugc_snapshots.creator_user_id)
 WHERE creator_user_id IN (SELECT business_id FROM _user_merge_map WHERE business_id <> auth_id);
+CREATE TRIGGER prevent_ugc_snapshot_content_update
+BEFORE UPDATE ON ugc_snapshots
+WHEN NEW.id IS NOT OLD.id
+  OR NEW.submission_id IS NOT OLD.submission_id
+  OR NEW.kind IS NOT OLD.kind
+  OR NEW.revision IS NOT OLD.revision
+  OR NEW.content IS NOT OLD.content
+  OR NEW.file_path IS NOT OLD.file_path
+  OR NEW.mime_type IS NOT OLD.mime_type
+  OR NEW.size_bytes IS NOT OLD.size_bytes
+  OR NEW.creator_user_id IS NOT OLD.creator_user_id
+  OR NEW.created_at IS NOT OLD.created_at
+BEGIN SELECT RAISE(ABORT, 'snapshot content is immutable; append a new version'); END;
+
 UPDATE ugc_snapshots_review_audit SET admin_user_id = (SELECT auth_id FROM _user_merge_map WHERE business_id = ugc_snapshots_review_audit.admin_user_id)
 WHERE admin_user_id IN (SELECT business_id FROM _user_merge_map WHERE business_id <> auth_id);
 UPDATE ugc_submission_upvotes SET user_id = (SELECT auth_id FROM _user_merge_map WHERE business_id = ugc_submission_upvotes.user_id)

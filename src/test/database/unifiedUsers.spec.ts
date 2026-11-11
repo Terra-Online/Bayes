@@ -2,6 +2,8 @@ import { DatabaseSync } from "node:sqlite";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { insertCommentSnapshot } from "@/test/fixtures/commentSnapshots";
+
 import { applyMigrations, migrations } from "./migrations";
 
 describe("unified user migration", () => {
@@ -31,6 +33,11 @@ describe("unified user migration", () => {
         VALUES ('business-id', 'skland', 1, 'role', 'cred', 'token');
       INSERT INTO auth_accounts (id, userId, providerId, accountId) VALUES ('account', 'auth-id', 'github', 'external');
     `);
+    insertCommentSnapshot(database, {
+      id: "comment",
+      userId: "business-id",
+      content: "Original content",
+    });
     migrate();
     expect(
       database
@@ -46,6 +53,17 @@ describe("unified user migration", () => {
     });
     expect(database.prepare("SELECT uid FROM endfield_bindings").get()?.uid).toBe("auth-id");
     expect(database.prepare("SELECT userId FROM auth_accounts").get()?.userId).toBe("auth-id");
+    expect(database.prepare("SELECT user_id FROM ugc_submissions").get()?.user_id).toBe("auth-id");
+    expect(database.prepare("SELECT creator_user_id, content FROM ugc_snapshots").get()).toEqual({
+      creator_user_id: "auth-id",
+      content: "Original content",
+    });
+    expect(() => database.exec("UPDATE ugc_snapshots SET content = 'Changed content'")).toThrow(
+      "snapshot content is immutable",
+    );
+    expect(() => database.exec("UPDATE ugc_snapshots SET creator_user_id = 'business-id'")).toThrow(
+      "snapshot content is immutable",
+    );
     expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
   });
 

@@ -298,6 +298,10 @@ try {
           INSERT INTO endfield_bindings (uid, provider, server_id, role_id, cred_enc, token_enc)
             VALUES ('business', 'skland', 1, 'role', 'cred', 'token');
           INSERT INTO auth_sessions (id, token, expiresAt, userId) VALUES ('session', 'token', '2099-01-01', 'auth');
+          INSERT INTO ugc_submissions (id, kind, poi_id, poi_hash, poi_type, user_id)
+            VALUES ('comment', 'comment', 'marker', 'hash', 'poi', 'business');
+          INSERT INTO ugc_snapshots (id, submission_id, kind, revision, content, review_status, creator_user_id)
+            VALUES ('snapshot', 'comment', 'comment', 1, 'Original content', 'approved', 'business');
         `,
           );
           await migrateNativeDatabase(db, ["0039_unified_users.sql"]);
@@ -309,6 +313,18 @@ try {
           assert.equal(
             await db.prepare("SELECT userId FROM auth_sessions").first("userId"),
             "auth",
+          );
+          assert.deepEqual(
+            await db.prepare("SELECT creator_user_id, content FROM ugc_snapshots").first(),
+            { creator_user_id: "auth", content: "Original content" },
+          );
+          await assert.rejects(
+            db.prepare("UPDATE ugc_snapshots SET content = 'Changed content'").run(),
+            /snapshot content is immutable/,
+          );
+          await assert.rejects(
+            db.prepare("UPDATE ugc_snapshots SET creator_user_id = 'business'").run(),
+            /snapshot content is immutable/,
           );
           assert.deepEqual((await db.prepare("PRAGMA foreign_key_check").all()).results, []);
         },

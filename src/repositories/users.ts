@@ -1,5 +1,4 @@
 import { pointsToKarma } from "@/lib/karma/rules";
-import { buildUidSuffixFromNickname } from "@/services/profile/contract/publicUid";
 import type { Role } from "@/types/app";
 
 const UID_START = 100000;
@@ -41,6 +40,7 @@ export interface CreateUserInput {
   image: string | null;
   createdAt: Date;
   updatedAt: Date;
+  profileCandidates: readonly { nickname: string; uidSuffix: string }[];
 }
 
 function normalizeUidSuffix(raw: string | undefined): string {
@@ -190,28 +190,9 @@ export async function getUserByPublicUid(
   return row ? mapUser(row) : null;
 }
 
-function normalizeNickname(raw: string | undefined, uid: string, email?: string): string[] {
-  const source = (raw ?? "").replace(/[^A-Za-z0-9]/g, "").slice(0, 26);
-  const emailLocalPart = (email?.split("@")[0] ?? "").replace(/[^A-Za-z0-9]/g, "").slice(0, 26);
-  const compactUid = uid.replace(/[^A-Za-z0-9]/g, "");
-  const fallback = `U${compactUid.slice(0, 7)}`;
-
-  const candidates = [
-    source,
-    source ? `${source.slice(0, 20)}${compactUid.slice(0, 6)}` : "",
-    emailLocalPart,
-    emailLocalPart ? `${emailLocalPart.slice(0, 20)}${compactUid.slice(0, 6)}` : "",
-    fallback,
-    `U${compactUid.slice(-7)}`,
-  ].filter((item) => item.length > 0 && item.length <= 26);
-
-  return Array.from(new Set(candidates));
-}
-
 /** The sequence allocation and complete user row commit or roll back together. */
 export async function createUser(db: D1Database, input: CreateUserInput): Promise<void> {
-  const candidates = normalizeNickname(input.name, input.id, input.email);
-  for (const nickname of candidates) {
+  for (const profile of input.profileCandidates) {
     try {
       await db.batch([
         db.prepare("INSERT INTO user_uid_sequence DEFAULT VALUES"),
@@ -223,21 +204,21 @@ export async function createUser(db: D1Database, input: CreateUserInput): Promis
             ?8 + (SELECT MAX(id) FROM user_uid_sequence), ?9, ?10, 0)`)
           .bind(
             input.id,
-            input.email.toLowerCase(),
+            input.email,
             input.name,
             input.emailVerified ? 1 : 0,
             input.image,
             input.createdAt.toISOString(),
             input.updatedAt.toISOString(),
             UID_START,
-            buildUidSuffixFromNickname(nickname),
-            nickname,
+            profile.uidSuffix,
+            profile.nickname,
           ),
       ]);
       return;
     } catch (error) {
-      // A provider's display name is not unique. Retry with a different default;
-      // the failed batch has also rolled back its sequence allocation.
+      // A nickname conflict rolls back the entire batch, including its allocation.
+      // Try the next prepared candidate without consuming another public number.
       if (!getErrorMessage(error).includes("users.nickname")) {
         throw error;
       }

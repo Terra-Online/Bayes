@@ -1,6 +1,6 @@
 import type { BetterAuthOptions, DBAdapter } from "better-auth";
 
-import { createUser } from "@/repositories/users";
+import { createUser } from "@/services/auth/createUser";
 
 /** Keep the request's native adapter and schema checks; specialize only user creation. */
 export function installUserCreation<Options extends BetterAuthOptions>(
