@@ -74,7 +74,9 @@ function addCategoryRoutes(app: Hono<AppEnv>, category: NotificationCategory): v
         id: notificationId,
       });
       if (changed) {
-        await publishNotificationRead(c.env, user.uid, { category, ids: [notificationId], readAt });
+        c.executionCtx.waitUntil(
+          publishNotificationRead(c.env, user.uid, { category, ids: [notificationId], readAt }),
+        );
       }
       const unread = await getNotificationUnreadCounts(c.env.DB, user.uid);
       return noStore(c.json({ ok: true, changed, unread }));
@@ -98,7 +100,9 @@ function addCategoryRoutes(app: Hono<AppEnv>, category: NotificationCategory): v
         ids: parsed.data.ids,
       });
       if (changed) {
-        await publishNotificationRead(c.env, user.uid, { category, ids: parsed.data.ids, readAt });
+        c.executionCtx.waitUntil(
+          publishNotificationRead(c.env, user.uid, { category, ids: parsed.data.ids, readAt }),
+        );
       }
       const unread = await getNotificationUnreadCounts(c.env.DB, user.uid);
       return noStore(c.json({ ok: true, changed, unread }));
@@ -112,7 +116,9 @@ function addCategoryRoutes(app: Hono<AppEnv>, category: NotificationCategory): v
         readAt,
       });
       if (changed) {
-        await publishNotificationRead(c.env, user.uid, { category, ids: null, readAt });
+        c.executionCtx.waitUntil(
+          publishNotificationRead(c.env, user.uid, { category, ids: null, readAt }),
+        );
       }
       const unread = await getNotificationUnreadCounts(c.env.DB, user.uid);
       return noStore(c.json({ ok: true, changed, unread }));

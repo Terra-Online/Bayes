@@ -13,10 +13,12 @@ import type { AppEnv } from "@/types/app";
 import { createRoutes } from "./createRoutes";
 
 const fanout = vi.fn();
+let backgroundTasks: Promise<unknown>[];
 let database: TestDatabase;
 let sessions: Map<string, ReturnType<typeof insertSession>>;
 
 beforeEach(() => {
+  backgroundTasks = [];
   fanout.mockReset().mockResolvedValue(new Response(null, { status: 200 }));
   database = createTestDatabase();
   sessions = new Map();
@@ -43,7 +45,8 @@ beforeEach(() => {
   }
 });
 
-afterEach(() => {
+afterEach(async () => {
+  await Promise.all(backgroundTasks);
   database.close();
   vi.useRealTimers();
 });
@@ -56,12 +59,23 @@ function request(path: string, uid: string | undefined = "alice", init: RequestI
   if (uid) {
     headers.set("authorization", sessions.get(uid)!.headers.authorization);
   }
-  return app.request(`http://localhost/notify/v1${path}`, { ...init, headers }, {
-    DB: database.db,
-    OEM_NOTIFICATION_DO: { idFromName: (uid: string) => uid, get: () => ({ fetch: fanout }) },
-    ...testAuthConfig,
-    OEM_AUTH_RATE_LIMIT: { limit: async () => ({ success: true }) },
-  } as unknown as AppEnv["Bindings"]);
+  return app.request(
+    `http://localhost/notify/v1${path}`,
+    { ...init, headers },
+    {
+      DB: database.db,
+      OEM_NOTIFICATION_DO: { idFromName: (uid: string) => uid, get: () => ({ fetch: fanout }) },
+      ...testAuthConfig,
+      OEM_AUTH_RATE_LIMIT: { limit: async () => ({ success: true }) },
+    } as unknown as AppEnv["Bindings"],
+    {
+      waitUntil: (task: Promise<unknown>) => {
+        backgroundTasks.push(task);
+      },
+      passThroughOnException() {},
+      props: {},
+    },
+  );
 }
 
 type InboxPage = {
@@ -464,4 +478,63 @@ it("does not mark notifications created or aggregated after the operation cutoff
   await request("/system/read-all", "alice", { method: "POST" });
   expect((await inbox()).items.find((item) => item.id === "approval-a")?.readAt).toBeNull();
   expect((await inbox()).unread.system).toBe(1);
+});
+
+it.each([
+  ["/system/messages/approval-a/read", "PATCH", undefined, 2],
+  ["/system/messages/read", "POST", { ids: ["approval-a", "approval-b"] }, 1],
+  ["/system/read-all", "POST", undefined, 0],
+])("responds before live delivery completes for %s", async (path, method, body, remaining) => {
+  let finish!: (response: Response) => void;
+  const pending = new Promise<Response>((resolve) => {
+    finish = resolve;
+  });
+  fanout.mockReturnValueOnce(pending);
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const response = await Promise.race([
+      request(path, "alice", {
+        method,
+        headers: { "content-type": "application/json" },
+        body: body && JSON.stringify(body),
+      }),
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error("HTTP waited for live delivery")), 1500);
+      }),
+    ]);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ ok: true, unread: { system: remaining } });
+    expect(
+      database.sqlite.prepare("SELECT read_at FROM notifications WHERE id = 'approval-a'").get(),
+    ).toEqual({ read_at: expect.any(String) });
+    expect(fanout).toHaveBeenCalledOnce();
+    expect(backgroundTasks).toHaveLength(1);
+  } finally {
+    clearTimeout(timeout);
+    finish(new Response(null, { status: 200 }));
+    await Promise.all(backgroundTasks);
+  }
+});
+
+it("keeps HTTP success and the persisted read when background delivery fails later", async () => {
+  let fail!: (error: Error) => void;
+  fanout.mockReturnValueOnce(
+    new Promise<Response>((_, reject) => {
+      fail = reject;
+    }),
+  );
+  const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+  try {
+    const response = await request("/system/messages/approval-a/read", "alice", {
+      method: "PATCH",
+    });
+    expect(response.status).toBe(200);
+    expect(backgroundTasks).toHaveLength(1);
+    fail(new Error("late delivery failure"));
+    await Promise.all(backgroundTasks);
+    expect((await inbox()).unread.system).toBe(2);
+    expect(log).toHaveBeenCalledOnce();
+  } finally {
+    log.mockRestore();
+  }
 });

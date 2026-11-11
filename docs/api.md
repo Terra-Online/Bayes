@@ -313,6 +313,11 @@ requesting connection if selected). Other connections stay open. The event conta
 read only to items whose latest event timestamp (`createdAt`) is at or before
 `readAt`, so a newer aggregated notification stays unread.
 
+Read delivery runs through Workers `waitUntil()` after persistence, so HTTP waits
+for the database write and response counts but not for live delivery. Background
+work starts immediately and may finish before or after the HTTP response. It is
+best effort within the platform background execution window, with no durable retry.
+The cap bounds sends per event, not event rate or the number of open connections.
 Read delivery is best effort after persistence: retries that change no rows do not
 broadcast, and a delivery failure does not undo the database write. Reconnecting
 receives a fresh `notification.ready` count snapshot; reopening the inbox reloads

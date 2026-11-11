@@ -30,6 +30,9 @@ interface WebSocketAttachment {
   connectedAt: string;
 }
 
+// Per read event, including the initiating connection if selected.
+const MAX_READ_SYNC_CONNECTIONS = 10;
+
 const NOTIFICATION_HEARTBEAT_PATTERN = /^[A-Za-z0-9]{8}$/;
 // The client switches back to nonce heartbeats after any missed acknowledgement,
 // so a delayed static echo cannot acknowledge a subsequent probe.
@@ -97,13 +100,14 @@ export async function publishNotificationsCreated(
 }
 
 export class OEMNotificationDO extends DurableObject<Bindings> {
-  private delivery: Promise<unknown> = Promise.resolve();
+  private pendingDelivery: Promise<unknown> = Promise.resolve();
 
   // D1 hydration and broadcast stay in arrival order; a slow older query must
   // not publish an obsolete unread count after a newer read event.
-  private deliver(operation: () => Promise<Response>): Promise<Response> {
-    const result = this.delivery.then(operation);
-    this.delivery = result.catch(() => undefined);
+  private enqueueDelivery(operation: () => Promise<Response>): Promise<Response> {
+    const result = this.pendingDelivery.then(operation);
+    // Keep later operations running after a failure; the caller still receives result.
+    this.pendingDelivery = result.catch(() => undefined);
     return result;
   }
   constructor(ctx: DurableObjectState, env: Bindings) {
@@ -116,13 +120,13 @@ export class OEMNotificationDO extends DurableObject<Bindings> {
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/connect") {
-      return this.deliver(() => this.handleConnect(request));
+      return this.enqueueDelivery(() => this.handleConnect(request));
     }
     if (request.method === "POST" && url.pathname === "/fanout") {
-      return this.deliver(() => this.handleFanout(request));
+      return this.enqueueDelivery(() => this.handleFanout(request));
     }
     if (request.method === "POST" && url.pathname === "/read") {
-      return this.deliver(() => this.handleRead(request));
+      return this.enqueueDelivery(() => this.handleRead(request));
     }
     return jsonResponse(
       { code: "NOT_FOUND", message: "Notification DO route not found." },
@@ -332,7 +336,7 @@ export class OEMNotificationDO extends DurableObject<Bindings> {
       }))
       .filter(({ attachment }) => attachment?.uid === uid)
       .sort((a, b) => Date.parse(b.attachment!.connectedAt) - Date.parse(a.attachment!.connectedAt))
-      .slice(0, 10);
+      .slice(0, MAX_READ_SYNC_CONNECTIONS);
     if (sockets.length === 0) {
       return jsonResponse({ ok: true, delivered: 0 });
     }
