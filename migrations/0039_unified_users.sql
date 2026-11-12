@@ -26,6 +26,8 @@ INSERT INTO _user_merge_check SELECT
 
 -- Renaming the referenced column also updates every existing business FK definition.
 ALTER TABLE users RENAME COLUMN uid TO id;
+-- Preserve first-confirmation eligibility. Existing suffixes stay untouched here;
+-- only users with nickname_confirmed = 0 finalize them on their first profile save.
 ALTER TABLE users RENAME COLUMN nickname_customized TO nickname_confirmed;
 ALTER TABLE users DROP COLUMN password_hash;
 ALTER TABLE users DROP COLUMN email_verified;

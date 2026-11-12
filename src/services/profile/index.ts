@@ -3,6 +3,7 @@ import { formatPublicUid, getErrorMessage, saveUserProfile } from "@/repositorie
 import type { Role } from "@/types/app";
 
 import { EDITABLE_NICKNAME_PATTERN } from "./contract/nickname";
+import { buildUidSuffixFromNickname } from "./contract/publicUid";
 
 export type UpdateProfileInput = {
   // The caller supplies the authenticated business user's internal ID.
@@ -43,6 +44,7 @@ export async function updateProfile(
       uid: input.userId,
       nickname,
       avatar,
+      uidSuffix: buildUidSuffixFromNickname(nickname),
     });
     if (!updated) {
       throw new Error("USER_NOT_FOUND");

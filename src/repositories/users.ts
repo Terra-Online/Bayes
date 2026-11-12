@@ -253,15 +253,18 @@ async function refreshUserActivity(db: D1Database, user: UserRecord): Promise<Us
 
 export async function saveUserProfile(
   db: D1Database,
-  payload: { uid: string; nickname: string; avatar?: number },
+  payload: { uid: string; nickname: string; avatar?: number; uidSuffix: string },
 ): Promise<UserRecord | null> {
   try {
+    // Finalize against the stored confirmation state in the same write, so a
+    // concurrent profile edit cannot overwrite the first confirmed suffix.
     const row = await db
       .prepare(`UPDATE users
       SET nickname = ?2, avt = COALESCE(?3, avt), nickname_confirmed = 1,
+          uid_suffix = CASE WHEN nickname_confirmed = 0 THEN ?4 ELSE uid_suffix END,
           updated_at = CURRENT_TIMESTAMP, last_active = CURRENT_TIMESTAMP
       WHERE id = ?1 RETURNING *`)
-      .bind(payload.uid, payload.nickname, payload.avatar ?? null)
+      .bind(payload.uid, payload.nickname, payload.avatar ?? null, payload.uidSuffix)
       .first<Record<string, unknown>>();
     return row ? mapUser(row) : null;
   } catch (error) {

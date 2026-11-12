@@ -19,7 +19,7 @@ function normalizeNickname(raw: string | undefined, uid: string, email?: string)
   return Array.from(new Set(candidates));
 }
 
-/** Choose initial public identity once; later nickname confirmation keeps its UID. */
+/** Allocate the public number atomically; its provisional suffix is finalized at nickname confirmation. */
 export async function createUser(
   db: D1Database,
   identity: Omit<CreateUserInput, "profileCandidates">,

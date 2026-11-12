@@ -1,15 +1,19 @@
-import { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { updateProfile } from "@/services/profile";
 import { insertCommentSnapshot } from "@/test/fixtures/commentSnapshots";
 
 import { applyMigrations, migrations } from "./migrations";
+import { SqliteD1 } from "./sqliteD1";
 
 describe("unified user migration", () => {
   let database: DatabaseSync;
+  let d1: SqliteD1;
   beforeEach(() => {
-    database = new DatabaseSync(":memory:");
+    d1 = new SqliteD1();
+    database = d1.sqlite;
     applyMigrations(
       database,
       migrations.filter((file) => file < "0039"),
@@ -23,6 +27,35 @@ describe("unified user migration", () => {
       migrations.filter((file) => file >= "0039"),
     );
   }
+
+  it("keeps pending users eligible to finalize their suffix and preserves confirmed users' UIDs", async () => {
+    database.exec(`
+      INSERT INTO auth_users (id, name, email) VALUES
+        ('pending-auth', 'Pending', 'pending@example.test'),
+        ('confirmed-auth', 'Confirmed', 'confirmed@example.test');
+      INSERT INTO users (uid, email, password_hash, nickname, uid_number, uid_suffix, nickname_customized) VALUES
+        ('pending-business', 'pending@example.test', '', 'DefaultName', 100123, 'AA', 0),
+        ('confirmed-business', 'confirmed@example.test', '', 'ChosenName', 100124, 'AB', 1);
+    `);
+    migrate();
+    expect(
+      database
+        .prepare("SELECT id, uid_number, uid_suffix, nickname_confirmed FROM users ORDER BY id")
+        .all(),
+    ).toEqual([
+      { id: "confirmed-auth", uid_number: 100124, uid_suffix: "AB", nickname_confirmed: 1 },
+      { id: "pending-auth", uid_number: 100123, uid_suffix: "AA", nickname_confirmed: 0 },
+    ]);
+    expect(
+      await updateProfile(d1.db, { userId: "pending-auth", nickname: "Explorer" }),
+    ).toMatchObject({ uid: "100123ER", needsProfileSetup: false });
+    expect(
+      await updateProfile(d1.db, { userId: "pending-auth", nickname: "Navigator" }),
+    ).toMatchObject({ uid: "100123ER" });
+    expect(
+      await updateProfile(d1.db, { userId: "confirmed-auth", nickname: "NewName" }),
+    ).toMatchObject({ uid: "100124AB" });
+  });
 
   it("keeps the authentication ID and public UID while moving business references", () => {
     database.exec(`

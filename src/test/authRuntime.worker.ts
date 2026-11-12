@@ -5,6 +5,7 @@ import { Hono } from "hono";
 
 import { onAppError } from "@/middleware/error-handler";
 import { createRoutes as createAuthRoutes } from "@/routes/auth/createRoutes";
+import { createRoutes as createProfileRoutes } from "@/routes/profile/createRoutes";
 import { createAuth, runWithAuthRequest } from "@/services/auth/betterAuth";
 import type { AuthCredentials } from "@/services/auth/contract/credentials";
 import { resolveAuthIdentity } from "@/services/auth/session";
@@ -98,6 +99,7 @@ function observe(database: D1Database): D1Database {
 const app = new Hono<AppEnv<{ requestId: string }>>();
 app.onError(onAppError);
 app.route("/auth/v1", createAuthRoutes());
+app.route("/auth/v1", createProfileRoutes());
 
 export default {
   async fetch(request: Request, raw: TestEnv, context: ExecutionContext): Promise<Response> {

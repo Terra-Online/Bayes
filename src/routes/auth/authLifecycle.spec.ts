@@ -165,41 +165,72 @@ describe("authenticated account and profile HTTP lifecycle", () => {
     expect(storedProfile("other")).toMatchObject({ nickname: "TakenName", avt: 9 });
   });
 
-  it("confirms a nickname while keeping the public UID assigned at creation", async () => {
-    // An uncustomized profile chooses its suffix on the first nickname update.
-    // Later edits keep that public identity.
-    database.sqlite.exec("UPDATE users SET nickname_confirmed = 0 WHERE id = 'owner'");
-    expect(await (await request("/session")).json()).toMatchObject({
-      user: { uid: "123456AB", needsProfileSetup: true },
-    });
+  it.each([
+    ["Explorer", "ER"],
+    ["OriginalName", "ME"],
+  ])(
+    "finalizes the UID when first confirming %s, then preserves it on later edits",
+    async (nickname, suffix) => {
+      // An uncustomized profile chooses its suffix on the first nickname update.
+      // Later edits keep that public identity.
+      database.sqlite.exec("UPDATE users SET nickname_confirmed = 0 WHERE id = 'owner'");
+      expect(await (await request("/session")).json()).toMatchObject({
+        user: { uid: "123456AB", needsProfileSetup: true },
+      });
 
-    const onboarded = await jsonRequest("PATCH", "/profile", { nickname: "Explorer" });
-    expect(onboarded.status).toBe(200);
-    const profile = (await onboarded.json()) as { user: { uid: string } };
-    expect(profile).toMatchObject({
-      user: {
-        uid: "123456AB",
-        nickname: "Explorer",
-        avatar: 7,
-        needsProfileSetup: false,
-      },
-    });
-    const renamed = await jsonRequest("PATCH", "/profile", { nickname: "Pathfinder" });
-    expect(renamed.status).toBe(200);
-    expect(await renamed.json()).toMatchObject({
-      user: { uid: profile.user.uid, nickname: "Pathfinder", avatar: 7, needsProfileSetup: false },
-    });
-    expect(await (await request("/session")).json()).toMatchObject({
-      user: { uid: profile.user.uid, nickname: "Pathfinder", needsProfileSetup: false },
-    });
+      const onboarded = await jsonRequest("PATCH", "/profile", { nickname });
+      expect(onboarded.status).toBe(200);
+      const profile = (await onboarded.json()) as { user: { uid: string } };
+      expect(profile).toMatchObject({
+        user: {
+          uid: `123456${suffix}`,
+          nickname,
+          avatar: 7,
+          needsProfileSetup: false,
+        },
+      });
+      const renamed = await jsonRequest("PATCH", "/profile", { nickname: "Navigator" });
+      expect(renamed.status).toBe(200);
+      expect(await renamed.json()).toMatchObject({
+        user: {
+          uid: profile.user.uid,
+          nickname: "Navigator",
+          avatar: 7,
+          needsProfileSetup: false,
+        },
+      });
+      expect(await (await request("/session")).json()).toMatchObject({
+        user: { uid: profile.user.uid, nickname: "Navigator", needsProfileSetup: false },
+      });
+      expect(storedProfile()).toMatchObject({
+        uid: "owner",
+        uid_number: 123456,
+        uid_suffix: suffix,
+        nickname_confirmed: 1,
+        avt: 7,
+        points: 340,
+      });
+      expect(database.sqlite.prepare("SELECT COUNT(*) AS count FROM users").get()!.count).toBe(2);
+    },
+  );
+
+  it("finalizes the UID only once when first profile confirmations race", async () => {
+    database.sqlite.exec("UPDATE users SET nickname_confirmed = 0 WHERE id = 'owner'");
+    const responses = await Promise.all([
+      jsonRequest("PATCH", "/profile", { nickname: "Explorer" }),
+      jsonRequest("PATCH", "/profile", { nickname: "Navigator" }),
+    ]);
+    expect(responses.map((response) => response.status)).toEqual([200, 200]);
+    const profiles = await Promise.all(
+      responses.map((response) => response.json() as Promise<{ user: { uid: string } }>),
+    );
+    expect(["123456ER", "123456OR"]).toContain(profiles[0]!.user.uid);
+    expect(profiles[1]!.user.uid).toBe(profiles[0]!.user.uid);
     expect(storedProfile()).toMatchObject({
-      uid: "owner",
       uid_number: 123456,
+      uid_suffix: profiles[0]!.user.uid.slice(-2),
       nickname_confirmed: 1,
-      avt: 7,
-      points: 340,
     });
-    expect(database.sqlite.prepare("SELECT COUNT(*) AS count FROM users").get()!.count).toBe(2);
   });
 
   it.each(["json", "urlencoded", "multipart"])(
@@ -232,6 +263,7 @@ describe("authenticated account and profile HTTP lifecycle", () => {
   );
 
   it("rejects a taken nickname without applying the accompanying avatar change to either profile", async () => {
+    database.sqlite.exec("UPDATE users SET nickname_confirmed = 0 WHERE id = 'owner'");
     const original = storedProfile();
     const otherOriginalProfile = storedProfile("other");
     const response = await jsonRequest("PATCH", "/profile", {
@@ -247,7 +279,12 @@ describe("authenticated account and profile HTTP lifecycle", () => {
     });
     const retry = await jsonRequest("PATCH", "/profile", { nickname: "AvailableName", avatar: 33 });
     expect(retry.status).toBe(200);
-    expect(storedProfile()).toMatchObject({ nickname: "AvailableName", avt: 33 });
+    expect(storedProfile()).toMatchObject({
+      nickname: "AvailableName",
+      avt: 33,
+      uid_suffix: "ME",
+      nickname_confirmed: 1,
+    });
   });
 
   it("lists only the signed-in user's login methods with public labels and no account secrets", async () => {

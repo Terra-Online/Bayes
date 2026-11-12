@@ -29,6 +29,7 @@ async function runtime() {
     },
     ratelimits: {
       OEM_PUBLIC_RATE_LIMIT: { namespace_id: "100", simple: { limit: 100, period: 60 } },
+      OEM_AUTH_RATE_LIMIT: { namespace_id: "101", simple: { limit: 100, period: 60 } },
     },
     bindings: {
       BETTER_AUTH_URL: authOrigin,
@@ -148,6 +149,46 @@ try {
           ["DB-user", "DB_SECOND-user"],
         );
       });
+      await t.test(
+        "concurrent first nickname confirmations finalize the UID once on native D1",
+        async () => {
+          const db = await worker.getD1Database("DB");
+          await db.prepare("UPDATE users SET nickname_confirmed = 0 WHERE id = 'DB-user'").run();
+          const save = (nickname) =>
+            worker.dispatchFetch(`${authOrigin}/auth/v1/profile`, {
+              method: "PATCH",
+              headers: {
+                authorization: "Bearer same-local-token",
+                "content-type": "application/json",
+                origin: "https://opendfieldmap.org",
+              },
+              body: JSON.stringify({ nickname }),
+            });
+          const responses = await Promise.all([save("Explorer"), save("Navigator")]);
+          for (const response of responses) {
+            assert.equal(response.status, 200, await response.clone().text());
+          }
+          const profiles = await Promise.all(responses.map((response) => response.json()));
+          const uid = profiles[0].user.uid;
+          assert.ok(["100001ER", "100001OR"].includes(uid));
+          assert.equal(profiles[1].user.uid, uid);
+          const renamed = await save("Renamed");
+          assert.equal(renamed.status, 200, await renamed.clone().text());
+          assert.equal((await renamed.json()).user.uid, uid);
+          assert.deepEqual(
+            await db
+              .prepare(
+                "SELECT uid_number, uid_suffix, nickname_confirmed FROM users WHERE id = 'DB-user'",
+              )
+              .first(),
+            {
+              uid_number: 100001,
+              uid_suffix: uid.slice(-2),
+              nickname_confirmed: 1,
+            },
+          );
+        },
+      );
       await t.test(
         "password login checks redirect destinations before authenticating credentials",
         async () => {
