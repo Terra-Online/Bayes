@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-export async function testNotifications(t, { db, read, connect, authHeaders }) {
+export async function testNotifications(t, { worker, db, read, connect, authHeaders }) {
   await t.test(
     "notifications: persisted fanout reaches each owner tab and reconnect recovers unread state",
     async () => {
@@ -79,6 +79,46 @@ export async function testNotifications(t, { db, read, connect, authHeaders }) {
           ).read_at,
           null,
         );
+        // Exercise actual authenticated HTTP writes against D1 and native sockets.
+        for (const [path, method, ids] of [
+          ["system/messages/owner-notification/read", "PATCH", ["owner-notification"]],
+          ["system/messages/read", "POST", ["owner-notification"]],
+          ["system/read-all", "POST", null],
+        ]) {
+          await db
+            .prepare("UPDATE notifications SET read_at = NULL WHERE id = 'owner-notification'")
+            .run();
+          const response = await worker.dispatchFetch(`http://localhost/notify/v1/${path}`, {
+            method,
+            headers: { ...authHeaders, "content-type": "application/json" },
+            ...(path.endsWith("messages/read") ? { body: JSON.stringify({ ids }) } : {}),
+          });
+          assert.equal(response.status, 200, await response.clone().text());
+          for (const connection of [tab, replacement]) {
+            const update = JSON.parse(await connection.next());
+            assert.equal(update.event, "notification.read");
+            assert.equal(update.category, "system");
+            assert.deepEqual(update.ids, ids);
+            assert.deepEqual(update.unread, { system: 0, community: 0, total: 0 });
+            assert.equal(
+              (
+                await db
+                  .prepare("SELECT read_at FROM notifications WHERE id = 'owner-notification'")
+                  .first()
+              ).read_at,
+              update.readAt,
+            );
+          }
+        }
+        // Heartbeat fences prove that no read event leaked to another account.
+        neighbor.socket.send("Ef123456");
+        assert.equal(await neighbor.next(), "Ef123456");
+        const recovered = await connect("notify/v1/live?clientId=recovered", authHeaders);
+        sockets.push(recovered);
+        assert.deepEqual(JSON.parse(await recovered.next()), {
+          event: "notification.ready",
+          unread: { system: 0, community: 0, total: 0 },
+        });
         replacement.socket.send("close");
         // A replacement must leave the other tab alive.
         tab.socket.send("Cd123456");

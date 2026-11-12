@@ -650,9 +650,11 @@ export async function getNotificationUnreadCounts(
   return { system, community, total: system + community };
 }
 
+// Use the same cutoff in storage and live events so delayed read delivery cannot
+// mark a subsequently created or reopened aggregate read.
 export async function markNotificationRead(
   db: D1Database,
-  payload: { userId: string; category: NotificationCategory; id: string },
+  payload: { userId: string; category: NotificationCategory; readAt?: string; id: string },
 ): Promise<boolean> {
   const result = await db
     .prepare(
@@ -660,16 +662,18 @@ export async function markNotificationRead(
        SET read_at = COALESCE(read_at, ?4)
        WHERE id = ?1
          AND recipient_user_id = ?2
-         AND category = ?3`,
+         AND category = ?3
+         AND read_at IS NULL
+         AND julianday(COALESCE(last_event_at, created_at)) <= julianday(?4)`,
     )
-    .bind(payload.id, payload.userId, payload.category, new Date().toISOString())
+    .bind(payload.id, payload.userId, payload.category, payload.readAt ?? new Date().toISOString())
     .run();
   return (result.meta.changes ?? 0) > 0;
 }
 
 export async function markNotificationsRead(
   db: D1Database,
-  payload: { userId: string; category: NotificationCategory; ids: string[] },
+  payload: { userId: string; category: NotificationCategory; readAt?: string; ids: string[] },
 ): Promise<number> {
   const ids = [...new Set(payload.ids.map((id) => id.trim()).filter(Boolean))].slice(0, 100);
   if (ids.length === 0) {
@@ -681,16 +685,23 @@ export async function markNotificationsRead(
        SET read_at = COALESCE(read_at, ?3)
        WHERE recipient_user_id = ?1
          AND category = ?2
-         AND id IN (SELECT value FROM json_each(?4))`,
+         AND id IN (SELECT value FROM json_each(?4))
+         AND read_at IS NULL
+         AND julianday(COALESCE(last_event_at, created_at)) <= julianday(?3)`,
     )
-    .bind(payload.userId, payload.category, new Date().toISOString(), JSON.stringify(ids))
+    .bind(
+      payload.userId,
+      payload.category,
+      payload.readAt ?? new Date().toISOString(),
+      JSON.stringify(ids),
+    )
     .run();
   return result.meta.changes ?? 0;
 }
 
 export async function markAllNotificationsRead(
   db: D1Database,
-  payload: { userId: string; category: NotificationCategory },
+  payload: { userId: string; category: NotificationCategory; readAt?: string },
 ): Promise<number> {
   const result = await db
     .prepare(
@@ -698,9 +709,10 @@ export async function markAllNotificationsRead(
        SET read_at = ?3
        WHERE recipient_user_id = ?1
          AND category = ?2
-         AND read_at IS NULL`,
+         AND read_at IS NULL
+         AND julianday(COALESCE(last_event_at, created_at)) <= julianday(?3)`,
     )
-    .bind(payload.userId, payload.category, new Date().toISOString())
+    .bind(payload.userId, payload.category, payload.readAt ?? new Date().toISOString())
     .run();
   return result.meta.changes ?? 0;
 }

@@ -115,6 +115,113 @@ describe("notification Durable Object lifecycle", () => {
     expect(socket.send).toHaveBeenCalledWith("Ab234567");
   });
 
+  it.each([2, 10, 100])(
+    "sends read changes to at most the newest ten of %i connections",
+    async (count) => {
+      for (let i = 0; i < count; i++) {
+        const socket = new TestSocket();
+        socket.serializeAttachment({
+          uid: "user-1",
+          clientId: `tab-${i}`,
+          connectedAt: new Date(i * 1000).toISOString(),
+        });
+        sockets.push(socket);
+      }
+      const response = await object.fetch(
+        new Request("https://notify.internal/read", {
+          method: "POST",
+          headers: { "x-oem-notify-user": "user-1" },
+          body: JSON.stringify({
+            category: "system",
+            ids: ["notice"],
+            readAt: "2026-11-11T00:00:00.000Z",
+          }),
+        }),
+      );
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ delivered: Math.min(count, 10) });
+      for (let i = 0; i < count; i++) {
+        expect(sockets[i]!.send).toHaveBeenCalledTimes(i >= count - 10 ? 1 : 0);
+        expect(sockets[i]!.close).not.toHaveBeenCalled();
+      }
+      expect(mocks.unread).toHaveBeenCalledTimes(1);
+      expect(JSON.parse(sockets[count - 1]!.send.mock.calls[0]![0])).toMatchObject({
+        event: "notification.read",
+        category: "system",
+        ids: ["notice"],
+        unread: { total: 1 },
+      });
+    },
+  );
+
+  it("hydrates delayed upserts so they cannot undo a committed read", async () => {
+    await object.fetch(request());
+    const socket = sockets[0]!;
+    socket.send.mockClear();
+    const readAt = "2026-11-11T00:00:00.000Z";
+    mocks.notification.mockResolvedValue({ id: "notice", recipientUserId: "user-1", readAt });
+    mocks.unread.mockResolvedValue({ system: 0, community: 0, total: 0 });
+    await object.fetch(
+      new Request("https://notify.internal/fanout", {
+        method: "POST",
+        headers: { "x-oem-notify-user": "user-1" },
+        body: JSON.stringify({
+          event: "notification.upserted",
+          notification: { id: "notice", readAt: null },
+          unread: { total: 1 },
+        }),
+      }),
+    );
+    expect(JSON.parse(socket.send.mock.calls[0]![0])).toMatchObject({
+      notification: { readAt },
+      unread: { total: 0 },
+    });
+  });
+
+  it("continues read delivery past a disconnected socket and avoids counts with no subscribers", async () => {
+    const read = () =>
+      object.fetch(
+        new Request("https://notify.internal/read", {
+          method: "POST",
+          headers: { "x-oem-notify-user": "user-1" },
+          body: JSON.stringify({
+            category: "system",
+            ids: null,
+            readAt: "2026-11-11T00:00:00.000Z",
+          }),
+        }),
+      );
+    expect(await (await read()).json()).toMatchObject({ delivered: 0 });
+    expect(mocks.unread).not.toHaveBeenCalled();
+    for (const id of ["first", "second"]) {
+      const socket = new TestSocket();
+      socket.serializeAttachment({
+        uid: "user-1",
+        clientId: id,
+        connectedAt: "2026-11-01T00:00:00Z",
+      });
+      sockets.push(socket);
+    }
+    sockets[0]!.send.mockImplementation(() => {
+      throw new Error("disconnected");
+    });
+    expect(await (await read()).json()).toMatchObject({ delivered: 1 });
+    expect(sockets[1]!.send).toHaveBeenCalledOnce();
+  });
+
+  it("rejects another recipient's read broadcast", async () => {
+    await expect(
+      object.fetch(
+        new Request("https://notify.internal/read", {
+          method: "POST",
+          headers: { "x-oem-notify-user": "other" },
+          body: "{}",
+        }),
+      ),
+    ).rejects.toThrow("mismatch");
+    expect(mocks.unread).not.toHaveBeenCalled();
+  });
+
   it("does not accept an orphan socket when the ready snapshot cannot be read", async () => {
     mocks.unread.mockRejectedValue(new Error("D1_ERROR: D1 DB is overloaded."));
     await expect(object.fetch(request())).rejects.toThrow("overloaded");
