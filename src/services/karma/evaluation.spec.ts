@@ -326,7 +326,9 @@ describe("12-hour resumable karma evaluation", () => {
         });
       }
 
-      imported.sqlite.exec("INSERT INTO auth_users (id, name, email) VALUES ('legacy', 'Legacy', 'legacy@example.test')");
+      imported.sqlite.exec(
+        "INSERT INTO auth_users (id, name, email) VALUES ('legacy', 'Legacy', 'legacy@example.test')",
+      );
       applyMigrations(
         imported.sqlite,
         migrations.filter((file) => file >= "0038"),

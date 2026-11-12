@@ -328,7 +328,7 @@ try {
             .sort();
           await migrateNativeDatabase(
             db,
-            files.filter((file) => file < "0039"),
+            files.filter((file) => file < "0040"),
           );
           await sql(
             db,
@@ -343,9 +343,19 @@ try {
             VALUES ('comment', 'comment', 'marker', 'hash', 'poi', 'business');
           INSERT INTO ugc_snapshots (id, submission_id, kind, revision, content, review_status, creator_user_id)
             VALUES ('snapshot', 'comment', 'comment', 1, 'Original content', 'approved', 'business');
+          UPDATE ugc_submissions SET deleted_at='2026-09-11', deleted_by='business', lifecycle_version=1;
+          INSERT INTO ugc_submission_audit
+            (id,submission_id,action,actor_user_id,deleted_at,deleted_by,lifecycle_version,created_at)
+            VALUES ('deletion','comment','deleted','business','2026-09-11','business',1,'2026-09-11');
+          INSERT INTO ugc_submission_flags (submission_id,user_id) VALUES ('comment','business');
+          INSERT INTO ugc_submission_flag_audit
+            (id,submission_id,reporter_user_id,action,actor_user_id,operation_id,created_at)
+            VALUES ('flag','comment','business','activated','business','operation','2026-09-10');
+          INSERT INTO ugc_snapshots_review_audit (id,snapshot_id,from_status,to_status,source,admin_user_id)
+            VALUES ('review','snapshot','pending_audit','approved','admin','business');
         `,
           );
-          await migrateNativeDatabase(db, ["0039_unified_users.sql"]);
+          await migrateNativeDatabase(db, ["0040_unified_users.sql"]);
           assert.deepEqual(
             await db.prepare("SELECT id, uid_number, uid_suffix, points FROM users").first(),
             { id: "auth", uid_number: 123456, uid_suffix: "AB", points: 31 },
@@ -361,12 +371,54 @@ try {
           );
           await assert.rejects(
             db.prepare("UPDATE ugc_snapshots SET content = 'Changed content'").run(),
-            /snapshot content is immutable/,
+            /snapshot content and provenance are immutable/,
           );
           await assert.rejects(
             db.prepare("UPDATE ugc_snapshots SET creator_user_id = 'business'").run(),
-            /snapshot content is immutable/,
+            /snapshot content and provenance are immutable/,
           );
+          await assert.rejects(
+            db.prepare("UPDATE ugc_snapshots SET edit_note='Changed provenance'").run(),
+            /snapshot content and provenance are immutable/,
+          );
+          assert.equal(
+            await db.prepare("SELECT deleted_by FROM ugc_submissions").first("deleted_by"),
+            "auth",
+          );
+          assert.deepEqual(
+            await db
+              .prepare(
+                "SELECT actor_user_id,deleted_by,lifecycle_version FROM ugc_submission_audit",
+              )
+              .first(),
+            { actor_user_id: "auth", deleted_by: "auth", lifecycle_version: 1 },
+          );
+          assert.deepEqual(
+            await db
+              .prepare("SELECT reporter_user_id,actor_user_id FROM ugc_submission_flag_audit")
+              .first(),
+            { reporter_user_id: "auth", actor_user_id: "auth" },
+          );
+          assert.equal(
+            await db
+              .prepare("SELECT admin_user_id FROM ugc_snapshots_review_audit")
+              .first("admin_user_id"),
+            "auth",
+          );
+          for (const table of [
+            "ugc_submission_audit",
+            "ugc_submission_flag_audit",
+            "ugc_snapshots_review_audit",
+          ]) {
+            await assert.rejects(
+              db.prepare(`UPDATE ${table} SET created_at='2027-01-01'`).run(),
+              /audit records are immutable/,
+            );
+            await assert.rejects(
+              db.prepare(`DELETE FROM ${table}`).run(),
+              /audit records are immutable/,
+            );
+          }
           assert.deepEqual((await db.prepare("PRAGMA foreign_key_check").all()).results, []);
         },
       );

@@ -18,7 +18,11 @@ export async function migrateNativeDatabase(database, files) {
   files ??= (await readdir(directory)).filter((file) => file.endsWith(".sql")).sort();
   for (const file of files) {
     const source = await readFile(new URL(file, directory), "utf8");
-    if (["0038_ugc_snapshots.sql", "0039_ugc_administration.sql", "0039_unified_users.sql"].includes(file)) {
+    if (
+      ["0038_ugc_snapshots.sql", "0039_ugc_administration.sql", "0040_unified_users.sql"].includes(
+        file,
+      )
+    ) {
       await database.batch(unstable_splitSqlQuery(source).map((sql) => database.prepare(sql)));
     } else {
       await executeNativeSql(database, source);

@@ -16,7 +16,7 @@ describe("unified user migration", () => {
     database = d1.sqlite;
     applyMigrations(
       database,
-      migrations.filter((file) => file < "0039"),
+      migrations.filter((file) => file < "0040"),
     );
   });
   afterEach(() => database.close());
@@ -24,7 +24,7 @@ describe("unified user migration", () => {
   function migrate() {
     applyMigrations(
       database,
-      migrations.filter((file) => file >= "0039"),
+      migrations.filter((file) => file >= "0040"),
     );
   }
 
@@ -71,6 +71,18 @@ describe("unified user migration", () => {
       userId: "business-id",
       content: "Original content",
     });
+    database.exec(`
+      UPDATE ugc_submissions SET deleted_at='2026-09-11', deleted_by='business-id', lifecycle_version=1;
+      INSERT INTO ugc_submission_audit
+        (id,submission_id,action,actor_user_id,deleted_at,deleted_by,lifecycle_version,note,created_at)
+        VALUES ('deletion','comment','deleted','business-id','2026-09-11','business-id',1,'Retain this fact','2026-09-11');
+      INSERT INTO ugc_submission_flags (submission_id,user_id) VALUES ('comment','business-id');
+      INSERT INTO ugc_submission_flag_audit
+        (id,submission_id,reporter_user_id,action,actor_user_id,operation_id,created_at)
+        VALUES ('flag','comment','business-id','activated','business-id','operation','2026-09-10');
+      INSERT INTO ugc_snapshots_review_audit (id,snapshot_id,from_status,to_status,source,admin_user_id)
+        VALUES ('review','snapshot-comment','pending_audit','approved','admin','business-id');
+    `);
     migrate();
     expect(
       database
@@ -92,11 +104,45 @@ describe("unified user migration", () => {
       content: "Original content",
     });
     expect(() => database.exec("UPDATE ugc_snapshots SET content = 'Changed content'")).toThrow(
-      "snapshot content is immutable",
+      "snapshot content and provenance are immutable",
     );
     expect(() => database.exec("UPDATE ugc_snapshots SET creator_user_id = 'business-id'")).toThrow(
-      "snapshot content is immutable",
+      "snapshot content and provenance are immutable",
     );
+    expect(() =>
+      database.exec("UPDATE ugc_snapshots SET edit_note = 'Changed provenance'"),
+    ).toThrow("snapshot content and provenance are immutable");
+    expect(database.prepare("SELECT deleted_by FROM ugc_submissions").get()).toEqual({
+      deleted_by: "auth-id",
+    });
+    expect(
+      database
+        .prepare("SELECT actor_user_id,deleted_by,note,lifecycle_version FROM ugc_submission_audit")
+        .get(),
+    ).toEqual({
+      actor_user_id: "auth-id",
+      deleted_by: "auth-id",
+      note: "Retain this fact",
+      lifecycle_version: 1,
+    });
+    expect(
+      database
+        .prepare("SELECT reporter_user_id,actor_user_id,action FROM ugc_submission_flag_audit")
+        .get(),
+    ).toEqual({ reporter_user_id: "auth-id", actor_user_id: "auth-id", action: "activated" });
+    expect(
+      database.prepare("SELECT admin_user_id,to_status FROM ugc_snapshots_review_audit").get(),
+    ).toEqual({ admin_user_id: "auth-id", to_status: "approved" });
+    for (const table of [
+      "ugc_submission_audit",
+      "ugc_submission_flag_audit",
+      "ugc_snapshots_review_audit",
+    ]) {
+      expect(() => database.exec(`UPDATE ${table} SET created_at='2027-01-01'`)).toThrow(
+        "audit records are immutable",
+      );
+      expect(() => database.exec(`DELETE FROM ${table}`)).toThrow("audit records are immutable");
+    }
     expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
   });
 

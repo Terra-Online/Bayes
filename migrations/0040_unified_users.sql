@@ -50,8 +50,8 @@ UPDATE user_archive_progress SET uid = (SELECT auth_id FROM _user_merge_map WHER
 WHERE uid IN (SELECT business_id FROM _user_merge_map WHERE business_id <> auth_id);
 UPDATE archive_progress_sync_mutations SET uid = (SELECT auth_id FROM _user_merge_map WHERE business_id = archive_progress_sync_mutations.uid)
 WHERE uid IN (SELECT business_id FROM _user_merge_map WHERE business_id <> auth_id);
-UPDATE ugc_submissions SET admin_deleted_by = (SELECT auth_id FROM _user_merge_map WHERE business_id = ugc_submissions.admin_deleted_by)
-WHERE admin_deleted_by IN (SELECT business_id FROM _user_merge_map WHERE business_id <> auth_id);
+UPDATE ugc_submissions SET deleted_by = (SELECT auth_id FROM _user_merge_map WHERE business_id = ugc_submissions.deleted_by)
+WHERE deleted_by IN (SELECT business_id FROM _user_merge_map WHERE business_id <> auth_id);
 UPDATE ugc_submissions SET user_id = (SELECT auth_id FROM _user_merge_map WHERE business_id = ugc_submissions.user_id)
 WHERE user_id IN (SELECT business_id FROM _user_merge_map WHERE business_id <> auth_id);
 -- Identity remapping changes the reference, not snapshot authorship or content.
@@ -71,10 +71,32 @@ WHEN NEW.id IS NOT OLD.id
   OR NEW.size_bytes IS NOT OLD.size_bytes
   OR NEW.creator_user_id IS NOT OLD.creator_user_id
   OR NEW.created_at IS NOT OLD.created_at
-BEGIN SELECT RAISE(ABORT, 'snapshot content is immutable; append a new version'); END;
+  OR NEW.baseline_snapshot_id IS NOT OLD.baseline_snapshot_id
+  OR NEW.source_snapshot_id IS NOT OLD.source_snapshot_id
+  OR NEW.edit_note IS NOT OLD.edit_note OR NEW.creation_source IS NOT OLD.creation_source
+BEGIN SELECT RAISE(ABORT, 'snapshot content and provenance are immutable'); END;
 
+-- Audit identities follow the same canonical user mapping. Restore every
+-- immutability guard before commit; audit facts and provenance stay unchanged.
+DROP TRIGGER prevent_ugc_snapshots_review_audit_update;
 UPDATE ugc_snapshots_review_audit SET admin_user_id = (SELECT auth_id FROM _user_merge_map WHERE business_id = ugc_snapshots_review_audit.admin_user_id)
 WHERE admin_user_id IN (SELECT business_id FROM _user_merge_map WHERE business_id <> auth_id);
+CREATE TRIGGER prevent_ugc_snapshots_review_audit_update BEFORE UPDATE ON ugc_snapshots_review_audit
+BEGIN SELECT RAISE(ABORT,'audit records are immutable'); END;
+
+DROP TRIGGER prevent_ugc_submission_audit_update;
+UPDATE ugc_submission_audit SET
+  actor_user_id = COALESCE((SELECT auth_id FROM _user_merge_map WHERE business_id = actor_user_id), actor_user_id),
+  deleted_by = COALESCE((SELECT auth_id FROM _user_merge_map WHERE business_id = deleted_by), deleted_by);
+CREATE TRIGGER prevent_ugc_submission_audit_update BEFORE UPDATE ON ugc_submission_audit
+BEGIN SELECT RAISE(ABORT,'audit records are immutable'); END;
+
+DROP TRIGGER prevent_ugc_submission_flag_audit_update;
+UPDATE ugc_submission_flag_audit SET
+  reporter_user_id = COALESCE((SELECT auth_id FROM _user_merge_map WHERE business_id = reporter_user_id), reporter_user_id),
+  actor_user_id = COALESCE((SELECT auth_id FROM _user_merge_map WHERE business_id = actor_user_id), actor_user_id);
+CREATE TRIGGER prevent_ugc_submission_flag_audit_update BEFORE UPDATE ON ugc_submission_flag_audit
+BEGIN SELECT RAISE(ABORT,'audit records are immutable'); END;
 UPDATE ugc_submission_upvotes SET user_id = (SELECT auth_id FROM _user_merge_map WHERE business_id = ugc_submission_upvotes.user_id)
 WHERE user_id IN (SELECT business_id FROM _user_merge_map WHERE business_id <> auth_id);
 UPDATE ugc_submission_flags SET user_id = (SELECT auth_id FROM _user_merge_map WHERE business_id = ugc_submission_flags.user_id)

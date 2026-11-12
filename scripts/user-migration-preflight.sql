@@ -1,4 +1,4 @@
--- Read-only report for the 0039 cutover. Run against the old schema before applying
+-- Read-only report for the 0040 cutover. Run against the old schema before applying
 -- migrations. Every row in the first four result sets requires resolution first.
 SELECT 'BUSINESS_USER_WITHOUT_AUTH_USER' AS issue,
        u.uid AS business_id, u.uid_number, u.uid_suffix,

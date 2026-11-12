@@ -36,7 +36,7 @@ export async function changeSubmissionDeletion(
   const authorized =
     input.permission === "owner"
       ? "s.user_id=?2"
-      : `EXISTS (SELECT 1 FROM users WHERE uid=?2 AND role IN (${roles}))`;
+      : `EXISTS (SELECT 1 FROM users WHERE id=?2 AND role IN (${roles}))`;
   const eligible = `${authorized} AND (?3 IS NULL OR s.kind=?3)
     AND (?4 IS NULL OR EXISTS (SELECT 1 FROM ugc_snapshots f
       WHERE f.submission_id=s.id AND f.revision=s.revision AND f.id=?4))

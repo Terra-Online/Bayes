@@ -18,7 +18,7 @@ export async function correctSnapshotReview(db: D1Database, input: ReviewCorrect
     db
       .prepare(`SELECT s.kind,s.poi_id AS markerId,f.review_status AS reviewStatus,
       f.review_version AS reviewVersion,
-      EXISTS(SELECT 1 FROM users WHERE uid=?3 AND role IN ('a','r')) AS authorized FROM ugc_submissions s
+      EXISTS(SELECT 1 FROM users WHERE id=?3 AND role IN ('a','r')) AS authorized FROM ugc_submissions s
       JOIN ugc_snapshots f ON f.submission_id=s.id WHERE s.id=?1 AND f.id=?2`)
       .bind(input.submissionId, input.snapshotId, input.actorId),
     db
@@ -26,7 +26,7 @@ export async function correctSnapshotReview(db: D1Database, input: ReviewCorrect
       (id,snapshot_id,from_status,to_status,source,admin_user_id,note,created_at)
       SELECT ?1,f.id,f.review_status,?5,'admin',?6,?7,?8 FROM ugc_snapshots f
       WHERE f.submission_id=?2 AND f.id=?3 AND f.review_status=?4 AND f.review_version=?9
-        AND f.review_status<>?5 AND EXISTS (SELECT 1 FROM users WHERE uid=?6 AND role IN ('a','r'))`)
+        AND f.review_status<>?5 AND EXISTS (SELECT 1 FROM users WHERE id=?6 AND role IN ('a','r'))`)
       .bind(
         auditId,
         input.submissionId,
