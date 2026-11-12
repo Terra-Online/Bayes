@@ -23,6 +23,7 @@ export interface Bindings {
   BETTER_AUTH_SECRET?: string;
   SERVICE_ID_HMAC_SECRET?: string;
   BETTER_AUTH_URL?: string;
+  API_DOCS_ENABLED?: string;
   CORS_ORIGINS?: string;
   TRUSTED_ORIGINS?: string;
   GOOGLE_CLIENT_ID?: string;

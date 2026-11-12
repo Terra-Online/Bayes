@@ -11,7 +11,7 @@ Start with the task you want to do:
 | Configure and run a public checkout | [Local development](development.md) |
 | Understand runtime data flow | [Architecture](architecture.md) |
 | Understand the testing direction | [Testing for refactoring](testing.md) |
-| Call or change an endpoint | [API guide](api.md) |
+| Use the generated API reference and client workflows | [Client integration](client-integration.md) |
 | Operate or deploy your own installation | [Operations](operations.md) |
 | Set up local data files | [Data templates](../templates/README.md) |
 | Work on HTTP modules | [Route conventions](../src/routes/README.md) |

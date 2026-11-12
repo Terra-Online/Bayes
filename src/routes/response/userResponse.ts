@@ -1,6 +1,9 @@
+import type { z } from "zod";
+
+import type { userResponseSchema } from "@/routes/schema/auth";
 import type { AuthUser } from "@/types/app";
 
-export function toUserResponse(user: AuthUser) {
+export function toUserResponse(user: AuthUser): z.output<typeof userResponseSchema> {
   return {
     uid: user.publicUid,
     role: user.role,

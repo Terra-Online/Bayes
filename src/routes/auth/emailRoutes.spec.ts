@@ -3,6 +3,7 @@ import { createMiddleware } from "hono/factory";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createApp } from "@/app";
+import { registrationResponseSchema, passwordLoginResponseSchema } from "@/routes/schema/auth";
 import { createAuth, runWithAuthRequest } from "@/services/auth/betterAuth";
 import emailTemplates from "@/services/email/templateLocales.json";
 import { createMockBindings, type MockBindings } from "@/test/bindings";
@@ -171,7 +172,7 @@ describe("email authentication HTTP behavior", () => {
       password: "Password123",
     });
     expect(response.status, await response.clone().text()).toBe(200);
-    return response.json() as Promise<RegisteredEmailIdentity>;
+    return registrationResponseSchema.parse(await response.json());
   }
 
   it("counts rejected OTP submissions toward the advertised IP budget and recovers after Retry-After", async () => {
@@ -331,7 +332,7 @@ describe("email authentication HTTP behavior", () => {
       callbackURL,
     });
     expect(login.status).toBe(200);
-    expect(await login.json()).toMatchObject({
+    expect(passwordLoginResponseSchema.parse(await login.json())).toMatchObject({
       redirect: true,
       url: callbackURL,
       user: { id: account.user.id, email },
