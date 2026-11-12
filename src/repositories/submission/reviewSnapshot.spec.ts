@@ -60,9 +60,8 @@ it("rechecks reviewer authority at commit", async () => {
   expect(database.sqlite.prepare("SELECT * FROM ugc_snapshots_review_audit").all()).toEqual([]);
 });
 
-it("allows one receipt and leaves expired notification groups unchanged for a losing review", async () => {
+it("allows one immutable receipt and no inbox writes for a losing review", async () => {
   expect(await reviewSnapshot(database.db, command)).toMatchObject({ outcome: "committed" });
-  database.sqlite.exec("UPDATE notifications SET window_expires_at='2000-01-01'");
   const before = database.sqlite.prepare("SELECT * FROM notifications").all();
   expect(await reviewSnapshot(database.db, { ...command, auditId: "loser" })).toEqual({
     outcome: "ignored",

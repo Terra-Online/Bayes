@@ -72,3 +72,23 @@ Use request IDs to correlate failures. The
 For performance work, compare versioned windows with comparable traffic and
 outcomes. CPU, wall time, SQL rows read, cache misses, and long-lived WebSockets
 measure different things. An old observation report is not release acceptance.
+
+## Notification inbox cutover (0040–0041)
+
+This schema change requires a paused, drained deployment. Stop UGC mutations,
+moderation consumers and notification traffic, wait for in-flight work, and back
+up D1 before applying migrations. Apply 0040 and 0041 in order, deploy the matching
+Worker code, then restore traffic. Old code cannot run against the new schema.
+Do not roll back to the old Worker after applying the migrations; restore the
+backup during a maintenance window if rollback is required.
+
+Migration 0041 splits every saved message into an inbox entry, retains the parent
+ID for its first child, inherits its read state, keeps cards without children,
+and rebuilds unread counters. Unread totals can increase. It aborts on orphaned
+messages or identity/deduplication collisions instead of silently losing history.
+Source cutover positions exclude existing audits from fresh collection. Verify
+`PRAGMA foreign_key_check`, inbox row counts against old message/card counts, and
+unread counter sums before restoring traffic. Existing saved pagination cursors
+should be discarded and clients should refresh from the first page.
+
+No production migration or deployment is performed by the refactor itself.

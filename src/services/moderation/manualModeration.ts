@@ -13,7 +13,7 @@ import { getReviewTarget, reviewSnapshot } from "@/repositories/submission/revie
 import { applyUserPointsDelta } from "@/repositories/users";
 import { getModerationPointsDeltaWithDailyBackoff } from "@/services/karma/moderationPoints";
 import type { ManagementAction } from "@/services/moderation/contract/actions";
-import { publishNotificationsCreated } from "@/services/notify/live";
+import { hintUgcEvent } from "@/services/notify/hints";
 import type { AuthUser, Bindings } from "@/types/app";
 
 import { notifySubmissionModerationResult } from "./notifications";
@@ -110,9 +110,7 @@ export async function applyManualModeration(
   if (transition.outcome === "ignored") {
     return conflict(bindings.DB, input.submissionId);
   }
-  if (transition.notifications.length) {
-    dependencies.defer(publishNotificationsCreated(bindings, transition.notifications));
-  }
+  dependencies.defer(hintUgcEvent(bindings, transition.event));
   if (nextStatus === "active" || nextStatus === "pending_audit") {
     dependencies.defer(
       notifySubmissionModerationResult(bindings, {

@@ -74,3 +74,19 @@ The cache interface is implemented in
 - Email uses the configured Resend/Cloudflare provider policy; social login,
   moderation, and translation require their respective external credentials.
 - `OEM_IMG_TRANS` runs the image transcoder container.
+
+## Notification collection
+
+UGC repositories atomically write state and their own immutable review/vote audit
+facts. Business orchestration hints the notification module after commit; a hint
+or live-delivery failure cannot roll back the business operation. Notification
+policy and source readers live under `services/notify` and the notification
+repositories. Domains never write the inbox.
+
+The inbox owns rendering targets and per-entry read state. Collection fixes source
+heads before capturing time, reads a user's related events in a batched query,
+and uses expected source positions to commit inbox entries, counter triggers and
+progress atomically. Source sequences resolve same-millisecond ordering. Explicit
+sync repairs missed hints within 14 days; list and badge reads never scan audits.
+Rule effective dates belong to notification policy. Changing rules does not replay
+already collected history. There is no scheduled delivery or arbitrary replay.

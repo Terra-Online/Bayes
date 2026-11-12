@@ -159,9 +159,9 @@ export function createModerationTestFixture(): ModerationTestFixture {
 
   function notificationMessages(): ModerationRow[] {
     return database.sqlite
-      .prepare(`SELECT n.recipient_user_id, n.type, m.submission_id
-      FROM notifications n JOIN notification_messages m ON m.notification_id = n.id
-      ORDER BY n.recipient_user_id, m.submission_id`)
+      .prepare(`SELECT n.recipient_user_id, n.type, n.submission_id
+      FROM notifications n
+      ORDER BY n.recipient_user_id, n.submission_id`)
       .all();
   }
 

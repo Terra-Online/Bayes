@@ -44,6 +44,10 @@ export const notificationItemSchema: z.ZodType<SerializedNotificationItem> = z
     }),
     readAt: z.string().nullable(),
     createdAt: z.string(),
+    projectedAt: z
+      .string()
+      .optional()
+      .describe("Inbox arrival time; use with createdAt when applying read cutoffs."),
     isMultiMsg: z.boolean(),
     messages: z.array(z.lazy(() => notificationItemSchema)),
   })
@@ -62,3 +66,8 @@ export const notificationReadOneResponseSchema = notificationReadResponseSchema.
   changed: z.boolean(),
 });
 export const unreadResponseSchema = z.object({ unread: unreadCountsSchema });
+
+export const notificationSyncResponseSchema = z.object({
+  ok: z.literal(true),
+  unread: unreadCountsSchema,
+});

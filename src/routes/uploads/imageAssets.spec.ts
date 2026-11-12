@@ -36,7 +36,7 @@ beforeEach(() => {
     votes: database.sqlite.prepare("SELECT * FROM ugc_submission_upvotes").all(),
     flags: database.sqlite.prepare("SELECT * FROM ugc_submission_flags").all(),
     notifications: database.sqlite.prepare("SELECT * FROM notifications").all(),
-    messages: database.sqlite.prepare("SELECT * FROM notification_messages").all(),
+    voteEvents: database.sqlite.prepare("SELECT * FROM ugc_vote_events").all(),
     reviews: database.sqlite.prepare("SELECT * FROM ugc_snapshots_review_audit").all(),
   });
   storage = new Map();

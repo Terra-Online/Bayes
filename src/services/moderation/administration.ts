@@ -9,6 +9,7 @@ import {
   type ReviewCorrection,
 } from "@/repositories/submission/correctReview";
 import { changeSubmissionDeletion } from "@/repositories/submission/lifecycle";
+import { hintUgcEvent } from "@/services/notify/hints";
 import { commentContentSchema } from "@/services/ugc/contract/commentContent";
 import type { RevisionContent } from "@/services/ugc/contract/revisionContent";
 
@@ -66,6 +67,9 @@ export async function administerReview(
     throw new ApiError(409, "MODERATION_CONFLICT", "The inspected review changed.");
   }
   if (result.outcome === "committed") {
+    if (result.event) {
+      dependencies.defer(hintUgcEvent(dependencies.bindings, result.event));
+    }
     dependencies.defer(
       invalidateUploadCaches({
         kv: dependencies.bindings.OEM_KV,

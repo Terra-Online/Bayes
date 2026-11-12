@@ -1,7 +1,7 @@
 import { ApiError } from "@/lib/errors";
 import { invalidateUploadCaches } from "@/publicRead/client/invalidate";
 import { setImageUpvote, setSubmissionVote } from "@/repositories/submission/voteSubmission";
-import { publishNotificationsCreated } from "@/services/notify/live";
+import { hintUgcEvent } from "@/services/notify/hints";
 import type { UgcActionDependencies, UgcActionInput } from "@/services/ugc/contract/actions";
 
 interface VoteCommentInput extends UgcActionInput {
@@ -24,10 +24,8 @@ export async function voteComment(dependencies: UgcActionDependencies, input: Vo
   dependencies.defer(
     invalidateUploadCaches({ kv: bindings.OEM_KV, kind: "comment", markerId: vote.markerId }),
   );
-  if (vote.notifications.length > 0) {
-    dependencies.defer(publishNotificationsCreated(bindings, vote.notifications));
-  }
 
+  dependencies.defer(hintUgcEvent(bindings, vote.event));
   return { vote: vote.currentVote, previousVote: vote.previousVote, score: vote.score };
 }
 
@@ -47,8 +45,8 @@ async function setImageVote(
   dependencies.defer(
     invalidateUploadCaches({ kv: bindings.OEM_KV, kind: "image", markerId: result.markerId }),
   );
-  if (result.notifications.length > 0) {
-    dependencies.defer(publishNotificationsCreated(bindings, result.notifications));
+  if (result.event) {
+    dependencies.defer(hintUgcEvent(bindings, result.event));
   }
   return result;
 }

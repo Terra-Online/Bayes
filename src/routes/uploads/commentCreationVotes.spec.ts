@@ -238,6 +238,24 @@ it("toggles and reverses votes across public versions while preserving creation 
   );
 });
 
+it("commits a vote and its audit when inbox projection is unavailable", async () => {
+  insertCommentSnapshot(database.sqlite, { id: "target", userId: "reader" });
+  database.sqlite.exec(`CREATE TRIGGER reject_inbox BEFORE INSERT ON notifications
+    BEGIN SELECT RAISE(ABORT, 'inbox unavailable'); END;`);
+  const response = await post("/comments/target/upvote");
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({ previousVote: 0, vote: 1, score: 1 });
+  await Promise.all(pending);
+  expect(
+    database.sqlite.prepare("SELECT previous_value,next_value FROM ugc_vote_events").all(),
+  ).toEqual([{ previous_value: 0, next_value: 1 }]);
+  expect(database.sqlite.prepare("SELECT active,value FROM ugc_submission_votes").get()).toEqual({
+    active: 1,
+    value: 1,
+  });
+  expect(database.sqlite.prepare("SELECT * FROM notifications").all()).toEqual([]);
+});
+
 it.each(["pending_openai", "pending_audit", "rejected", "unknown"] as const)(
   "denies votes on a first version in %s",
   async (reviewStatus) => {
@@ -260,9 +278,9 @@ it("keeps readers separate and notifies only committed positive votes, preservin
   expect(await (await post("/comments/target/upvote")).json()).toMatchObject({ vote: 1, score: 1 });
   await Promise.all(pending);
   expect(fanout).toHaveBeenCalledTimes(1);
-  expect(
-    database.sqlite.prepare("SELECT recipient_user_id,message_count FROM notifications").all(),
-  ).toEqual([{ recipient_user_id: "reader", message_count: 1 }]);
+  expect(database.sqlite.prepare("SELECT recipient_user_id FROM notifications").all()).toEqual([
+    { recipient_user_id: "reader" },
+  ]);
   vi.setSystemTime(new Date("2026-10-29T00:00:01.000Z"));
   expect(await (await post("/comments/target/upvote")).json()).toMatchObject({ vote: 0, score: 0 });
   expect(
@@ -278,9 +296,9 @@ it("keeps readers separate and notifies only committed positive votes, preservin
     vote: -1,
     score: -1,
   });
-  expect(
-    database.sqlite.prepare("SELECT count(*) AS count FROM notification_messages").get(),
-  ).toEqual({ count: 1 });
+  expect(database.sqlite.prepare("SELECT count(*) AS count FROM notifications").get()).toEqual({
+    count: 1,
+  });
   headers = insertAuthenticatedUser(database.sqlite, { uid: "other-reader" }).headers;
   expect(await (await post("/comments/target/downvote")).json()).toMatchObject({
     previousVote: 0,

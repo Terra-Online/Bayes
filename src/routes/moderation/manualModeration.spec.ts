@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 import { appendCommentVersion } from "@/repositories/submission/appendCommentVersion";
+import { collectNotifications } from "@/services/notify/collect";
 import { createSnapshotModerationFixture } from "@/test/fixtures/management";
 import { insertUser } from "@/test/fixtures/users";
 
@@ -191,30 +192,28 @@ it.each(["deleted_at"])("refuses review after %s", async (fact) => {
   expect(fixture.notificationMessages()).toEqual([]);
   expect(fixture.authorPoints()).toBe(20);
 });
-it.each(["notification", "points"])(
+it.each(["audit", "points"])(
   "retains the documented %s failure boundary and does not replay committed effects",
   async (failure) => {
     fixture.submission({ id: "waiting", reviewStatus: "pending_audit" });
     const headers = fixture.createReviewerSession();
     fixture.database.sqlite.exec(
-      failure === "notification"
-        ? "CREATE TEMP TRIGGER fail_write BEFORE INSERT ON notification_messages BEGIN SELECT RAISE(ABORT,'failed notification'); END"
+      failure === "audit"
+        ? "CREATE TEMP TRIGGER fail_write BEFORE INSERT ON ugc_snapshots_review_audit BEGIN SELECT RAISE(ABORT,'failed audit'); END"
         : "CREATE TEMP TRIGGER fail_write BEFORE UPDATE OF points ON users BEGIN SELECT RAISE(ABORT,'failed points'); END",
     );
     expect((await patch("waiting", command("approve", "waiting"), headers)).status).toBe(500);
-    expect(status("snapshot-waiting")).toBe(
-      failure === "notification" ? "pending_audit" : "approved",
-    );
+    expect(status("snapshot-waiting")).toBe(failure === "audit" ? "pending_audit" : "approved");
     expect(fixture.authorPoints()).toBe(20);
-    expect(fixture.reviewAudits()).toHaveLength(failure === "notification" ? 0 : 1);
-    expect(fixture.notificationMessages()).toHaveLength(failure === "notification" ? 0 : 1);
-    expect(fixture.messages.live).toHaveLength(failure === "notification" ? 0 : 1);
-    expect(fixture.messages.translation).toHaveLength(failure === "notification" ? 0 : 1);
+    expect(fixture.reviewAudits()).toHaveLength(failure === "audit" ? 0 : 1);
+    expect(fixture.notificationMessages()).toHaveLength(failure === "audit" ? 0 : 1);
+    expect(fixture.messages.live).toHaveLength(failure === "audit" ? 0 : 1);
+    expect(fixture.messages.translation).toHaveLength(failure === "audit" ? 0 : 1);
     fixture.database.sqlite.exec("DROP TRIGGER fail_write");
     expect((await patch("waiting", command("approve", "waiting"), headers)).status).toBe(
-      failure === "notification" ? 200 : 409,
+      failure === "audit" ? 200 : 409,
     );
-    expect(fixture.authorPoints()).toBe(failure === "notification" ? 22 : 20);
+    expect(fixture.authorPoints()).toBe(failure === "audit" ? 22 : 20);
     expect(fixture.reviewAudits()).toHaveLength(1);
     expect(fixture.notificationMessages()).toHaveLength(1);
     expect(fixture.messages.live).toHaveLength(1);
@@ -397,3 +396,20 @@ it.each(["rejected", "unknown"] as const)(
     expect(fixture.reviewAudits()).toEqual([]);
   },
 );
+
+it("commits review and rewards when notification projection fails and later sync repairs the inbox", async () => {
+  fixture.submission({ id: "waiting", reviewStatus: "pending_audit" });
+  const headers = fixture.createReviewerSession();
+  fixture.database.sqlite.exec(`CREATE TRIGGER fail_notification BEFORE INSERT ON notifications
+    BEGIN SELECT RAISE(ABORT,'inbox unavailable'); END;`);
+  expect((await patch("waiting", command("approve", "waiting"), headers)).status).toBe(200);
+  expect(status("snapshot-waiting")).toBe("approved");
+  expect(fixture.reviewAudits()).toHaveLength(1);
+  expect(fixture.authorPoints()).toBe(22);
+  expect(fixture.notificationMessages()).toEqual([]);
+  fixture.database.sqlite.exec("DROP TRIGGER fail_notification");
+  // The independent notification collector repairs the committed fact; review is never rerun.
+  await collectNotifications(fixture.database.db, "author");
+  expect(fixture.notificationMessages()).toHaveLength(1);
+  expect(fixture.authorPoints()).toBe(22);
+});

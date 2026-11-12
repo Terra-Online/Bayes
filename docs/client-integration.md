@@ -198,8 +198,9 @@ The server sends JSON frames with an `event` discriminator:
   Notification fields use the HTTP notification model from the OpenAPI reference.
 - `notification.read`: contains `category`, `ids` (an array, or `null` for the
   whole category), `readAt`, and `unread`. Mark matching items read only when their
-  latest event timestamp (`createdAt`) is at or before `readAt`, so a newer
-  aggregated notification stays unread. Replace the unread counts with the
+  event timestamp (`createdAt`) and inbox arrival time (`projectedAt`, falling
+  back to `createdAt` for old responses) are both at or before `readAt`. Later
+  projections of older events stay unread. Replace the unread counts with the
   supplied snapshot. Apply the event even when the inbox panel is closed;
   receiving it does not require another HTTP request.
 
@@ -253,3 +254,20 @@ Treat `reconnecting` as a transient state. Authentication and access checks may
 fail after the HTTP upgrade, so handle error frames as well as handshake errors.
 If the client connection closes, reconnect with backoff and obtain a fresh ticket
 when the previous one expires. Sending the text frame `close` stops the stream.
+
+## Notification inbox collection
+
+Opening the notification center should call authenticated `POST /notify/v1/sync`
+before refreshing the list and unread counts. Ordinary list/count/read requests
+use the inbox only. A post-commit hint or sync collects at most 200 user-related
+events per source per run; repeat sync to drain a larger recent backlog. Events
+older than 14 days are permanently skipped if not yet collected; existing inbox
+entries remain. Missed hints require a later trigger within this window.
+
+Notifications have independent IDs and first-read timestamps, with `isMultiMsg:
+false` and `messages: []`. Clients may group display items and mark their underlying
+IDs read together; unread counts count individual entries. Historical cards are
+split once with inherited read state, so unread totals can increase. Discard old
+pagination cursors after cutover and refresh from the first page. Read-all applies
+to entries present at execution; later projections remain unread even when their
+event timestamps precede the read-all request. Atlos integration is separate.

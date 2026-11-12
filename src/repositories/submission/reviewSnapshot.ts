@@ -1,7 +1,6 @@
-import type { NotificationRecord } from "@/repositories/notifications";
 import { formatPublicUid } from "@/repositories/users";
+import type { UgcEventReference } from "@/services/ugc/contract/events";
 
-import { commitReviewBatch } from "./reviewNotifications";
 import type { SnapshotReviewStatus } from "./types";
 import type { SubmissionRecord } from "./types";
 
@@ -49,7 +48,7 @@ export type ReviewResult =
       target: ReviewTarget;
       reviewStatus: ReviewCommand["decision"];
       firstApproval: boolean;
-      notifications: NotificationRecord[];
+      event: UgcEventReference;
     };
 
 export async function getReviewTarget(
@@ -131,8 +130,10 @@ export async function reviewSnapshot(
   const statements = [
     db
       .prepare(`INSERT INTO ugc_snapshots_review_audit
-      (id,snapshot_id,from_status,to_status,source,admin_user_id,note,created_at)
-      SELECT ?1,f.id,f.review_status,?5,?6,?7,?8,?9
+      (id,snapshot_id,from_status,to_status,source,admin_user_id,note,created_at,first_publication)
+      SELECT ?1,f.id,f.review_status,?5,?6,?7,?8,?9,(?5='approved' AND s.has_been_published=0 AND NOT EXISTS (
+        SELECT 1 FROM ugc_snapshots published
+        WHERE published.submission_id=s.id AND published.review_status='approved'))
       FROM ugc_submissions s JOIN ugc_snapshots f
         ON f.submission_id=s.id AND f.revision=s.revision
       WHERE s.id=?2 AND f.id=?3 AND f.review_status=?4 AND f.review_version=?10
@@ -142,7 +143,7 @@ export async function reviewSnapshot(
             AND ((?4='pending_openai' AND ?5 IN ('approved','rejected','pending_audit'))
               OR (?4='pending_audit' AND ?5 IN ('approved','rejected')))))
       UNION ALL
-      SELECT id,snapshot_id,from_status,to_status,source,admin_user_id,note,created_at
+      SELECT id,snapshot_id,from_status,to_status,source,admin_user_id,note,created_at,first_publication
       FROM ugc_snapshots_review_audit WHERE id=?1
       RETURNING id`)
       .bind(
@@ -179,14 +180,20 @@ export async function reviewSnapshot(
         .bind(auditId, decision, target.id),
     );
   }
-  const result = await commitReviewBatch(db, command, statements, now);
-  return result.committed
+  statements.push(
+    db
+      .prepare(`UPDATE ugc_submissions SET has_been_published=1
+    WHERE id=?2 AND ?3='approved' AND ${receipt}`)
+      .bind(auditId, target.id, decision),
+  );
+  const results = await db.batch<Record<string, unknown>>(statements);
+  return results[0].results.length > 0
     ? {
         outcome: "committed",
         target,
         reviewStatus: decision,
-        firstApproval: result.firstApproval,
-        notifications: result.notifications,
+        firstApproval: Boolean(results[2].results[0]?.firstApproval),
+        event: { source: "review", eventId: auditId },
       }
     : { outcome: "ignored" };
 }

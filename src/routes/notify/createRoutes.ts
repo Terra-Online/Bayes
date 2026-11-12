@@ -22,6 +22,8 @@ import {
 } from "@/routes/openapi/operation";
 import * as docs from "@/routes/schema/notify";
 import { listQuerySchema, readManySchema } from "@/routes/schema/notify";
+import { collectNotifications } from "@/services/notify/collect";
+import { publishNotificationsCreated } from "@/services/notify/live";
 import { publishNotificationRead } from "@/services/notify/read";
 import type { AppEnv } from "@/types/app";
 
@@ -195,6 +197,27 @@ export function createRoutes() {
   addCategoryRoutes(app, "community");
 
   return app
+    .post(
+      "/sync",
+      operation("syncNotifications", "Notifications", "Collect recent notification events", {
+        errors: [429, 503],
+        security: sessionSecurity,
+        response: docs.notificationSyncResponseSchema,
+      }),
+      requireAuth,
+      rateLimit("auth"),
+      async (c) => {
+        const user = c.get("authUser");
+        const notifications = await collectNotifications(c.env.DB, user.uid);
+        await publishNotificationsCreated(c.env, notifications);
+        const unread = await getNotificationUnreadCounts(c.env.DB, user.uid);
+        return noStore(
+          c.json({ ok: true, unread } satisfies z.output<
+            typeof docs.notificationSyncResponseSchema
+          >),
+        );
+      },
+    )
     .get(
       "/unread-count",
       operation("getUnreadCounts", "Notifications", "Read notification unread counts", {
