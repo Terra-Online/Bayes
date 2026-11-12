@@ -3,13 +3,13 @@ import type { EndfieldBindingRow } from "@/repositories/binding/types";
 export function publicBinding(row: EndfieldBindingRow | null) {
   if (!row) {
     return {
-      bound: false,
-      enabled: false,
+      bound: false as const,
+      enabled: false as const,
     };
   }
 
   return {
-    bound: true,
+    bound: true as const,
     enabled: row.status === "enabled",
     provider: row.provider,
     serverId: row.server_id,

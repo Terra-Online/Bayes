@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { z } from "zod";
 
 import { getRuntimeConfig, getUgcReadConfig } from "@/lib/config";
 import { ApiError } from "@/lib/errors";
@@ -7,6 +8,13 @@ import { readPublicImagesFromWorkersCache } from "@/publicRead/client/client";
 import { resolvePublicImageCacheNamespace } from "@/publicRead/client/scope";
 import { getPublicImageById } from "@/repositories/submission/getPublicImage";
 import { listUserImagesByMarker } from "@/repositories/submission/listImages";
+import {
+  operation,
+  sessionSecurity,
+  optionalSessionSecurity,
+  jsonResponse,
+} from "@/routes/openapi/operation";
+import * as docs from "@/routes/schema/uploads";
 import { imageQuerySchema, imagesQuerySchema } from "@/routes/schema/uploads";
 import { readImageViewerFeed } from "@/services/ugc/read/feeds";
 import { readImageSections } from "@/services/ugc/read/imageSections";
@@ -20,154 +28,198 @@ import { resolveImageScope, resolvePrivateAssetBaseUrl, resolvePublicAssetBaseUr
 export function createRoutes() {
   return (
     new Hono<AppEnv<{ requestId: string }>>()
-      .get("/images/mine", requireActiveUser, rateLimit("auth"), async (c) => {
-        const user = c.get("authUser");
+      .get(
+        "/images/mine",
+        operation("listMyImages", "Images", "List own images by marker", {
+          errors: [429, 503],
+          security: sessionSecurity,
+          query: docs.imagesQuerySchema,
+          response: docs.userImageListSchema,
+          description: "Active user required. markerId and markerIds are optional for own images.",
+        }),
+        requireActiveUser,
+        rateLimit("auth"),
+        async (c) => {
+          const user = c.get("authUser");
 
-        const parsed = imagesQuerySchema.safeParse({
-          markerId: c.req.query("markerId"),
-          markerIds: c.req.query("markerIds"),
-          scope: c.req.query("scope"),
-          limit: c.req.query("limit"),
-          publicOnly: c.req.query("publicOnly") === "1" ? "1" : undefined,
-        });
-        if (!parsed.success) {
-          throw new ApiError(
-            422,
-            "VALIDATION_ERROR",
-            "Invalid image query.",
-            parsed.error.flatten(),
-          );
-        }
-
-        const ids = requireMarkerIds(parsed.data, false);
-        const config = getUgcReadConfig(c.env);
-        const scope = resolveImageScope(c.req.raw, config.ugcUploadPathPrefix, parsed.data.scope);
-        const items = await listUserImagesByMarker(c.env.DB, {
-          userId: user.uid,
-          markerIds: ids,
-          assetBaseUrl: resolvePublicAssetBaseUrl(c.req.url, config.ugcAssetBaseUrl),
-          privateAssetBaseUrl: resolvePrivateAssetBaseUrl(c.req.url),
-          pathPrefix: scope.pathPrefix,
-          excludePathPrefix: scope.excludePathPrefix,
-          limit: parsed.data.limit ?? 6,
-        });
-
-        const response = c.json({ items });
-        response.headers.set("Cache-Control", "private, no-store");
-        return response;
-      })
-      // Keep after /images/mine so "mine" is not treated as an image ID.
-      .get("/images/:id", rateLimit("public"), async (c) => {
-        const parsed = imageQuerySchema.safeParse({
-          markerId: c.req.query("markerId"),
-          scope: c.req.query("scope"),
-        });
-        if (!parsed.success) {
-          throw new ApiError(
-            422,
-            "VALIDATION_ERROR",
-            "Invalid image query.",
-            parsed.error.flatten(),
-          );
-        }
-
-        const config = getRuntimeConfig(c.env);
-        const scope = resolveImageScope(c.req.raw, config.ugcUploadPathPrefix, parsed.data.scope);
-        const identity = await getOptionalAuthIdentity(c.env, {
-          cookie: c.req.header("cookie"),
-          authorization: c.req.header("authorization"),
-        });
-        const item = await getPublicImageById(c.env.DB, {
-          id: c.req.param("id"),
-          markerId: parsed.data.markerId,
-          assetBaseUrl: resolvePublicAssetBaseUrl(c.req.url, config.ugcAssetBaseUrl),
-          ...scope,
-          viewerUserId: identity?.uid,
-        });
-        if (!item) {
-          throw new ApiError(404, "NOT_FOUND", "Image not found.");
-        }
-        const response = c.json({ item });
-        response.headers.set("Cache-Control", "private, no-store");
-        return response;
-      })
-      .get("/images", parseImageListAccess, imageListRateLimit, async (c) => {
-        const access = c.get("imageListAccess");
-        if (access.kind === "includeMine") {
-          const parsed = imagesQuerySchema.safeParse(c.req.query());
+          const parsed = imagesQuerySchema.safeParse({
+            markerId: c.req.query("markerId"),
+            markerIds: c.req.query("markerIds"),
+            scope: c.req.query("scope"),
+            limit: c.req.query("limit"),
+            publicOnly: c.req.query("publicOnly") === "1" ? "1" : undefined,
+          });
           if (!parsed.success) {
-            throw new ApiError(422, "VALIDATION_ERROR", "Invalid image query.");
+            throw new ApiError(
+              422,
+              "VALIDATION_ERROR",
+              "Invalid image query.",
+              parsed.error.flatten(),
+            );
           }
-          const markerIds = requireMarkerIds(parsed.data);
+
+          const ids = requireMarkerIds(parsed.data, false);
           const config = getUgcReadConfig(c.env);
           const scope = resolveImageScope(c.req.raw, config.ugcUploadPathPrefix, parsed.data.scope);
-          const assetBaseUrl = resolvePublicAssetBaseUrl(c.req.url, config.ugcAssetBaseUrl);
-          const limit = parsed.data.limit ?? 6;
-
-          const result = await readImageSections(c.env, {
-            viewerUserId: access.user.uid,
-            markerIds,
-            limit,
-            scope,
-            assetBaseUrl,
+          const items = await listUserImagesByMarker(c.env.DB, {
+            userId: user.uid,
+            markerIds: ids,
+            assetBaseUrl: resolvePublicAssetBaseUrl(c.req.url, config.ugcAssetBaseUrl),
             privateAssetBaseUrl: resolvePrivateAssetBaseUrl(c.req.url),
+            pathPrefix: scope.pathPrefix,
+            excludePathPrefix: scope.excludePathPrefix,
+            limit: parsed.data.limit ?? 6,
           });
-          return imageSectionsResponse(result, c.get("requestId"));
-        }
 
-        const parsed = imagesQuerySchema.safeParse({
-          markerId: c.req.query("markerId"),
-          markerIds: c.req.query("markerIds"),
-          scope: c.req.query("scope"),
-          limit: c.req.query("limit"),
-          publicOnly: c.req.query("publicOnly") === "1" ? "1" : undefined,
-        });
-        if (!parsed.success) {
-          throw new ApiError(
-            422,
-            "VALIDATION_ERROR",
-            "Invalid image query.",
-            parsed.error.flatten(),
-          );
-        }
+          const response = c.json({ items } satisfies z.output<typeof docs.userImageListSchema>);
+          response.headers.set("Cache-Control", "private, no-store");
+          return response;
+        },
+      )
+      // Keep after /images/mine so "mine" is not treated as an image ID.
+      .get(
+        "/images/:id",
+        operation("getImage", "Images", "Read a public image", {
+          errors: [404, 429, 503],
+          security: optionalSessionSecurity,
+          query: docs.imageQuerySchema,
+          response: docs.imageItemSchema,
+          description:
+            "Session credentials add viewer data when valid; invalid credentials fall back to the anonymous view.",
+        }),
+        rateLimit("public"),
+        async (c) => {
+          const parsed = imageQuerySchema.safeParse({
+            markerId: c.req.query("markerId"),
+            scope: c.req.query("scope"),
+          });
+          if (!parsed.success) {
+            throw new ApiError(
+              422,
+              "VALIDATION_ERROR",
+              "Invalid image query.",
+              parsed.error.flatten(),
+            );
+          }
 
-        const ids = requireMarkerIds(parsed.data);
-        const config = getUgcReadConfig(c.env);
-        const scope = resolveImageScope(c.req.raw, config.ugcUploadPathPrefix, parsed.data.scope);
-        const limit = parsed.data.limit ?? 6;
-        const assetBaseUrl = resolvePublicAssetBaseUrl(c.req.url, config.ugcAssetBaseUrl);
-        const publicResponsePromise = readPublicImagesFromWorkersCache({
-          markerIds: ids,
-          limit,
-          cacheNamespace: resolvePublicImageCacheNamespace(scope),
-          assetBaseUrl,
-        });
+          const config = getRuntimeConfig(c.env);
+          const scope = resolveImageScope(c.req.raw, config.ugcUploadPathPrefix, parsed.data.scope);
+          const identity = await getOptionalAuthIdentity(c.env, {
+            cookie: c.req.header("cookie"),
+            authorization: c.req.header("authorization"),
+          });
+          const item = await getPublicImageById(c.env.DB, {
+            id: c.req.param("id"),
+            markerId: parsed.data.markerId,
+            assetBaseUrl: resolvePublicAssetBaseUrl(c.req.url, config.ugcAssetBaseUrl),
+            ...scope,
+            viewerUserId: identity?.uid,
+          });
+          if (!item) {
+            throw new ApiError(404, "NOT_FOUND", "Image not found.");
+          }
+          const response = c.json({ item } satisfies z.output<typeof docs.imageItemSchema>);
+          response.headers.set("Cache-Control", "private, no-store");
+          return response;
+        },
+      )
+      .get(
+        "/images",
+        operation("listImages", "Images", "List images by marker", {
+          errors: [401, 403, 429, 503],
+          security: optionalSessionSecurity,
+          query: docs.imageListQuerySchema,
+          description:
+            "Supply markerId or comma-separated markerIds. publicOnly=1 skips viewer data. Ordinary reads fall back to the anonymous view when session credentials are invalid. includeMine=1 requires an active user (401/403 on access failure) and returns images and mine sections. A 200 list can still be partial. For 207 responses, inspect both section errors and images.partial; preserve every successful section and marker result.",
+          responses: {
+            200: jsonResponse(z.union([docs.publicImageListSchema, docs.imageSectionsSchema])),
+            207: jsonResponse(docs.imageSectionsSchema, "One or more sections are incomplete"),
+          },
+        }),
+        parseImageListAccess,
+        imageListRateLimit,
+        async (c) => {
+          const access = c.get("imageListAccess");
+          if (access.kind === "includeMine") {
+            const parsed = imagesQuerySchema.safeParse(c.req.query());
+            if (!parsed.success) {
+              throw new ApiError(422, "VALIDATION_ERROR", "Invalid image query.");
+            }
+            const markerIds = requireMarkerIds(parsed.data);
+            const config = getUgcReadConfig(c.env);
+            const scope = resolveImageScope(
+              c.req.raw,
+              config.ugcUploadPathPrefix,
+              parsed.data.scope,
+            );
+            const assetBaseUrl = resolvePublicAssetBaseUrl(c.req.url, config.ugcAssetBaseUrl);
+            const limit = parsed.data.limit ?? 6;
 
-        const credentials = {
-          cookie: c.req.header("cookie"),
-          authorization: c.req.header("authorization"),
-        };
-        if (parsed.data.publicOnly === "1" || !hasAuthCredentials(credentials)) {
-          return publicReadResponse(await publicResponsePromise);
-        }
+            const result = await readImageSections(c.env, {
+              viewerUserId: access.user.uid,
+              markerIds,
+              limit,
+              scope,
+              assetBaseUrl,
+              privateAssetBaseUrl: resolvePrivateAssetBaseUrl(c.req.url),
+            });
+            return imageSectionsResponse(result, c.get("requestId"));
+          }
 
-        const [publicResponse, identity] = await Promise.all([
-          publicResponsePromise,
-          getOptionalAuthIdentity(c.env, credentials),
-        ]);
-        if (!identity || !publicResponse.ok) {
-          return publicReadResponse(publicResponse);
-        }
+          const parsed = imagesQuerySchema.safeParse({
+            markerId: c.req.query("markerId"),
+            markerIds: c.req.query("markerIds"),
+            scope: c.req.query("scope"),
+            limit: c.req.query("limit"),
+            publicOnly: c.req.query("publicOnly") === "1" ? "1" : undefined,
+          });
+          if (!parsed.success) {
+            throw new ApiError(
+              422,
+              "VALIDATION_ERROR",
+              "Invalid image query.",
+              parsed.error.flatten(),
+            );
+          }
 
-        const { payload } = publicResponse;
-        const images = await readImageViewerFeed(c.env.DB, {
-          viewerUserId: identity.uid,
-          markerIds: ids,
-          publicImages: payload.items,
-          scope,
-        });
+          const ids = requireMarkerIds(parsed.data);
+          const config = getUgcReadConfig(c.env);
+          const scope = resolveImageScope(c.req.raw, config.ugcUploadPathPrefix, parsed.data.scope);
+          const limit = parsed.data.limit ?? 6;
+          const assetBaseUrl = resolvePublicAssetBaseUrl(c.req.url, config.ugcAssetBaseUrl);
+          const publicResponsePromise = readPublicImagesFromWorkersCache({
+            markerIds: ids,
+            limit,
+            cacheNamespace: resolvePublicImageCacheNamespace(scope),
+            assetBaseUrl,
+          });
 
-        return viewerReadResponse(publicResponse, images);
-      })
+          const credentials = {
+            cookie: c.req.header("cookie"),
+            authorization: c.req.header("authorization"),
+          };
+          if (parsed.data.publicOnly === "1" || !hasAuthCredentials(credentials)) {
+            return publicReadResponse(await publicResponsePromise);
+          }
+
+          const [publicResponse, identity] = await Promise.all([
+            publicResponsePromise,
+            getOptionalAuthIdentity(c.env, credentials),
+          ]);
+          if (!identity || !publicResponse.ok) {
+            return publicReadResponse(publicResponse);
+          }
+
+          const { payload } = publicResponse;
+          const images = await readImageViewerFeed(c.env.DB, {
+            viewerUserId: identity.uid,
+            markerIds: ids,
+            publicImages: payload.items,
+            scope,
+          });
+
+          return viewerReadResponse(publicResponse, images);
+        },
+      )
   );
 }

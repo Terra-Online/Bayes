@@ -99,8 +99,11 @@ describe("locator reconnection lifecycle", () => {
 
   async function connect() {
     const app = createRoutes();
+    // Run the final handler directly for this socket lifecycle fixture; route
+    // metadata middleware precedes it in Hono's handler inventory.
     await app.routes
-      .find((route) => route.path === "/position-stream")!
+      .filter((route) => route.path === "/position-stream")
+      .at(-1)!
       .handler(context, async () => {});
     await Promise.all(waits);
     await vi.advanceTimersByTimeAsync(0);
