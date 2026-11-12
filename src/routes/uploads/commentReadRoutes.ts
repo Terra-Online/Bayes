@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import type { z } from "zod";
 
 import { getUgcReadConfig } from "@/lib/config";
 import { ApiError } from "@/lib/errors";
@@ -6,6 +7,8 @@ import { rateLimit } from "@/middleware/rate-limit";
 import { readPublicCommentsFromWorkersCache } from "@/publicRead/client/client";
 import { resolvePublicCommentCacheNamespace } from "@/publicRead/client/scope";
 import { listUserCommentsByMarker } from "@/repositories/submission/listComments";
+import { operation, sessionSecurity, optionalSessionSecurity } from "@/routes/openapi/operation";
+import * as docs from "@/routes/schema/uploads";
 import { commentQuerySchema, commentsQuerySchema } from "@/routes/schema/uploads";
 import { readCommentContext, readCommentViewerFeed } from "@/services/ugc/read/feeds";
 import type { AppEnv } from "@/types/app";
@@ -18,127 +21,163 @@ import { resolveImageScope } from "./scope";
 export function createRoutes() {
   return (
     new Hono<AppEnv<{ requestId: string }>>()
-      .get("/comments/mine", requireActiveUser, rateLimit("auth"), async (c) => {
-        const user = c.get("authUser");
+      .get(
+        "/comments/mine",
+        operation("listMyComments", "Comments", "List own comments by marker", {
+          errors: [429, 503],
+          security: sessionSecurity,
+          query: docs.commentsQuerySchema,
+          response: docs.userCommentListSchema,
+          description: "Active user required. Supply markerId or comma-separated markerIds.",
+        }),
+        requireActiveUser,
+        rateLimit("auth"),
+        async (c) => {
+          const user = c.get("authUser");
 
-        const parsed = commentsQuerySchema.safeParse({
-          markerId: c.req.query("markerId"),
-          markerIds: c.req.query("markerIds"),
-          scope: c.req.query("scope"),
-          limit: c.req.query("limit"),
-          replyLimit: c.req.query("replyLimit"),
-          publicOnly: c.req.query("publicOnly") === "1" ? "1" : undefined,
-        });
-        if (!parsed.success) {
-          throw new ApiError(
-            422,
-            "VALIDATION_ERROR",
-            "Invalid comment query.",
-            parsed.error.flatten(),
+          const parsed = commentsQuerySchema.safeParse({
+            markerId: c.req.query("markerId"),
+            markerIds: c.req.query("markerIds"),
+            scope: c.req.query("scope"),
+            limit: c.req.query("limit"),
+            replyLimit: c.req.query("replyLimit"),
+            publicOnly: c.req.query("publicOnly") === "1" ? "1" : undefined,
+          });
+          if (!parsed.success) {
+            throw new ApiError(
+              422,
+              "VALIDATION_ERROR",
+              "Invalid comment query.",
+              parsed.error.flatten(),
+            );
+          }
+
+          const ids = requireMarkerIds(parsed.data);
+          const items = await listUserCommentsByMarker(c.env.DB, {
+            userId: user.uid,
+            markerIds: ids,
+            limit: parsed.data.limit ?? 50,
+          });
+
+          const response = c.json({ items } satisfies z.output<typeof docs.userCommentListSchema>);
+          response.headers.set("Cache-Control", "private, no-store");
+          return response;
+        },
+      )
+      .get(
+        "/comments",
+        operation("listComments", "Comments", "List public comment trees", {
+          errors: [429, 503],
+          security: optionalSessionSecurity,
+          query: docs.commentsQuerySchema,
+          response: docs.publicCommentListSchema,
+          description:
+            "Supply markerId or comma-separated markerIds. A signed-in viewer may see their own pending comments and edits; their presence does not establish public visibility. publicOnly=1 returns the public view without viewer data. Invalid session credentials fall back to the anonymous view. limit caps root branches; replyLimit caps branches per parent. Hidden connectors appear as placeholders.",
+        }),
+        rateLimit("public"),
+        async (c) => {
+          const parsed = commentsQuerySchema.safeParse({
+            markerId: c.req.query("markerId"),
+            markerIds: c.req.query("markerIds"),
+            scope: c.req.query("scope"),
+            limit: c.req.query("limit"),
+            replyLimit: c.req.query("replyLimit"),
+            publicOnly: c.req.query("publicOnly") === "1" ? "1" : undefined,
+          });
+          if (!parsed.success) {
+            throw new ApiError(
+              422,
+              "VALIDATION_ERROR",
+              "Invalid comment query.",
+              parsed.error.flatten(),
+            );
+          }
+
+          const ids = requireMarkerIds(parsed.data);
+          const limit = parsed.data.limit ?? 20;
+          const replyLimit = parsed.data.replyLimit ?? 3;
+          const cacheNamespace = resolvePublicCommentCacheNamespace(
+            resolveImageScope(
+              c.req.raw,
+              getUgcReadConfig(c.env).ugcUploadPathPrefix,
+              parsed.data.scope,
+            ),
           );
-        }
+          const publicResponsePromise = readPublicCommentsFromWorkersCache({
+            markerIds: ids,
+            limit,
+            replyLimit,
+            cacheNamespace,
+          });
 
-        const ids = requireMarkerIds(parsed.data);
-        const items = await listUserCommentsByMarker(c.env.DB, {
-          userId: user.uid,
-          markerIds: ids,
-          limit: parsed.data.limit ?? 50,
-        });
+          const credentials = {
+            cookie: c.req.header("cookie"),
+            authorization: c.req.header("authorization"),
+          };
+          if (parsed.data.publicOnly === "1" || !hasAuthCredentials(credentials)) {
+            return publicReadResponse(await publicResponsePromise);
+          }
 
-        const response = c.json({ items });
-        response.headers.set("Cache-Control", "private, no-store");
-        return response;
-      })
-      .get("/comments", rateLimit("public"), async (c) => {
-        const parsed = commentsQuerySchema.safeParse({
-          markerId: c.req.query("markerId"),
-          markerIds: c.req.query("markerIds"),
-          scope: c.req.query("scope"),
-          limit: c.req.query("limit"),
-          replyLimit: c.req.query("replyLimit"),
-          publicOnly: c.req.query("publicOnly") === "1" ? "1" : undefined,
-        });
-        if (!parsed.success) {
-          throw new ApiError(
-            422,
-            "VALIDATION_ERROR",
-            "Invalid comment query.",
-            parsed.error.flatten(),
-          );
-        }
+          const [publicResponse, identity] = await Promise.all([
+            publicResponsePromise,
+            getOptionalAuthIdentity(c.env, credentials),
+          ]);
+          if (!identity || !publicResponse.ok) {
+            return publicReadResponse(publicResponse);
+          }
 
-        const ids = requireMarkerIds(parsed.data);
-        const limit = parsed.data.limit ?? 20;
-        const replyLimit = parsed.data.replyLimit ?? 3;
-        const cacheNamespace = resolvePublicCommentCacheNamespace(
-          resolveImageScope(
-            c.req.raw,
-            getUgcReadConfig(c.env).ugcUploadPathPrefix,
-            parsed.data.scope,
-          ),
-        );
-        const publicResponsePromise = readPublicCommentsFromWorkersCache({
-          markerIds: ids,
-          limit,
-          replyLimit,
-          cacheNamespace,
-        });
+          const { payload } = publicResponse;
+          const items = await readCommentViewerFeed(c.env.DB, {
+            markerIds: ids,
+            viewerUserId: identity.uid,
+            publicComments: payload.items,
+          });
 
-        const credentials = {
-          cookie: c.req.header("cookie"),
-          authorization: c.req.header("authorization"),
-        };
-        if (parsed.data.publicOnly === "1" || !hasAuthCredentials(credentials)) {
-          return publicReadResponse(await publicResponsePromise);
-        }
-
-        const [publicResponse, identity] = await Promise.all([
-          publicResponsePromise,
-          getOptionalAuthIdentity(c.env, credentials),
-        ]);
-        if (!identity || !publicResponse.ok) {
-          return publicReadResponse(publicResponse);
-        }
-
-        const { payload } = publicResponse;
-        const items = await readCommentViewerFeed(c.env.DB, {
-          markerIds: ids,
-          viewerUserId: identity.uid,
-          publicComments: payload.items,
-        });
-
-        return viewerReadResponse(publicResponse, items);
-      })
+          return viewerReadResponse(publicResponse, items);
+        },
+      )
       // Keep after /comments/mine so "mine" is not treated as a comment ID.
-      .get("/comments/:id", rateLimit("public"), async (c) => {
-        const parsed = commentQuerySchema.safeParse({
-          markerId: c.req.query("markerId"),
-        });
-        if (!parsed.success) {
-          throw new ApiError(
-            422,
-            "VALIDATION_ERROR",
-            "Invalid comment query.",
-            parsed.error.flatten(),
-          );
-        }
+      .get(
+        "/comments/:id",
+        operation("getCommentContext", "Comments", "Read a comment and its context", {
+          errors: [404, 429, 503],
+          security: optionalSessionSecurity,
+          query: docs.commentQuerySchema,
+          response: docs.commentItemSchema,
+          description:
+            "Invalid session credentials fall back to the anonymous view. path includes ancestors and the target; replies contains bounded descendants. Hidden targets and connectors use the placeholder node type.",
+        }),
+        rateLimit("public"),
+        async (c) => {
+          const parsed = commentQuerySchema.safeParse({
+            markerId: c.req.query("markerId"),
+          });
+          if (!parsed.success) {
+            throw new ApiError(
+              422,
+              "VALIDATION_ERROR",
+              "Invalid comment query.",
+              parsed.error.flatten(),
+            );
+          }
 
-        const identity = await getOptionalAuthIdentity(c.env, {
-          cookie: c.req.header("cookie"),
-          authorization: c.req.header("authorization"),
-        });
-        const item = await readCommentContext(c.env.DB, {
-          id: c.req.param("id"),
-          markerId: parsed.data.markerId,
-          ...(identity ? { viewerUserId: identity.uid } : {}),
-        });
-        if (!item) {
-          throw new ApiError(404, "COMMENT_NOT_FOUND", "Comment not found.");
-        }
+          const identity = await getOptionalAuthIdentity(c.env, {
+            cookie: c.req.header("cookie"),
+            authorization: c.req.header("authorization"),
+          });
+          const item = await readCommentContext(c.env.DB, {
+            id: c.req.param("id"),
+            markerId: parsed.data.markerId,
+            ...(identity ? { viewerUserId: identity.uid } : {}),
+          });
+          if (!item) {
+            throw new ApiError(404, "COMMENT_NOT_FOUND", "Comment not found.");
+          }
 
-        const response = c.json({ item });
-        response.headers.set("Cache-Control", "private, no-store");
-        return response;
-      })
+          const response = c.json({ item } satisfies z.output<typeof docs.commentItemSchema>);
+          response.headers.set("Cache-Control", "private, no-store");
+          return response;
+        },
+      )
   );
 }

@@ -63,3 +63,83 @@ export const resetPasswordPreviewSchema = z.object({
 export const sessionExchangeSchema = z.object({
   code: z.string().trim().min(16, "Code is required."),
 });
+
+export const userResponseSchema = z
+  .object({
+    uid: z.string().describe("Public UID, not the internal user ID."),
+    role: z.enum(["n", "p", "a", "s", "r"]),
+    karma: z.number(),
+    avatar: z.number(),
+    email: z.string(),
+    nickname: z.string(),
+    registeredAt: z.string().optional(),
+    needsProfileSetup: z
+      .boolean()
+      .describe("Complete onboarding by updating this existing user's profile."),
+  })
+  .meta({ ref: "User" });
+
+export const sessionResponseSchema = z.object({
+  user: userResponseSchema,
+  requiresCookieConfirmation: z
+    .literal(true)
+    .optional()
+    .describe(
+      "A replacement session cookie was issued. Request the session again with browser credentials to confirm that the cookie is accepted; confirmation succeeds when this field is absent.",
+    ),
+});
+
+// Better Auth owns these forwarded payloads. Keep their model distinct from
+// the business user returned by /session (whose uid is the public UID).
+export const authProviderUserSchema = z
+  .looseObject({
+    id: z.string(),
+    name: z.string(),
+    email: z.string(),
+    emailVerified: z.boolean(),
+    image: z.string().nullable().optional(),
+    createdAt: z.string(),
+    updatedAt: z.string(),
+  })
+  .meta({ ref: "AuthProviderUser" });
+export const passwordLoginSchema = z.looseObject({
+  email: z.string(),
+  password: z.string(),
+  rememberMe: z.boolean().optional(),
+  callbackURL: z.string().optional(),
+});
+export const socialLoginSchema = linkAccountSchema
+  .extend({
+    newUserCallbackURL: z.string().optional(),
+    requestSignUp: z.boolean().optional(),
+  })
+  .loose();
+export const passwordLoginResponseSchema = z.looseObject({
+  redirect: z.boolean(),
+  token: z.string(),
+  url: z.string().optional(),
+  user: authProviderUserSchema,
+});
+export const registrationResponseSchema = z.looseObject({
+  token: z.string(),
+  user: authProviderUserSchema,
+});
+export const socialLoginResponseSchema = z.looseObject({
+  redirect: z.boolean(),
+  url: z.string().optional(),
+});
+export const loginMethodsResponseSchema = z.object({
+  accounts: z.array(
+    z.object({
+      provider: z.string(),
+      linkedAt: z.string(),
+      verified: z.boolean().optional(),
+      unlinkable: z.boolean(),
+    }),
+  ),
+});
+export const passwordResetPreviewResponseSchema = z.object({
+  ok: z.literal(true),
+  tokenValid: z.literal(true),
+  email: z.string(),
+});

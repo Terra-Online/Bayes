@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  markerSyncResponseSchema,
+  markerStateResponseSchema,
+  archiveSyncResponseSchema,
+  archiveStateResponseSchema,
+} from "@/routes/schema/progress";
+import {
   buildManifestPayload,
   createProgressHttpFixture,
   type ProgressHttpFixture,
@@ -17,6 +23,42 @@ afterEach(async () => {
 });
 
 describe("persisted progress HTTP sync", () => {
+  it.each(["map", "archive"] as const)(
+    "returns the documented %s contract through raw Durable Object responses",
+    async (kind) => {
+      const hash = await fixture.registerManifest(kind);
+      const changed = await fixture.syncProgress(
+        hash,
+        "contract-write",
+        kind === "map" ? { setPointIds: ["p1"] } : { setArchiveIds: ["p1"] },
+        kind,
+      );
+      expect(changed.status).toBe(200);
+      const syncSchema = kind === "map" ? markerSyncResponseSchema : archiveSyncResponseSchema;
+      const accepted = syncSchema.parse(await changed.json());
+      expect(accepted.ok).toBe(true);
+      const state = await fixture.request(
+        kind === "map"
+          ? `/state?markerIndexHash=${hash}`
+          : `/archive/state?archiveIndexHash=${hash}`,
+      );
+      expect(state.status).toBe(200);
+      const stateSchema = kind === "map" ? markerStateResponseSchema : archiveStateResponseSchema;
+      const restored = stateSchema.parse(await state.json());
+      expect(restored.progress.revision).toBe(accepted.progress.revision);
+      expect(restored.progress).toMatchObject(
+        kind === "map" ? { pointIds: ["p1"] } : { archiveIds: ["p1"] },
+      );
+      const unchanged = await fixture.syncProgress(
+        hash,
+        "contract-noop",
+        { baseRevision: accepted.progress.revision },
+        kind,
+      );
+      expect(unchanged.status).toBe(200);
+      expect(syncSchema.parse(await unchanged.json())).toMatchObject({ ok: true, unchanged: true });
+    },
+  );
   it("restores collected archives when their index entries return, clears retained archives, and leaves map progress untouched", async () => {
     const mapHash = await fixture.registerManifest();
     await fixture.expectAcceptedSync(

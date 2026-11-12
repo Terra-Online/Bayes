@@ -4,6 +4,8 @@ SERVICE_ID_HMAC_SECRET=""
 
 BETTER_AUTH_SECRET=""
 BETTER_AUTH_URL="http://127.0.0.1:8787"
+# Defaults to enabled for a localhost BETTER_AUTH_URL, disabled otherwise.
+# API_DOCS_ENABLED="true"
 
 CORS_ORIGINS="http://localhost:5173,http://127.0.0.1:5173,https://beta.opendfieldmap.org"
 TRUSTED_ORIGINS="http://localhost:5173,http://127.0.0.1:5173,http://localhost:8787,http://127.0.0.1:8787,https://beta.opendfieldmap.org"

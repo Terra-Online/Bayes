@@ -2,6 +2,8 @@ import { z } from "zod";
 
 import { EDITABLE_NICKNAME_PATTERN } from "@/services/profile/contract/nickname";
 
+import { userResponseSchema } from "./auth";
+
 export const profileUpdateSchema = z.object({
   nickname: z
     .string()
@@ -12,3 +14,5 @@ export const profileUpdateSchema = z.object({
   avatar: z.number().int().min(1).max(99).optional(),
   avt: z.number().int().min(1).max(99).optional(),
 });
+
+export const profileResponseSchema = z.object({ user: userResponseSchema });

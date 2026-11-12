@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import type { z } from "zod";
 
 import { ApiError } from "@/lib/errors";
 import { requireAuth } from "@/middleware/auth";
@@ -8,7 +9,9 @@ import {
   getContributionCounts,
   getContributionImage,
 } from "@/repositories/me";
+import { operation, sessionSecurity } from "@/routes/openapi/operation";
 import { toUserResponse } from "@/routes/response/userResponse";
+import * as docs from "@/routes/schema/me";
 import { contributionQuerySchema } from "@/routes/schema/me";
 import { listContributions } from "@/services/me/contributions";
 import type { AppEnv } from "@/types/app";
@@ -57,73 +60,126 @@ export function createRoutes() {
     .use("/overview", rateLimit("auth"))
     .use("/contributions", rateLimit("auth"))
     .use("/contributions/:id/preview", rateLimit("preview"))
-    .get("/overview", async (c) => {
-      const user = c.get("authUser");
+    .get(
+      "/overview",
+      operation(
+        "getMyOverview",
+        "Personal contributions",
+        "Read the user and contribution counts",
+        {
+          errors: [429, 503],
+          security: sessionSecurity,
+          response: docs.overviewResponseSchema,
+        },
+      ),
+      async (c) => {
+        const user = c.get("authUser");
 
-      const counts = await readCached(c.env.DB, `counts:${user.uid}`, 15_000, () =>
-        getContributionCounts(c.env.DB, user.uid),
-      );
-      return c.json({ user: toUserResponse(user), contributions: counts }, 200, privateHeaders(15));
-    })
-    .get("/contributions", async (c) => {
-      const user = c.get("authUser");
-      const parsed = contributionQuerySchema.safeParse({
-        kind: c.req.query("kind") || undefined,
-        status: c.req.query("status") || undefined,
-        cursor: c.req.query("cursor") || undefined,
-        limit: c.req.query("limit") || undefined,
-      });
-      if (!parsed.success) {
-        throw new ApiError(
-          422,
-          "VALIDATION_ERROR",
-          "Invalid contribution query.",
-          parsed.error.flatten(),
+        const counts = await readCached(c.env.DB, `counts:${user.uid}`, 15_000, () =>
+          getContributionCounts(c.env.DB, user.uid),
         );
-      }
-      const cursor = parsed.data.cursor ? decodeContributionCursor(parsed.data.cursor) : undefined;
-      if (parsed.data.cursor && !cursor) {
-        throw new ApiError(422, "INVALID_CURSOR", "Contribution cursor is invalid.");
-      }
+        return c.json(
+          { user: toUserResponse(user), contributions: counts } satisfies z.output<
+            typeof docs.overviewResponseSchema
+          >,
+          200,
+          privateHeaders(15),
+        );
+      },
+    )
+    .get(
+      "/contributions",
+      operation("listMyContributions", "Personal contributions", "List own contributions", {
+        errors: [429, 503],
+        security: sessionSecurity,
+        query: docs.contributionQuerySchema,
+        response: docs.contributionPageSchema,
+        description:
+          "Private cursor pagination. Follow nextCursor rather than constructing cursors.",
+      }),
+      async (c) => {
+        const user = c.get("authUser");
+        const parsed = contributionQuerySchema.safeParse({
+          kind: c.req.query("kind") || undefined,
+          status: c.req.query("status") || undefined,
+          cursor: c.req.query("cursor") || undefined,
+          limit: c.req.query("limit") || undefined,
+        });
+        if (!parsed.success) {
+          throw new ApiError(
+            422,
+            "VALIDATION_ERROR",
+            "Invalid contribution query.",
+            parsed.error.flatten(),
+          );
+        }
+        const cursor = parsed.data.cursor
+          ? decodeContributionCursor(parsed.data.cursor)
+          : undefined;
+        if (parsed.data.cursor && !cursor) {
+          throw new ApiError(422, "INVALID_CURSOR", "Contribution cursor is invalid.");
+        }
 
-      const key = JSON.stringify(["contributions", user.uid, parsed.data]);
-      const result = await readCached(c.env.DB, key, 15_000, () =>
-        listContributions(c.env.DB, {
-          uid: user.uid,
-          kind: parsed.data.kind,
-          status: parsed.data.status,
-          cursor: cursor ?? undefined,
-          limit: parsed.data.limit,
-          previewBaseUrl: "/me/v1/contributions",
-        }),
-      );
-      return c.json(result, 200, privateHeaders(15));
-    })
-    .get("/contributions/:id/preview", async (c) => {
-      const user = c.get("authUser");
-      const id = c.req.param("id");
-      const image = await getContributionImage(c.env.DB, user.uid, id);
-      if (!image) {
-        throw new ApiError(404, "IMAGE_NOT_FOUND", "Image file was not found.");
-      }
-      const etag = c.req.header("If-None-Match");
-      const object = await c.env.UGC_BUCKET.get(image.file_path, {
-        onlyIf: new Headers(etag ? { "If-None-Match": etag } : {}),
-      });
-      if (!object) {
-        throw new ApiError(404, "IMAGE_NOT_FOUND", "Image file was not found.");
-      }
-      const headers = new Headers();
-      object.writeHttpMetadata(headers);
-      headers.set(
-        "Content-Type",
-        object.httpMetadata?.contentType ?? image.mime_type ?? "application/octet-stream",
-      );
-      Object.entries(privateHeaders(3600)).forEach(([key, value]) => headers.set(key, value));
-      headers.set("etag", object.httpEtag);
-      if (!("body" in object)) {
-        return new Response(null, { status: 304, headers });
-      }
-      return new Response(object.body, { headers });
-    });
+        const key = JSON.stringify(["contributions", user.uid, parsed.data]);
+        const result = await readCached(c.env.DB, key, 15_000, () =>
+          listContributions(c.env.DB, {
+            uid: user.uid,
+            kind: parsed.data.kind,
+            status: parsed.data.status,
+            cursor: cursor ?? undefined,
+            limit: parsed.data.limit,
+            previewBaseUrl: "/me/v1/contributions",
+          }),
+        );
+        return c.json(
+          result satisfies z.output<typeof docs.contributionPageSchema>,
+          200,
+          privateHeaders(15),
+        );
+      },
+    )
+    .get(
+      "/contributions/:id/preview",
+      operation("getMyContributionPreview", "Personal contributions", "Read an own image preview", {
+        errors: [404, 429, 503],
+        security: sessionSecurity,
+        parameters: [{ in: "header", name: "If-None-Match", schema: { type: "string" } }],
+        responses: {
+          200: {
+            description: "Private image",
+            content: {
+              "application/octet-stream": { schema: { type: "string", format: "binary" } },
+            },
+          },
+          304: { description: "Not modified" },
+        },
+      }),
+      async (c) => {
+        const user = c.get("authUser");
+        const id = c.req.param("id");
+        const image = await getContributionImage(c.env.DB, user.uid, id);
+        if (!image) {
+          throw new ApiError(404, "IMAGE_NOT_FOUND", "Image file was not found.");
+        }
+        const etag = c.req.header("If-None-Match");
+        const object = await c.env.UGC_BUCKET.get(image.file_path, {
+          onlyIf: new Headers(etag ? { "If-None-Match": etag } : {}),
+        });
+        if (!object) {
+          throw new ApiError(404, "IMAGE_NOT_FOUND", "Image file was not found.");
+        }
+        const headers = new Headers();
+        object.writeHttpMetadata(headers);
+        headers.set(
+          "Content-Type",
+          object.httpMetadata?.contentType ?? image.mime_type ?? "application/octet-stream",
+        );
+        Object.entries(privateHeaders(3600)).forEach(([key, value]) => headers.set(key, value));
+        headers.set("etag", object.httpEtag);
+        if (!("body" in object)) {
+          return new Response(null, { status: 304, headers });
+        }
+        return new Response(object.body, { headers });
+      },
+    );
 }

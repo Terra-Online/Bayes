@@ -13,6 +13,7 @@ import { createRoutes as createMeRoutes } from "./me/createRoutes";
 import { createRoutes as createUgcAdministrationRoutes } from "./moderation/administrationRoutes";
 import { createRoutes as createModerationRoutes } from "./moderation/createRoutes";
 import { createRoutes as createNotifyRoutes } from "./notify/createRoutes";
+import { createDocumentation } from "./openapi/documentation";
 import { createRoutes as createProfileRoutes } from "./profile/createRoutes";
 import { createRoutes as createProgressRoutes } from "./progress/createRoutes";
 import { createRoutes as createRootRoutes } from "./root/createRoutes";
@@ -47,4 +48,8 @@ export function mountRoutes<E extends AppEnv<{ requestId: string }>>(app: Hono<E
   app.route("/notify/v1", createNotifyRoutes());
   app.route("/me/v1", createMeRoutes());
   app.route("/", createRootRoutes());
+  const docs = createDocumentation(app);
+  app.route("/openapi.json", docs.spec);
+  app.route("/doc", docs.redirect);
+  app.route("/docs", docs.ui);
 }
