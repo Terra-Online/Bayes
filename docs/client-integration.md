@@ -155,6 +155,32 @@ The server sends JSON frames with an `event` discriminator:
 - `notification.upserted`: contains `notification` and `unread`. Upsert the
   notification by ID and replace the unread counts with the supplied snapshot.
   Notification fields use the HTTP notification model from the OpenAPI reference.
+- `notification.read`: contains `category`, `ids` (an array, or `null` for the
+  whole category), `readAt`, and `unread`. Mark matching items read only when their
+  latest event timestamp (`createdAt`) is at or before `readAt`, so a newer
+  aggregated notification stays unread. Replace the unread counts with the
+  supplied snapshot. Apply the event even when the inbox panel is closed;
+  receiving it does not require another HTTP request.
+
+Successful single, batch and category-wide read changes publish this event after
+persistence. Batch IDs are trimmed and deduplicated; blank IDs are ignored. Writes
+that change no rows do not broadcast. The server attempts delivery to at most the
+account's 10 newest connections per event. Tabs count separately, and the initiating
+connection counts if selected. Other connections remain open. The cap applies to
+read updates, not new notifications, incoming request rate or queue length.
+
+Delivery runs through Workers `waitUntil()`: HTTP waits for persistence and response
+counts, but not WebSocket delivery. Background delivery and the HTTP response can
+arrive in either order. While loading an inbox page, preserve live changes and
+apply them over the response; an older HTTP response must not restore unread items
+or overwrite newer live counts. Ignore callbacks from a previous login session.
+
+Read delivery is best effort; a send failure does not undo the saved read. Reconnect
+restores counts with `notification.ready`; reopening the inbox reloads items. There
+is no durable retry queue or application retry loop. Platform automatic retries
+cover eligible DO transport failures, not execution errors, overload, HTTP error
+responses or individual WebSocket sends. They do not guarantee browser receipt.
+See [Cloudflare automatic retries](https://developers.cloudflare.com/durable-objects/best-practices/automatic-retries/).
 
 Heartbeats are text frames, not JSON. Send an eight-character alphanumeric nonce;
 the server echoes it unchanged. `OEMping1` is also an automatic echo heartbeat.

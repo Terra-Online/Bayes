@@ -22,6 +22,7 @@ import {
 } from "@/routes/openapi/operation";
 import * as docs from "@/routes/schema/notify";
 import { listQuerySchema, readManySchema } from "@/routes/schema/notify";
+import { publishNotificationRead } from "@/services/notify/read";
 import type { AppEnv } from "@/types/app";
 
 import { proxyNotificationLive } from "./liveUpgrade";
@@ -93,11 +94,18 @@ function addCategoryRoutes(app: Hono<AppEnv>, category: NotificationCategory): v
         if (!notificationId) {
           throw new ApiError(422, "VALIDATION_ERROR", "Notification id is required.");
         }
+        const readAt = new Date().toISOString();
         const changed = await markNotificationRead(c.env.DB, {
           userId: user.uid,
           category,
+          readAt,
           id: notificationId,
         });
+        if (changed) {
+          c.executionCtx.waitUntil(
+            publishNotificationRead(c.env, user.uid, { category, ids: [notificationId], readAt }),
+          );
+        }
         const unread = await getNotificationUnreadCounts(c.env.DB, user.uid);
         return noStore(
           c.json({ ok: true, changed, unread } satisfies z.output<
@@ -127,11 +135,19 @@ function addCategoryRoutes(app: Hono<AppEnv>, category: NotificationCategory): v
             parsed.error.flatten(),
           );
         }
+        const ids = [...new Set(parsed.data.ids.map((id) => id.trim()).filter(Boolean))];
+        const readAt = new Date().toISOString();
         const changed = await markNotificationsRead(c.env.DB, {
           userId: user.uid,
           category,
-          ids: parsed.data.ids,
+          readAt,
+          ids,
         });
+        if (changed) {
+          c.executionCtx.waitUntil(
+            publishNotificationRead(c.env, user.uid, { category, ids, readAt }),
+          );
+        }
         const unread = await getNotificationUnreadCounts(c.env.DB, user.uid);
         return noStore(
           c.json({ ok: true, changed, unread } satisfies z.output<
@@ -151,10 +167,17 @@ function addCategoryRoutes(app: Hono<AppEnv>, category: NotificationCategory): v
       rateLimit("auth"),
       async (c) => {
         const user = c.get("authUser");
+        const readAt = new Date().toISOString();
         const changed = await markAllNotificationsRead(c.env.DB, {
           userId: user.uid,
           category,
+          readAt,
         });
+        if (changed) {
+          c.executionCtx.waitUntil(
+            publishNotificationRead(c.env, user.uid, { category, ids: null, readAt }),
+          );
+        }
         const unread = await getNotificationUnreadCounts(c.env.DB, user.uid);
         return noStore(
           c.json({ ok: true, changed, unread } satisfies z.output<

@@ -9,7 +9,11 @@ export const listQuerySchema = z.object({
 });
 
 export const readManySchema = z.object({
-  ids: z.array(z.string().min(1).max(64)).min(1).max(100),
+  ids: z
+    .array(z.string().min(1).max(64))
+    .min(1)
+    .max(100)
+    .describe("Notification IDs are trimmed and deduplicated; blank IDs are ignored."),
 });
 
 export const unreadCountsSchema = z.object({

@@ -11,6 +11,8 @@ import {
 } from "@/repositories/notifications";
 import type { Bindings } from "@/types/app";
 
+import type { NotificationReadChange } from "./read";
+
 export interface NotificationLiveEnvelope {
   event: "notification.upserted";
   notification: SerializedNotificationItem;
@@ -27,6 +29,9 @@ interface WebSocketAttachment {
   clientId: string;
   connectedAt: string;
 }
+
+// Per read event, including the initiating connection if selected.
+const MAX_READ_SYNC_CONNECTIONS = 10;
 
 const NOTIFICATION_HEARTBEAT_PATTERN = /^[A-Za-z0-9]{8}$/;
 // The client switches back to nonce heartbeats after any missed acknowledgement,
@@ -95,6 +100,16 @@ export async function publishNotificationsCreated(
 }
 
 export class OEMNotificationDO extends DurableObject<Bindings> {
+  private pendingDelivery: Promise<unknown> = Promise.resolve();
+
+  // Keep each D1 read and its broadcast together, in DO arrival order.
+  // This is an in-memory sequence, not a retry queue.
+  private enqueueDelivery(operation: () => Promise<Response>): Promise<Response> {
+    const result = this.pendingDelivery.then(operation);
+    // Let the next operation run after a failure; return the original result to the caller.
+    this.pendingDelivery = result.catch(() => undefined);
+    return result;
+  }
   constructor(ctx: DurableObjectState, env: Bindings) {
     super(ctx, env);
     ctx.setWebSocketAutoResponse(
@@ -105,10 +120,13 @@ export class OEMNotificationDO extends DurableObject<Bindings> {
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/connect") {
-      return this.handleConnect(request);
+      return this.enqueueDelivery(() => this.handleConnect(request));
     }
     if (request.method === "POST" && url.pathname === "/fanout") {
-      return this.handleFanout(request);
+      return this.enqueueDelivery(() => this.handleFanout(request));
+    }
+    if (request.method === "POST" && url.pathname === "/read") {
+      return this.enqueueDelivery(() => this.handleRead(request));
     }
     return jsonResponse(
       { code: "NOT_FOUND", message: "Notification DO route not found." },
@@ -254,16 +272,32 @@ export class OEMNotificationDO extends DurableObject<Bindings> {
   }
 
   private async handleFanout(request: Request): Promise<Response> {
-    this.requireUser(request);
-    const envelope = (await request.json().catch(() => null)) as NotificationLiveEnvelope | null;
-    if (!envelope || envelope.event !== "notification.upserted" || !envelope.notification) {
+    const uid = this.requireUser(request);
+    const envelope = (await request.json().catch(() => null)) as {
+      event?: string;
+      notification?: { id?: string };
+    } | null;
+    if (
+      !envelope ||
+      envelope.event !== "notification.upserted" ||
+      typeof envelope.notification?.id !== "string"
+    ) {
       return jsonResponse(
         { code: "VALIDATION_ERROR", message: "Invalid notification fanout payload." },
         { status: 422 },
       );
     }
 
-    const body = JSON.stringify(envelope);
+    // An earlier queued creation may reach this object after its read update.
+    const current = await getNotificationById(this.env.DB, envelope.notification.id);
+    if (!current || current.recipientUserId !== uid) {
+      return jsonResponse({ ok: true, delivered: 0 });
+    }
+    const body = JSON.stringify({
+      event: "notification.upserted",
+      notification: serializeNotificationItem(current),
+      unread: await getNotificationUnreadCounts(this.env.DB, uid),
+    } satisfies NotificationLiveEnvelope);
     let delivered = 0;
     for (const socket of this.ctx.getWebSockets()) {
       try {
@@ -274,6 +308,51 @@ export class OEMNotificationDO extends DurableObject<Bindings> {
           socket.close(1011, "notification send failed");
         } catch {
           // Ignore close failures from already-closed sockets.
+        }
+      }
+    }
+    return jsonResponse({ ok: true, delivered });
+  }
+
+  private async handleRead(request: Request): Promise<Response> {
+    const uid = this.requireUser(request);
+    const change = (await request.json().catch(() => null)) as NotificationReadChange | null;
+    if (
+      !change ||
+      !["community", "system"].includes(change.category) ||
+      !Number.isFinite(Date.parse(change.readAt)) ||
+      (change.ids !== null &&
+        (!Array.isArray(change.ids) ||
+          change.ids.length > 100 ||
+          !change.ids.every((id) => typeof id === "string")))
+    ) {
+      return jsonResponse({ code: "VALIDATION_ERROR" }, { status: 422 });
+    }
+    const sockets = this.ctx
+      .getWebSockets()
+      .map((socket) => ({
+        socket,
+        attachment: socket.deserializeAttachment() as WebSocketAttachment | null,
+      }))
+      .filter(({ attachment }) => attachment?.uid === uid)
+      .sort((a, b) => Date.parse(b.attachment!.connectedAt) - Date.parse(a.attachment!.connectedAt))
+      .slice(0, MAX_READ_SYNC_CONNECTIONS);
+    if (sockets.length === 0) {
+      return jsonResponse({ ok: true, delivered: 0 });
+    }
+    const unread = await getNotificationUnreadCounts(this.env.DB, uid);
+    const body = JSON.stringify({ event: "notification.read", ...change, unread });
+    let delivered = 0;
+    for (const { socket } of sockets) {
+      try {
+        socket.send(body);
+        delivered++;
+      } catch {
+        // Reconnection's ready snapshot repairs missed updates.
+        try {
+          socket.close(1011, "notification send failed");
+        } catch {
+          /* already closed */
         }
       }
     }
