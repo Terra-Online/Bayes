@@ -14,7 +14,7 @@ function normalizeNickname(raw: string | undefined, uid: string, email?: string)
     emailLocalPart ? `${emailLocalPart.slice(0, 20)}${compactUid.slice(0, 6)}` : "",
     fallback,
     `U${compactUid.slice(-7)}`,
-  ].filter((item) => item.length > 0 && item.length <= 26);
+  ].filter((item) => item.length >= 2 && item.length <= 26);
 
   return Array.from(new Set(candidates));
 }

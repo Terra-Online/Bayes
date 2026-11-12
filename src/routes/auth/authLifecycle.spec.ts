@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { onAppError } from "@/middleware/error-handler";
 import { createRoutes as createProfileRoutes } from "@/routes/profile/createRoutes";
 import { createAuth } from "@/services/auth/betterAuth";
+import { createUser } from "@/services/auth/createUser";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { insertAuthUser, insertSession, testAuthConfig } from "@/test/fixtures/auth";
 import { stubRequestWithDuplex } from "@/test/fixtures/request";
@@ -213,6 +214,38 @@ describe("authenticated account and profile HTTP lifecycle", () => {
       expect(database.sqlite.prepare("SELECT COUNT(*) AS count FROM users").get()!.count).toBe(2);
     },
   );
+
+  it("allows unchanged confirmation of a default generated from a one-character provider name", async () => {
+    await createUser(database.db, {
+      id: "short-provider",
+      name: "A",
+      email: "b@example.test",
+      emailVerified: true,
+      image: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    const created = database.sqlite
+      .prepare("SELECT nickname FROM users WHERE id='short-provider'")
+      .get()!;
+    const credentials = insertSession(database.sqlite, { userId: "short-provider" }).headers;
+    const confirmed = await jsonRequest(
+      "PATCH",
+      "/profile",
+      { nickname: created.nickname },
+      credentials,
+    );
+    expect(confirmed.status).toBe(200);
+    const profile = (await confirmed.json()) as {
+      user: { uid: string; needsProfileSetup: boolean };
+    };
+    expect(profile.user.needsProfileSetup).toBe(false);
+    const renamed = await jsonRequest("PATCH", "/profile", { nickname: "LaterName" }, credentials);
+    expect(renamed.status).toBe(200);
+    expect(await renamed.json()).toMatchObject({
+      user: { uid: profile.user.uid, needsProfileSetup: false },
+    });
+  });
 
   it("finalizes the UID only once when first profile confirmations race", async () => {
     database.sqlite.exec("UPDATE users SET nickname_confirmed = 0 WHERE id = 'owner'");
