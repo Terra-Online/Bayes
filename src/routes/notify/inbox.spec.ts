@@ -435,6 +435,7 @@ it.each([
     { ids: ["approval-a", "approval-b"] },
     ["approval-a", "approval-b"],
   ],
+  ["/system/messages/read", "POST", { ids: [" approval-a ", "approval-a", "   "] }, ["approval-a"]],
   ["/system/read-all", "POST", undefined, null],
 ])("publishes committed reads once through %s", async (path, method, body, ids) => {
   const init = {

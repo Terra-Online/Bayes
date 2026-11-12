@@ -92,16 +92,17 @@ function addCategoryRoutes(app: Hono<AppEnv>, category: NotificationCategory): v
           parsed.error.flatten(),
         );
       }
+      const ids = [...new Set(parsed.data.ids.map((id) => id.trim()).filter(Boolean))];
       const readAt = new Date().toISOString();
       const changed = await markNotificationsRead(c.env.DB, {
         userId: user.uid,
         category,
         readAt,
-        ids: parsed.data.ids,
+        ids,
       });
       if (changed) {
         c.executionCtx.waitUntil(
-          publishNotificationRead(c.env, user.uid, { category, ids: parsed.data.ids, readAt }),
+          publishNotificationRead(c.env, user.uid, { category, ids, readAt }),
         );
       }
       const unread = await getNotificationUnreadCounts(c.env.DB, user.uid);
