@@ -22,6 +22,8 @@ export type ContributionReviewEvidence = {
   status: SubmissionStatus;
   createdAt: string;
   snapshotCreatedAt: string;
+  deletedAt?: string | null;
+  deletedBy?: string | null;
   authorDeletedAt: string | null;
   adminDeletedAt: string | null;
   // Only genuine transitions for the selected frontier, in insertion order.
@@ -53,6 +55,8 @@ export type ContributionItem = ContributionReviewProjection & {
   snapshotId: string;
   revision: number;
   reviewStatus: SnapshotReviewStatus;
+  deletedAt?: string | null;
+  deletedBy?: string | null;
   authorDeletedAt: string | null;
   adminDeletedAt: string | null;
   status: SubmissionStatus;

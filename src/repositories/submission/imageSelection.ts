@@ -8,7 +8,7 @@ export const publicImageSelection = `(SELECT p.*,
 export const ownerImageSelection = `(SELECT s.*, r.id AS snapshot_id, r.content,
   r.file_path, r.mime_type, r.size_bytes,
   v.public_snapshot_id,
-  CASE WHEN s.author_deleted_at IS NOT NULL OR s.admin_deleted_at IS NOT NULL
+  CASE WHEN s.deleted_at IS NOT NULL
     OR r.review_status IN ('rejected','unknown') THEN 'stale'
     WHEN r.review_status IN ('pending_openai','pending_audit') THEN r.review_status
     WHEN EXISTS (SELECT 1 FROM ugc_submission_flags f

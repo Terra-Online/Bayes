@@ -46,6 +46,8 @@ export const contributionPageSchema = z.object({
       snapshotId: z.string(),
       revision: z.number(),
       reviewStatus: reviewStatusSchema,
+      deletedAt: z.string().nullable().optional(),
+      deletedBy: z.string().nullable().optional(),
       authorDeletedAt: z.string().nullable(),
       adminDeletedAt: z.string().nullable(),
       visibility: z.enum(["public", "private", "unavailable"]),

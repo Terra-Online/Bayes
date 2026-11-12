@@ -246,16 +246,17 @@ async function applyAutoModerationDecision(
     await enqueueApprovedCommentTransPrewarm(bindings, submission.id, "auto_moderation");
   }
 
-  const pointsDelta = !transition.firstApproval
-    ? 0
-    : await getModerationPointsDeltaWithDailyBackoff(redis, {
-        userId: submission.userId,
-        kind: submission.kind,
-        status: nextStatus,
-        role: submission.submitter?.role,
-        surgeModeEnabled: config.surgeModeEnabled,
-        surgeBackoffMultiplier: config.surgeBackoffMultiplier,
-      });
+  const pointsDelta =
+    !transition.firstApproval || submission.creationSource === "admin"
+      ? 0
+      : await getModerationPointsDeltaWithDailyBackoff(redis, {
+          userId: submission.userId,
+          kind: submission.kind,
+          status: nextStatus,
+          role: submission.submitter?.role,
+          surgeModeEnabled: config.surgeModeEnabled,
+          surgeBackoffMultiplier: config.surgeBackoffMultiplier,
+        });
   await applyUserPointsDelta(bindings.DB, submission.userId, pointsDelta);
   return nextStatus;
 }

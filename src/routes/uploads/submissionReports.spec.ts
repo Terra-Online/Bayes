@@ -124,7 +124,9 @@ it("sets and cancels image likes without a snapshot field and rejects hidden wri
     upvoteCount: 0,
   });
   expect((await post("/images/image/upvote", {})).status).toBe(200);
-  database.sqlite.exec("UPDATE ugc_submissions SET author_deleted_at='gone' WHERE id='image'");
+  database.sqlite.exec(
+    "UPDATE ugc_submissions SET deleted_at='gone',deleted_by=user_id WHERE id='image'",
+  );
   for (const action of ["upvote", "unvote"]) {
     expect((await post(`/images/image/${action}`, {})).status).toBe(409);
   }
@@ -183,8 +185,8 @@ it.each(["author", "admin", "rejected"])(
     } else {
       database.sqlite.exec(
         reason === "author"
-          ? "UPDATE ugc_submissions SET author_deleted_at='gone'"
-          : "UPDATE ugc_submissions SET admin_deleted_at='gone',admin_deleted_by='admin'",
+          ? "UPDATE ugc_submissions SET deleted_at='gone',deleted_by=user_id"
+          : "UPDATE ugc_submissions SET deleted_at='gone',deleted_by='admin'",
       );
     }
     for (const action of ["flag", "unflag"]) {
@@ -260,7 +262,7 @@ it("preserves like timestamps on duplicate and cancel, aggregates reactivation, 
       created_at: "2026-10-29T07:00:00.000Z",
     });
     database.sqlite.exec(
-      "UPDATE ugc_submissions SET admin_deleted_at='gone',admin_deleted_by='admin' WHERE id='image'",
+      "UPDATE ugc_submissions SET deleted_at='gone',deleted_by='admin' WHERE id='image'",
     );
     const hiddenBefore = database.sqlite.prepare("SELECT * FROM notifications").all();
     expect((await post("/images/image/upvote", {})).status).toBe(409);
@@ -335,7 +337,7 @@ it.each(["comment", "image"] as const)(
     addPendingVersion(id, kind);
     expect((await review(id)).status).toBe(200);
     database.sqlite
-      .prepare("UPDATE ugc_submissions SET author_deleted_at='gone' WHERE id=?")
+      .prepare("UPDATE ugc_submissions SET deleted_at='gone',deleted_by=user_id WHERE id=?")
       .run(id);
     const browse = await management("/pending?mode=reports&limit=1");
     expect(browse.status).toBe(200);
@@ -361,7 +363,37 @@ it.each(["comment", "image"] as const)(
     );
     expect(database.sqlite.prepare("SELECT * FROM notification_messages").all()).toEqual(messages);
     expect(
-      database.sqlite.prepare("SELECT author_deleted_at FROM ugc_submissions WHERE id=?").get(id),
-    ).toEqual({ author_deleted_at: "gone" });
+      database.sqlite.prepare("SELECT deleted_at FROM ugc_submissions WHERE id=?").get(id),
+    ).toEqual({ deleted_at: "gone" });
   },
 );
+
+it("records report activation, dismissal and reactivation without logging duplicate requests", async () => {
+  await post("/comments/comment/flag");
+  await post("/comments/comment/flag");
+  await management("/comment/status", { action: "clear_flags" });
+  await post("/comments/comment/flag");
+  await post("/comments/comment/unflag");
+  await post("/comments/comment/unflag");
+  expect(
+    database.sqlite
+      .prepare(
+        "SELECT action,reporter_user_id,actor_user_id FROM ugc_submission_flag_audit ORDER BY rowid",
+      )
+      .all(),
+  ).toEqual([
+    { action: "activated", reporter_user_id: "reviewer", actor_user_id: "reviewer" },
+    { action: "cleared", reporter_user_id: "reviewer", actor_user_id: "admin" },
+    { action: "activated", reporter_user_id: "reviewer", actor_user_id: "reviewer" },
+    { action: "withdrawn", reporter_user_id: "reviewer", actor_user_id: "reviewer" },
+  ]);
+});
+
+it("rolls report state back when its audit cannot be persisted", async () => {
+  database.sqlite.exec(
+    "CREATE TEMP TRIGGER fail_report_audit BEFORE INSERT ON ugc_submission_flag_audit BEGIN SELECT RAISE(ABORT,'audit unavailable'); END",
+  );
+  expect((await post("/comments/comment/flag")).status).toBe(500);
+  expect(database.sqlite.prepare("SELECT * FROM ugc_submission_flags").all()).toEqual([]);
+  expect(database.sqlite.prepare("SELECT * FROM ugc_submission_flag_audit").all()).toEqual([]);
+});

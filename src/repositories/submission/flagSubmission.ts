@@ -62,6 +62,17 @@ export async function setSubmissionReport(
             AND EXISTS (${eligible}) RETURNING submission_id`)
           .bind(input.submissionId, input.kind, input.userId),
     db
+      .prepare(`INSERT INTO ugc_submission_flag_audit
+      (id,submission_id,reporter_user_id,action,actor_user_id,operation_id,created_at)
+      SELECT ?1,?2,?3,?4,?3,?1,?5 WHERE changes()>0`)
+      .bind(
+        crypto.randomUUID(),
+        input.submissionId,
+        input.userId,
+        input.active ? "activated" : "withdrawn",
+        new Date().toISOString(),
+      ),
+    db
       .prepare(`SELECT COUNT(*) AS count FROM ugc_submission_flags
       WHERE submission_id=?1 AND active=1`)
       .bind(input.submissionId),
@@ -80,7 +91,7 @@ export async function setSubmissionReport(
     outcome: "committed",
     changed: results[1].results.length > 0,
     previousStatus: Number(row.flagCount) > 0 ? "flagged" : "active",
-    flagCount: toCount(results[2].results[0]?.count),
+    flagCount: toCount(results[3].results[0]?.count),
     submission: {
       id: String(row.id),
       snapshotId: String(row.snapshotId),

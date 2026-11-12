@@ -143,6 +143,47 @@ explicit retry identity, while repeated comment votes can toggle the result.
 After an uncertain outcome, reconcile the relevant state before repeating a
 write whose operation does not promise safe replay.
 
+## UGC administration
+
+Administrator reads expose the current frontier, public snapshot, deletion facts,
+`lifecycleVersion` and each snapshot's `reviewVersion`. Capture these values with
+what the administrator inspected. Delete binds the frontier and lifecycle version;
+restore binds the lifecycle version; review correction binds the selected snapshot's
+review status and review version. A `409 MODERATION_CONFLICT` requires refreshing
+and a new explicit action. Versions detect changes away and back. No-op operations
+add no audit entries.
+
+A content correction appends a snapshot from new text or a retained source snapshot
+of the same submission. It does not change revision order or overwrite history.
+A pending frontier prevents another append. Deleted content can be corrected but
+is not queued until restored. Queue delivery failure leaves the committed revision
+recoverable through backfill. Delivery bookkeeping errors after a successful send
+are logged without failing the saved edit request.
+
+Canonical deletion fields are `deletedAt`, `deletedBy` and `lifecycleVersion`.
+Existing `authorDeletedAt`, `adminDeletedAt` and `adminDeletedBy` read aliases are
+derived from the current deleting actor; they are not independent restrictions.
+Owner DELETE retains its `authorDeletedAt` acknowledgement and adds `deletedAt`
+and `deletedBy`. Only administrators restore deletions, independently of review. Cor sends
+`expectedLifecycleVersion` with disable actions. An older unversioned disable is
+accepted for initial deletion or an eligible already-deleted no-op, but conflicts
+after restoration.
+
+Editorial revisions and review corrections do not award points or notifications;
+delete and restore do not alter points. Ordinary first-time moderation retains its
+scoring. Periodic image-quality evaluation uses preserved normal-review scoring
+facts rather than corrected review visibility.
+
+Submission, snapshot and report histories are retained. Report clears record one
+event per affected report under a shared `operationId`; current `flagCount` counts
+active reports. History pages use opaque cursors, and snapshot pages use revision
+boundaries. Migration 0039 starts new lifecycle and report histories without
+backfilling older actions; missing history does not mean an action never happened.
+Historical images and administrative history remain private to administrators.
+Migration 0039 and the matching backend must roll out together with UGC writes
+quiesced; the old backend references deletion columns removed by the migration.
+Applying application code alone does not migrate the database.
+
 ## Live notification protocol
 
 Connect to the notification WebSocket using the authenticated browser session.
@@ -212,4 +253,3 @@ Treat `reconnecting` as a transient state. Authentication and access checks may
 fail after the HTTP upgrade, so handle error frames as well as handshake errors.
 If the client connection closes, reconnect with backoff and obtain a fresh ticket
 when the previous one expires. Sending the text frame `close` stops the stream.
-

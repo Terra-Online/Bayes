@@ -24,7 +24,12 @@ export type ReviewTarget = Pick<
   | "createdAt"
   | "updatedAt"
   | "submitter"
-> & { reviewStatus: SnapshotReviewStatus; hasEarlierApproval: boolean };
+> & {
+  reviewStatus: SnapshotReviewStatus;
+  hasEarlierApproval: boolean;
+  creationSource: "user" | "admin";
+  reviewVersion: number;
+};
 
 export type ReviewCommand = {
   target: ReviewTarget;
@@ -59,6 +64,7 @@ export async function getReviewTarget(
     s.created_at AS createdAt, s.updated_at AS updatedAt,
     f.id AS snapshotId, f.content, f.file_path AS filePath, f.mime_type AS mimeType,
     f.size_bytes AS sizeBytes, f.review_status AS reviewStatus,
+    f.creation_source AS creationSource,f.review_version AS reviewVersion,
     EXISTS (SELECT 1 FROM ugc_snapshots earlier WHERE earlier.submission_id=s.id
       AND earlier.revision<f.revision AND earlier.review_status='approved') AS hasEarlierApproval,
     u.uid, u.uid_number AS uidNumber, u.uid_suffix AS uidSuffix,
@@ -67,7 +73,7 @@ export async function getReviewTarget(
       ON f.submission_id=s.id AND f.revision=s.revision
     LEFT JOIN users u ON u.uid=s.user_id
     WHERE s.id=?1 AND (?2 IS NULL OR f.id=?2)
-      AND s.author_deleted_at IS NULL AND s.admin_deleted_at IS NULL`)
+      AND s.deleted_at IS NULL`)
     .bind(submissionId, snapshotId ?? null)
     .first<
       Omit<ReviewTarget, "submitter"> & {
@@ -129,8 +135,8 @@ export async function reviewSnapshot(
       SELECT ?1,f.id,f.review_status,?5,?6,?7,?8,?9
       FROM ugc_submissions s JOIN ugc_snapshots f
         ON f.submission_id=s.id AND f.revision=s.revision
-      WHERE s.id=?2 AND f.id=?3 AND f.review_status=?4
-        AND s.author_deleted_at IS NULL AND s.admin_deleted_at IS NULL
+      WHERE s.id=?2 AND f.id=?3 AND f.review_status=?4 AND f.review_version=?10
+        AND s.deleted_at IS NULL
         AND ((?6='ai' AND ?7 IS NULL AND ?4='pending_openai' AND ?5 IN ('approved','pending_audit'))
           OR (?6='admin' AND EXISTS (SELECT 1 FROM users WHERE uid=?7 AND role IN ('p','a','r'))
             AND ((?4='pending_openai' AND ?5 IN ('approved','rejected','pending_audit'))
@@ -149,9 +155,10 @@ export async function reviewSnapshot(
         source === "admin" ? command.adminUserId : null,
         command.note ?? null,
         now,
+        target.reviewVersion,
       ),
     db
-      .prepare(`UPDATE ugc_snapshots SET review_status=?3
+      .prepare(`UPDATE ugc_snapshots SET review_status=?3,review_version=review_version+1
       WHERE id=?2 AND ${receipt}`)
       .bind(auditId, target.snapshotId, decision),
     db
@@ -162,6 +169,16 @@ export async function reviewSnapshot(
       WHERE ${receipt}`)
       .bind(auditId, target.id, target.snapshotId, decision),
   ];
+  // Preserve normal-review quality facts independently of later admin corrections.
+  if (target.creationSource === "user" && decision !== "pending_audit") {
+    statements.push(
+      db
+        .prepare(`UPDATE ugc_submissions SET karma_review_status=?2
+      WHERE id=?3 AND kind='image' AND ${receipt}
+        AND (?2='approved' OR karma_review_status<>'approved')`)
+        .bind(auditId, decision, target.id),
+    );
+  }
   const result = await commitReviewBatch(db, command, statements, now);
   return result.committed
     ? {

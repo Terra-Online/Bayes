@@ -12,7 +12,9 @@ it("rechecks parent visibility when inserting and leaves neither reply identity 
     insertUser(database.sqlite, { uid: "author" });
     insertCommentSnapshot(database.sqlite, { id: "parent", userId: "author" });
     // The caller selected this parent while it was public; deletion commits first.
-    database.sqlite.exec("UPDATE ugc_submissions SET author_deleted_at='gone' WHERE id='parent'");
+    database.sqlite.exec(
+      "UPDATE ugc_submissions SET deleted_at='gone',deleted_by=user_id WHERE id='parent'",
+    );
     expect(
       await createPendingComment(database.db, {
         id: "reply",

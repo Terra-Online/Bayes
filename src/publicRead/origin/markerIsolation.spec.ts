@@ -159,7 +159,7 @@ describe.each(["images", "comments"] as const)("%s invocation isolation", (kind)
     }
     expect(kv.values.size).toBe(3);
     database.sqlite.exec(
-      "UPDATE ugc_submissions SET author_deleted_at='deleted' WHERE id='stored'",
+      "UPDATE ugc_submissions SET deleted_at='deleted',deleted_by=user_id WHERE id='stored'",
     );
     const archived = database.sqlite.prepare("SELECT * FROM ugc_submissions").all();
     // Workers can report a failed purge or reject the RPC. Both must still allow

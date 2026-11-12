@@ -1,6 +1,9 @@
 import type { SQLOutputValue } from "node:sqlite";
 
+import { Hono } from "hono";
+
 import { onAppError } from "@/middleware/error-handler";
+import { createRoutes as createAdministrationRoutes } from "@/routes/moderation/administrationRoutes";
 import { createRoutes } from "@/routes/moderation/createRoutes";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { insertAuthenticatedUser, testAuthConfig, type SessionHeaders } from "@/test/fixtures/auth";
@@ -10,7 +13,7 @@ import {
   type SubmissionFixture,
 } from "@/test/fixtures/submissions";
 import { insertUser } from "@/test/fixtures/users";
-import type { Bindings, Role } from "@/types/app";
+import type { AppEnv, Bindings, Role } from "@/types/app";
 
 type ModerationSubmissionFixture = Omit<SubmissionFixture, "userId"> & { userId?: string };
 type ModerationRow = Record<string, SQLOutputValue>;
@@ -106,7 +109,9 @@ export function createModerationTestFixture(): ModerationTestFixture {
   }
 
   async function request(path: string, options: ModerationRequestOptions = {}): Promise<Response> {
-    const app = createRoutes();
+    const app = new Hono<AppEnv>()
+      .route("/", createRoutes())
+      .route("/", createAdministrationRoutes());
     app.onError(onAppError);
     const pending: Promise<unknown>[] = [];
     const response = await app.request(

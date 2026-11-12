@@ -66,6 +66,17 @@ describe("OpenAPI delivery and client contract", () => {
         }
         type User = paths["/auth/v1/session"]["get"]["responses"][200]["content"]["application/json"]["user"];
         const publicUid: User["uid"] = "42AB";
+        type DeleteInput = paths["/moderation/v1/submissions/{id}/delete"]["post"]["requestBody"]["content"]["application/json"];
+        const deletion: DeleteInput = { expectedSnapshotId: "A", expectedLifecycleVersion: 2 };
+        // @ts-expect-error Deletion must bind the inspected lifecycle version.
+        const staleDeletion: DeleteInput = { expectedSnapshotId: "A" };
+        type Inspect = paths["/moderation/v1/submissions/{id}"]["get"]["responses"][200]["content"]["application/json"]["item"];
+        function inspect(item: Inspect): number { return item.lifecycleVersion + item.frontier.reviewVersion; }
+        type RevisionInput = paths["/moderation/v1/submissions/{id}/revisions"]["post"]["requestBody"]["content"]["application/json"];
+        const reuse: RevisionInput = { expectedSnapshotId: "B", sourceSnapshotId: "A" };
+        // @ts-expect-error Internal revision change objects are not HTTP input.
+        const internalRevision: RevisionInput = { expectedSnapshotId: "B", change: { type: "reuse", sourceSnapshotId: "A" } };
+
       `,
       );
       const program = ts.createProgram([consumer], {

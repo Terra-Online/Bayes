@@ -27,5 +27,9 @@ export async function deleteSubmissionByAuthor(
       }),
     );
   }
-  return { authorDeletedAt: result.authorDeletedAt };
+  return {
+    authorDeletedAt: result.authorDeletedAt,
+    deletedAt: result.deletedAt,
+    deletedBy: result.deletedBy,
+  };
 }

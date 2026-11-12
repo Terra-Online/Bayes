@@ -101,7 +101,7 @@ describe("comment translation queue delivery", () => {
           }
           if (completion === "deleted") {
             fixture.database.sqlite.exec(
-              "UPDATE ugc_submissions SET author_deleted_at='deleted' WHERE id='comment'",
+              "UPDATE ugc_submissions SET deleted_at='deleted',deleted_by=user_id WHERE id='comment'",
             );
           }
         }

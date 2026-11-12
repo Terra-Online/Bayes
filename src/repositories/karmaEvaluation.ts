@@ -9,9 +9,8 @@ export type KarmaEvaluationRow = {
   rejected_images: number | string | null;
 };
 
-/** User-scoped periodic scoring facts. A hidden edit with an earlier approval
- * keeps its existing exemption; deletion/disable and unknown imports are never
- * reinterpreted as a review rejection. No notes or audit reconstruction is used.
+/** Quality scoring uses preserved normal-review facts, independently of current
+ * publication and administrative corrections. No audit replay is required.
  */
 export async function listKarmaEvaluationUsers(
   db: D1Database,
@@ -23,17 +22,11 @@ export async function listKarmaEvaluationUsers(
     VALUES ${selectedUserValues}
   ), image_stats AS (
     SELECT s.user_id,
-      SUM(CASE WHEN v.public_snapshot_id IS NOT NULL THEN 1 ELSE 0 END) AS approved_images,
-      SUM(CASE WHEN r.review_status='rejected'
-        AND s.author_deleted_at IS NULL AND s.admin_deleted_at IS NULL
-        AND NOT EXISTS (SELECT 1 FROM ugc_snapshots earlier
-          WHERE earlier.submission_id=s.id AND earlier.revision<r.revision
-          AND earlier.review_status='approved') THEN 1 ELSE 0 END) AS rejected_images
+      SUM(CASE WHEN s.karma_review_status='approved' THEN 1 ELSE 0 END) AS approved_images,
+      SUM(CASE WHEN s.karma_review_status='rejected' THEN 1 ELSE 0 END) AS rejected_images
     FROM selected_users selected
     CROSS JOIN ugc_submissions s INDEXED BY idx_ugc_user_kind_poi_created
       ON selected.uid=s.user_id
-    JOIN ugc_snapshots r ON r.submission_id=s.id AND r.revision=s.revision
-    JOIN v_ugc_submission_visibility v ON v.submission_id=s.id
     WHERE s.kind='image'
     GROUP BY s.user_id
   )

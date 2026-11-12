@@ -457,18 +457,16 @@ describe("notification aggregation SQL", () => {
       await archiveTestImageSubmissions(db, { prefix: "test_a", adminUserId: "admin" }),
     ).toEqual({ changedRows: 1, markerIds: ["point1"] });
     expect(
-      database.sqlite.prepare("SELECT admin_deleted_by FROM ugc_submissions WHERE id='mine'").get(),
-    ).toEqual({ admin_deleted_by: "admin" });
+      database.sqlite.prepare("SELECT deleted_by FROM ugc_submissions WHERE id='mine'").get(),
+    ).toEqual({ deleted_by: "admin" });
     expect(
       database.sqlite
         .prepare("SELECT review_status FROM ugc_snapshots WHERE submission_id='mine'")
         .get(),
     ).toEqual({ review_status: "pending_openai" });
     expect(
-      database.sqlite
-        .prepare("SELECT admin_deleted_at FROM ugc_submissions WHERE id='other'")
-        .get(),
-    ).toEqual({ admin_deleted_at: null });
+      database.sqlite.prepare("SELECT deleted_at FROM ugc_submissions WHERE id='other'").get(),
+    ).toEqual({ deleted_at: null });
     expect(database.sqlite.prepare("SELECT * FROM ugc_snapshots_review_audit").all()).toEqual([]);
   });
 

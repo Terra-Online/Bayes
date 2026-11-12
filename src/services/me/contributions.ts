@@ -26,6 +26,8 @@ export async function listContributions(
         snapshotId: record.snapshotId,
         revision: record.revision,
         reviewStatus: record.reviewStatus,
+        deletedAt: record.deletedAt ?? null,
+        deletedBy: record.deletedBy ?? null,
         authorDeletedAt: record.authorDeletedAt,
         adminDeletedAt: record.adminDeletedAt,
         visibility: projection.visibility,

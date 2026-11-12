@@ -258,6 +258,8 @@ export const flagDeletedSchema = z.object({ ...flagResult, deleted: z.boolean() 
 export const authorDeletionSchema = z.object({
   ok: z.literal(true),
   authorDeletedAt: z.string().nullable(),
+  deletedAt: z.string().nullable(),
+  deletedBy: z.string().nullable(),
 });
 export const translationsResponseSchema = z.object({
   items: z.array(

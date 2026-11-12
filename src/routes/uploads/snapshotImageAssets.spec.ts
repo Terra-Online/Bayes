@@ -142,7 +142,9 @@ describe("snapshot image HTTP paths", () => {
         env,
       );
     expect((await conditional()).status).toBe(304);
-    database.sqlite.exec("UPDATE ugc_submissions SET author_deleted_at='deleted' WHERE id='photo'");
+    database.sqlite.exec(
+      "UPDATE ugc_submissions SET deleted_at='deleted',deleted_by=user_id WHERE id='photo'",
+    );
     getObject.mockClear();
     expect((await conditional()).status).toBe(404);
     expect(getObject).not.toHaveBeenCalled();

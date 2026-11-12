@@ -20,6 +20,8 @@ type ContributionRow = {
   review_status: ContributionReviewEvidence["reviewStatus"];
   created_at: string;
   snapshot_created_at: string;
+  deleted_at: string | null;
+  deleted_by: string | null;
   author_deleted_at: string | null;
   admin_deleted_at: string | null;
   review_events: string;
@@ -53,6 +55,8 @@ function mapContributionRecord(row: ContributionRow): ContributionRecord {
     status: row.status,
     createdAt: row.created_at,
     snapshotCreatedAt: row.snapshot_created_at,
+    deletedAt: row.deleted_at,
+    deletedBy: row.deleted_by,
     authorDeletedAt: row.author_deleted_at,
     adminDeletedAt: row.admin_deleted_at,
     events: JSON.parse(row.review_events) as ReviewEvent[],
@@ -62,9 +66,11 @@ function mapContributionRecord(row: ContributionRow): ContributionRecord {
 // Private archive summaries always select the frontier, even when deleted or
 // disabled. Compatibility status describes this version, not its public fallback.
 const ownerFrontiers = `SELECT s.id, s.kind, s.poi_id, s.poi_type, s.created_at,
-  s.author_deleted_at, s.admin_deleted_at, r.id AS snapshot_id, r.revision,
+  s.deleted_at,s.deleted_by,
+  CASE WHEN s.deleted_by=s.user_id THEN s.deleted_at END AS author_deleted_at,
+  CASE WHEN s.deleted_by IS NOT s.user_id THEN s.deleted_at END AS admin_deleted_at, r.id AS snapshot_id, r.revision,
   r.content, r.file_path, r.created_at AS snapshot_created_at, r.review_status,
-  CASE WHEN s.author_deleted_at IS NOT NULL OR s.admin_deleted_at IS NOT NULL
+  CASE WHEN s.deleted_at IS NOT NULL
     OR r.review_status IN ('unknown','rejected') THEN 'stale'
     WHEN r.review_status IN ('pending_openai','pending_audit') THEN r.review_status
     WHEN EXISTS (SELECT 1 FROM ugc_submission_flags f
@@ -108,7 +114,7 @@ export async function getContributionCounts(db: D1Database, uid: string) {
       `SELECT
        SUM(CASE WHEN s.kind = 'image' THEN 1 ELSE 0 END) AS image_count,
        SUM(CASE WHEN s.kind = 'comment' THEN 1 ELSE 0 END) AS comment_count,
-       SUM(CASE WHEN s.author_deleted_at IS NULL AND s.admin_deleted_at IS NULL
+       SUM(CASE WHEN s.deleted_at IS NULL
          AND r.review_status IN ('pending_openai', 'pending_audit') THEN 1 ELSE 0 END) AS pending_count
      FROM ugc_submissions s
      JOIN ugc_snapshots r ON r.submission_id=s.id AND r.revision=s.revision
@@ -150,8 +156,8 @@ export async function listContributionRecords(
   }
   bindings.push(payload.limit + 1);
 
-  // A snapshot has at most two legal review transitions: automation to manual,
-  // then a terminal decision. Audit reads run only for the bounded owner page,
+  // Owner timelines keep a bounded tail now that administrators may correct decisions.
+  // Audit reads run only for the bounded owner page,
   // use the snapshot index and preserve insertion order even for equal times.
   const result = await db
     .prepare(
@@ -165,9 +171,9 @@ export async function listContributionRecords(
           'id', e.id, 'snapshotId', e.snapshot_id,
           'from', e.from_status, 'to', e.to_status, 'source', e.source,
           'adminUserId', e.admin_user_id, 'note', e.note, 'at', e.created_at))
-         FROM (SELECT id, snapshot_id, from_status, to_status, source,
-           admin_user_id, note, created_at FROM ugc_snapshots_review_audit
-           WHERE snapshot_id=p.snapshot_id ORDER BY rowid LIMIT 2) e
+         FROM (SELECT * FROM (SELECT id, snapshot_id, from_status, to_status, source,
+           admin_user_id, note, created_at, rowid AS audit_order FROM ugc_snapshots_review_audit
+           WHERE snapshot_id=p.snapshot_id ORDER BY rowid DESC LIMIT 50) ORDER BY audit_order) e
         ) AS review_events
       FROM page p ORDER BY created_at DESC, id DESC`,
     )
