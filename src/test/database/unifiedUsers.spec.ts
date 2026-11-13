@@ -195,6 +195,18 @@ describe("unified user migration", () => {
     ).toEqual({ uid_number: 100002, nickname: "U100002X" });
   });
 
+  it("rejects ambiguous normalized authentication emails before changing the schema", () => {
+    database.exec(`INSERT INTO auth_users (id,name,email) VALUES
+      ('first','First','owner@example.test'),('second','Second','OWNER@example.test');
+      INSERT INTO users(uid,email,password_hash,nickname,uid_number,uid_suffix)
+        VALUES ('first','owner@example.test','','Owner',100001,'AA');`);
+    expect(migrate).toThrow("AMBIGUOUS_AUTH_EMAIL");
+    expect(database.prepare("SELECT uid FROM users").get()).toEqual({ uid: "first" });
+    expect(
+      database.prepare("SELECT name FROM sqlite_master WHERE name LIKE '_user_merge_%'").all(),
+    ).toEqual([]);
+  });
+
   it("rejects cross-linked identities instead of moving another user's data", () => {
     database.exec(`
       INSERT INTO auth_users (id, name, email) VALUES ('first', 'First', 'first@example.test'), ('second', 'Second', 'second@example.test');
