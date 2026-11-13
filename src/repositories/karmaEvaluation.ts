@@ -30,12 +30,12 @@ export async function listKarmaEvaluationUsers(
     WHERE s.kind='image'
     GROUP BY s.user_id
   )
-  SELECT u.uid, u.role, u.karma, u.points, u.created_at, u.last_active,
+  SELECT u.id AS uid, u.role, u.karma, u.points, u.created_at, u.last_active,
     COALESCE(s.approved_images,0) AS approved_images,
     COALESCE(s.rejected_images,0) AS rejected_images
   FROM users u
-  INNER JOIN selected_users selected ON selected.uid=u.uid
-  LEFT JOIN image_stats s ON s.user_id=u.uid
+  INNER JOIN selected_users selected ON selected.uid=u.id
+  LEFT JOIN image_stats s ON s.user_id=u.id
   WHERE u.role<>'r' AND u.karma<5`)
     .bind(...userIds)
     .all<KarmaEvaluationRow>();

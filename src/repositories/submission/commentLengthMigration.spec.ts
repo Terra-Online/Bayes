@@ -5,8 +5,8 @@ import { afterEach, beforeEach, expect, it } from "vitest";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { migrations } from "@/test/database/migrations";
 import { insertSubmission } from "@/test/fixtures/legacySubmissions";
+import { insertLegacyUser as insertUser } from "@/test/fixtures/legacyUsers";
 import { insertNotification } from "@/test/fixtures/notifications";
-import { insertUser } from "@/test/fixtures/users";
 
 const migration = readFileSync(
   new URL("../../../migrations/0037_comment_source_length.sql", import.meta.url),

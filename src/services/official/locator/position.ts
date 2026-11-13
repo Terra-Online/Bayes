@@ -1,11 +1,11 @@
 import {
   createCredentialRecoveryScope,
   recoverBindingCredentials,
+  readBindingCredentials,
 } from "@/services/official/auth/credentials";
 import type { DecryptedBinding } from "@/services/official/auth/types";
 import type { Bindings } from "@/types/app";
 
-import { prepareLocatorAccess, type LocatorIdentity } from "./access";
 import {
   getPositionCacheKey,
   POSITION_CACHE_FRESH_MS,
@@ -18,6 +18,7 @@ import {
   type PositionRefreshDependencies,
 } from "./positionCache";
 import { issueLocatorSocketTicket } from "./ticket";
+import type { LocatorIdentity } from "./types";
 import type { PositionCacheEntry } from "./types";
 
 type PositionReadResult = {
@@ -59,7 +60,8 @@ export async function readPosition(
   input: { identity: LocatorIdentity; includeSocketTicket?: boolean },
   env: Bindings,
 ): Promise<PositionReadResult & { socketTicket?: string }> {
-  const { uid, binding: initialBinding } = await prepareLocatorAccess(input.identity, env);
+  const { uid } = input.identity;
+  const initialBinding = await readBindingCredentials(input.identity, env);
   const socketTicket = input.includeSocketTicket
     ? await issueLocatorSocketTicket(env, uid)
     : undefined;

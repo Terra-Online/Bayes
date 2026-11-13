@@ -1,10 +1,5 @@
 import { ApiError } from "@/lib/errors";
-import {
-  formatPublicUid,
-  getErrorMessage,
-  getUserByUid,
-  saveUserProfile,
-} from "@/repositories/users";
+import { formatPublicUid, getErrorMessage, saveUserProfile } from "@/repositories/users";
 import type { Role } from "@/types/app";
 
 import { EDITABLE_NICKNAME_PATTERN } from "./contract/nickname";
@@ -33,11 +28,6 @@ export async function updateProfile(
   input: UpdateProfileInput,
 ): Promise<UpdatedProfile> {
   try {
-    const current = await getUserByUid(db, input.userId);
-    if (!current) {
-      throw new Error("USER_NOT_FOUND");
-    }
-
     const nickname = input.nickname.trim();
     if (nickname.length < 2 || nickname.length > 26 || !EDITABLE_NICKNAME_PATTERN.test(nickname)) {
       throw new Error("INVALID_NICKNAME_FORMAT");
@@ -50,16 +40,11 @@ export async function updateProfile(
       throw new Error("INVALID_AVATAR");
     }
 
-    // The first nickname update chooses the public UID suffix. Later updates keep it.
-    const uidSuffix = current.nicknameCustomized
-      ? current.uidSuffix
-      : buildUidSuffixFromNickname(nickname);
     const updated = await saveUserProfile(db, {
       uid: input.userId,
       nickname,
       avatar,
-      uidSuffix,
-      nicknameCustomized: true,
+      uidSuffix: buildUidSuffixFromNickname(nickname),
     });
     if (!updated) {
       throw new Error("USER_NOT_FOUND");
@@ -72,7 +57,7 @@ export async function updateProfile(
       email: updated.email,
       nickname: updated.nickname,
       registeredAt: updated.createdAt,
-      needsProfileSetup: !updated.nicknameCustomized,
+      needsProfileSetup: !updated.nicknameConfirmed,
     };
   } catch (error) {
     const message = getErrorMessage(error);

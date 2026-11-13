@@ -55,6 +55,22 @@ session response after login. If `needsProfileSetup` is true, update that existi
 user's profile. Use the session endpoint for the business user profile rather
 than treating the login or registration payload as that profile.
 
+The numeric public UID is allocated when the account is created. Its letter suffix
+is provisional while `needsProfileSetup` is true; show an unassigned label rather
+than presenting that provisional UID as permanent. The first successful nickname
+confirmation finalizes the suffix, including when the existing nickname is
+confirmed unchanged. A failed save preserves this opportunity. Later nickname
+edits keep the complete UID. Read the finalized value from the successful profile
+response; do not derive the suffix in the client.
+
+Migration 0040 follows the UGC administration migration 0039 and unifies the user
+tables under the authentication ID. Run `scripts/user-migration-preflight.sql`
+against the old user schema and resolve its errors first. Quiesce and drain account
+and business writes, apply the migrations in order, and deploy the matching Worker
+before resuming traffic. Old Worker code cannot run against the unified user schema;
+rollback requires restoring the database backup. Existing confirmed UIDs and pending
+users' first-confirmation eligibility are preserved.
+
 For a browser sign-in flow:
 
 1. Complete login with browser credentials enabled so the browser accepts the

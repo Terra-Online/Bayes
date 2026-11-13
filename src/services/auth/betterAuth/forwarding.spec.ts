@@ -30,7 +30,7 @@ describe("authentication conflict boundaries", () => {
     "classifies exact conflicts from an auth %s",
     async (mode) => {
       for (const [publicPath, authPath, constraint, status, code] of [
-        ["/register", "/sign-in/email-otp", "auth_users.email", 409, "USER_ALREADY_EXISTS"],
+        ["/register", "/sign-in/email-otp", "users.email", 409, "USER_ALREADY_EXISTS"],
         ["/register", "/sign-in/email-otp", "auth_verifications.identifier", 400, "INVALID_OTP"],
         [
           "/send",
@@ -72,8 +72,8 @@ describe("authentication conflict boundaries", () => {
   );
   it.each([
     "UNIQUE constraint failed: auth_accounts.accountId",
-    "UNIQUE constraint failed: auth_users.email, auth_users.name",
-    "D1_ERROR: no such table: auth_users",
+    "UNIQUE constraint failed: users.email, users.name",
+    "D1_ERROR: no such table: users",
   ])("preserves other database failures: %s", async (message) => {
     vi.mocked(createAuth).mockImplementation(
       (_env, options) =>
@@ -99,7 +99,7 @@ describe("authentication conflict boundaries", () => {
         ({
           handler: async () => {
             if (calls++ === 0) {
-              options?.onError?.(new Error("UNIQUE constraint failed: auth_users.email"));
+              options?.onError?.(new Error("UNIQUE constraint failed: users.email"));
             }
             return new Response("opaque", { status: 500 });
           },

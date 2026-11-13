@@ -53,7 +53,7 @@ it.each([
 );
 
 it("rechecks reviewer authority at commit", async () => {
-  database.sqlite.exec("UPDATE users SET role='n' WHERE uid='admin'");
+  database.sqlite.exec("UPDATE users SET role='n' WHERE id='admin'");
   expect(
     await reviewSnapshot(database.db, { ...command, source: "admin", adminUserId: "admin" }),
   ).toEqual({ outcome: "ignored" });

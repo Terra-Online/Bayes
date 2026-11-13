@@ -1,8 +1,8 @@
-import type { LocatorIdentity } from "@/services/official/locator/access";
 import {
   createPositionStream,
   type PositionStreamCloseReason,
 } from "@/services/official/locator/stream";
+import type { LocatorIdentity } from "@/services/official/locator/types";
 import type { Bindings } from "@/types/app";
 
 import { serializeLocatorError } from "./helpers";

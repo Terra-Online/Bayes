@@ -130,7 +130,7 @@ export async function listDuplicateImageMarkers(
            li.*,
            COALESCE(v.upvote_count, 0) AS upvote_count,
            COALESCE(f.flag_count, 0) AS flag_count,
-           u.uid AS submitter_uid,
+           u.id AS submitter_uid,
            u.uid_number AS user_uid_number,
            u.uid_suffix AS user_uid_suffix,
            u.role AS user_role,
@@ -140,7 +140,7 @@ export async function listDuplicateImageMarkers(
          LEFT JOIN latest_visible_images li ON li.poi_id = dm.poi_id
          LEFT JOIN upvote_counts v ON v.submission_id = li.id
          LEFT JOIN flag_counts f ON f.submission_id = li.id
-         LEFT JOIN users u ON u.uid = li.user_id
+         LEFT JOIN users u ON u.id = li.user_id
          ORDER BY dm.latest_created_at DESC, dm.poi_id ASC`,
       )
       .bind(...scope.bindings, limit, offset)
@@ -245,7 +245,7 @@ export async function listDuplicateMarkerImages(
            s.*,
            COALESCE(v.upvote_count, 0) AS upvote_count,
            COALESCE(f.flag_count, 0) AS flag_count,
-           u.uid AS submitter_uid,
+           u.id AS submitter_uid,
            u.uid_number AS user_uid_number,
            u.uid_suffix AS user_uid_suffix,
            u.role AS user_role,
@@ -256,7 +256,7 @@ export async function listDuplicateMarkerImages(
          LEFT JOIN upvote_counts v ON v.submission_id = s.id
          LEFT JOIN flag_counts f ON f.submission_id = s.id
          ${viewerJoin}
-         LEFT JOIN users u ON u.uid = s.user_id
+         LEFT JOIN users u ON u.id = s.user_id
          ORDER BY s.created_at DESC, s.id DESC`,
       )
       .bind(markerId, ...scope.bindings, ...viewerBindings, limit, offset)

@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 
-import { executeNativeSql as sql } from "./native-test-database.mjs";
+import { executeNativeSql as sql, migrateNativeDatabase } from "./native-test-database.mjs";
 import { bundleFixture, deferred, Miniflare, root, within } from "./worker-test-runtime.mjs";
 
 const temporary = await mkdtemp(join(tmpdir(), "bayes-auth-regression-"));
@@ -22,9 +22,14 @@ async function runtime() {
   let release = deferred();
   const worker = new Miniflare({
     ...fixture,
-    d1Databases: { DB: "local-regression-primary", DB_SECOND: "local-regression-secondary" },
+    d1Databases: {
+      DB: "local-regression-primary",
+      DB_SECOND: "local-regression-secondary",
+      DB_MIGRATION: "local-user-migration",
+    },
     ratelimits: {
       OEM_PUBLIC_RATE_LIMIT: { namespace_id: "100", simple: { limit: 100, period: 60 } },
+      OEM_AUTH_RATE_LIMIT: { namespace_id: "101", simple: { limit: 100, period: 60 } },
     },
     bindings: {
       BETTER_AUTH_URL: authOrigin,
@@ -57,20 +62,27 @@ async function runtime() {
         "0002_better_auth.sql",
         "0005_auth_verifications_unique_identifier.sql",
       ]) {
-        await sql(database, await readFile(join(root, "migrations", name), "utf8"));
+        await sql(
+          database,
+          (await readFile(join(root, "migrations", name), "utf8")).replaceAll(
+            "REFERENCES auth_users(id)",
+            "REFERENCES users(id)",
+          ),
+        );
       }
       await sql(
         database,
         `
         CREATE TABLE users (
-          uid TEXT PRIMARY KEY, email TEXT UNIQUE, password_hash TEXT DEFAULT '', role TEXT DEFAULT 'n',
-          karma INTEGER DEFAULT 0, avt INTEGER DEFAULT 1, nickname TEXT UNIQUE, nickname_customized INTEGER DEFAULT 1,
+          id TEXT PRIMARY KEY, email TEXT UNIQUE, name TEXT NOT NULL DEFAULT '', email_verified INTEGER NOT NULL DEFAULT 0, image TEXT, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, role TEXT DEFAULT 'n',
+          karma INTEGER DEFAULT 0, avt INTEGER DEFAULT 1, nickname TEXT UNIQUE, nickname_confirmed INTEGER DEFAULT 1,
           uid_number INTEGER DEFAULT 100001, uid_suffix TEXT DEFAULT 'AA',
           created_at TEXT DEFAULT CURRENT_TIMESTAMP, last_active TEXT DEFAULT CURRENT_TIMESTAMP
         );
-        INSERT INTO auth_users (id, name, email, emailVerified) VALUES ('${binding}-user', 'LocalUser', '${binding.toLowerCase()}@example.test', 1);
+        INSERT INTO users (id, email, name, nickname, email_verified) VALUES ('${binding}-user', '${binding.toLowerCase()}@example.test', 'LocalUser', 'LocalUser', 1);
         INSERT INTO auth_sessions (id, expiresAt, token, userId) VALUES ('${binding}-session', datetime('now', '+180 days'), 'same-local-token', '${binding}-user');
-        INSERT INTO users (uid, email, nickname) VALUES ('${binding}-user', '${binding.toLowerCase()}@example.test', 'LocalUser');
+        CREATE TABLE user_uid_sequence (id INTEGER PRIMARY KEY AUTOINCREMENT);
+        INSERT INTO user_uid_sequence (id) VALUES (1);
       `,
       );
     }
@@ -137,6 +149,46 @@ try {
           ["DB-user", "DB_SECOND-user"],
         );
       });
+      await t.test(
+        "concurrent first nickname confirmations finalize the UID once on native D1",
+        async () => {
+          const db = await worker.getD1Database("DB");
+          await db.prepare("UPDATE users SET nickname_confirmed = 0 WHERE id = 'DB-user'").run();
+          const save = (nickname) =>
+            worker.dispatchFetch(`${authOrigin}/auth/v1/profile`, {
+              method: "PATCH",
+              headers: {
+                authorization: "Bearer same-local-token",
+                "content-type": "application/json",
+                origin: "https://opendfieldmap.org",
+              },
+              body: JSON.stringify({ nickname }),
+            });
+          const responses = await Promise.all([save("Explorer"), save("Navigator")]);
+          for (const response of responses) {
+            assert.equal(response.status, 200, await response.clone().text());
+          }
+          const profiles = await Promise.all(responses.map((response) => response.json()));
+          const uid = profiles[0].user.uid;
+          assert.ok(["100001ER", "100001OR"].includes(uid));
+          assert.equal(profiles[1].user.uid, uid);
+          const renamed = await save("Renamed");
+          assert.equal(renamed.status, 200, await renamed.clone().text());
+          assert.equal((await renamed.json()).user.uid, uid);
+          assert.deepEqual(
+            await db
+              .prepare(
+                "SELECT uid_number, uid_suffix, nickname_confirmed FROM users WHERE id = 'DB-user'",
+              )
+              .first(),
+            {
+              uid_number: 100001,
+              uid_suffix: uid.slice(-2),
+              nickname_confirmed: 1,
+            },
+          );
+        },
+      );
       await t.test(
         "password login checks redirect destinations before authenticating credentials",
         async () => {
@@ -267,6 +319,135 @@ try {
           );
         },
       );
+      await t.test(
+        "populated native D1 migration preserves business data under the auth ID",
+        async () => {
+          const db = await worker.getD1Database("DB_MIGRATION");
+          const files = (await readdir(join(root, "migrations")))
+            .filter((file) => file.endsWith(".sql"))
+            .sort();
+          await migrateNativeDatabase(
+            db,
+            files.filter((file) => file < "0040"),
+          );
+          await sql(
+            db,
+            `
+          INSERT INTO auth_users (id, email, name, emailVerified) VALUES ('auth', 'owner@example.test', 'Owner', 1);
+          INSERT INTO users (uid, email, password_hash, nickname, uid_number, uid_suffix, points)
+            VALUES ('business', 'owner@example.test', '', 'Owner', 123456, 'AB', 31);
+          INSERT INTO endfield_bindings (uid, provider, server_id, role_id, cred_enc, token_enc)
+            VALUES ('business', 'skland', 1, 'role', 'cred', 'token');
+          INSERT INTO auth_sessions (id, token, expiresAt, userId) VALUES ('session', 'token', '2099-01-01', 'auth');
+          INSERT INTO ugc_submissions (id, kind, poi_id, poi_hash, poi_type, user_id)
+            VALUES ('comment', 'comment', 'marker', 'hash', 'poi', 'business');
+          INSERT INTO ugc_snapshots (id, submission_id, kind, revision, content, review_status, creator_user_id)
+            VALUES ('snapshot', 'comment', 'comment', 1, 'Original content', 'approved', 'business');
+          UPDATE ugc_submissions SET deleted_at='2026-09-11', deleted_by='business', lifecycle_version=1;
+          INSERT INTO ugc_submission_audit
+            (id,submission_id,action,actor_user_id,deleted_at,deleted_by,lifecycle_version,created_at)
+            VALUES ('deletion','comment','deleted','business','2026-09-11','business',1,'2026-09-11');
+          INSERT INTO ugc_submission_flags (submission_id,user_id) VALUES ('comment','business');
+          INSERT INTO ugc_submission_flag_audit
+            (id,submission_id,reporter_user_id,action,actor_user_id,operation_id,created_at)
+            VALUES ('flag','comment','business','activated','business','operation','2026-09-10');
+          INSERT INTO ugc_snapshots_review_audit (id,snapshot_id,from_status,to_status,source,admin_user_id)
+            VALUES ('review','snapshot','pending_audit','approved','admin','business');
+        `,
+          );
+          await migrateNativeDatabase(db, ["0040_unified_users.sql"]);
+          assert.deepEqual(
+            await db.prepare("SELECT id, uid_number, uid_suffix, points FROM users").first(),
+            { id: "auth", uid_number: 123456, uid_suffix: "AB", points: 31 },
+          );
+          assert.equal(await db.prepare("SELECT uid FROM endfield_bindings").first("uid"), "auth");
+          assert.equal(
+            await db.prepare("SELECT userId FROM auth_sessions").first("userId"),
+            "auth",
+          );
+          assert.deepEqual(
+            await db.prepare("SELECT creator_user_id, content FROM ugc_snapshots").first(),
+            { creator_user_id: "auth", content: "Original content" },
+          );
+          await assert.rejects(
+            db.prepare("UPDATE ugc_snapshots SET content = 'Changed content'").run(),
+            /snapshot content and provenance are immutable/,
+          );
+          await assert.rejects(
+            db.prepare("UPDATE ugc_snapshots SET creator_user_id = 'business'").run(),
+            /snapshot content and provenance are immutable/,
+          );
+          await assert.rejects(
+            db.prepare("UPDATE ugc_snapshots SET edit_note='Changed provenance'").run(),
+            /snapshot content and provenance are immutable/,
+          );
+          assert.equal(
+            await db.prepare("SELECT deleted_by FROM ugc_submissions").first("deleted_by"),
+            "auth",
+          );
+          assert.deepEqual(
+            await db
+              .prepare(
+                "SELECT actor_user_id,deleted_by,lifecycle_version FROM ugc_submission_audit",
+              )
+              .first(),
+            { actor_user_id: "auth", deleted_by: "auth", lifecycle_version: 1 },
+          );
+          assert.deepEqual(
+            await db
+              .prepare("SELECT reporter_user_id,actor_user_id FROM ugc_submission_flag_audit")
+              .first(),
+            { reporter_user_id: "auth", actor_user_id: "auth" },
+          );
+          assert.equal(
+            await db
+              .prepare("SELECT admin_user_id FROM ugc_snapshots_review_audit")
+              .first("admin_user_id"),
+            "auth",
+          );
+          for (const table of [
+            "ugc_submission_audit",
+            "ugc_submission_flag_audit",
+            "ugc_snapshots_review_audit",
+          ]) {
+            await assert.rejects(
+              db.prepare(`UPDATE ${table} SET created_at='2027-01-01'`).run(),
+              /audit records are immutable/,
+            );
+            await assert.rejects(
+              db.prepare(`DELETE FROM ${table}`).run(),
+              /audit records are immutable/,
+            );
+          }
+          assert.deepEqual((await db.prepare("PRAGMA foreign_key_check").all()).results, []);
+        },
+      );
+      await t.test("user creation rolls back its UID allocation on native D1", async () => {
+        const db = await worker.getD1Database("DB");
+        await sql(
+          db,
+          `CREATE TRIGGER reject_new_user BEFORE INSERT ON users
+          WHEN NEW.email = 'rollback@example.test'
+          BEGIN SELECT RAISE(ABORT, 'synthetic write failure'); END;`,
+        );
+        assert.equal((await request("/create-user?email=rollback@example.test")).status, 500);
+        assert.equal(
+          await db
+            .prepare("SELECT COUNT(*) FROM users WHERE email = 'rollback@example.test'")
+            .first("COUNT(*)"),
+          0,
+        );
+        assert.equal(await db.prepare("SELECT MAX(id) FROM user_uid_sequence").first("MAX(id)"), 1);
+        await sql(db, "DROP TRIGGER reject_new_user");
+        const created = await request("/create-user?email=rollback@example.test");
+        assert.equal(created.status, 200, await created.clone().text());
+        const user = await db
+          .prepare(
+            "SELECT uid_number, nickname_confirmed FROM users WHERE email = 'rollback@example.test'",
+          )
+          .first();
+        assert.deepEqual(user, { uid_number: 100002, nickname_confirmed: 0 });
+      });
     } finally {
       current.release();
       await worker.dispose();

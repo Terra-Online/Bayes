@@ -41,7 +41,7 @@ export async function archiveTestImageSubmissions(
       (id,submission_id,action,actor_user_id,deleted_at,deleted_by,lifecycle_version,created_at)
       SELECT ?4||':'||s.id,s.id,'deleted',?2,?3,?2,s.lifecycle_version+1,?3
       FROM ugc_submissions s WHERE s.kind='image' AND s.deleted_at IS NULL
-        AND EXISTS (SELECT 1 FROM users WHERE uid=?2 AND role IN ('a','r'))
+        AND EXISTS (SELECT 1 FROM users WHERE id=?2 AND role IN ('a','r'))
         AND EXISTS (SELECT 1 FROM ugc_snapshots f WHERE f.submission_id=s.id
           AND f.revision=s.revision AND f.file_path LIKE ?1 ESCAPE '\\')`)
       .bind(`${escapeLikePattern(input.prefix)}/%`, input.adminUserId, now, operationId),

@@ -29,7 +29,7 @@ describe("request-owned auth lookups", () => {
   const sessionReads = () =>
     fixture.database.queries.filter((q) => /from "auth_sessions"/i.test(q.sql));
   const profileReads = () =>
-    fixture.database.queries.filter((q) => /^SELECT \* FROM users WHERE uid =/i.test(q.sql));
+    fixture.database.queries.filter((q) => /^SELECT \* FROM users WHERE id =/i.test(q.sql));
 
   it.each([undefined, "analytics=abc; cf_clearance=xyz"])(
     "avoids auth initialization without credentials (%s)",

@@ -3,7 +3,7 @@ import { afterEach, expect, it } from "vitest";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
 import { applyMigrations, migrations } from "@/test/database/migrations";
 import { insertCommentSnapshot } from "@/test/fixtures/commentSnapshots";
-import { insertUser } from "@/test/fixtures/users";
+import { insertLegacyUser as insertUser } from "@/test/fixtures/legacyUsers";
 
 let database: TestDatabase;
 afterEach(() => database?.close());
@@ -22,7 +22,7 @@ it("coalesces the first deletion without inventing audit events or losing retain
     WHERE id='admin-first';`);
   applyMigrations(
     database.sqlite,
-    migrations.filter((file) => file >= "0039"),
+    migrations.filter((file) => file >= "0039" && file < "0040"),
   );
   expect(
     database.sqlite

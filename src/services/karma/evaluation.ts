@@ -190,7 +190,7 @@ async function evaluateKarmaUserChunk(
       db
         .prepare(
           `UPDATE users SET karma = ?2
-       WHERE uid = ?1 AND karma = ?3 AND points = ?4 AND last_active = ?5 AND role = ?6`,
+       WHERE id = ?1 AND karma = ?3 AND points = ?4 AND last_active = ?5 AND role = ?6`,
         )
         .bind(
           row.uid,
@@ -222,12 +222,12 @@ async function selectSweepUidsAfter(
 ): Promise<string[]> {
   const result = await db
     .prepare(
-      `SELECT uid
+      `SELECT id AS uid
        FROM users
        WHERE role <> 'r'
          AND karma < 5
-         AND uid > ?1
-       ORDER BY uid ASC
+         AND id > ?1
+       ORDER BY id ASC
        LIMIT ?2`,
     )
     .bind(cursor, limit)

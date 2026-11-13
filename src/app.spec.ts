@@ -157,7 +157,7 @@ it("keeps the profile and session readable after a failed profile write and allo
   const session = () =>
     app.request("http://localhost/auth/v1/session", { headers: owner.headers }, external.bindings);
   expect((await session()).status).toBe(200);
-  const original = database.sqlite.prepare("SELECT * FROM users WHERE uid = ?").get(owner.user.uid);
+  const original = database.sqlite.prepare("SELECT * FROM users WHERE id = ?").get(owner.user.uid);
   async function update(nickname: string, avatar: number): Promise<Response> {
     return app.request(
       "http://localhost/auth/v1/profile",
@@ -178,7 +178,7 @@ it("keeps the profile and session readable after a failed profile write and allo
   expect(failed.status).toBe(500);
   expect(await failed.json()).toMatchObject({ code: "PROFILE_UPDATE_FAILED" });
   database.hooks.beforeQuery = undefined;
-  expect(database.sqlite.prepare("SELECT * FROM users WHERE uid = ?").get(owner.user.uid)).toEqual(
+  expect(database.sqlite.prepare("SELECT * FROM users WHERE id = ?").get(owner.user.uid)).toEqual(
     original,
   );
   expect(await (await session()).json()).toMatchObject({

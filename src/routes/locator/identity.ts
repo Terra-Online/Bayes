@@ -2,7 +2,7 @@ import type { Context } from "hono";
 
 import { getRequestAuthCredentials } from "@/services/auth/requestCredentials";
 import { resolveAuthIdentity } from "@/services/auth/session";
-import type { LocatorIdentity } from "@/services/official/locator/access";
+import type { LocatorIdentity } from "@/services/official/locator/types";
 import type { AppEnv } from "@/types/app";
 
 export async function resolveLocatorIdentity<E extends AppEnv>(
@@ -15,6 +15,5 @@ export async function resolveLocatorIdentity<E extends AppEnv>(
   const identity = await resolveAuthIdentity(c.env, getRequestAuthCredentials(c.req.raw));
   return {
     uid: identity.uid,
-    profile: { email: identity.email, displayName: identity.displayName },
   };
 }

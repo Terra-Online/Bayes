@@ -67,11 +67,11 @@ export async function getReviewTarget(
     f.creation_source AS creationSource,f.review_version AS reviewVersion,
     EXISTS (SELECT 1 FROM ugc_snapshots earlier WHERE earlier.submission_id=s.id
       AND earlier.revision<f.revision AND earlier.review_status='approved') AS hasEarlierApproval,
-    u.uid, u.uid_number AS uidNumber, u.uid_suffix AS uidSuffix,
+    u.id AS uid, u.uid_number AS uidNumber, u.uid_suffix AS uidSuffix,
     u.role, u.karma, u.nickname, u.avt AS avatar
     FROM ugc_submissions s JOIN ugc_snapshots f
       ON f.submission_id=s.id AND f.revision=s.revision
-    LEFT JOIN users u ON u.uid=s.user_id
+    LEFT JOIN users u ON u.id=s.user_id
     WHERE s.id=?1 AND (?2 IS NULL OR f.id=?2)
       AND s.deleted_at IS NULL`)
     .bind(submissionId, snapshotId ?? null)
@@ -138,7 +138,7 @@ export async function reviewSnapshot(
       WHERE s.id=?2 AND f.id=?3 AND f.review_status=?4 AND f.review_version=?10
         AND s.deleted_at IS NULL
         AND ((?6='ai' AND ?7 IS NULL AND ?4='pending_openai' AND ?5 IN ('approved','pending_audit'))
-          OR (?6='admin' AND EXISTS (SELECT 1 FROM users WHERE uid=?7 AND role IN ('p','a','r'))
+          OR (?6='admin' AND EXISTS (SELECT 1 FROM users WHERE id=?7 AND role IN ('p','a','r'))
             AND ((?4='pending_openai' AND ?5 IN ('approved','rejected','pending_audit'))
               OR (?4='pending_audit' AND ?5 IN ('approved','rejected')))))
       UNION ALL

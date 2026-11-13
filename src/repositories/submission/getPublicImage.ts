@@ -34,13 +34,13 @@ export async function getPublicImageById(
       `SELECT s.*,
        (SELECT COUNT(*) FROM ugc_submission_upvotes WHERE submission_id = s.id AND active = 1) AS upvote_count,
        (SELECT COUNT(*) FROM ugc_submission_flags WHERE submission_id = s.id AND active = 1) AS flag_count,
-       u.uid AS submitter_uid,
+       u.id AS submitter_uid,
        u.uid_number AS user_uid_number,
        u.uid_suffix AS user_uid_suffix,
        u.nickname AS user_nickname
        ${viewerSelect}
      FROM ${publicImageSelection} s
-     LEFT JOIN users u ON u.uid = s.user_id
+     LEFT JOIN users u ON u.id = s.user_id
      WHERE ${filters.join(" AND ")}`,
     )
     .bind(

@@ -119,12 +119,7 @@ export async function createLifecycleRuntime(t) {
   await migrateNativeDatabase(db);
   await db
     .prepare(
-      "INSERT INTO users (uid, email, password_hash, nickname) VALUES ('user', 'native@example.test', '', 'NativeUser')",
-    )
-    .run();
-  await db
-    .prepare(
-      "INSERT INTO auth_users (id, email, name, emailVerified) VALUES ('user', 'native@example.test', 'NativeUser', 1)",
+      "INSERT INTO users (id, email, name, nickname, email_verified, uid_number, uid_suffix) VALUES ('user', 'native@example.test', 'NativeUser', 'NativeUser', 1, 100001, 'AA')",
     )
     .run();
   await db

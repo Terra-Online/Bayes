@@ -4,7 +4,7 @@
 import { z } from "zod";
 
 import { ApiError } from "@/lib/errors";
-import { ensureUserProfile, formatPublicUid } from "@/repositories/users";
+import { readSessionUser, formatPublicUid } from "@/repositories/users";
 import { createAuth } from "@/services/auth/betterAuth";
 import {
   expireOAuthExchangeProof,
@@ -138,11 +138,7 @@ export async function exchangeSession(
     throw new ApiError(400, "INVALID_AUTH_CODE", "Auth code is invalid or expired.");
   }
 
-  const profile = await ensureUserProfile(env.DB, {
-    uid: session.user.id,
-    email: session.user.email,
-    displayName: session.user.name,
-  });
+  const profile = await readSessionUser(env.DB, session.user.id);
   const cookies = [
     await serializeBrowserSessionCookie(auth, session.session),
     expireOAuthExchangeProof(auth),
@@ -157,7 +153,7 @@ export async function exchangeSession(
       email: profile.email,
       nickname: profile.nickname,
       registeredAt: profile.createdAt,
-      needsProfileSetup: !profile.nicknameCustomized,
+      needsProfileSetup: !profile.nicknameConfirmed,
     },
     cookies,
   };

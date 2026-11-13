@@ -37,7 +37,7 @@ export async function appendVersion(
   const now = new Date().toISOString();
   const content = input.change.type === "text" ? input.change.content : null;
   const sourceSnapshotId = input.change.type === "reuse" ? input.change.sourceSnapshotId : null;
-  const admin = "EXISTS (SELECT 1 FROM users WHERE uid=?3 AND role IN ('a','r'))";
+  const admin = "EXISTS (SELECT 1 FROM users WHERE id=?3 AND role IN ('a','r'))";
   const authorized = input.mode === "admin" ? admin : `(s.user_id=?3 OR ${admin})`;
   const eligible =
     `f.id=?2 AND ${authorized} AND ` +

@@ -132,7 +132,7 @@ export async function listActiveCommentsByMarker(
           WHERE child.parent_id = s.id
             AND child.kind = 'comment'
             AND child.id IN (SELECT id FROM retained_comments)) AS reply_count,
-         u.uid AS submitter_uid,
+         u.id AS submitter_uid,
          u.uid_number AS user_uid_number,
          u.uid_suffix AS user_uid_suffix,
          u.role AS user_role,
@@ -143,7 +143,7 @@ export async function listActiveCommentsByMarker(
        FROM selected_comments selected
        CROSS JOIN comment_rows s ON s.id = selected.id
        ${viewerJoin}
-       LEFT JOIN users u ON u.uid = s.user_id
+       LEFT JOIN users u ON u.id = s.user_id
        ORDER BY (selected.root_rank IS NULL) ASC,
          CASE WHEN selected.root_rank IS NOT NULL THEN s.poi_id END ASC,
          selected.root_rank ASC, s.comment_depth ASC, s.parent_id ASC, s.created_at ASC, s.id ASC`,
@@ -196,7 +196,7 @@ export async function listUserCommentsByMarker(
          COALESCE(f.flag_count, 0) AS flag_count,
          COALESCE(vv.value, 0) AS viewer_vote,
          CASE WHEN vf.user_id IS NULL THEN 0 ELSE 1 END AS viewer_flagged,
-         u.uid AS submitter_uid,
+         u.id AS submitter_uid,
          u.uid_number AS user_uid_number,
          u.uid_suffix AS user_uid_suffix,
          u.role AS user_role,
@@ -220,7 +220,7 @@ export async function listUserCommentsByMarker(
        ) f ON f.submission_id = s.id
        LEFT JOIN ugc_submission_votes vv ON vv.submission_id = s.id AND vv.user_id = ?1 AND vv.active = 1
        LEFT JOIN ugc_submission_flags vf ON vf.submission_id = s.id AND vf.user_id = ?1 AND vf.active = 1
-       LEFT JOIN users u ON u.uid = s.user_id
+       LEFT JOIN users u ON u.id = s.user_id
        ORDER BY s.created_at DESC, s.id DESC`,
     )
     .bind(payload.userId, JSON.stringify(markerIds), limit)
@@ -264,7 +264,7 @@ export async function listCommentViewerStateByMarker(
        s.*,
        COALESCE(v.score, 0) AS score,
        COALESCE(f.flag_count, 0) AS flag_count,
-       u.uid AS submitter_uid,
+       u.id AS submitter_uid,
        u.uid_number AS user_uid_number,
        u.uid_suffix AS user_uid_suffix,
        u.role AS user_role,
@@ -286,7 +286,7 @@ export async function listCommentViewerStateByMarker(
          AND submission_id IN (SELECT id FROM selected_comments)
        GROUP BY submission_id
      ) f ON f.submission_id = s.id
-     LEFT JOIN users u ON u.uid = s.user_id
+     LEFT JOIN users u ON u.id = s.user_id
      ORDER BY s.created_at DESC, s.id DESC`,
     )
     .bind(payload.userId, JSON.stringify(markerIds), pendingLimit);

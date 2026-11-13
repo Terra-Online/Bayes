@@ -46,7 +46,17 @@ export function createAuthConfiguration(env: Bindings) {
     },
     socialProviders: createAuthSocialProviders(env),
     user: {
-      modelName: "auth_users",
+      modelName: "users",
+      fields: { emailVerified: "email_verified", createdAt: "created_at", updatedAt: "updated_at" },
+      additionalFields: {
+        nickname: {
+          type: "string",
+          input: false,
+          returned: false,
+          required: true,
+          defaultValue: "",
+        },
+      },
     },
     session: {
       modelName: "auth_sessions",

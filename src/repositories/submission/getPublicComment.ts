@@ -61,7 +61,7 @@ export async function getPublicCommentContextById(
           WHERE child.parent_id = path.id
             AND child.kind = 'comment'
             AND child.id IN (SELECT id FROM retained_comments)) AS reply_count,
-         u.uid AS submitter_uid,
+         u.id AS submitter_uid,
          u.uid_number AS user_uid_number,
          u.uid_suffix AS user_uid_suffix,
          u.role AS user_role,
@@ -70,7 +70,7 @@ export async function getPublicCommentContextById(
          u.avt AS user_avt
          ${pathViewerSelect}
        FROM comment_path path
-       LEFT JOIN users u ON u.uid = path.user_id
+       LEFT JOIN users u ON u.id = path.user_id
        ORDER BY path.ancestor_distance DESC`,
     )
     .bind(
@@ -165,7 +165,7 @@ export async function getPublicCommentContextById(
           WHERE child.parent_id = reply.id
             AND child.kind = 'comment'
             AND child.id IN (SELECT id FROM retained_comments)) AS reply_count,
-         u.uid AS submitter_uid,
+         u.id AS submitter_uid,
          u.uid_number AS user_uid_number,
          u.uid_suffix AS user_uid_suffix,
          u.role AS user_role,
@@ -175,7 +175,7 @@ export async function getPublicCommentContextById(
          ${replyViewerSelect}
        FROM traversal_meta meta
        LEFT JOIN selected_replies reply ON TRUE
-       LEFT JOIN users u ON u.uid = reply.user_id
+       LEFT JOIN users u ON u.id = reply.user_id
        ORDER BY reply.relative_depth ASC, reply.created_at ASC, reply.id ASC`,
     )
     .bind(

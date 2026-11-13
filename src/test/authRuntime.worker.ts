@@ -5,6 +5,7 @@ import { Hono } from "hono";
 
 import { onAppError } from "@/middleware/error-handler";
 import { createRoutes as createAuthRoutes } from "@/routes/auth/createRoutes";
+import { createRoutes as createProfileRoutes } from "@/routes/profile/createRoutes";
 import { createAuth, runWithAuthRequest } from "@/services/auth/betterAuth";
 import type { AuthCredentials } from "@/services/auth/contract/credentials";
 import { resolveAuthIdentity } from "@/services/auth/session";
@@ -98,6 +99,7 @@ function observe(database: D1Database): D1Database {
 const app = new Hono<AppEnv<{ requestId: string }>>();
 app.onError(onAppError);
 app.route("/auth/v1", createAuthRoutes());
+app.route("/auth/v1", createProfileRoutes());
 
 export default {
   async fetch(request: Request, raw: TestEnv, context: ExecutionContext): Promise<Response> {
@@ -116,6 +118,16 @@ export default {
           if (url.pathname === "/init") {
             await createAuth(env).api.getSession({ headers: new Headers() });
             response = Response.json({ initialized: true });
+          } else if (url.pathname === "/create-user") {
+            response = Response.json(
+              await createAuth(env).api.signUpEmail({
+                body: {
+                  email: url.searchParams.get("email")!,
+                  name: "NativeNew",
+                  password: "Native-password123",
+                },
+              }),
+            );
           } else if (url.pathname === "/singleton-init") {
             await singletonAuth(env);
             response = Response.json({ initialized: true });

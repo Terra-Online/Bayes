@@ -409,12 +409,12 @@ it("detects review status changes away and back and rolls state back when lifecy
 
 it("keeps scheduled karma evaluation unchanged after an administrative review correction", async () => {
   fixture.submission({ id: "image", kind: "image", reviewStatus: "approved" });
-  fixture.database.sqlite.exec("UPDATE users SET points=100,karma=1 WHERE uid='author'");
+  fixture.database.sqlite.exec("UPDATE users SET points=100,karma=1 WHERE id='author'");
   const headers = fixture.createReviewerSession("a", "admin");
   const evaluate = () => fixture.request("/karma/run-once", { method: "POST", headers });
   expect((await evaluate()).status).toBe(200);
   expect(
-    fixture.database.sqlite.prepare("SELECT karma FROM users WHERE uid='author'").get(),
+    fixture.database.sqlite.prepare("SELECT karma FROM users WHERE id='author'").get(),
   ).toEqual({ karma: 1 });
   expect(
     (
@@ -427,7 +427,7 @@ it("keeps scheduled karma evaluation unchanged after an administrative review co
   ).toBe(200);
   expect((await evaluate()).status).toBe(200);
   expect(
-    fixture.database.sqlite.prepare("SELECT karma,points FROM users WHERE uid='author'").get(),
+    fixture.database.sqlite.prepare("SELECT karma,points FROM users WHERE id='author'").get(),
   ).toEqual({ karma: 1, points: 100 });
   expect(
     (
@@ -470,7 +470,7 @@ it("keeps scheduled karma evaluation unchanged after an administrative review co
   ).toBe(200);
   expect((await evaluate()).status).toBe(200);
   expect(
-    fixture.database.sqlite.prepare("SELECT karma,points FROM users WHERE uid='author'").get(),
+    fixture.database.sqlite.prepare("SELECT karma,points FROM users WHERE id='author'").get(),
   ).toEqual({ karma: 1, points: 100 });
 });
 

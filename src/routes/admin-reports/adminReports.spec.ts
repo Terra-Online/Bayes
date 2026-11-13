@@ -97,19 +97,19 @@ describe("administrator reports HTTP", () => {
     }
   });
 
-  it("counts registered people once and attributes linked logins to the earliest account", async () => {
+  it("counts users before their first business visit and attributes linked logins to the earliest account", async () => {
     seedMember("github-user", "n", "2026-09-02T10:00:00.000Z");
     seedMember("email-user", "n", "2026-09-02T11:00:00.000Z");
     insertUser(database.sqlite, { uid: "legacy-user", created_at: "2026-09-03T10:00:00.000Z" });
-    insertAuthUser(database.sqlite, { id: "auth-only" });
+    insertAuthUser(database.sqlite, { id: "new-user" });
     // Linked accounts do not add people. Equal account times resolve by account
-    // ID, and an auth-only identity is excluded from business registrations.
+    // ID; a newly created identity is already a registered user.
     for (const [id, uid, provider, at] of [
       ["github-first", "github-user", "github", "2026-09-02T10:00:00.000Z"],
       ["discord-later", "github-user", "discord", "2026-09-05T10:00:00.000Z"],
       ["a-email", "email-user", "credential", "2026-09-02T11:00:00.000Z"],
       ["z-google", "email-user", "google", "2026-09-02T11:00:00.000Z"],
-      ["orphan-account", "auth-only", "discord", "2026-09-06T10:00:00.000Z"],
+      ["new-account", "new-user", "discord", "2026-09-06T10:00:00.000Z"],
     ]) {
       database.sqlite
         .prepare(`INSERT INTO auth_accounts (id, accountId, providerId, userId, createdAt)
@@ -120,17 +120,18 @@ describe("administrator reports HTTP", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
       generatedAt: expect.any(String),
-      totalUsers: 4,
+      totalUsers: 5,
       firstRegistrationDate: "2026-09-01",
       lastRegistrationDate: "2026-09-03",
       daily: [
-        { date: "2026-09-01", count: 1 },
+        { date: "2026-09-01", count: 2 },
         { date: "2026-09-02", count: 2 },
         { date: "2026-09-03", count: 1 },
       ],
       sources: [
         { source: "unknown", count: 2 },
         { source: "credential", count: 1 },
+        { source: "discord", count: 1 },
         { source: "github", count: 1 },
       ],
     });

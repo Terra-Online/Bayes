@@ -97,7 +97,7 @@ export async function listActiveImagesByMarker(
          s.*,
          COALESCE(v.upvote_count, 0) AS upvote_count,
          COALESCE(f.flag_count, 0) AS flag_count,
-         u.uid AS submitter_uid,
+         u.id AS submitter_uid,
          u.uid_number AS user_uid_number,
          u.uid_suffix AS user_uid_suffix,
          u.role AS user_role,
@@ -108,7 +108,7 @@ export async function listActiveImagesByMarker(
        LEFT JOIN upvote_counts v ON v.submission_id = s.id
        LEFT JOIN flag_counts f ON f.submission_id = s.id
        ${viewerJoin}
-       LEFT JOIN users u ON u.uid = s.user_id
+       LEFT JOIN users u ON u.id = s.user_id
        ORDER BY s.poi_id ASC, s.created_at DESC, s.id DESC`,
     )
     .bind(JSON.stringify(markerIds), ...scope.bindings, limit, ...viewerBindings)
@@ -184,7 +184,7 @@ export async function listUserImagesByMarker(
          s.*,
          COALESCE(v.upvote_count, 0) AS upvote_count,
          COALESCE(f.flag_count, 0) AS flag_count,
-         u.uid AS submitter_uid,
+         u.id AS submitter_uid,
          u.uid_number AS user_uid_number,
          u.uid_suffix AS user_uid_suffix,
          u.role AS user_role,
@@ -193,7 +193,7 @@ export async function listUserImagesByMarker(
        FROM selected_images s
        LEFT JOIN upvote_counts v ON v.submission_id = s.id
        LEFT JOIN flag_counts f ON f.submission_id = s.id
-       LEFT JOIN users u ON u.uid = s.user_id
+       LEFT JOIN users u ON u.id = s.user_id
        ORDER BY s.poi_id ASC, s.created_at DESC, s.id DESC`,
     )
     .bind(payload.userId, JSON.stringify(markerIds), ...extraBindings, limit)

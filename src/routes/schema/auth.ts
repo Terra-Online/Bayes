@@ -66,7 +66,11 @@ export const sessionExchangeSchema = z.object({
 
 export const userResponseSchema = z
   .object({
-    uid: z.string().describe("Public UID, not the internal user ID."),
+    uid: z
+      .string()
+      .describe(
+        "Public UID, not the internal user ID. The suffix is provisional while needsProfileSetup is true and finalizes on the first successful nickname confirmation.",
+      ),
     role: z.enum(["n", "p", "a", "s", "r"]),
     karma: z.number(),
     avatar: z.number(),
@@ -75,7 +79,9 @@ export const userResponseSchema = z
     registeredAt: z.string().optional(),
     needsProfileSetup: z
       .boolean()
-      .describe("Complete onboarding by updating this existing user's profile."),
+      .describe(
+        "Confirm the nickname on this existing profile to finalize the UID suffix. Later nickname edits preserve the complete UID.",
+      ),
   })
   .meta({ ref: "User" });
 

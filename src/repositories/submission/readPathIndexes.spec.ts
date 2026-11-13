@@ -53,7 +53,7 @@ describe("read path index migration on the repository schema", () => {
   function cutover() {
     applyMigrations(
       database.sqlite,
-      migrationFiles.filter((file) => file >= "0036"),
+      migrationFiles.filter((file) => file >= "0036" && file < "0040"),
     );
   }
 

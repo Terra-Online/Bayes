@@ -8,7 +8,7 @@ import { createAuth, runWithAuthRequest } from "@/services/auth/betterAuth";
 import emailTemplates from "@/services/email/templateLocales.json";
 import { createMockBindings, type MockBindings } from "@/test/bindings";
 import { createTestDatabase, type TestDatabase } from "@/test/database/createTestDatabase";
-import { insertUser } from "@/test/fixtures/users";
+import { updateUser } from "@/test/fixtures/users";
 import type { AppEnv, Bindings } from "@/types/app";
 
 // This Node suite exercises HTTP/CORS/auth. Unused native service bindings fail loudly.
@@ -147,7 +147,7 @@ describe("email authentication HTTP behavior", () => {
 
   function storedIdentity() {
     return {
-      users: database.sqlite.prepare("SELECT * FROM auth_users ORDER BY id").all(),
+      users: database.sqlite.prepare("SELECT * FROM users ORDER BY id").all(),
       accounts: database.sqlite.prepare("SELECT * FROM auth_accounts ORDER BY id").all(),
       sessions: database.sqlite.prepare("SELECT * FROM auth_sessions ORDER BY id").all(),
     };
@@ -364,7 +364,7 @@ describe("email authentication HTTP behavior", () => {
       expect.objectContaining({
         id: identity.user.id,
         email: "x@example.com",
-        emailVerified: 1,
+        email_verified: 1,
       }),
     ]);
     const before = storedIdentity();
@@ -475,7 +475,7 @@ describe("email authentication HTTP behavior", () => {
   it("retains an existing password, business profile and prior session when registration is repeated with fresh email proof", async () => {
     const email = "existing@example.com";
     const identity = await registerEmailAccount(email);
-    insertUser(database.sqlite, {
+    updateUser(database.sqlite, {
       uid: identity.user.id,
       email,
       nickname: "Established",
@@ -579,7 +579,7 @@ describe("email authentication HTTP behavior", () => {
   it("preserves the user's password and business profile after failed reset delivery and recovers with a newly delivered link", async () => {
     const email = "retry-reset@example.com";
     const { user } = await registerEmailAccount(email);
-    insertUser(database.sqlite, { uid: user.id, email, nickname: "ResetOwner", points: 340 });
+    updateUser(database.sqlite, { uid: user.id, email, nickname: "ResetOwner", points: 340 });
     const profile = database.sqlite.prepare("SELECT * FROM users").all();
     const before = storedIdentity();
     delivery.mockRejectedValueOnce(new Error("Mail service unavailable"));
@@ -618,7 +618,7 @@ describe("email authentication HTTP behavior", () => {
         // Verification values have no user FK; deleting an account can leave a
         // still-live reset token referring to that removed identity.
         database.sqlite.exec(
-          "DELETE FROM auth_sessions; DELETE FROM auth_accounts; DELETE FROM auth_users;",
+          "DELETE FROM auth_sessions; DELETE FROM auth_accounts; DELETE FROM users;",
         );
       }
       const before = storedIdentity();

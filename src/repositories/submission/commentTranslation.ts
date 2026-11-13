@@ -21,10 +21,10 @@ export async function getPublicTranslationTarget(
   snapshotId?: string,
 ): Promise<PublicTranslationTarget | null> {
   const row = await db
-    .prepare(`SELECT s.*, u.uid AS submitter_uid,
+    .prepare(`SELECT s.*, u.id AS submitter_uid,
     u.uid_number AS user_uid_number, u.uid_suffix AS user_uid_suffix,
     u.role AS user_role, u.karma AS user_karma, u.nickname AS user_nickname, u.avt AS user_avt
-    FROM v_ugc_public_submissions s JOIN users u ON u.uid=s.user_id
+    FROM v_ugc_public_submissions s JOIN users u ON u.id=s.user_id
     WHERE s.id=?1 AND s.kind='comment' AND (?2 IS NULL OR s.snapshot_id=?2)`)
     .bind(submissionId, snapshotId ?? null)
     .first<Record<string, unknown>>();
