@@ -31,7 +31,7 @@ function isFeatureLocked(flag: string | undefined, defaultLocked = true): boolea
   return !["0", "false", "off", "no"].includes(normalized);
 }
 
-async function runScheduledJobs(env: Bindings): Promise<void> {
+function runScheduledJobs(env: Bindings, ctx: ExecutionContext): void {
   if (isFeatureLocked(env.LOCK_SCHEDULED_JOBS, false)) {
     console.warn("cron jobs skipped", {
       reason: "LOCK_SCHEDULED_JOBS enabled",
@@ -40,22 +40,46 @@ async function runScheduledJobs(env: Bindings): Promise<void> {
     return;
   }
 
-  const redis = createRedisClient(env);
   const config = getRuntimeConfig(env);
 
-  const karmaEvaluation = await evaluateKarmaIfDue(env.DB, redis);
-  let enqueued = 0;
-
+  // A slow or failed Karma evaluation must not delay moderation backfill.
+  ctx.waitUntil(runScheduledKarmaEvaluation(env));
   if (config.scheduledModerationEnabled) {
-    enqueued = await ensureAutoModerationBackfill(env, 20);
+    ctx.waitUntil(runScheduledModerationBackfill(env));
   }
+}
 
-  console.warn("cron jobs completed", {
-    karmaEvaluation,
-    enqueued,
-    scheduledModerationEnabled: config.scheduledModerationEnabled,
-    at: new Date().toISOString(),
-  });
+async function runScheduledKarmaEvaluation(env: Bindings): Promise<void> {
+  try {
+    const redis = createRedisClient(env);
+    const karmaEvaluation = await evaluateKarmaIfDue(env.DB, redis);
+    console.warn("cron karma evaluation completed", {
+      karmaEvaluation,
+      at: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error("cron karma evaluation failed", {
+      error: error instanceof Error ? error.message : String(error),
+      at: new Date().toISOString(),
+    });
+    throw error;
+  }
+}
+
+async function runScheduledModerationBackfill(env: Bindings): Promise<void> {
+  try {
+    const enqueued = await ensureAutoModerationBackfill(env, 20);
+    console.warn("cron moderation backfill completed", {
+      enqueued,
+      at: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error("cron moderation backfill failed", {
+      error: error instanceof Error ? error.message : String(error),
+      at: new Date().toISOString(),
+    });
+    throw error;
+  }
 }
 
 async function runProgressRecovery(env: Bindings): Promise<void> {
@@ -91,7 +115,7 @@ export default {
   },
   async scheduled(_event: ScheduledEvent, env: Bindings, ctx: ExecutionContext) {
     ctx.waitUntil(runProgressRecovery(env));
-    ctx.waitUntil(runScheduledJobs(env));
+    runScheduledJobs(env, ctx);
   },
   queue: handleQueue,
 };
