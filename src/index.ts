@@ -7,7 +7,7 @@ import { withRequestTelemetry } from "./lib/requestTelemetry";
 import { ensureAutoModerationBackfill } from "./queues/client/autoModeration";
 import { handleQueue } from "./queues/runtime/entrypoint";
 import { runWithAuthRequest } from "./services/auth/betterAuth";
-import { evaluateKarmaIfDue } from "./services/karma/evaluation";
+import { evaluateKarmaIfDue, type KarmaEvaluationResult } from "./services/karma/evaluation";
 import { drainProgressStatsOutbox } from "./services/progress/outbox";
 import {
   cleanupProgressConsistencyRecords,
@@ -40,14 +40,37 @@ async function runScheduledJobs(env: Bindings): Promise<void> {
     return;
   }
 
-  const redis = createRedisClient(env);
   const config = getRuntimeConfig(env);
-
-  const karmaEvaluation = await evaluateKarmaIfDue(env.DB, redis);
+  const failures: unknown[] = [];
+  let karmaEvaluation: KarmaEvaluationResult | undefined;
   let enqueued = 0;
 
+  try {
+    const redis = createRedisClient(env);
+    karmaEvaluation = await evaluateKarmaIfDue(env.DB, redis);
+  } catch (error) {
+    failures.push(error);
+    console.error("cron karma evaluation failed", {
+      error: error instanceof Error ? error.message : String(error),
+      at: new Date().toISOString(),
+    });
+  }
+
   if (config.scheduledModerationEnabled) {
-    enqueued = await ensureAutoModerationBackfill(env, 20);
+    try {
+      enqueued = await ensureAutoModerationBackfill(env, 20);
+    } catch (error) {
+      failures.push(error);
+      console.error("cron moderation backfill failed", {
+        error: error instanceof Error ? error.message : String(error),
+        at: new Date().toISOString(),
+      });
+    }
+  }
+
+  // Attempt each independent job before reporting failures to the cron runtime.
+  if (failures.length > 0) {
+    throw new AggregateError(failures, "Scheduled jobs failed");
   }
 
   console.warn("cron jobs completed", {

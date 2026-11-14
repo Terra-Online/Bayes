@@ -1,13 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { createMockBindings } from "./test/bindings";
 import type { Bindings } from "./types/app";
 
 const mocks = vi.hoisted(() => ({
   drain: vi.fn(),
   health: vi.fn(),
   cleanup: vi.fn(),
-  karma: vi.fn(),
-  moderation: vi.fn(),
+  karma: vi.fn<typeof import("./services/karma/evaluation").evaluateKarmaIfDue>(),
+  moderation: vi.fn<typeof import("./queues/client/autoModeration").ensureAutoModerationBackfill>(),
+  redis: vi.fn<typeof import("./lib/redis").createRedisClient>(),
   fetch: vi.fn(),
   upgrade: vi.fn(),
   requestLog: vi.fn(),
@@ -20,10 +22,7 @@ vi.mock("cloudflare:workers", () => ({
 vi.mock("@cloudflare/containers", () => ({ Container: class {} }));
 vi.mock("./app", () => ({ createApp: () => ({ fetch: mocks.fetch }) }));
 vi.mock("@/routes/notify/liveUpgrade", () => ({ handleNotificationLiveUpgrade: mocks.upgrade }));
-vi.mock("./lib/redis", () => ({ createRedisClient: () => ({}) }));
-vi.mock("./lib/config", () => ({
-  getRuntimeConfig: () => ({ scheduledModerationEnabled: false }),
-}));
+vi.mock("./lib/redis", () => ({ createRedisClient: mocks.redis }));
 vi.mock("./services/email", () => ({}));
 vi.mock("./services/karma/evaluation", () => ({ evaluateKarmaIfDue: mocks.karma }));
 vi.mock("./services/progress/outbox", () => ({ drainProgressStatsOutbox: mocks.drain }));
@@ -86,14 +85,29 @@ describe("HTTP entrypoint telemetry", () => {
 });
 
 describe("scheduled database work", () => {
+  let env: Bindings;
+
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ["Date"] });
-    vi.clearAllMocks();
+    vi.resetAllMocks();
+    env = createMockBindings({ DB: {} as D1Database }).bindings;
+    env.ENABLE_SCHEDULED_MODERATION = "false";
     mocks.drain.mockResolvedValue(undefined);
     mocks.cleanup.mockResolvedValue(undefined);
     mocks.health.mockResolvedValue({ pending: 0, blocked: 0, oldestAgeMs: 0 });
-    mocks.karma.mockResolvedValue({ evaluated: false });
+    mocks.redis.mockReturnValue({} as ReturnType<typeof mocks.redis>);
+    mocks.karma.mockResolvedValue({
+      evaluated: false,
+      selected: 0,
+      dirtySelected: 0,
+      sweepSelected: 0,
+      updated: 0,
+      cycleComplete: false,
+      nextRunAt: null,
+    });
+    mocks.moderation.mockResolvedValue(0);
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
   });
   afterEach(() => {
     vi.useRealTimers();
@@ -103,14 +117,15 @@ describe("scheduled database work", () => {
   async function tick(time: string) {
     vi.setSystemTime(time);
     const waits: Promise<unknown>[] = [];
-    await worker.scheduled(
-      {} as ScheduledEvent,
-      { DB: {} } as Bindings,
-      {
-        waitUntil: (promise: Promise<unknown>) => waits.push(promise),
-      } as unknown as ExecutionContext,
-    );
-    await Promise.all(waits);
+    await worker.scheduled({} as ScheduledEvent, env, {
+      waitUntil: (promise: Promise<unknown>) => waits.push(promise),
+    } as unknown as ExecutionContext);
+    // Observe all background work even when one waitUntil promise rejects.
+    const results = await Promise.allSettled(waits);
+    const failure = results.find((result) => result.status === "rejected");
+    if (failure?.status === "rejected") {
+      throw failure.reason;
+    }
   }
 
   it("keeps minute-level outbox recovery while sampling health every five minutes", async () => {
@@ -132,5 +147,98 @@ describe("scheduled database work", () => {
     expect(mocks.drain).toHaveBeenCalledTimes(1);
     expect(mocks.health).toHaveBeenCalledTimes(1);
     expect(mocks.cleanup).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports Karma and the number of backfilled reviews after both jobs succeed", async () => {
+    env.ENABLE_SCHEDULED_MODERATION = "true";
+    mocks.moderation.mockResolvedValueOnce(3);
+
+    await expect(tick("2026-09-05T12:01:00Z")).resolves.toBeUndefined();
+
+    expect(console.warn).toHaveBeenCalledWith(
+      "cron jobs completed",
+      expect.objectContaining({
+        karmaEvaluation: expect.objectContaining({ evaluated: false }),
+        enqueued: 3,
+        scheduledModerationEnabled: true,
+      }),
+    );
+  });
+
+  it("backfills pending reviews when Karma fails and still reports a failed cron", async () => {
+    env.ENABLE_SCHEDULED_MODERATION = "true";
+    mocks.karma.mockRejectedValueOnce(new Error("Karma Redis unavailable"));
+    mocks.moderation.mockResolvedValueOnce(2);
+
+    await expect(tick("2026-09-05T12:01:00Z")).rejects.toThrow();
+
+    expect(mocks.moderation).toHaveBeenCalledExactlyOnceWith(env, 20);
+    expect(mocks.drain).toHaveBeenCalledTimes(1);
+  });
+
+  it("backfills pending reviews even when constructing the Karma Redis client throws", async () => {
+    env.ENABLE_SCHEDULED_MODERATION = "true";
+    mocks.redis.mockImplementationOnce(() => {
+      throw new Error("Invalid Redis configuration");
+    });
+
+    await expect(tick("2026-09-05T12:01:00Z")).rejects.toThrow();
+
+    expect(mocks.moderation).toHaveBeenCalledExactlyOnceWith(env, 20);
+    expect(mocks.karma).not.toHaveBeenCalled();
+  });
+
+  it("reports backfill failure after completing Karma evaluation", async () => {
+    env.ENABLE_SCHEDULED_MODERATION = "true";
+    mocks.moderation.mockRejectedValueOnce(new Error("Moderation queue unavailable"));
+
+    await expect(tick("2026-09-05T12:01:00Z")).rejects.toThrow();
+
+    expect(mocks.karma).toHaveBeenCalledTimes(1);
+    expect(mocks.moderation).toHaveBeenCalledExactlyOnceWith(env, 20);
+    expect(mocks.drain).toHaveBeenCalledTimes(1);
+  });
+
+  it("retains both failures when Karma and moderation backfill fail", async () => {
+    env.ENABLE_SCHEDULED_MODERATION = "true";
+    const karmaError = new Error("Karma Redis unavailable");
+    const moderationError = new Error("Moderation queue unavailable");
+    mocks.karma.mockRejectedValueOnce(karmaError);
+    mocks.moderation.mockRejectedValueOnce(moderationError);
+
+    await expect(tick("2026-09-05T12:01:00Z")).rejects.toMatchObject({
+      errors: [karmaError, moderationError],
+    });
+    expect(console.warn).not.toHaveBeenCalledWith("cron jobs completed", expect.anything());
+  });
+
+  it("does not enable moderation backfill as a fallback when it is disabled", async () => {
+    mocks.karma.mockRejectedValueOnce(new Error("Karma Redis unavailable"));
+
+    await expect(tick("2026-09-05T12:01:00Z")).rejects.toThrow();
+
+    expect(mocks.moderation).not.toHaveBeenCalled();
+  });
+
+  it("keeps locked scheduled jobs off while progress recovery continues", async () => {
+    env.LOCK_SCHEDULED_JOBS = "true";
+    env.ENABLE_SCHEDULED_MODERATION = "true";
+
+    await tick("2026-09-05T12:01:00Z");
+
+    expect(mocks.redis).not.toHaveBeenCalled();
+    expect(mocks.karma).not.toHaveBeenCalled();
+    expect(mocks.moderation).not.toHaveBeenCalled();
+    expect(mocks.drain).toHaveBeenCalledTimes(1);
+  });
+
+  it("completes enabled backfill despite an independent progress recovery failure", async () => {
+    env.ENABLE_SCHEDULED_MODERATION = "true";
+    mocks.drain.mockRejectedValueOnce(new Error("Progress outbox unavailable"));
+
+    await expect(tick("2026-09-05T12:01:00Z")).rejects.toThrow("Progress outbox unavailable");
+
+    expect(mocks.karma).toHaveBeenCalledTimes(1);
+    expect(mocks.moderation).toHaveBeenCalledExactlyOnceWith(env, 20);
   });
 });
