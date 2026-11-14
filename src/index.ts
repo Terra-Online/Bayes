@@ -7,7 +7,7 @@ import { withRequestTelemetry } from "./lib/requestTelemetry";
 import { ensureAutoModerationBackfill } from "./queues/client/autoModeration";
 import { handleQueue } from "./queues/runtime/entrypoint";
 import { runWithAuthRequest } from "./services/auth/betterAuth";
-import { evaluateKarmaIfDue, type KarmaEvaluationResult } from "./services/karma/evaluation";
+import { evaluateKarmaIfDue } from "./services/karma/evaluation";
 import { drainProgressStatsOutbox } from "./services/progress/outbox";
 import {
   cleanupProgressConsistencyRecords,
@@ -31,7 +31,7 @@ function isFeatureLocked(flag: string | undefined, defaultLocked = true): boolea
   return !["0", "false", "off", "no"].includes(normalized);
 }
 
-async function runScheduledJobs(env: Bindings): Promise<void> {
+function runScheduledJobs(env: Bindings, ctx: ExecutionContext): void {
   if (isFeatureLocked(env.LOCK_SCHEDULED_JOBS, false)) {
     console.warn("cron jobs skipped", {
       reason: "LOCK_SCHEDULED_JOBS enabled",
@@ -41,44 +41,45 @@ async function runScheduledJobs(env: Bindings): Promise<void> {
   }
 
   const config = getRuntimeConfig(env);
-  const failures: unknown[] = [];
-  let karmaEvaluation: KarmaEvaluationResult | undefined;
-  let enqueued = 0;
 
+  // A slow or failed Karma evaluation must not delay moderation backfill.
+  ctx.waitUntil(runScheduledKarmaEvaluation(env));
+  if (config.scheduledModerationEnabled) {
+    ctx.waitUntil(runScheduledModerationBackfill(env));
+  }
+}
+
+async function runScheduledKarmaEvaluation(env: Bindings): Promise<void> {
   try {
     const redis = createRedisClient(env);
-    karmaEvaluation = await evaluateKarmaIfDue(env.DB, redis);
+    const karmaEvaluation = await evaluateKarmaIfDue(env.DB, redis);
+    console.warn("cron karma evaluation completed", {
+      karmaEvaluation,
+      at: new Date().toISOString(),
+    });
   } catch (error) {
-    failures.push(error);
     console.error("cron karma evaluation failed", {
       error: error instanceof Error ? error.message : String(error),
       at: new Date().toISOString(),
     });
+    throw error;
   }
+}
 
-  if (config.scheduledModerationEnabled) {
-    try {
-      enqueued = await ensureAutoModerationBackfill(env, 20);
-    } catch (error) {
-      failures.push(error);
-      console.error("cron moderation backfill failed", {
-        error: error instanceof Error ? error.message : String(error),
-        at: new Date().toISOString(),
-      });
-    }
+async function runScheduledModerationBackfill(env: Bindings): Promise<void> {
+  try {
+    const enqueued = await ensureAutoModerationBackfill(env, 20);
+    console.warn("cron moderation backfill completed", {
+      enqueued,
+      at: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error("cron moderation backfill failed", {
+      error: error instanceof Error ? error.message : String(error),
+      at: new Date().toISOString(),
+    });
+    throw error;
   }
-
-  // Attempt each independent job before reporting failures to the cron runtime.
-  if (failures.length > 0) {
-    throw new AggregateError(failures, "Scheduled jobs failed");
-  }
-
-  console.warn("cron jobs completed", {
-    karmaEvaluation,
-    enqueued,
-    scheduledModerationEnabled: config.scheduledModerationEnabled,
-    at: new Date().toISOString(),
-  });
 }
 
 async function runProgressRecovery(env: Bindings): Promise<void> {
@@ -114,7 +115,7 @@ export default {
   },
   async scheduled(_event: ScheduledEvent, env: Bindings, ctx: ExecutionContext) {
     ctx.waitUntil(runProgressRecovery(env));
-    ctx.waitUntil(runScheduledJobs(env));
+    runScheduledJobs(env, ctx);
   },
   queue: handleQueue,
 };

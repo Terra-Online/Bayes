@@ -51,12 +51,13 @@ Marker sync uses mutation IDs and a D1 outbox to deliver statistics deltas to
 consistency records. The one-minute cron always schedules progress recovery;
 `LOCK_SCHEDULED_JOBS` controls the separate karma/moderation job path.
 
-That path attempts karma evaluation first, then automatic moderation backfill
-when enabled, with at most 20 pending submissions per run. A karma failure,
-including Redis client setup, does not skip backfill. Each failed job is logged;
-after both applicable jobs have been attempted, their errors are reported together
-through the scheduled `waitUntil()` promise. This isolates failures without
-adding parallel work or retries; a slow karma evaluation still delays backfill.
+That path registers karma evaluation and enabled automatic moderation backfill
+with separate `waitUntil()` calls. Backfill does not wait for karma evaluation
+to settle, even if Redis client setup fails, and still handles at most 20 pending
+submissions per run.
+Each job logs its own completion or failure and rejects its own promise on error.
+Their database operations may overlap within the same scheduled invocation;
+they still share its runtime limits. No additional retry loop is introduced.
 
 See [`services/progress/`](../src/services/progress/) for manifests, normalization,
 atomic persistence, delivery, and consistency tests.
